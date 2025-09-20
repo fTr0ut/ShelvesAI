@@ -1,0 +1,100 @@
+Shelfy - Product & Architecture Sheet
+
+Synopsis
+
+Shelfy is a mobile-first and web companion experience for showcasing physical collections. Users create "shelves" that group items such as books, movies, vinyl, watches, wine, memorabilia, or any collectible. Shelves and their items can be kept private, shared with friends, or published to a public feed. A camera workflow sends shelf photos to OpenAI Vision to auto-identify titles and metadata, dramatically reducing manual cataloging. Monetization paths include transaction fees on trades/sales and targeted promotions.
+
+Technology Overview
+
+Backend (Node.js + Express)
+- MongoDB for persistent storage
+- Auth0 + local JWT for authentication (supports username/password and SSO)
+- OpenAI Vision + Responses API for photo analysis
+- REST APIs for auth, shelves, items, feed, friendships, and account management
+
+Web Frontend (React + Vite)
+- Responsive dashboard for managing shelves, visibility, and account data
+- Shelf detail page shows catalogued items, manual entry, catalog search, and visibility controls
+
+Mobile (Expo + React Native)
+- Secure token storage with Expo SecureStore
+- Auth0 SSO via expo-auth-session plus local login/register
+- Camera-powered shelf capture, Vision AI integration, manual overrides, and profile management
+
+Authentication Flow
+- Local login/register issues JWT stored in web localStorage and mobile SecureStore
+- Auth0 login (web and mobile) exchanges the Auth0 access token for a local JWT via /api/auth0/consume
+- Auth0 profiles can be synced into MongoDB for enriched user records
+
+Data Model (MongoDB)
+
+Users
+- username (unique, optional for SSO until claimed)
+- password (bcrypt hash, optional if SSO-only)
+- auth0Sub, email, name, picture
+- profile: firstName, lastName, phoneNumber, country, state, city, isPrivate
+
+Shelves
+- owner (User reference)
+- name, type, description
+- visibility: private | friends | public (indexed)
+- timestamps
+
+Collectable (global catalog)
+- name, type, description
+- optional metadata: author, format, publisher, year
+- text index on name
+
+UserManual
+- user, shelf references
+- manual item name/type/description
+
+UserCollection
+- user + shelf references
+- collectable reference OR manual reference
+- represents items a user has linked to a shelf
+
+Friendship
+- requester, addressee references
+- status: pending | accepted | blocked
+- optional message
+
+Feed Generation
+- Query shelves filtered by visibility, owner scope, type, and optional updated-since timestamp
+- Scopes: global (public shelves), friends (friends only + public), nearby (public shelves matching viewer location), mine (all visibilities for current user)
+- Friend graph derived from Friendship documents (accepted status)
+- Results include shelf summary, owner profile snippet, latest 5 items, and item counts
+
+Vision AI Pipeline
+1. Mobile app requests camera permission and captures a photo (base64 payload)
+2. POST /api/shelves/:id/vision with imageBase64, autoApply flag, and metadata
+3. Backend normalizes base64, builds structured JSON prompt, and calls OpenAI Responses API (model default gpt-4o-mini)
+4. Parsed items are sanitized (name, author, format, publisher, year, confidence)
+5. Collectables are upserted; new UserCollection rows are created when autoApply=true
+6. Response returns analysis payload, number of auto-added items, and refreshed shelf items
+
+Feed & Friends APIs
+- GET /api/feed?scope={global|friends|nearby|mine}&type=&ownerId=&since=&limit=&skip=
+  Returns entries with shelf metadata, owner details, and latest items
+- GET /api/friends: list pending/accepted friendships
+- POST /api/friends/request { targetUserId, message? }: send or auto-accept mutual requests
+- POST /api/friends/respond { friendshipId, action: accept|reject|cancel|block }
+
+Web UX Notes
+- Shelf creation form includes visibility selector (private/friends/public)
+- Shelves list shows type + visibility badges
+- Shelf detail: change visibility inline, manual additions, catalog search, and item list
+
+Mobile UX Notes
+- Login screen supports local auth + Auth0 SSO flow
+- Shelves screen lets users create shelves with visibility chips and view existing shelves
+- Shelf detail: visibility toggles, camera capture, auto-detected item summaries, manual entry, and catalog search
+- Account screen exposes extended profile fields and privacy toggle
+
+Next Steps & Enhancements
+- Extend feed filters for tag/topic discovery and pagination metadata
+- Surface Vision AI suggestions for manual confirmation (autoApply=false mode)
+- Add notifications when friends publish new shelves or items
+- Consider media storage (S3) for retaining original shelf images
+- Monetization experiments: promoted shelves, trade marketplace, affiliate links
+

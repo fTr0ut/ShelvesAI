@@ -1,0 +1,144 @@
+const path = require('path');
+// Load .env from this folder explicitly so it works no matter CWD
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const fs = require('fs');
+
+const authRoutes = require('./routes/auth');
+const shelvesRoutes = require('./routes/shelves');
+const accountRoutes = require('./routes/account');
+const collectablesRoutes = require('./routes/collectables');
+const feedRoutes = require('./routes/feed');
+const friendsRoutes = require('./routes/friends');
+
+const app = express();
+// Minimal request log (dev only)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, _res, next) => {
+    console.log(`[REQ] ${req.method} ${req.url}`);
+    next();
+  });
+}
+app.use(cors());            // allow Vite (5173) during dev
+app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
+
+// DB connection
+if (process.env.MONGO_URI) {
+  mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => console.log('MongoDB connected'))
+    .catch((err) => console.error('MongoDB connection error:', err));
+} else {
+  console.warn('MONGO_URI not set. Skipping DB connection.');
+}
+
+// Routes
+app.use('/api', authRoutes);
+app.use('/api/shelves', shelvesRoutes);
+app.use('/api/account', accountRoutes);
+app.use('/api/collectables', collectablesRoutes);
+app.use('/api/feed', feedRoutes);
+app.use('/api/friends', friendsRoutes);
+// Optional: Auth0-protected example route when configured
+try {
+  const { auth: auth0Jwt } = require('express-oauth2-jwt-bearer');
+  const rawDomain = (process.env.AUTH0_DOMAIN || '').trim();
+  const audience = (process.env.AUTH0_AUDIENCE || '').trim();
+  // Normalize issuer: accept either bare domain (your-tenant.us.auth0.com) or full https URL
+  const issuerBaseURL = rawDomain
+    ? (rawDomain.startsWith('http') ? rawDomain.replace(/\/+$/, '') : `https://${rawDomain}`)
+    : '';
+  if (issuerBaseURL && audience) {
+    console.log(`Auth0 config → issuer: ${issuerBaseURL} audience: ${audience}`);
+    const checkJwt = auth0Jwt({
+      audience,
+      issuerBaseURL,
+      tokenSigningAlg: 'RS256',
+    });
+    app.get('/api/auth0/me', checkJwt, (req, res) => {
+      // When valid, req.auth contains token claims
+      res.json({ auth0: req.auth });
+    });
+    // consumeAuth0 -> issues local JWT
+    try {
+      const { consumeAuth0 } = require('./controllers/authController');
+      app.post('/api/auth0/consume', checkJwt, consumeAuth0);
+    } catch {}
+    // Optional: sync minimal Auth0 profile into Mongo
+    try {
+      const Auth0Profile = require('./models/Auth0Profile');
+      app.post('/api/auth0/sync', checkJwt, async (req, res) => {
+        const claims = req.auth?.payload || {};
+        if (!claims.sub) return res.status(400).json({ error: 'Missing sub in token' });
+        const update = {
+          email: claims.email,
+          name: claims.name || claims.nickname,
+          picture: claims.picture,
+        };
+        const doc = await Auth0Profile.findOneAndUpdate(
+          { sub: claims.sub },
+          { sub: claims.sub, ...update },
+          { upsert: true, new: true }
+        );
+        res.json({ synced: true, profile: { id: doc._id, sub: doc.sub, email: doc.email, name: doc.name } });
+      });
+      console.log('Auth0 routes enabled at /api/auth0/me and /api/auth0/sync');
+    } catch {}
+    console.log('Auth0 route enabled at /api/auth0/me');
+  } else {
+    console.log('Auth0 not configured (set AUTH0_DOMAIN and AUTH0_AUDIENCE).');
+  }
+} catch (e) {
+  // Module not installed; skip silently
+}
+
+// Serve frontend build with optional env override
+const distPath = process.env.FRONTEND_DIST || path.join(__dirname, '..', 'frontend', 'dist');
+const indexPath = path.join(distPath, 'index.html');
+
+if (fs.existsSync(distPath)) {
+  console.log(`Serving frontend from: ${distPath}`);
+  console.log(`Index at: ${indexPath} (exists: ${fs.existsSync(indexPath)})`);
+  // Serve root explicitly
+  app.get('/', (req, res) => {
+    res.sendFile(indexPath);
+  });
+  // Also handle /index.html explicitly
+  app.get('/index.html', (req, res) => {
+    res.sendFile(indexPath);
+  });
+  // Serve static assets
+  app.use(express.static(distPath));
+  // SPA fallback: send index.html for non-API routes
+  app.get(/^(?!\/api).*/, (req, res) => {
+    res.sendFile(indexPath);
+  });
+} else {
+  console.warn(`Frontend build not found at ${distPath}. Run "npm run build" in /frontend to generate it.`);
+}
+
+// Debug route to verify resolved paths
+app.get('/__debug', (req, res) => {
+  const fp = path.join(__dirname, '..', 'frontend', 'dist');
+  const ip = path.join(fp, 'index.html');
+  res.json({
+    frontendPath: fp,
+    frontendExists: fs.existsSync(fp),
+    indexPath: ip,
+    indexExists: fs.existsSync(ip),
+    cwd: process.cwd(),
+    dirname: __dirname,
+  });
+});
+
+const PORT = process.env.PORT || 5001;
+app.listen(PORT, () => {
+  console.log(`API listening on http://localhost:${PORT}`);
+});
+
+
+
+
+

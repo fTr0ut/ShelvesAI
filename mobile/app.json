@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Shelves.AI",
+    "slug": "shelves-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "shelvesai",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b0f14"
+    },
+    "extra": {
+      "API_BASE": "http://localhost:5001",
+      "auth0": {
+        "domain": "dev-0b3u5la73y4qw1gk.us.auth0.com",
+        "clientId": "WRrmNATBOpAuG6j12TQ1crxyMbqkI2Vo",
+        "audience": "https://dev-0b3u5la73y4qw1gk.us.auth0.com/api/v2/",
+        "scheme": "shelvesai",
+        "useProxy": true
+      }
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Shelves.AI to capture your shelves.",
+        "NSPhotoLibraryUsageDescription": "Allow Shelves.AI to import shelf photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b0f14"
+      },
+      "package": "com.shelvesai.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Shelves.AI to access your collection photos.",
+          "cameraPermission": "Allow Shelves.AI to capture your shelves."
+        }
+      ],
+      "expo-secure-store",
+      "expo-web-browser"
+    ]
+  }
+}
