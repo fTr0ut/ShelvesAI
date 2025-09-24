@@ -3,6 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, Switch, StyleSheet, ScrollView
 import FooterNav from '../components/FooterNav'
 import { AuthContext } from '../App'
 import { apiRequest, clearToken } from '../services/api'
+import useAuthDebug from '../hooks/useAuthDebug'
+import { Button } from 'react-native'
 
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext)
@@ -14,6 +16,9 @@ export default function AccountScreen({ navigation }) {
   const [user, setUser] = useState(null)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  const { clearAuthCache } = useAuthDebug()
+
+ 
 
   useEffect(() => {
     (async () => {

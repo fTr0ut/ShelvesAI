@@ -15,6 +15,8 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
+  FlatList,
+  Modal
 } from "react-native";
 
 import { useFocusEffect } from "@react-navigation/native";
@@ -26,6 +28,7 @@ import FooterNav from "../components/FooterNav";
 import { AuthContext } from "../App";
 
 import { apiRequest } from "../services/api";
+
 
 const ITEM_SORT_OPTIONS = [
   { value: "alpha-asc", label: "A to Z" },
@@ -50,7 +53,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
   const [error, setError] = useState("");
 
-  const [manual, setManual] = useState({ name: "", type: "", description: "" });
+  const [manual, setManual] = useState({ title: "", type: "", description: "" });
 
   const [q, setQ] = useState("");
 
@@ -61,6 +64,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
   const [visionMessage, setVisionMessage] = useState("");
 
   const [analysis, setAnalysis] = useState(null);
+
+  const [ediItem, setEditItem] = useState(null);
+  const [needsReviewIds, setNeedsReviewIds] = useState([]);
 
   const hasLoadedRef = useRef(false);
 
@@ -110,7 +116,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       const manual = entry?.manual || null;
 
-      return collectable?.name || manual?.name || "Untitled item";
+      return collectable?.title || manual?.name || "Untitled item";
     };
 
     const compareName = (a, b) => getTitle(a).localeCompare(getTitle(b));
@@ -318,7 +324,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         body: manual,
       });
 
-      setManual({ name: "", type: "", description: "" });
+      setManual({ title: "", type: "", description: "" });
 
       await refreshItems();
     } catch (e) {
@@ -396,8 +402,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }
   };
 
-  const confirmRemove = (itemId, name) => {
-    Alert.alert("Remove item", `Remove "${name}" from this shelf?`, [
+  const confirmRemove = (itemId, title) => {
+    Alert.alert("Remove item", `Remove "${title}" from this shelf?`, [
       { text: "Cancel", style: "cancel" },
 
       {
@@ -418,7 +424,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     navigation.navigate("CollectableDetail", {
       id: collectableId,
 
-      title: collectable.name,
+      title: collectable.title || collectable.name,
     });
   };
 
@@ -470,11 +476,46 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       setAnalysis(data.analysis);
 
-      setVisionMessage(
-        `Detected ${data.analysis?.items?.length || 0} items. Added ${data.addedCount || 0}.`,
-      );
+      if (Array.isArray(data.results)) {
+        // const needsEdit = data.results.filter(r => r.status === "edit_required");
+        // setPendingEdits(needsEdit.map(r => r.item));
+        const resultList = data.results;
 
-      await refreshItems();
+        const reviewIds = resultList
+         .filter(r => r.status === "manual_added" || r.status === "edit_required")
+         .map(r => {
+            // New flow returns the shelf-join id as itemId
+            if (r.status === "manual_added") return r.itemId ?? r.itemID ?? null;
+            // Old flow had no join yet; no id to highlight -> return null
+            return null;
+          })
+          .filter(Boolean);
+
+        // Always set (clears old highlights if none now)
+        setNeedsReviewIds(reviewIds);
+
+        // Optional: apply updated items immediately if backend returned them
+        if (Array.isArray(data?.items)) {
+          setItems(data.items);
+        } else {
+          await refreshItems();
+        }
+
+
+       const addedCount = data.results.filter(
+        r => r.status === "created" || r.status === "linked"
+      ).length;
+
+      setVisionMessage(
+        `Detected ${data.analysis?.items?.length || 0} items. Added ${addedCount}.`
+      );
+    } else {
+      setVisionMessage(
+        `Detected ${data.analysis?.items?.length || 0} items. Added 0.`
+      );
+    }
+
+
     } catch (e) {
       setError(e.message);
     } finally {
@@ -556,17 +597,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
             <View style={styles.itemGrid}>
               {sortedItems.map((it) => {
                 const isCollectable = Boolean(it.collectable);
-
                 const collectable = it.collectable || null;
-
                 const manualItem = it.manual || null;
+                const isManual = !isCollectable && !!manualItem;
 
                 const title =
-                  collectable?.name || manualItem?.name || "Untitled item";
+                  collectable?.title || collectable?.name || manualItem?.name || "Untitled item";
 
                 const detailParts = isCollectable
                   ? [
-                      collectable?.author,
+                      collectable?.primaryCreator || collectable?.author ,
 
                       collectable?.format,
 
@@ -621,9 +661,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 const typeLabel = isCollectable
                   ? collectable?.type || shelf?.type || "Collectable"
                   : manualItem?.type || shelf?.type || "Manual";
+                
+                  // Mark as needing review if:
+                  // 1) backend just told us it was created from vision as manual, OR
+                  // 2) it's a manual item missing common metadata
 
+                  const missingCore =
+                    isManual && (!manualItem.primaryCreator || !manualItem.format || !manualItem.publisher || !manualItem.year);
+                  const needsReview =
+                    isManual && (missingCore || needsReviewIds.includes(it.id));
                 return (
-                  <View key={it.id} style={styles.itemTile}>
+                  <View key={it.id} style={[styles.itemTile, needsReview && styles.itemTileNeedsReview]}>
+                    
                     <TouchableOpacity
                       style={styles.itemTileBody}
                       activeOpacity={isCollectable ? 0.75 : 1}
@@ -633,6 +682,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     >
                       <View style={styles.itemTileHeader}>
                         <Text style={styles.itemTileType}>{typeLabel}</Text>
+                        {needsReview ? (
+                         <Text style={styles.needsReviewPill}>Needs review</Text>
+                        ) : null}
 
                         {positionLabel ? (
                           <Text style={styles.itemTilePosition}>
@@ -651,7 +703,24 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         </Text>
                       ) : null}
                     </TouchableOpacity>
-
+                
+                   {isManual && (
+                      <TouchableOpacity
+                          style={[styles.itemTileEdit]}
+                          onPress={() =>
+                          navigation.navigate("ManualEdit", {
+                              shelfId: id,
+                              itemId: it.id,
+                              isCollectable: false,
+                            initialData: manualItem,
+                            })
+                          }
+                          activeOpacity={0.8}
+                      >
+                        <Text style={styles.itemTileEditText}>Edit</Text>
+                      </TouchableOpacity>
+                   
+                   )}
                     <TouchableOpacity
                       style={styles.itemTileRemove}
                       onPress={() => confirmRemove(it.id, title)}
@@ -692,7 +761,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
               {analysis.items.slice(0, 6).map((item, idx) => (
                 <Text key={`${item.name}-${idx}`} style={styles.analysisText}>
                   - {item.name}
-                  {item.author ? ` by ${item.author}` : ""}
+                  {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
                   {item.format ? ` [${item.format}]` : ""}
                   {typeof item.confidence === "number"
                     ? ` (${Math.round(item.confidence * 100)}%)`
@@ -707,7 +776,34 @@ export default function ShelfDetailScreen({ route, navigation }) {
               ) : null}
             </View>
           ) : null}
-
+          {/* {pendingEdits.length > 0 && (
+            <View style={styles.analysisBox}>
+              <Text style={styles.sectionSmall}>Items needing review</Text>
+              {pendingEdits.map((it, idx ) => (
+                <View key={`${it.name || it.title || idx}-${idx}`} style={{ marginBottom: 8 }}>
+                  <Text style={styles.analysisText}>
+                    ✏️ {it.name || it.title || "Untitled"} {it.author ? `by ${it.author}` : ""}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.smallButton}
+                    onPress={() =>
+                      navigation.navigate("ManualEdit", {
+                        shelfId: id,
+                        itemId: it.id,
+                        isCollectable: !!it.collectable,
+                        initialData: it.collectable || it.manual,
+                        itemId: it.id || it._id || null,     // may be empty for pending edits
+                        isCollectable: false,                 // pending edits are not linked yet
+                        initialData: it,                
+                      })
+                    }
+                  >
+                    <Text style={styles.smallButtonText}>Edit Metadata</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )} */}
           <Text style={styles.helper}>
             Photos stay on device until you confirm a capture. Only the selected
             image is sent securely for recognition.
@@ -719,7 +815,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
           <TextInput
             style={styles.input}
-            placeholder="Name"
+            placeholder="Title"
             placeholderTextColor="#9aa6b2"
             value={manual.name}
             onChangeText={(value) => setManual({ ...manual, name: value })}
@@ -772,9 +868,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
               {results.map((item) => (
                 <View key={item._id} style={styles.searchRow}>
                   <Text style={styles.itemMeta} numberOfLines={2}>
-                    {item.name}
+                    {item.title}
 
-                    {item.author ? ` by ${item.author}` : ""}
+                    {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
 
                     {item.format ? ` [${item.format}]` : ""}
                   </Text>
@@ -937,7 +1033,32 @@ const styles = StyleSheet.create({
 
     flexGrow: 1,
   },
+  itemTileNeedsReview: {
+   borderColor: "#f6c749",
+   backgroundColor: "#18140a",
+  },
+ needsReviewPill: {
+   color: "#f6c749",
+   fontSize: 11,
+   borderWidth: 1,
+   borderColor: "#4a3a12",
+   backgroundColor: "#241d0d",
+   paddingHorizontal: 8,
+   paddingVertical: 2,
+   borderRadius: 999,
+ },
+ itemTileEdit: {
+   marginTop: 8,
+   alignSelf: "flex-start",
+   paddingVertical: 6,
+   paddingHorizontal: 10,
+   borderRadius: 8,
+   borderWidth: 1,
+   borderColor: "#3b4b6a",
+   backgroundColor: "#0f1a2a",
+ },
 
+ itemTileEditText: { color: "#9ec1ff", fontSize: 12, fontWeight: "600" },
   itemTileBody: { gap: 6 },
 
   itemTileHeader: {

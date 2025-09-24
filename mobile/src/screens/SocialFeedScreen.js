@@ -122,7 +122,17 @@ export default function SocialFeedScreen({ navigation }) {
     const originLabel = __origin === 'friends' ? 'Friends' : 'Public'
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.75}
+        onPress={() =>
+          navigation.navigate('FeedDetail', {
+            entry: item,
+            shelfId: shelf?.id,
+            title: shelf?.name,
+          })
+        }
+      >
         <View style={styles.rowBetween}>
           <View>
             <Text style={styles.ownerName}>{owner?.name || owner?.username || 'Someone'}</Text>
@@ -142,13 +152,8 @@ export default function SocialFeedScreen({ navigation }) {
             <Text style={styles.tag}>{shelf?.type || 'Collection'}</Text>
           </View>
         </View>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name })}
-        >
-          <Text style={styles.shelfTitle}>{shelf?.name || 'Untitled Shelf'}</Text>
-          {shelf?.description ? <Text style={styles.shelfDescription}>{shelf.description}</Text> : null}
-        </TouchableOpacity>
+        <Text style={styles.shelfTitle}>{shelf?.name || 'Untitled Shelf'}</Text>
+        {shelf?.description ? <Text style={styles.shelfDescription}>{shelf.description}</Text> : null}
         {items?.length ? (
           <View style={styles.itemsPreview}>
             {items.map((entry) => {
@@ -167,7 +172,7 @@ export default function SocialFeedScreen({ navigation }) {
           <Text style={styles.muted}>No items yet</Text>
         )}
         {createdLabel ? <Text style={styles.timestamp}>{createdLabel}</Text> : null}
-      </View>
+      </TouchableOpacity>
     )
   }
 

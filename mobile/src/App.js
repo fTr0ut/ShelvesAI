@@ -7,6 +7,7 @@ import * as WebBrowser from 'expo-web-browser'
 import Constants from 'expo-constants'
 import LoginScreen from './screens/LoginScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
+import FeedDetailScreen from './screens/FeedDetailScreen'
 import ShelvesScreen from './screens/ShelvesScreen'
 import ShelfDetailScreen from './screens/ShelfDetailScreen'
 import ShelfCreateScreen from './screens/ShelfCreateScreen'
@@ -15,6 +16,7 @@ import FriendSearchScreen from './screens/FriendSearchScreen'
 import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
+import ManualEditScreen from './screens/ManualEditScreen'
 
 WebBrowser.maybeCompleteAuthSession()
 
@@ -131,6 +133,7 @@ export default function App() {
           ) : (
             <>
               <Stack.Screen name="Feed" component={SocialFeedScreen} options={{ title: 'Feed' }} />
+              <Stack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Feed Details' })} />
               <Stack.Screen name="FriendSearch" component={FriendSearchScreen} options={{ title: 'Find Friends' }} />
               <Stack.Screen name="Shelves" component={ShelvesScreen} options={{ title: 'Shelves' }} />
               <Stack.Screen name="ShelfCreate" component={ShelfCreateScreen} options={{ title: 'New Shelf' }} />
@@ -139,6 +142,7 @@ export default function App() {
               <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} options={({ route }) => ({ title: route.params?.initialName ? `Edit ${route.params.initialName}` : 'Edit Shelf' })} />
               <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Collectable' })} />
               <Stack.Screen name="Account" component={AccountScreen} options={{ title: 'Account' }} />
+              <Stack.Screen name="ManualEdit" component={ManualEditScreen} options={{ title: 'Edit Metadat' }} />
             </>
           )}
         </Stack.Navigator>

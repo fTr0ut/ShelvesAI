@@ -1,3 +1,7 @@
+const { openLibraryToCollectable } = require("../adapters/openlibrary.adapter");
+const { upsertCollectable } = require("../services/collectables.upsert");
+const crypto = require("crypto");
+
 const Shelf = require("../models/Shelf");
 
 const Collectable = require("../models/Collectable");
@@ -10,7 +14,7 @@ const OpenAI = require("openai");
 
 const EventLog = require("../models/EventLog");
 
-const { lookupWorkMetadata } = require("../services/openLibrary");
+const { lookupWorkBookMetadata } = require("../services/openLibrary");
 
 let openaiClient;
 
@@ -86,6 +90,11 @@ function coerceNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function makeLightweightFingerprint(title, creator) {
+  const base = `${(title || "").trim().toLowerCase()}|${(creator || "").trim().toLowerCase()}`;
+  return crypto.createHash("sha1").update(base).digest("hex");
+}
+
 function extractPositionPayload(body) {
   if (!body) return null;
 
@@ -157,7 +166,7 @@ const structuredVisionFormat = {
           additionalProperties: false,
 
           properties: {
-            name: { type: "string" },
+            title: { type: "string" },
 
             type: { type: "string" },
 
@@ -179,7 +188,7 @@ const structuredVisionFormat = {
           //required: ["name","type","author","format","publisher","year","notes","position","confidence"]
 
           required: [
-            "name",
+            "title",
             "type",
             "author",
             "format",
@@ -421,129 +430,504 @@ function extractVisionResponsePayload(response) {
   return parseTextContent(combinedText);
 }
 
-async function ensureCollectableFromVision(item, fallbackType) {
-  const type = item.type || fallbackType || "unsorted";
-  const positionValue = (() => {
-    if (item.position === undefined || item.position === null) return undefined;
-    const stringified = String(item.position).trim();
-    return stringified ? stringified : undefined;
-  })();
-  const normalizedTags = normalizeVisionTags(item.tags);
+// async function ensureCollectableFromVision(item, fallbackType) {
+//   const type = item.type || fallbackType || "unsorted";
+//   const positionValue = (() => {
+//     if (item.position === undefined || item.position === null) return undefined;
+//     const stringified = String(item.position).trim();
+//     return stringified ? stringified : undefined;
+//   })();
+//   const normalizedTags = normalizeVisionTags(item.tags);
 
+//   const name = item.name;
+
+//   let collectable = await Collectable.findOne({ name, type });
+
+//   const shouldEnrichBooks =
+//     isLikelyBookType(type) || (fallbackType && isLikelyBookType(fallbackType));
+
+//   const collectableMissingCore =
+//     !collectable ||
+//     !collectable.author ||
+//     !collectable.publisher ||
+//     !collectable.year ||
+//     !collectable.description;
+
+//   const itemMissingCore =
+//     !item.author || !item.publisher || !item.year || !item.notes;
+
+//   if (shouldEnrichBooks && (collectableMissingCore || itemMissingCore)) {
+//     try {
+//       const enrichment = await lookupWorkMetadata({
+//         title: name,
+
+//         author: item.author || (collectable ? collectable.author : "") || "",
+//       });
+
+//       if (enrichment) {
+//         if (!item.author && enrichment.authors.length)
+//           item.author = enrichment.authors[0];
+
+//         if (!item.publisher && enrichment.publishers.length)
+//           item.publisher = enrichment.publishers[0];
+
+//         if (!item.year && enrichment.publishYear)
+//           item.year = enrichment.publishYear;
+
+//         if (!item.notes) {
+//           const noteParts = [];
+
+//           if (enrichment.subtitle) noteParts.push(enrichment.subtitle);
+
+//           if (enrichment.subjects.length) {
+//             noteParts.push(
+//               `Subjects: ${enrichment.subjects.slice(0, 5).join(", ")}`,
+//             );
+//           }
+
+//           if (enrichment.isbn) noteParts.push(`ISBN: ${enrichment.isbn}`);
+
+//           const combinedNotes = noteParts.filter(Boolean).join(" - ");
+
+//           if (combinedNotes) item.notes = combinedNotes;
+//         }
+//       }
+//     } catch (err) {
+//       console.warn("OpenLibrary enrichment failed", err.message);
+//     }
+//   }
+
+//   if (!collectable) {
+//     collectable = await Collectable.create({
+//       name,
+//       type,
+//       description: item.notes,
+//       author: item.author,
+//       format: item.format,
+//       publisher: item.publisher,
+//       year: item.year,
+//       position: positionValue,
+//       tags: normalizedTags,
+//     });
+
+//     return collectable;
+//   }
+
+//   const updates = {};
+
+//   if ((!collectable.author || collectable.author === name) && item.author)
+//     updates.author = item.author;
+
+//   if (!collectable.format && item.format) updates.format = item.format;
+
+//   if (!collectable.publisher && item.publisher)
+//     updates.publisher = item.publisher;
+
+//   if (!collectable.year && item.year) updates.year = item.year;
+
+//   if (!collectable.description && item.notes) updates.description = item.notes;
+
+//   if (positionValue && positionValue !== collectable.position) {
+//     updates.position = positionValue;
+//   }
+
+//   if (normalizedTags.length) {
+//     const existingTags = Array.isArray(collectable.tags)
+//       ? collectable.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
+//       : [];
+//     const normalizedExisting = existingTags.map((tag) => tag.toLowerCase());
+//     const normalizedIncoming = normalizedTags.map((tag) => tag.toLowerCase());
+//     if (
+//       normalizedIncoming.length !== normalizedExisting.length ||
+//       normalizedIncoming.some((tag, idx) => tag !== normalizedExisting[idx])
+//     ) {
+//       updates.tags = normalizedTags;
+//     }
+//   }
+
+//   if (Object.keys(updates).length) {
+//     collectable.set(updates);
+
+//     await collectable.save();
+//   }
+
+//   return collectable;
+// }
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+async function safeLookup(item, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      console
+      return await lookupWorkBookMetadata({
+        title: item.name || item.title,
+        author: item.author || ""
+      });
+    } catch (err) {
+      if (String(err.message).includes("429") && attempt < retries) {
+        const backoff = 500 * Math.pow(2, attempt);
+        console.warn(`429 from OpenLibrary, retrying in ${backoff}ms`);
+        await delay(backoff);
+        continue;
+      }
+      if (String(err.message).includes("aborted") && attempt < retries) {
+        const backoff = 1000 * (attempt + 1);
+        console.warn(`Timeout/abort, retrying in ${backoff}ms`);
+        await delay(backoff);
+        continue;
+      }
+      throw err;
+    }
+  }
+  return null;
+}
+
+async function batchLookupFirstPass(items, concurrency = 5) {
+  const results = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      const input = items[i];
+      try {
+        const value = await safeLookup(input);
+        if (value) {
+          results[i] = { status: "resolved", input, enrichment: value };
+        } else {
+          results[i] = { status: "unresolved", input };
+        }
+      } catch (err) {
+        console.error("OpenLibrary lookup failed", err.message);
+        results[i] = { status: "unresolved", input };
+      }
+    }
+  }
+
+  // run limited concurrency
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return results;
+}
+
+// async function batchEnrichWithOpenAI(unresolved) {
+//   if (!unresolved.length) return [];
+//   const openai = getOpenAIClient();
+//   if (!openai) return unresolved.map(u => ({ status: "unresolved", input: u.input }));
+
+//   const payload = unresolved.map(u => ({ title: u.input.name || u.input.title, author: u.input.author || "" }));
+
+//   const aiResponse = await openai.responses.create({
+//     model: "gpt-4.1-mini",
+//     tools: [{ type: "web_search" }],
+//     tool_choice: "auto",
+//     text: { format: structuredVisionFormat },
+
+//     input: [
+//       { role: "system", content: "You are cleaning up noisy OCR text from book covers so they can match OpenLibrary records." },
+//       { role: "user", content: `OCR extracted list:\n${JSON.stringify(payload, null, 2)}\n\n Search the web for similarly spelled or similarly sounding titles or authors. Dig deeper if no initial results found. No comments.` }
+//     ]
+//   });
+
+//   let corrections = [];
+//   try {
+//     corrections = JSON.parse(aiResponse.output_text);
+//   } catch (err) {
+//     console.error("Failed to parse OpenAI output", err);
+//     return unresolved;
+//   }
+
+//   // second pass: lookup corrected titles in OpenLibrary
+//   const requeue = await Promise.allSettled(
+//     corrections.map(c => lookupWorkBookMetadata({ title: c.title, author: c.author }))
+//   );
+
+//   return requeue.map((res, idx) => {
+//     const orig = unresolved[idx].input;
+//     if (res.status === "fulfilled" && res.value) {
+//       return { status: "resolved", input: orig, enrichment: res.value };
+//     } else {
+//       return { status: "unresolved", input: orig };
+//     }
+//   });
+// }
+// Replace your current batchEnrichWithOpenAI with this:
+async function batchEnrichWithOpenAI(unresolved = []) {
+  // unresolved comes from firstPass: [{ status:"unresolved", input:{ name, author, ... } }, ...]
+  if (!Array.isArray(unresolved) || unresolved.length === 0) return [];
+
+  const openai = getOpenAIClient();
+  if (!openai) return unresolved.map(u => ({ status: "unresolved", input: u.input }));
+
+  // Build a compact payload: [{ title, author }]
+  // - take only what's needed
+  // - dedupe by "title|author"
+  // - keep the batch modest to avoid hitting token limits
+  const raw = unresolved
+    .map(u => ({
+      title: (u?.input?.name || u?.input?.title || "").trim(),
+      author: (u?.input?.author || "").trim()
+    }))
+    .filter(it => it.title);
+
+  const seen = new Set();
+  const payload = [];
+  for (const it of raw) {
+    const key = `${it.title.toLowerCase()}|${(it.author || "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    payload.push(it);
+  }
+
+  // Hard cap the batch if needed (tune if you expect larger batches)
+  const LIMITED_BATCH_SIZE = parseInt(process.env.OPENAI_ENRICH_BATCH_MAX || "30", 10);
+  const trimmed = payload.slice(0, LIMITED_BATCH_SIZE);
+
+  // Nothing to do?
+  if (trimmed.length === 0) {
+    return unresolved.map(u => ({ status: "unresolved", input: u.input }));
+  }
+
+  // Call OpenAI with strict JSON array schema
+  const resp = await openai.responses.create({
+    model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
+    tools: [{ type: "web_search" }],
+    tool_choice: "auto",
+    text: {
+      format: {
+        name: "BookCorrections",
+        type: "json_schema",
+        strict: true,
+        schema: {
+            type: "object",
+            additionalProperties: false,
+
+            properties: {
+              items: {  
+                type: "array",
+               items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    title:  { type: "string" },
+                    author: { type: ["string", "null"] }
+                },
+                required: ["title", "author"]
+              },
+              
+           }                     
+        },
+        required: ["items"] 
+      }
+    }
+  },
+    input: [
+      { role: "system", content: "Return ONLY a JSON array matching the schema: [{ title, author }]. No prose." },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: `Clean and correct these OCR book entries. (fix spelling/sound-alikes; web-search reliable sources for correct data). Output ONLY the corrected JSON array (no wrapper objects, no extra fields).
+
+${JSON.stringify(trimmed, null, 2)}`
+          }
+        ]
+      }
+    ]
+  });
+
+  // Prefer parsed output if the SDK provides it; otherwise parse text safely
+  let corrections = [];
+  if (Array.isArray(resp?.output_parsed)) {
+    corrections = resp.output_parsed;
+  } else {
+    const text = safeGetOutputText(resp);
+    corrections = coerceCorrectionsArray(text); // your helper returns [] when it can’t parse
+  }
+
+  if (!Array.isArray(corrections) || corrections.length === 0) {
+    // Couldn’t parse or got an empty array—leave them unresolved
+    return unresolved.map(u => ({ status: "unresolved", input: u.input }));
+  }
+
+  // Re-query OpenLibrary with throttling + retries, like first pass
+  // Use the same safeLookup to avoid 429s/timeouts
+  const results = [];
+  for (let i = 0; i < corrections.length; i++) {
+    results[i] = null;
+  }
+
+  const concurrency = 5;
+  let idx = 0;
+
+  async function worker() {
+    while (idx < corrections.length) {
+      const i = idx++;
+      const corr = corrections[i];
+      try {
+        const ol = await safeLookup({ title: corr.title, author: corr.author || "" });
+        if (ol) {
+          // Map back to the *original* unresolved entry by index where possible:
+          // If counts mismatch (model dropped/added items), fall back to pairing by title.
+          const orig = unresolved[i]?.input || unresolved.find(u => 
+            (u.input?.name || u.input?.title || "").trim().toLowerCase() === corr.title.trim().toLowerCase()
+          )?.input || { title: corr.title, author: corr.author || "" };
+
+          results[i] = { status: "resolved", input: orig, enrichment: ol };
+        } else {
+          const orig = unresolved[i]?.input || { title: corr.title, author: corr.author || "" };
+          results[i] = { status: "unresolved", input: orig };
+        }
+      } catch (err) {
+        const orig = unresolved[i]?.input || { title: corr.title, author: corr.author || "" };
+        console.error("OpenLibrary requeue failed", err?.message || err);
+        results[i] = { status: "unresolved", input: orig };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, corrections.length) }, worker));
+
+  // Filter out any nulls (shouldn’t happen, but be safe)
+  return results.filter(Boolean);
+}
+
+
+async function batchLookupOpenLibrary(corrections) {
+  if (!Array.isArray(corrections) || !corrections.length) return [];
+  
+  // Run them in parallel but respect rate limits
+  const results = await Promise.allSettled(
+    corrections.map(c => lookupWorkBookMetadata({ title: c.title, author: c.author }))
+  );
+
+  return results.map((res, idx) => {
+    if (res.status === "fulfilled" && res.value) {
+      return { ok: true, input: corrections[idx], enrichment: res.value };
+    } else {
+      return { ok: false, input: corrections[idx], error: res.reason?.message || "OpenLibrary failed" };
+    }
+  });
+}
+
+async function batchCorrectOCR(items) {
+  const openai = getOpenAIClient();
+  if (!openai) return [];
+
+  const payload = items.map(it => ({ title: it.name || it.title, author: it.author || "" }));
+  
+  const aiResponse = await openai.responses.create({
+    model: "gpt-4.1-mini",
+    tools: [{ type: "web_search" }],
+    input: [
+      {
+        role: "system",
+        content: "You are cleaning up noisy OCR text from book covers so they can match OpenLibrary records."
+      },
+      {
+        role: "user",
+        content: `OCR extracted list:\n${JSON.stringify(payload, null, 2)}\n\nReturn corrected array as JSON [{title, author}]. No comments.`
+      }
+    ]
+  });
+
+  try {
+    const corrections = JSON.parse(aiResponse.output_text);
+    return Array.isArray(corrections) ? corrections : [];
+  } catch (err) {
+    console.error("Failed to parse OpenAI corrections", err);
+    return [];
+  }
+}
+
+async function ensureCollectableFromVision(item, shelfType) {
   const name = item.name;
 
-  let collectable = await Collectable.findOne({ name, type });
+  if (shelfType === "books" || isLikelyBookType(shelfType)) {
+   // 0) Compute lightweightFingerprint from OCR fields
+   const lwf = makeLightweightFingerprint(name, item.author || "");
 
-  const shouldEnrichBooks =
-    isLikelyBookType(type) || (fallbackType && isLikelyBookType(fallbackType));
-
-  const collectableMissingCore =
-    !collectable ||
-    !collectable.author ||
-    !collectable.publisher ||
-    !collectable.year ||
-    !collectable.description;
-
-  const itemMissingCore =
-    !item.author || !item.publisher || !item.year || !item.notes;
-
-  if (shouldEnrichBooks && (collectableMissingCore || itemMissingCore)) {
-    try {
-      const enrichment = await lookupWorkMetadata({
-        title: name,
-
-        author: item.author || (collectable ? collectable.author : "") || "",
-      });
-
-      if (enrichment) {
-        if (!item.author && enrichment.authors.length)
-          item.author = enrichment.authors[0];
-
-        if (!item.publisher && enrichment.publishers.length)
-          item.publisher = enrichment.publishers[0];
-
-        if (!item.year && enrichment.publishYear)
-          item.year = enrichment.publishYear;
-
-        if (!item.notes) {
-          const noteParts = [];
-
-          if (enrichment.subtitle) noteParts.push(enrichment.subtitle);
-
-          if (enrichment.subjects.length) {
-            noteParts.push(
-              `Subjects: ${enrichment.subjects.slice(0, 5).join(", ")}`,
-            );
-          }
-
-          if (enrichment.isbn) noteParts.push(`ISBN: ${enrichment.isbn}`);
-
-          const combinedNotes = noteParts.filter(Boolean).join(" - ");
-
-          if (combinedNotes) item.notes = combinedNotes;
+   // 1) Check if Collectable already exists by lightweightFingerprint
+   const existing = await Collectable.findOne({ lightweightFingerprint: lwf });
+      if (existing) {
+        // Link it to this shelf if not already linked
+        const alreadyLinked = await UserCollection.findOne({
+          user: req.user.id,
+          shelf: shelf._id,
+          collectable: existing._id,
+        });
+        if (!alreadyLinked) {
+          await UserCollection.create({
+            user: req.user.id,
+            shelf: shelf._id,
+            collectable: existing._id,
+          });
         }
+        return { status: "linked", collectable: existing };
       }
-    } catch (err) {
-      console.warn("OpenLibrary enrichment failed", err.message);
+
+
+    // 2) Try Open Library first
+    let enrichment = await safeLookup({ name, author: item.author || "" });
+
+    // 3) Retry via OpenAI spelling/alias correction if needed (your existing logic)
+    if (!enrichment) {
+      try {
+        const openai = getOpenAIClient();
+        if (openai) {
+          const aiResponse = await openai.responses.create({
+            model: "gpt-4.1-mini",
+            tools: [{ type: "web_search" }],
+            input: [
+              { role: "system", content: "You are cleaning up noisy OCR text from book covers so they can match OpenLibrary records." },
+              { role: "user", content: `OCR extracted: "${name}" by "${item.author || ""}". Use a web search to find a similarly spelled or similarly "sounding" corrected book title and author as JSON {title, author}. No comments, no explanations.` }
+            ]
+          });
+
+          let suggestion = null;
+          try { suggestion = JSON.parse(aiResponse.output_text); } catch {}
+          if (suggestion?.title) {
+            enrichment = await safeLookup({ name: suggestion.title, author: suggestion.author || "" });
+          }
+        }
+      } catch (err) {
+        console.error("OpenAI retry failed:", err.message);
+      }
     }
-  }
 
-  if (!collectable) {
-    collectable = await Collectable.create({
-      name,
-      type,
-      description: item.notes,
-      author: item.author,
-      format: item.format,
-      publisher: item.publisher,
-      year: item.year,
-      position: positionValue,
-      tags: normalizedTags,
-    });
-
-    return collectable;
-  }
-
-  const updates = {};
-
-  if ((!collectable.author || collectable.author === name) && item.author)
-    updates.author = item.author;
-
-  if (!collectable.format && item.format) updates.format = item.format;
-
-  if (!collectable.publisher && item.publisher)
-    updates.publisher = item.publisher;
-
-  if (!collectable.year && item.year) updates.year = item.year;
-
-  if (!collectable.description && item.notes) updates.description = item.notes;
-
-  if (positionValue && positionValue !== collectable.position) {
-    updates.position = positionValue;
-  }
-
-  if (normalizedTags.length) {
-    const existingTags = Array.isArray(collectable.tags)
-      ? collectable.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
-      : [];
-    const normalizedExisting = existingTags.map((tag) => tag.toLowerCase());
-    const normalizedIncoming = normalizedTags.map((tag) => tag.toLowerCase());
-    if (
-      normalizedIncoming.length !== normalizedExisting.length ||
-      normalizedIncoming.some((tag, idx) => tag !== normalizedExisting[idx])
-    ) {
-      updates.tags = normalizedTags;
+    // 4) If still nothing, bubble up for manual
+    if (!enrichment) {
+      return {
+        status: "edit_required",
+        item: {
+          id: item._id || item.id || null,
+          name,
+          type: item.type || shelfType || "manual",
+          author: item.author || "",
+          format: item.format || "",
+          publisher: item.publisher || "",
+          year: item.year || "",
+          position: item.position || "",
+          tags: item.tags || [],
+          description: item.notes || "",
+          reason: "No OpenLibrary match",
+        },
+      };
     }
+
+    // 5) We have an OL work → map to generic Collectable and upsert
+
+    const incoming = openLibraryToCollectable({
+                  ...enrichment,
+                  position: item.position || null,  // 👈 forward position from vision
+                  lightweightFingerprint: lwf,          // 👈 store lightweightFingerprint
+                });
+    const saved = await upsertCollectable(Collectable, incoming);
+
+    return { status: "created", collectable: saved };
   }
-
-  if (Object.keys(updates).length) {
-    collectable.set(updates);
-
-    await collectable.save();
-  }
-
-  return collectable;
 }
+
 
 async function loadShelfForUser(userId, shelfId) {
   return Shelf.findOne({ _id: shelfId, owner: userId });
@@ -913,13 +1297,48 @@ async function searchCollectablesForShelf(req, res) {
   res.json({ results });
 }
 
-// Analyze a shelf photo with OpenAI Vision
+function safeGetOutputText(resp) {
+  // Works for both legacy and current @openai SDK shapes
+  try {
+    if (typeof resp?.output_text === "string") return resp.output_text;
+    const maybeText = resp?.output?.[0]?.content?.[0]?.text;
+    if (typeof maybeText === "string") return maybeText;
+  } catch {}
+  return "";
+}
+
+function coerceCorrectionsArray(jsonLike) {
+  // Accept: stringified JSON, array, or object wrappers
+  let parsed = jsonLike;
+  if (typeof jsonLike === "string") {
+    const trimmed = jsonLike.trim();
+    // attempt to extract a JSON block if the model added prose
+    const start = trimmed.indexOf("[") !== -1 ? trimmed.indexOf("[") : trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("]") !== -1 ? trimmed.lastIndexOf("]") + 1 : trimmed.lastIndexOf("}") + 1;
+    try {
+      parsed = JSON.parse(start >= 0 && end > start ? trimmed.slice(start, end) : trimmed);
+    } catch {
+      return []; // could not parse
+    }
+  }
+
+  // If already an array of items
+  if (Array.isArray(parsed)) return parsed;
+
+  // Common wrapper: { corrections: [...] }
+  if (parsed && Array.isArray(parsed.corrections)) return parsed.corrections;
+
+  // Single object case: {title, author}
+  if (parsed && (parsed.title || parsed.author)) return [parsed];
+
+  return [];
+}
+
 
 async function processShelfVision(req, res) {
   console.log("vision req", req.user, req.params.shelfId);
 
   const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
-
   if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
   const {
@@ -933,79 +1352,50 @@ async function processShelfVision(req, res) {
     return res.status(400).json({ error: "imageBase64 is required" });
 
   const client = getOpenAIClient();
-
   if (!client)
     return res.status(503).json({ error: "Vision AI is not configured" });
 
+  // --- Clean image payload ---
   const rawImagePayload = String(imageBase64);
-
-  const explicitMatch = rawImagePayload.match(
-    /^data:(image\/[a-zA-Z0-9.+-]+);base64,/i,
-  );
-
+  const explicitMatch = rawImagePayload.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/i);
   let mimeType = explicitMatch ? explicitMatch[1] : null;
-
   let cleanedSource;
 
   if (explicitMatch) {
     cleanedSource = rawImagePayload.slice(explicitMatch[0].length);
   } else if (rawImagePayload.startsWith("data:image;base64,")) {
     cleanedSource = rawImagePayload.slice("data:image;base64,".length);
-
     mimeType = mimeType || "image/jpeg";
   } else {
     cleanedSource = rawImagePayload;
   }
 
   const cleaned = cleanedSource.replace(/\s+/g, "");
-
-  if (!cleaned)
-    return res.status(400).json({ error: "Invalid base64 payload" });
-
+  if (!cleaned) return res.status(400).json({ error: "Invalid base64 payload" });
   if (!/^[A-Za-z0-9+/]+=*$/.test(cleaned))
     return res.status(400).json({ error: "Invalid base64 payload" });
-
   if (cleaned.length > 8 * 1024 * 1024)
-    return res
-      .status(400)
-      .json({ error: "Image too large; limit to 8MB base64 payload" });
+    return res.status(400).json({ error: "Image too large; limit to 8MB base64 payload" });
 
   const imageDataUrl = `data:${mimeType || "image/jpeg"};base64,${cleaned}`;
-
   const systemPrompt = prompt || buildVisionPrompt(shelf.type);
 
   try {
+    // --- Step 1: Run Vision ---
     const maxOutputTokens = getVisionMaxOutputTokens();
-
     const baseRequest = {
       model: process.env.OPENAI_VISION_MODEL || "gpt-4.1-mini",
-
-      // tools: [{
-
-      //   type: 'web_search',
-
-      // }],
-
-      // tool_choice: "auto",
-
       text: { format: structuredVisionFormat },
-
-      //reasoning: { effort: 'high' },
-
       max_output_tokens: maxOutputTokens,
-
       input: [
         { role: "system", content: systemPrompt },
-
         {
           role: "user",
-
           content: [
             {
               type: "input_text",
-              text: `This photo shows the shelf named "${shelf.name}" of type "${shelf.type}". Identify the items on the shelf with metadata.`,
+              text: `This photo shows the shelf named "${shelf.name}" of type "${shelf.type}". Identify the items on the shelf with metadata.`
             },
-
             { type: "input_image", image_url: imageDataUrl },
           ],
         },
@@ -1013,82 +1403,42 @@ async function processShelfVision(req, res) {
     };
 
     let response = await client.responses.create(baseRequest);
-
-    let usedOutputTokens = maxOutputTokens;
-
-    let retriedMaxTokens = false;
-
-    let hitTokenLimit =
-      response?.status === "incomplete" &&
-      response?.incomplete_details?.reason === "max_output_tokens";
-
-    if (hitTokenLimit) {
-      const retryLimit = getRetryVisionOutputTokens(usedOutputTokens);
-
-      if (retryLimit > usedOutputTokens) {
-        retriedMaxTokens = true;
-
-        console.warn(
-          "Vision response hit max_output_tokens, retrying with higher limit",
-          {
-            shelfId: shelf._id,
-
-            previousLimit: usedOutputTokens,
-
-            retryLimit,
-          },
-        );
-
-        response = await client.responses.create({
-          ...baseRequest,
-          max_output_tokens: retryLimit,
-        });
-
-        usedOutputTokens = retryLimit;
-
-        hitTokenLimit =
-          response?.status === "incomplete" &&
-          response?.incomplete_details?.reason === "max_output_tokens";
-      }
-    }
-
-    if (hitTokenLimit) {
-      console.warn("Vision response truncated at max_output_tokens", {
-        shelfId: shelf._id,
-
-        maxOutputTokens: usedOutputTokens,
-      });
-    }
-
-    console.log("OpenAI Vision response", JSON.stringify(response, null, 2));
-
     const parsed = extractVisionResponsePayload(response) || {};
-
-    const responseStatus = {
-      status: response?.status || null,
-
-      incompleteReason:
-        response?.status === "incomplete"
-          ? response?.incomplete_details?.reason || null
-          : null,
-
-      maxOutputTokens: usedOutputTokens,
-
-      retried: retriedMaxTokens,
-    };
-
     const normalizedItems = sanitizeVisionItems(parsed.items || [], shelf.type);
 
-    const applied = [];
+    // --- Step 2: Throttled + retrying OpenLibrary lookups ---
+    const firstPass = await batchLookupFirstPass(normalizedItems, 5); // concurrency=5
+    const resolved = firstPass.filter(r => r.status === "resolved");
+    const unresolved = firstPass.filter(r => r.status === "unresolved");
 
+    // --- Step 3: Only unresolved go to OpenAI ---
+    let enrichedFromAI = [];
+    if ((shelf.type === "books" || isLikelyBookType(shelf.type)) && unresolved.length) {
+      enrichedFromAI = await batchEnrichWithOpenAI(unresolved);
+    }
+
+    // --- Step 4: Merge all enrichment results ---
+    const enriched = [...resolved, ...enrichedFromAI];
+    const results = [];
+
+    // --- Step 5: Apply results ---
     if (autoApply) {
-      for (const item of normalizedItems) {
-        try {
-          const collectable = await ensureCollectableFromVision(
-            item,
-            shelf.type,
-          );
+      for (const entry of enriched) {
+        const item = entry.input;
+        if (entry.status === "resolved" && entry.enrichment) {
+          // ✅ Good OpenLibrary result
+          const enrichment = entry.enrichment;
 
+          // Map + upsert using the new model
+          const lwf = makeLightweightFingerprint(item.name || item.title, item.author || "");
+         const incoming = openLibraryToCollectable({
+                      ...enrichment,
+                      position: item.position || null,  // 👈 forward position from vision
+                      lightweightFingerprint: lwf, // 👈 store lightweightFingerprint
+                    });
+          const collectable = await upsertCollectable(Collectable, incoming);
+
+          // Add to this shelf if not already present
           const existing = await UserCollection.findOne({
             user: req.user.id,
             shelf: shelf._id,
@@ -1102,29 +1452,65 @@ async function processShelfVision(req, res) {
               collectable: collectable._id,
             });
 
-            applied.push({
-              collectableId: collectable._id,
-              name: collectable.name,
-            });
-
             await logShelfEvent({
               userId: req.user.id,
-
               shelfId: shelf._id,
-
               type: "item.collectable_added",
-
               payload: {
                 itemId: join._id,
                 collectableId: collectable._id,
                 name: collectable.name,
+                author: collectable.author || "",
+                // keep your legacy fields in the event payload for FE compatibility
+                coverUrl: collectable.coverUrl || "",
+                openLibraryId: collectable.openLibraryId || "",
+                publisher: collectable.publisher || "",
+                year: collectable.year || "",
+                description: collectable.description || "",
                 type: collectable.type,
                 source: "vision",
               },
             });
+
+            results.push({ status: "linked", collectable });
+          } else {
+            results.push({ status: "existing", collectable });
           }
-        } catch (err) {
-          console.warn("Vision auto-apply error", err);
+        } else {
+          // ❌ Nothing found → manual entry
+          const manualPayload = {
+            user: req.user.id,
+            shelf: shelf._id,
+            name: item.title || item.name,
+            type: item.type || shelf.type || "manual",
+            description: item.description || "",
+            author: item.author || "",
+            publisher: item.publisher || "",
+            format: item.format || "",
+            year: item.year || "",
+            position: item.position || "",
+            tags: item.tags || [],
+          };
+          const manual = await UserManual.create(manualPayload);
+          const join = await UserCollection.create({
+            user: req.user.id,
+            shelf: shelf._id,
+            manual: manual._id,
+          });
+          await logShelfEvent({
+            userId: req.user.id,
+            shelfId: shelf._id,
+            type: "item.manual_added",
+            payload: {
+              itemId: join._id,
+              manualId: manual._id,
+              name: manual.name,
+              type: manual.type,
+              source: "vision",
+              needsReview: true,
+            },
+          });
+          results.push({ status: "manual_added", itemId: String(join._id), manual });
         }
       }
     }
@@ -1133,23 +1519,50 @@ async function processShelfVision(req, res) {
 
     res.json({
       analysis: { ...parsed, items: normalizedItems },
-
-      visionStatus: responseStatus,
-
-      addedCount: applied.length,
-
-      applied,
-
+      visionStatus: { status: response?.status || null },
+      results,
       items,
-
       metadata,
     });
   } catch (err) {
     console.error("Vision analysis failed", err);
-
     res.status(502).json({ error: "Vision analysis failed" });
   }
 }
+
+
+async function updateManualEntry(req, res) {
+  const { shelfId, itemId } = req.params;
+  const body = req.body ?? {};
+
+  const shelf = await loadShelfForUser(req.user.id, shelfId);
+  if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+  const entry = await UserCollection.findOne({
+    _id: itemId,
+    user: req.user.id,
+    shelf: shelf._id,
+  }).populate("manual");
+
+  if (!entry || !entry.manual) {
+    return res.status(404).json({ error: "Manual item not found" });
+  }
+
+  const manual = entry.manual;
+
+  if (body.name !== undefined) manual.name = String(body.name).trim();
+  if (body.type !== undefined) manual.type = String(body.type).trim();
+  if (body.description !== undefined) manual.description = String(body.description).trim();
+  if (body.author !== undefined) manual.author = String(body.author).trim();
+  if (body.publisher !== undefined) manual.publisher = String(body.publisher).trim();
+  if (body.format !== undefined) manual.format = String(body.format).trim();
+  if (body.year !== undefined) manual.year = String(body.year).trim();
+
+  await manual.save();
+
+  res.json({ item: { id: entry._id, manual } });
+}
+
 
 module.exports = {
   listShelves,
@@ -1171,4 +1584,6 @@ module.exports = {
   removeShelfItem,
 
   processShelfVision,
+
+  updateManualEntry,
 };

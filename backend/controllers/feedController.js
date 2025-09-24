@@ -153,5 +153,72 @@ async function getFeed(req, res) {
   res.json({ scope, filters, paging: { limit, skip }, entries });
 }
 
-module.exports = { getFeed };
+async function getFeedEntryDetails(req, res) {
+  const shelfId = String(req.params.shelfId || '').trim();
+  const objectId = toObjectId(shelfId);
+  if (!objectId) return res.status(400).json({ error: 'Invalid shelf id' });
+
+  const viewer = await User.findById(req.user.id).select('city state country');
+  if (!viewer) return res.status(404).json({ error: 'User not found' });
+
+  const shelfDoc = await Shelf.findById(objectId)
+    .populate('owner', 'username name firstName lastName picture city state country visibility');
+  if (!shelfDoc || !shelfDoc.owner) return res.status(404).json({ error: 'Feed entry not found' });
+
+  const viewerId = String(viewer._id);
+  const ownerId = String(shelfDoc.owner._id);
+
+  let allowed = false;
+  if (ownerId === viewerId) {
+    allowed = true;
+  } else if (shelfDoc.visibility === 'public') {
+    allowed = true;
+  } else if (shelfDoc.visibility === 'friends') {
+    const friendIds = await fetchFriendIds(viewer._id);
+    allowed = friendIds.has(ownerId);
+  }
+
+  if (!allowed) return res.status(403).json({ error: 'You do not have access to this feed entry' });
+
+  const items = await UserCollection.find({ shelf: shelfDoc._id })
+    .populate('collectable')
+    .populate('manual')
+    .sort({ createdAt: -1 });
+
+  const entry = {
+    shelf: {
+      id: String(shelfDoc._id),
+      name: shelfDoc.name,
+      type: shelfDoc.type,
+      description: shelfDoc.description,
+      visibility: shelfDoc.visibility,
+      createdAt: shelfDoc.createdAt,
+      updatedAt: shelfDoc.updatedAt,
+      itemCount: items.length,
+    },
+    owner: {
+      id: ownerId,
+      username: shelfDoc.owner.username,
+      name:
+        shelfDoc.owner.name ||
+        [shelfDoc.owner.firstName, shelfDoc.owner.lastName].filter(Boolean).join(' ').trim() ||
+        undefined,
+      city: shelfDoc.owner.city,
+      state: shelfDoc.owner.state,
+      country: shelfDoc.owner.country,
+      picture: shelfDoc.owner.picture,
+    },
+    items: items.map((entryDoc) => ({
+      id: String(entryDoc._id),
+      collectable: entryDoc.collectable || null,
+      manual: entryDoc.manual || null,
+      createdAt: entryDoc.createdAt,
+      updatedAt: entryDoc.updatedAt,
+    })),
+  };
+
+  res.json({ entry });
+}
+
+module.exports = { getFeed, getFeedEntryDetails };
 

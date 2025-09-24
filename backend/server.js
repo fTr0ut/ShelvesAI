@@ -3,7 +3,6 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
 const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
@@ -25,14 +24,16 @@ app.use(cors());            // allow Vite (5173) during dev
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
 
 // DB connection
-if (process.env.MONGO_URI) {
-  mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch((err) => console.error('MongoDB connection error:', err));
-} else {
-  console.warn('MONGO_URI not set. Skipping DB connection.');
-}
+// if (process.env.MONGO_URI) {
+//   mongoose
+//     .connect(process.env.MONGO_URI)
+//     .then(() => console.log('MongoDB connected'))
+//     .catch((err) => console.error('MongoDB connection error:', err));
+// } else {
+//   console.warn('MONGO_URI not set. Skipping DB connection.');
+// }
+
+
 
 // Routes
 app.use('/api', authRoutes);
@@ -133,12 +134,6 @@ app.get('/__debug', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
-});
-
-
-
+module.exports = app;
 
 

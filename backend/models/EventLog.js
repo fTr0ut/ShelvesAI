@@ -10,6 +10,7 @@ const EventLogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Define indexes for user, shelf, and createdAt fields
 EventLogSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('EventLog', EventLogSchema);

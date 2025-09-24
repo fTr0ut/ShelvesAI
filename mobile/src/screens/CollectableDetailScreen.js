@@ -24,14 +24,14 @@ import { apiRequest } from "../services/api";
 
 const EDITABLE_FIELDS = [
   {
-    key: "name",
+    key: "title",
     label: "Title",
     placeholder: "Enter title",
     autoCapitalize: "words",
   },
 
   {
-    key: "author",
+    key: "primaryCreator",
     label: "Author / Creator",
     placeholder: "Enter author",
     autoCapitalize: "words",
@@ -89,8 +89,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
   const [savingField, setSavingField] = useState(null);
 
   const [draftValues, setDraftValues] = useState({
-    name: "",
-    author: "",
+    title: "",
+    primaryCreator: "",
     publisher: "",
     format: "",
     position: "",
@@ -147,8 +147,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
     if (!collectable) return;
 
     setDraftValues({
+      title: getFieldValue("title"),
       name: getFieldValue("name"),
-      author: getFieldValue("author"),
+      primaryCreator: getFieldValue("primaryCreator"),
       publisher: getFieldValue("publisher"),
       format: getFieldValue("format"),
       position: getFieldValue("position"),
@@ -157,7 +158,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     });
 
     navigation.setOptions({
-      title: collectable.name || title || "Collectable",
+      title: collectable.title || collectable.name  || "Collectable",
     });
   }, [collectable, navigation, title, getFieldValue]);
 
@@ -232,28 +233,28 @@ export default function CollectableDetailScreen({ route, navigation }) {
     [apiBase, collectable, draftValues, id, token],
   );
 
-  const rows = useMemo(() => {
-    if (!collectable) return [];
+    const rows = useMemo(() => {
+          if (!collectable) return [];
 
-    const baseRows = [
-      ...EDITABLE_FIELDS.map((field) => ({
-        ...field,
-        value: getFieldValue(field.key),
-        editable: true,
-      })),
 
-      { key: "type", label: "Type", value: collectable.type, editable: false },
+          const baseRows = [
+                ...EDITABLE_FIELDS.map((field) => ({
+                ...field,
+                value: getFieldValue(field.key),
+                editable: true,
+          })),
+    { key: "type", label: "Type", value: collectable.type, editable: false },
+    {
+          key: "description",
+          label: "Description",
+          value: collectable.description,
+          editable: false,
+    },
+  ];
 
-      {
-        key: "description",
-        label: "Description",
-        value: collectable.description,
-        editable: false,
-      },
-    ];
 
-    return baseRows.filter((row) => row.editable || row.value);
-  }, [collectable]);
+return baseRows.filter((row) => row.editable || row.value);
+}, [collectable, getFieldValue]); // UPDATED: include getFieldValue
 
   let body;
 
