@@ -30,11 +30,28 @@ function getConcurrency() {
   return DEFAULT_CONCURRENCY;
 }
 
+function normalizeAuthorQuery(author) {
+  if (!author) return author;
+
+  let normalized = String(author);
+
+  normalized = normalized.replace(/([A-Za-z])\.([A-Za-z])/g, '$1. $2');
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+
+  return normalized;
+}
+
 function buildSearchUrl({ title, author, limit = 10 }) {
   const base = getBaseUrl();
   const params = new URLSearchParams();
   if (title) params.append('title', title);
-  if (author) params.append('author', author);
+  if (author) {
+    const normalizedAuthor = normalizeAuthorQuery(author);
+    if (normalizedAuthor !== author) {
+      console.log('[openLibrary.buildSearchUrl] normalized author', { original: author, normalized: normalizedAuthor });
+    }
+    params.append('author', normalizedAuthor);
+  }
   params.append('limit', String(limit));
   // `mode=everything` returns broader info (works + editions metadata surface)
   params.append('mode', 'everything');
@@ -330,6 +347,7 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
   if (!title && !author) return [];
   try {
     const url = buildSearchUrl({ title, author, limit: 10 }); // get >limit so we can score & slice
+    console.log('[openLibrary.searchAndHydrateBooks] request', { title, author, fetchLimit: 10, clientLimit: limit, url });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return [];
@@ -357,6 +375,7 @@ async function lookupWorkBookMetadata({ title, author }) {
   if (!title && !author) return null;
   try {
     const url = buildSearchUrl({ title, author });
+    console.log('[openLibrary.lookupWorkBookMetadata] request', { title, author, url });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return null;
@@ -529,11 +548,30 @@ function toCollectionDoc(h) {
 }
 
 
+
+async function lookupWorkByISBN(isbn) {
+  const code = (isbn || '').trim();
+  if (!code) return null;
+
+  const base = getBaseUrl();
+  try {
+    const edition = await fetchJson(`${base}/isbn/${encodeURIComponent(code)}.json`);
+    const workKey = Array.isArray(edition?.works) && edition.works.length ? edition.works[0]?.key : null;
+    if (!workKey) return null;
+    const hydrated = await hydrateWorkByKey(workKey);
+    return hydrated ? toCollectionDoc(hydrated) : null;
+  } catch (err) {
+    if (String(err?.message).includes('404')) return null;
+    throw err;
+  }
+}
+
 module.exports = {
   // New, rich, multi-result API
   searchAndHydrateBooks,
   // Back-compat (now hydrated)
   lookupWorkBookMetadata,
+  lookupWorkByISBN,
   // Direct helper
   hydrateWorkByKey,
   // Canonical Collection doc mapper

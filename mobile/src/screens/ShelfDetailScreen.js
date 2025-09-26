@@ -22,8 +22,62 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 
 import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 
 import FooterNav from "../components/FooterNav";
+
+
+const MIME_EXTENSIONS = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
+
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+async function ensureBase64Image(asset) {
+  if (!asset) return null;
+  let mime = resolveMimeType(asset);
+  let base64 = asset.base64 || null;
+
+  if (!base64 || !SUPPORTED_IMAGE_MIME_TYPES.has(mime)) {
+    try {
+      const manipulated = await ImageManipulator.manipulateAsync(
+        asset.uri,
+        [],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      base64 = manipulated.base64 || null;
+      mime = 'image/jpeg';
+    } catch (err) {
+      console.warn('[ShelfDetail] image manipulation failed', err);
+      base64 = asset.base64 || null;
+    }
+  }
+
+  if (!base64) return null;
+
+  return { base64, mime };
+}
+
+function resolveMimeType(asset) {
+  if (!asset) return 'image/jpeg';
+  if (asset.mimeType && asset.mimeType.startsWith('image/')) return asset.mimeType;
+  if (asset.type && asset.type.startsWith && asset.type.startsWith('image/')) return asset.type;
+  if (typeof asset.type === 'string' && asset.type === 'image') return 'image/jpeg';
+  if (asset.fileName || asset.filename || asset.uri) {
+    const name = asset.fileName || asset.filename || asset.uri || '';
+    const match = name.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+    if (match) {
+      const ext = match[1].toLowerCase();
+      if (MIME_EXTENSIONS[ext]) return MIME_EXTENSIONS[ext];
+    }
+  }
+  return 'image/jpeg';
+}
+
 
 import { AuthContext } from "../App";
 
@@ -434,27 +488,54 @@ export default function ShelfDetailScreen({ route, navigation }) {
     setVisionMessage("");
 
     try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+      const libraryPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-      if (!permission.granted) {
-        setError("Camera permission denied");
-
+      if (!cameraPermission.granted && !libraryPermission.granted) {
+        setError("Camera and photo library permissions are required");
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
-        base64: true,
+      let selectedSource = null;
+      if (cameraPermission.granted && libraryPermission.granted) {
+        selectedSource = await new Promise((resolve) => {
+          Alert.alert("Add Photo", "Choose how you want to add a photo", [
+            { text: "Take Photo", onPress: () => resolve("camera") },
+            { text: "Choose from Library", onPress: () => resolve("library") },
+            { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+          ]);
+        });
+        if (!selectedSource) return;
+      } else if (cameraPermission.granted) {
+        selectedSource = "camera";
+      } else {
+        selectedSource = "library";
+      }
 
-        quality: 0.5,
-      });
+      const pickerResult =
+        selectedSource === "camera"
+          ? await ImagePicker.launchCameraAsync({
+              base64: true,
+              quality: 0.5,
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsMultipleSelection: false,
+              exif: false,
+            })
+          : await ImagePicker.launchImageLibraryAsync({
+              base64: true,
+              quality: 0.5,
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsMultipleSelection: false,
+              exif: false,
+            });
 
-      if (result.canceled) return;
+      if (pickerResult.canceled) return;
 
-      const asset = result.assets?.[0];
+      const asset = pickerResult.assets?.[0];
 
-      if (!asset?.base64) {
-        setError("Failed to capture image");
-
+      const processed = await ensureBase64Image(asset);
+      if (!processed) {
+        setError("Failed to load image");
         return;
       }
 
@@ -462,15 +543,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       const data = await apiRequest({
         apiBase,
-
         path: `/api/shelves/${id}/vision`,
-
         method: "POST",
-
         token,
-
         body: {
-          imageBase64: `data:${asset.type || "image/jpeg"};base64,${asset.base64}`,
+          imageBase64: `data:${processed.mime};base64,${processed.base64}`,
         },
       });
 

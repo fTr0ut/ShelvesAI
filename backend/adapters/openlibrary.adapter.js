@@ -12,6 +12,14 @@ function makeFingerprint({ title, primaryCreator, year }) {
   return crypto.createHash('sha1').update(base).digest('hex');
 }
 
+function makeLightweightFingerprint(title, creator) {
+  const base = [
+    (title || '').trim().toLowerCase(),
+    (creator || '').trim().toLowerCase(),
+  ].join('|');
+  return crypto.createHash('sha1').update(base).digest('hex');
+}
+
 /**
  * h = hydrated Work from your openLibrary.js (searchAndHydrateBooks / lookupWorkBookMetadata)
  */
@@ -92,6 +100,8 @@ function openLibraryToCollectable(h) {
     });
   }
 
+  const lwf = h.lightweightFingerprint || makeLightweightFingerprint(h.title, primaryCreator);
+
   const doc = {
     kind: 'book',
     title: h.title || '',
@@ -107,6 +117,8 @@ function openLibraryToCollectable(h) {
 
     position: h.position || null,
     tags: unique(h.subjects || []),
+
+    lightweightFingerprint: lwf || null,
 
     images,
     identifiers,

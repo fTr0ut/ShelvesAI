@@ -21,7 +21,7 @@ function mergeIdentifiers(existingIds = {}, incomingIds = {}) {
 async function upsertCollectable(Collectable, incoming) {
   if (!incoming?.kind || !incoming?.title) return null;
 
-  // Dedup priority: provider-strong IDs → global IDs → fingerprint
+  // Dedup priority: provider-strong IDs â†’ global IDs â†’ fingerprint
   const or = [];
 
   // Open Library Work ID
@@ -47,6 +47,7 @@ async function upsertCollectable(Collectable, incoming) {
     $set: {
       kind: incoming.kind,
       title: incoming.title,
+      lightweightFingerprint: incoming.lightweightFingerprint ?? null,
       subtitle: incoming.subtitle ?? null,
       description: incoming.description ?? null,
 
@@ -70,14 +71,32 @@ async function upsertCollectable(Collectable, incoming) {
     },
     $setOnInsert: {
       fingerprint: incoming.fingerprint || null,
-      lightweightFingerprint: incoming.lightweightFingerprint || null,
-      
     },
   };
 
   // If you want to merge identifiers/images/sources on existing docs:
   const existing = await Collectable.findOne(query).lean();
-    if (existing) {
+  if (existing) {
+    const incomingLwf = incoming.lightweightFingerprint || null;
+    const existingLwf = existing.lightweightFingerprint || null;
+
+    if (incomingLwf) {
+      update.$set.lightweightFingerprint = existingLwf || incomingLwf;
+    }
+
+    if (incomingLwf && existingLwf === incomingLwf) {
+      console.log("[collectables.upsert] matched lightweight fingerprint", {
+        collectableId: String(existing._id || ""),
+        lightweightFingerprint: existingLwf,
+        title: existing.title || existing.name || incoming.title || "",
+      });
+    } else if (incomingLwf && !existingLwf) {
+      console.log("[collectables.upsert] assigning lightweight fingerprint", {
+        collectableId: String(existing._id || ""),
+        lightweightFingerprint: incomingLwf,
+        title: existing.title || existing.name || incoming.title || "",
+      });
+    }
     // 1) IDENTIFIERS: deep-merge nested objects & union arrays
     update.$set.identifiers = mergeIdentifiers(existing.identifiers, incoming.identifiers || {});
 
