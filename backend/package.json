@@ -3,11 +3,13 @@
     "version":  "1.0.0",
     "description":  "",
     "main":  "index.js",
+    "type":   "module",
     "scripts":  {
                     "start":  "node server.js",
                     "dev":  "nodemon index.js",
                     "test:backend": "jest --config jest.config.js",
-                    "build-indexes": "node scripts/build-indexes.js"
+                    "build-indexes": "node scripts/build-indexes.js",
+                    "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000"
                 },
     "keywords":  [
 
@@ -28,4 +30,5 @@
     "devDependencies":  {
                             "nodemon":  "^3.1.10"
                         }
+    
 }

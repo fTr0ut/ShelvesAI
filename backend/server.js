@@ -1,6 +1,6 @@
 const path = require('path');
 // Load .env from this folder explicitly so it works no matter CWD
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');

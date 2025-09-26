@@ -97,7 +97,7 @@ const CollectableSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Existing index
-CollectableSchema.index({ name: "text", type: 1 });
+CollectableSchema.index({ title: "text", type: 1 });
 
 // New sparse uniques on strong IDs (won’t affect docs that don’t have them)
 CollectableSchema.index({ 'identifiers.openlibrary.work': 1 }, { unique: true, sparse: true });

@@ -26,6 +26,12 @@ function normalizeTags(input) {
   return tags;
 }
 
+function normalizeString(value) {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed || undefined;
+}
+
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
 router.post("/", async (req, res) => {
   if (String(process.env.ALLOW_CATALOG_WRITE).toLowerCase() !== "true") {
@@ -33,10 +39,12 @@ router.post("/", async (req, res) => {
   }
 
   const {
+    title,
     name,
     type,
     description,
     author,
+    primaryCreator,
     format,
     publisher,
     year,
@@ -44,23 +52,22 @@ router.post("/", async (req, res) => {
     tags,
   } = req.body ?? {};
 
-  if (!name || !type)
-    return res.status(400).json({ error: "name and type required" });
+  const canonicalTitle = normalizeString(title ?? name);
+  const canonicalType = normalizeString(type);
 
-  const normalizedPosition =
-    position != null ? String(position).trim() : undefined;
-  const normalizedTags = normalizeTags(tags);
+  if (!canonicalTitle || !canonicalType)
+    return res.status(400).json({ error: "title and type required" });
 
   const item = await Collectable.create({
-    name,
-    type,
-    description,
-    author,
-    format,
-    publisher,
-    year,
-    position: normalizedPosition || undefined,
-    tags: normalizedTags,
+    title: canonicalTitle,
+    type: canonicalType,
+    description: normalizeString(description),
+    primaryCreator: normalizeString(primaryCreator ?? author),
+    format: normalizeString(format),
+    publisher: normalizeString(publisher),
+    year: normalizeString(year),
+    position: normalizeString(position),
+    tags: normalizeTags(tags),
   });
 
   res.status(201).json({ item });
@@ -74,7 +81,7 @@ router.get("/", async (req, res) => {
   const filter = {};
   if (type) filter.type = type;
   if (q)
-    filter.name = {
+    filter.title = {
       $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
       $options: "i",
     };
@@ -99,35 +106,31 @@ router.put("/:collectableId", async (req, res) => {
   const body = req.body ?? {};
   const updates = {};
 
-  if (body.name !== undefined) {
-    const name = String(body.name || "").trim();
-    if (!name) return res.status(400).json({ error: "name cannot be empty" });
-    updates.name = name;
+  if (body.title !== undefined || body.name !== undefined) {
+    const nextTitle = normalizeString(body.title ?? body.name);
+    if (!nextTitle)
+      return res.status(400).json({ error: "title cannot be empty" });
+    updates.title = nextTitle;
   }
 
-  if (body.author !== undefined) {
-    const value = String(body.author || "").trim();
-    updates.author = value || undefined;
+  if (body.primaryCreator !== undefined || body.author !== undefined) {
+    updates.primaryCreator = normalizeString(body.primaryCreator ?? body.author);
   }
 
   if (body.publisher !== undefined) {
-    const value = String(body.publisher || "").trim();
-    updates.publisher = value || undefined;
+    updates.publisher = normalizeString(body.publisher);
   }
 
   if (body.format !== undefined) {
-    const value = String(body.format || "").trim();
-    updates.format = value || undefined;
+    updates.format = normalizeString(body.format);
   }
 
   if (body.year !== undefined) {
-    const value = String(body.year || "").trim();
-    updates.year = value || undefined;
+    updates.year = normalizeString(body.year);
   }
 
   if (body.position !== undefined) {
-    const value = String(body.position || "").trim();
-    updates.position = value || undefined;
+    updates.position = normalizeString(body.position);
   }
 
   if (body.tags !== undefined) {
