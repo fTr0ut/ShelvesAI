@@ -1,4 +1,3 @@
-const { openLibraryToCollectable } = require("../adapters/openlibrary.adapter");
 const { upsertCollectable } = require("../services/collectables.upsert");
 const crypto = require("crypto");
 
@@ -14,7 +13,7 @@ const OpenAI = require("openai");
 
 const EventLog = require("../models/EventLog");
 
-const { lookupWorkBookMetadata, lookupWorkByISBN } = require("../services/openLibrary");
+const { BookCatalogService } = require("../services/catalog/BookCatalogService");
 
 let openaiClient;
 
@@ -67,24 +66,6 @@ const VISION_PROMPT_RULES = [
     prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a collection of wine or spirits. Use "author" for the producer, winery, or distillery, "format" for the varietal or bottle/edition details, "publisher" for the region or bottler, and "year" for the vintage or bottling year. If any metadata is missing, research reputable wine or spirits sources before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
   },
 ];
-
-const BOOK_TYPE_HINTS = new Set(
-  VISION_PROMPT_RULES[0].match.map((hint) => hint.toLowerCase()),
-);
-
-const ENABLE_SHELF_VISION_SECOND_PASS = String(
-  process.env.ENABLE_SHELF_VISION_SECOND_PASS || "false"
-).trim().toLowerCase() === "true";
-
-function isLikelyBookType(value) {
-  const normalized = String(value || "").toLowerCase();
-
-  for (const hint of BOOK_TYPE_HINTS) {
-    if (normalized.includes(hint)) return true;
-  }
-
-  return false;
-}
 
 function coerceNumber(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -198,6 +179,8 @@ const structuredVisionFormat = {
     required: ["shelfConfirmed", "items"],
   },
 };
+
+const bookCatalogService = new BookCatalogService();
 
 function getVisionMaxOutputTokens() {
   const envValue = parseInt(
@@ -405,37 +388,6 @@ function extractVisionResponsePayload(response) {
   }
 
   return parseTextContent(combinedText);
-}
-
-function safeGetOutputText(resp) {
-  try {
-    if (typeof resp?.output_text === "string") return resp.output_text;
-    const maybeText = resp?.output?.[0]?.content?.[0]?.text;
-    if (typeof maybeText === "string") return maybeText;
-  } catch {}
-  return "";
-}
-
-function coerceCorrectionsArray(jsonLike) {
-  let parsed = jsonLike;
-  if (typeof jsonLike === "string") {
-    const trimmed = jsonLike.trim();
-    const start = trimmed.indexOf("[") !== -1 ? trimmed.indexOf("[") : trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("]") !== -1 ? trimmed.lastIndexOf("]") + 1 : trimmed.lastIndexOf("}") + 1;
-    try {
-      parsed = JSON.parse(start >= 0 && end > start ? trimmed.slice(start, end) : trimmed);
-    } catch {
-      return [];
-    }
-  }
-
-  if (Array.isArray(parsed)) return parsed;
-
-  if (parsed && Array.isArray(parsed.corrections)) return parsed.corrections;
-
-  if (parsed && (parsed.title || parsed.author)) return [parsed];
-
-  return [];
 }
 
 async function loadShelfForUser(userId, shelfId) {
@@ -965,333 +917,6 @@ async function matchExistingCollectables(items, userId, shelf) {
 return { results, remaining };
 }
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function safeLookup(item, retries = 2) {
-  const payload = {
-    title: (item?.name || item?.title || "").trim(),
-    author: (item?.author || item?.primaryCreator || "").trim(),
-    identifiers: item?.identifiers || {},
-  };
-
-  const isbnCandidates = [
-    ...(Array.isArray(payload.identifiers?.isbn13) ? payload.identifiers.isbn13 : []),
-    ...(Array.isArray(payload.identifiers?.isbn10) ? payload.identifiers.isbn10 : []),
-  ]
-    .map((code) => String(code || "").trim())
-    .filter(Boolean);
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    console.log("[shelfVision.safeLookup] attempt", {
-      attempt,
-      retries,
-      payload,
-      isbnCandidates,
-    });
-    try {
-      const result = await lookupWorkBookMetadata({
-        title: payload.title,
-        author: payload.author,
-      });
-      if (result) {
-        console.log("[shelfVision.safeLookup] success", { attempt, payload });
-        return result;
-      }
-      console.log("[shelfVision.safeLookup] empty-result", { attempt, payload });
-      break;
-    } catch (err) {
-      if (String(err.message).includes("429") && attempt < retries) {
-        const backoff = 500 * Math.pow(2, attempt);
-        console.warn("[shelfVision.safeLookup] 429 from OpenLibrary, retrying", { backoff, payload });
-        await delay(backoff);
-        continue;
-      }
-      if (String(err.message).includes("aborted") && attempt < retries) {
-        const backoff = 1000 * (attempt + 1);
-        console.warn("[shelfVision.safeLookup] request aborted, retrying", { backoff, payload });
-        await delay(backoff);
-        continue;
-      }
-      console.error("[shelfVision.safeLookup] failed", { payload, error: err });
-      throw err;
-    }
-  }
-
-  for (const isbn of isbnCandidates) {
-    try {
-      const byIsbn = await lookupWorkByISBN(isbn);
-      if (byIsbn) {
-        console.log("[shelfVision.safeLookup] isbn-match", { isbn, payload });
-        return byIsbn;
-      }
-    } catch (err) {
-      if (String(err.message).includes("429")) {
-        console.warn("[shelfVision.safeLookup] isbn 429", { isbn });
-        await delay(500);
-        continue;
-      }
-      if (String(err.message).includes("aborted")) {
-        console.warn("[shelfVision.safeLookup] isbn aborted", { isbn });
-        await delay(500);
-        continue;
-      }
-      console.error("[shelfVision.safeLookup] isbn lookup failed", { isbn, error: err });
-    }
-  }
-
-  console.log("[shelfVision.safeLookup] no matches", { payload, isbnCandidates });
-  return null;
-}
-async function batchLookupFirstPass(items, concurrency = 5) {
-  const results = [];
-  let index = 0;
-
-  async function worker() {
-    while (index < items.length) {
-      const i = index++;
-      const input = items[i];
-      try {
-        const value = await safeLookup(input);
-        if (value) {
-          results[i] = { status: "resolved", input, enrichment: value };
-        } else {
-          results[i] = { status: "unresolved", input };
-        }
-      } catch (err) {
-        console.error("OpenLibrary lookup failed", err.message);
-        results[i] = { status: "unresolved", input };
-      }
-    }
-  }
-
-  await Promise.all(Array.from({ length: concurrency }, worker));
-  return results;
-}
-
-
-
-
-async function batchEnrichWithOpenAI(unresolved = []) {
-  if (!Array.isArray(unresolved) || unresolved.length === 0) return [];
-
-  const openai = getOpenAIClient();
-  if (!openai) return unresolved.map((u) => ({ status: "unresolved", input: u.input }));
-
-  const payload = unresolved
-    .map((u) => ({
-      title: (u?.input?.name || u?.input?.title || "").trim(),
-      author: (u?.input?.author || "").trim(),
-      publisher: (u?.input?.publisher || "").trim(),
-      year: (u?.input?.year || "").trim(),
-      notes: (u?.input?.description || u?.input?.notes || "").trim(),
-    }))
-    .filter((it) => it.title);
-
-  if (!payload.length) {
-    return unresolved.map((u) => ({ status: "unresolved", input: u.input }));
-  }
-
-  const limitedBatchSize = parseInt(process.env.OPENAI_ENRICH_BATCH_MAX || "30", 10);
-  const trimmed = payload.slice(0, limitedBatchSize);
-  const unresolvedForPrompt = unresolved.slice(0, trimmed.length);
-  const overflow = unresolved.slice(trimmed.length);
-
-  const resp = await openai.responses.create({
-    model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
-    tools: [{ type: "web_search" }],
-    tool_choice: "auto",
-    text: {
-      format: {
-        name: "CollectableEnrichment",
-        type: "json_schema",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            items: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  title: { type: "string" },
-                  primaryCreator: { type: ["string", "null"] },
-                  creators: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
-                  description: { type: ["string", "null"] },
-                  publisher: { type: ["string", "null"] },
-                  year: { type: ["string", "number", "null"] },
-                  tags: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
-                  identifiers: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      isbn10: {
-                        type: "array",
-                        items: { type: "string" },
-                      },
-                      isbn13: {
-                        type: "array",
-                        items: { type: "string" },
-                      },
-                      asin: {
-                        type: "array",
-                        items: { type: "string" },
-                      },
-                    },
-                    required: ["isbn13", "isbn10", "asin"],
-                  },
-                  coverImage: { type: ["string", "null"] },
-                  coverImageSmall: { type: ["string", "null"] },
-                  coverImageMedium: { type: ["string", "null"] },
-                  coverImageLarge: { type: ["string", "null"] },
-                  sourceUrl: { type: ["string", "null"] },
-                  confidence: { type: ["string", "number", "null"] },
-                },
-                required: ["title","primaryCreator", "creators", "description", "publisher", "year", "tags", "identifiers", "sourceUrl", "confidence","coverImage", "coverImageSmall", "coverImageMedium", "coverImageLarge"],
-              },
-            },
-          },
-          required: ["items"],
-        },
-      },
-    },
-    input: [
-      {
-        role: "system",
-        content:
-          "You correct noisy OCR book metadata. For each input entry, return a JSON array of authoritative book objects with the requested fields. Use web_search when necessary. Prefer recent editions when multiple exist. Always supply reliable ISBN values when they can be determined.",
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: `Given these OCR book candidates, produce corrected metadata matching the schema. Fill missing fields when unknown with null. Provide authoritative ISBN-13 (and ISBN-10 when available), cover URLs, and source links when possible.\n\n${JSON.stringify(trimmed, null, 2)}`
-          }
-        ],
-      },
-    ],
-  });
-
-  let corrections = [];
-  if (Array.isArray(resp?.output_parsed?.items)) {
-    corrections = resp.output_parsed.items;
-  } else if (Array.isArray(resp?.output_parsed)) {
-    corrections = resp.output_parsed;
-  } else {
-    const textOut = safeGetOutputText(resp);
-    const parsed = coerceCorrectionsArray(textOut);
-    corrections = Array.isArray(parsed?.items) ? parsed.items : parsed;
-  }
-
-  if (!Array.isArray(corrections) || corrections.length === 0) {
-    const unresolvedOutputs = unresolved.map((u) => ({ status: "unresolved", input: u.input }));
-    return unresolvedOutputs;
-  }
-
-  const results = [];
-  const now = new Date().toISOString();
-
-  const clampArray = (value) => (Array.isArray(value) ? value.filter(Boolean) : []);
-
-  const normalizeIdentifiers = (identifiers = {}) => {
-    const out = {};
-    const isbn10 = clampArray(identifiers.isbn10).map((v) => String(v).trim());
-    const isbn13 = clampArray(identifiers.isbn13).map((v) => String(v).trim());
-    const asin = clampArray(identifiers.asin).map((v) => String(v).trim());
-    if (isbn10.length) out.isbn10 = Array.from(new Set(isbn10));
-    if (isbn13.length) out.isbn13 = Array.from(new Set(isbn13));
-    if (asin.length) out.asin = Array.from(new Set(asin));
-    return out;
-  };
-
-  corrections.forEach((corr, index) => {
-    const origEntry = unresolvedForPrompt[index] || unresolved[index];
-    const orig = origEntry?.input ||
-      unresolved.find((u) => (
-        (u.input?.name || u.input?.title || "").trim().toLowerCase() === (corr.title || "").trim().toLowerCase()
-      ))?.input || {};
-
-    const baseTitle = (corr.title || orig.name || orig.title || "").trim();
-    const baseCreator = (corr.primaryCreator || corr.author || (Array.isArray(corr.creators) ? corr.creators.find(Boolean) : null) || orig.author || "").trim();
-
-    if (!baseTitle) {
-      results.push({ status: "unresolved", input: orig });
-      return;
-    }
-
-    const creators = clampArray(corr.creators);
-    if (baseCreator && !creators.includes(baseCreator)) creators.unshift(baseCreator);
-
-    const publishers = clampArray(corr.publishers);
-    if (corr.publisher) {
-      const pref = String(corr.publisher).trim();
-      if (pref && !publishers.includes(pref)) publishers.unshift(pref);
-    }
-
-    const tags = clampArray(corr.tags);
-
-    const coverLarge = corr.coverImageLarge || corr.coverImage || null;
-    const coverMedium = corr.coverImageMedium || corr.coverImage || null;
-    const coverSmall = corr.coverImageSmall || corr.coverImage || null;
-    const images = (coverLarge || coverMedium || coverSmall)
-      ? [{
-          kind: "cover",
-          urlLarge: coverLarge || null,
-          urlMedium: coverMedium || null,
-          urlSmall: coverSmall || null,
-          provider: "openai",
-        }]
-      : [];
-
-    const identifiers = normalizeIdentifiers(corr.identifiers);
-
-    const collectable = {
-      kind: "book",
-      title: baseTitle,
-      subtitle: corr.subtitle || null,
-      description: corr.description || null,
-      primaryCreator: baseCreator || null,
-      creators,
-      year: corr.year ? String(corr.year) : (orig.year || null),
-      tags,
-      identifiers,
-      images,
-      editions: [],
-      sources: [{
-        provider: "openai",
-        ids: {},
-        urls: corr.sourceUrl ? { page: corr.sourceUrl } : {},
-        fetchedAt: now,
-        raw: { confidence: corr.confidence ?? null },
-      }],
-      extras: {},
-      lightweightFingerprint: makeLightweightFingerprint(baseTitle, baseCreator),
-    };
-
-    if (orig.position) collectable.position = orig.position;
-
-    results.push({
-      status: "resolved",
-      input: orig,
-      enrichment: { __collectable: true, collectable },
-    });
-  });
-
-  for (const entry of overflow) {
-    results.push({ status: "unresolved", input: entry.input });
-  }
-
-  return results;
-}
-
 async function processShelfVision(req, res) {
   console.log("vision req", req.user, req.params.shelfId);
 
@@ -1371,30 +996,50 @@ async function processShelfVision(req, res) {
       remaining: itemsForLookup.length,
     });
 
-    // --- Step 2: Throttled + retrying OpenLibrary lookups ---
-    const firstPass = await batchLookupFirstPass(itemsForLookup, 5); // concurrency=5
-    const resolved = firstPass.filter(r => r.status === "resolved");
-    const unresolved = firstPass.filter(r => r.status === "unresolved");
+    // --- Step 2: Type-specific lookup + enrichment ---
+    const catalogService = bookCatalogService.supportsShelfType(shelf.type)
+      ? bookCatalogService
+      : null;
+
+    let resolved = [];
+    let unresolved = itemsForLookup.map((input) => ({
+      status: "unresolved",
+      input,
+    }));
+
+    if (catalogService) {
+      const firstPass = await catalogService.lookupFirstPass(itemsForLookup, {
+        concurrency: 5,
+      });
+      resolved = firstPass.filter((r) => r.status === "resolved");
+      unresolved = firstPass.filter((r) => r.status === "unresolved");
+    }
 
     // --- Step 3: Only unresolved go to OpenAI ---
     let enrichedFromAI = [];
-    const shouldRunSecondPass =
-      ENABLE_SHELF_VISION_SECOND_PASS &&
-      (shelf.type === "books" || isLikelyBookType(shelf.type)) &&
-      unresolved.length;
+    const shouldRunSecondPass = catalogService
+      ? catalogService.shouldRunSecondPass(shelf.type, unresolved.length)
+      : false;
 
-    console.log("[shelfVision.secondPass] gate", {
-      rawEnv: process.env.ENABLE_SHELF_VISION_SECOND_PASS,
-      enabledEnv: ENABLE_SHELF_VISION_SECOND_PASS,
-      shelfType: shelf.type,
-      unresolvedCount: unresolved.length,
-      shouldRunSecondPass,
-    });
-
-    if (shouldRunSecondPass) {
-      enrichedFromAI = await batchEnrichWithOpenAI(unresolved);
-      console.log("[shelfVision.secondPass] executed", { count: enrichedFromAI.length });
+    if (catalogService) {
+      console.log("[shelfVision.secondPass] gate", {
+        rawEnv: process.env.ENABLE_SHELF_VISION_SECOND_PASS,
+        enabledEnv: catalogService.enableSecondPass,
+        shelfType: shelf.type,
+        unresolvedCount: unresolved.length,
+        shouldRunSecondPass,
+      });
     } else {
+      console.log("[shelfVision.secondPass] skipped (no catalog service)", {
+        shelfType: shelf.type,
+        unresolvedCount: unresolved.length,
+      });
+    }
+
+    if (shouldRunSecondPass && catalogService) {
+      enrichedFromAI = await catalogService.enrichWithOpenAI(unresolved, client);
+      console.log("[shelfVision.secondPass] executed", { count: enrichedFromAI.length });
+    } else if (catalogService) {
       console.log("[shelfVision.secondPass] skipped");
     }
 
@@ -1409,24 +1054,12 @@ async function processShelfVision(req, res) {
         const item = entry.input;
         if (entry.status === "resolved" && entry.enrichment) {
           const lwf = makeLightweightFingerprint(item.name || item.title, item.author || "");
-          let collectablePayload = null;
+          let collectablePayload = catalogService
+            ? catalogService.buildCollectablePayload(entry, item, lwf)
+            : null;
 
-          if (entry.enrichment.__collectable) {
-            const direct = { ...(entry.enrichment.collectable || {}) };
-            direct.kind = direct.kind || item.kind || "book";
-            direct.lightweightFingerprint = direct.lightweightFingerprint || lwf;
-            direct.identifiers = direct.identifiers || {};
-            direct.images = Array.isArray(direct.images) ? direct.images : (direct.images ? [direct.images] : []);
-            direct.tags = Array.isArray(direct.tags) ? direct.tags : (direct.tags ? [direct.tags] : []);
-            direct.sources = Array.isArray(direct.sources) ? direct.sources : (direct.sources ? [direct.sources] : []);
-            collectablePayload = direct;
-          } else {
-            const enrichment = entry.enrichment;
-            collectablePayload = openLibraryToCollectable({
-              ...enrichment,
-              position: item.position || null,
-              lightweightFingerprint: lwf,
-            });
+          if (collectablePayload && lwf && !collectablePayload.lightweightFingerprint) {
+            collectablePayload.lightweightFingerprint = lwf;
           }
 
           if (!collectablePayload) {
@@ -1434,8 +1067,6 @@ async function processShelfVision(req, res) {
             results.push({ status: "unresolved", input: item });
             continue;
           }
-
-          collectablePayload.lightweightFingerprint = collectablePayload.lightweightFingerprint || lwf;
 
           const collectable = await upsertCollectable(Collectable, collectablePayload);
           if (!collectable) {
