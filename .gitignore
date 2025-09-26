@@ -24,3 +24,7 @@ backend/.env
 *.njsproj
 *.sln
 *.sw?
+
+backup/**
+
+*.jsonl
