@@ -89,6 +89,10 @@ const ITEM_SORT_OPTIONS = [
 
   { value: "alpha-desc", label: "Z to A" },
 
+  { value: "author", label: "Author" },
+
+  { value: "rating-desc", label: "User rating" },
+
   { value: "position", label: "Position" },
 
   { value: "created-desc", label: "Date Created" },
@@ -165,12 +169,90 @@ export default function ShelfDetailScreen({ route, navigation }) {
   const sortedItems = useMemo(() => {
     const list = Array.isArray(items) ? [...items] : [];
 
+    const getUserCollection = (entry) =>
+      entry?.userCollection || entry?.user_collection || entry?.usercollection || null;
+
+    const getUserCollectable = (entry) =>
+      entry?.userCollectable ||
+      entry?.user_collectable ||
+      entry?.usercollectable ||
+      null;
+
     const getTitle = (entry) => {
       const collectable = entry?.collectable || null;
 
       const manual = entry?.manual || null;
 
-      return collectable?.title || manual?.name || "Untitled item";
+      const userCollectable = getUserCollectable(entry);
+
+      return (
+        collectable?.title ||
+        collectable?.name ||
+        userCollectable?.title ||
+        userCollectable?.name ||
+        manual?.name ||
+        "Untitled item"
+      );
+    };
+
+    const getPrimaryCreator = (entry) => {
+      const collectable = entry?.collectable || null;
+
+      const manual = entry?.manual || null;
+
+      const userCollectable = getUserCollectable(entry);
+
+      const candidates = [
+        collectable?.primaryCreator,
+
+        collectable?.author,
+
+        userCollectable?.primaryCreator,
+
+        userCollectable?.author,
+
+        manual?.primaryCreator,
+
+        manual?.author,
+
+        manual?.creator,
+      ];
+
+      for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+
+      return "";
+    };
+
+    const getUserRating = (entry) => {
+      const userCollectable = getUserCollectable(entry);
+
+      const candidates = [
+        userCollectable?.rating,
+
+        userCollectable?.userRating,
+
+        userCollectable?.ratingValue,
+
+        entry?.rating,
+
+        entry?.userRating,
+      ];
+
+      for (const candidate of candidates) {
+        if (candidate === undefined || candidate === null || candidate === "") {
+          continue;
+        }
+
+        const num = Number(candidate);
+
+        if (Number.isFinite(num)) return num;
+      }
+
+      return null;
     };
 
     const compareName = (a, b) => getTitle(a).localeCompare(getTitle(b));
@@ -188,7 +270,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       const manual = entry?.manual || null;
 
+      const userCollection = getUserCollection(entry);
+
       const raw =
+        userCollection?.position ??
+        userCollection?.location ??
+        entry?.position ??
+        entry?.location ??
         collectable?.position ??
         manual?.position ??
         collectable?.location ??
@@ -315,9 +403,51 @@ export default function ShelfDetailScreen({ route, navigation }) {
       return compareName(a, b);
     };
 
+    const compareAuthor = (a, b) => {
+      const authorA = getPrimaryCreator(a);
+
+      const authorB = getPrimaryCreator(b);
+
+      if (authorA && authorB && authorA !== authorB) {
+        return authorA.localeCompare(authorB);
+      }
+
+      if (authorA && !authorB) return -1;
+
+      if (!authorA && authorB) return 1;
+
+      return compareName(a, b);
+    };
+
+    const compareRatingDesc = (a, b) => {
+      const ratingA = getUserRating(a);
+
+      const ratingB = getUserRating(b);
+
+      const hasA = Number.isFinite(ratingA);
+
+      const hasB = Number.isFinite(ratingB);
+
+      if (hasA && hasB && ratingA !== ratingB) {
+        return ratingB - ratingA;
+      }
+
+      if (hasA && !hasB) return -1;
+
+      if (!hasA && hasB) return 1;
+
+      return compareName(a, b);
+    };
+
     switch (itemSortMode) {
       case "alpha-desc":
         return list.sort((a, b) => compareName(b, a));
+
+      case "author":
+        return list.sort(compareAuthor);
+
+      case "rating-desc":
+        return list.sort(compareRatingDesc);
 
       case "created-desc":
         return list.sort(compareCreated);
@@ -697,7 +827,14 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
                 const detail = detailParts.filter(Boolean).join(" | ");
 
+                const userCollection =
+                  it.userCollection || it.user_collection || it.usercollection || null;
+
                 const rawPosition =
+                  userCollection?.position ||
+                  userCollection?.location ||
+                  it.position ||
+                  it.location ||
                   collectable?.position ||
                   manualItem?.position ||
                   collectable?.location ||
