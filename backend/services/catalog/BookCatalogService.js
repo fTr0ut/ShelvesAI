@@ -174,17 +174,31 @@ class BookCatalogService {
     if (!openaiClient)
       return unresolved.map((u) => ({ status: 'unresolved', input: u.input }));
 
-    const payload = unresolved
-      .map((u) => ({
-        title: normalizeString(u?.input?.name || u?.input?.title),
-        author: normalizeString(u?.input?.author),
-        publisher: normalizeString(u?.input?.publisher),
-        year: normalizeString(u?.input?.year),
-        notes: normalizeString(u?.input?.description || u?.input?.notes),
-      }))
-      .filter((it) => it.title);
+    const prepared = [];
+    const skippedForMissingTitle = [];
 
-    if (!payload.length) {
+    for (let index = 0; index < unresolved.length; index++) {
+      const entry = unresolved[index];
+      const original = entry?.input || {};
+      const payload = {
+        inputId: `item-${index + 1}`,
+        title: normalizeString(original?.name || original?.title),
+        author: normalizeString(original?.author),
+        publisher: normalizeString(original?.publisher),
+        year: normalizeString(original?.year),
+        notes: normalizeString(original?.description || original?.notes),
+        identifiers: original?.identifiers || {},
+      };
+
+      if (!payload.title) {
+        skippedForMissingTitle.push(entry);
+        continue;
+      }
+
+      prepared.push({ payload, unresolved: entry });
+    }
+
+    if (!prepared.length) {
       return unresolved.map((u) => ({ status: 'unresolved', input: u.input }));
     }
 
@@ -192,13 +206,19 @@ class BookCatalogService {
       process.env.OPENAI_ENRICH_BATCH_MAX || '30',
       10,
     );
-    const trimmed = payload.slice(0, limitedBatchSize);
-    const unresolvedForPrompt = unresolved.slice(0, trimmed.length);
-    const overflow = unresolved.slice(trimmed.length);
+    const trimmed = prepared.slice(0, limitedBatchSize);
+    const overflow = prepared.slice(trimmed.length);
+
+    const payloadForPrompt = trimmed.map((entry) => entry.payload);
+    const idToUnresolved = new Map(
+      trimmed.map((entry) => [entry.payload.inputId, entry.unresolved]),
+    );
 
     const resp = await openaiClient.responses.create({
       model: process.env.OPENAI_TEXT_MODEL || 'gpt-5-mini',
-      reasoning: { effort: 'medium' },
+      reasoning: { effort: 'low' },
+      tools: [{ type: "web_search" }],
+      tool_choice: "auto",
       input: [
         {
           role: 'system',
@@ -215,15 +235,17 @@ class BookCatalogService {
           content: [
             {
               type: 'input_text',
-              text: `Given these OCR book candidates, produce corrected metadata matching the schema. Fill missing fields when unknown with null. Provide authoritative ISBN-13 (and ISBN-10 when available), cover URLs, and source links when possible.\n\n${JSON.stringify(trimmed, null, 2)}`,
+              text: `Given these OCR book candidates, produce corrected metadata matching the schema. Fill missing fields when unknown with null. Include the provided inputId unchanged in every response object so we can map results back to the original OCR entry. Provide authoritative ISBN-13 (and ISBN-10 when available), cover URLs, and source links when possible. No prose or comments, return only relevant findings.
+
+${JSON.stringify(payloadForPrompt, null, 2)}`,
             },
           ],
         },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'CorrectedBookMetadata',
+      text: {
+       format:{
+        name: 'CorrectedBookMetadata',
+        type: 'json_schema',                
           schema: {
             type: 'object',
             additionalProperties: false,
@@ -234,6 +256,7 @@ class BookCatalogService {
                   type: 'object',
                   additionalProperties: false,
                   properties: {
+                    inputId: { type: 'string' },
                     title: { type: 'string' },
                     subtitle: { type: ['string', 'null'] },
                     author: { type: ['string', 'null'] },
@@ -276,17 +299,18 @@ class BookCatalogService {
                           items: { type: 'string' },
                         },
                       },
+                      required: ["isbn13", "isbn10", "asin"],
                     },
                   },
-                  required: ['title'],
+                  required: ['inputId', 'title','subtitle','author','year','primaryCreator','creators','publisher','publishers','description','tags','identifiers','coverImage','coverImageLarge','coverImageMedium','coverImageSmall','sourceUrl','confidence' ],
                 },
               },
             },
             required: ['items'],
           },
-        },
       },
-    });
+    },
+  });
 
     let corrections = [];
     if (Array.isArray(resp?.output_parsed?.items)) {
@@ -300,11 +324,7 @@ class BookCatalogService {
     }
 
     if (!Array.isArray(corrections) || corrections.length === 0) {
-      const unresolvedOutputs = unresolved.map((u) => ({
-        status: 'unresolved',
-        input: u.input,
-      }));
-      return unresolvedOutputs;
+      return unresolved.map((u) => ({ status: 'unresolved', input: u.input }));
     }
 
     const results = [];
@@ -324,23 +344,34 @@ class BookCatalogService {
       return out;
     };
 
+    const handledInputIds = new Set();
+
     corrections.forEach((corr, index) => {
-      const origEntry = unresolvedForPrompt[index] || unresolved[index];
+      const corrCopy = { ...corr };
+      const corrInputId = typeof corrCopy.inputId === 'string' ? corrCopy.inputId.trim() : '';
+      if (corrInputId) delete corrCopy.inputId;
+
+      const referenceEntry = corrInputId ? idToUnresolved.get(corrInputId) : null;
+      const fallbackEntry = trimmed[index] || null;
+      const lookupId = corrInputId || fallbackEntry?.payload?.inputId || '';
+      if (lookupId) handledInputIds.add(lookupId);
+
       const orig =
-        origEntry?.input ||
+        referenceEntry?.input ||
+        fallbackEntry?.unresolved?.input ||
         unresolved.find(
           (u) =>
             normalizeString(u.input?.name || u.input?.title).toLowerCase() ===
-            normalizeString(corr.title).toLowerCase(),
+            normalizeString(corrCopy.title).toLowerCase(),
         )?.input || {};
 
       const baseTitle = normalizeString(
-        corr.title || orig.name || orig.title,
+        corrCopy.title || orig.name || orig.title,
       );
       const baseCreator = normalizeString(
-        corr.primaryCreator ||
-          corr.author ||
-          (Array.isArray(corr.creators) ? corr.creators.find(Boolean) : null) ||
+        corrCopy.primaryCreator ||
+          corrCopy.author ||
+          (Array.isArray(corrCopy.creators) ? corrCopy.creators.find(Boolean) : null) ||
           orig.author,
       );
 
@@ -349,20 +380,20 @@ class BookCatalogService {
         return;
       }
 
-      const creators = clampArray(corr.creators);
+      const creators = clampArray(corrCopy.creators);
       if (baseCreator && !creators.includes(baseCreator)) creators.unshift(baseCreator);
 
-      const publishers = clampArray(corr.publishers);
-      if (corr.publisher) {
-        const pref = normalizeString(corr.publisher);
+      const publishers = clampArray(corrCopy.publishers);
+      if (corrCopy.publisher) {
+        const pref = normalizeString(corrCopy.publisher);
         if (pref && !publishers.includes(pref)) publishers.unshift(pref);
       }
 
-      const tags = clampArray(corr.tags);
+      const tags = clampArray(corrCopy.tags);
 
-      const coverLarge = corr.coverImageLarge || corr.coverImage || null;
-      const coverMedium = corr.coverImageMedium || corr.coverImage || null;
-      const coverSmall = corr.coverImageSmall || corr.coverImage || null;
+      const coverLarge = corrCopy.coverImageLarge || corrCopy.coverImage || null;
+      const coverMedium = corrCopy.coverImageMedium || corrCopy.coverImage || null;
+      const coverSmall = corrCopy.coverImageSmall || corrCopy.coverImage || null;
       const images = coverLarge || coverMedium || coverSmall
         ? [
             {
@@ -375,17 +406,17 @@ class BookCatalogService {
           ]
         : [];
 
-      const identifiers = normalizeIdentifiers(corr.identifiers);
+      const identifiers = normalizeIdentifiers(corrCopy.identifiers);
 
       const collectable = {
         kind: 'book',
         title: baseTitle,
-        subtitle: corr.subtitle || null,
-        description: corr.description || null,
+        subtitle: corrCopy.subtitle || null,
+        description: corrCopy.description || null,
         primaryCreator: baseCreator || null,
         creators,
         publishers,
-        year: corr.year ? String(corr.year) : orig.year || null,
+        year: corrCopy.year ? String(corrCopy.year) : orig.year || null,
         tags,
         identifiers,
         images,
@@ -394,9 +425,9 @@ class BookCatalogService {
           {
             provider: 'openai',
             ids: {},
-            urls: corr.sourceUrl ? { page: corr.sourceUrl } : {},
+            urls: corrCopy.sourceUrl ? { page: corrCopy.sourceUrl } : {},
             fetchedAt: now,
-            raw: { confidence: corr.confidence ?? null },
+            raw: { confidence: corrCopy.confidence ?? null },
           },
         ],
         extras: {},
@@ -411,7 +442,17 @@ class BookCatalogService {
       });
     });
 
+    for (const entry of trimmed) {
+      const entryId = entry.payload.inputId;
+      if (entryId && handledInputIds.has(entryId)) continue;
+      results.push({ status: 'unresolved', input: entry.unresolved.input });
+    }
+
     for (const entry of overflow) {
+      results.push({ status: 'unresolved', input: entry.unresolved.input });
+    }
+
+    for (const entry of skippedForMissingTitle) {
       results.push({ status: 'unresolved', input: entry.input });
     }
 

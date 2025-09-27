@@ -80,6 +80,53 @@ function makeLightweightFingerprint(title, creator) {
   return crypto.createHash("sha1").update(base).digest("hex");
 }
 
+const DEFAULT_OCR_CONFIDENCE_THRESHOLD = 0.7;
+
+function normalizeFingerprintComponent(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function makeVisionOcrFingerprint(title, creator) {
+  const normalizedTitle = normalizeFingerprintComponent(title);
+  const normalizedCreator = normalizeFingerprintComponent(creator);
+  if (!normalizedTitle || !normalizedCreator) return null;
+  return crypto.createHash("sha1").update(normalizedTitle + "|" + normalizedCreator).digest("hex");
+}
+
+const OCR_CONFIDENCE_THRESHOLD = (() => {
+  const raw = parseFloat(
+    process.env.OPENAI_VISION_OCR_CONFIDENCE_THRESHOLD ||
+      process.env.OPENAI_VISION_CONFIDENCE_THRESHOLD ||
+      "",
+  );
+  if (Number.isFinite(raw)) {
+    return Math.max(0, Math.min(1, raw));
+  }
+  return DEFAULT_OCR_CONFIDENCE_THRESHOLD;
+})();
+
+const VISION_FINGERPRINT_SOURCE = "vision-ocr";
+
+const DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD = 0.35;
+
+const AI_REVIEW_CONFIDENCE_THRESHOLD = (() => {
+  const raw = parseFloat(
+    process.env.OPENAI_ENRICH_REVIEW_CONFIDENCE_THRESHOLD ||
+      process.env.OPENAI_ENRICH_CONFIDENCE_THRESHOLD ||
+      "",
+  );
+  if (Number.isFinite(raw)) {
+    return Math.max(0, Math.min(1, raw));
+  }
+  return DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD;
+})();
+
 function extractPositionPayload(body) {
   if (!body) return null;
 
@@ -774,19 +821,39 @@ async function matchExistingCollectables(items, userId, shelf) {
       continue;
     }
 
-    const lwf = makeLightweightFingerprint(title, author);
-    if (!lwf) {
-      console.log("[shelfVision.fingerprint] skip", { index, reason: "missing-fingerprint", title, author });
-      remaining.push(item);
-      continue;
-    }
+    const lightweightFp = makeLightweightFingerprint(title, author);
+    const fuzzyFp = makeVisionOcrFingerprint(title, author);
+    const authorRegex = author ? new RegExp(`^${escapeRegex(author)}$`, "i") : null;
+
+    let collectable = null;
+    let matchSource = null;
 
     try {
-      let collectable = await Collectable.findOne({ lightweightFingerprint: lwf });
+      if (fuzzyFp && author) {
+        const fuzzyQuery = {
+          "fuzzyFingerprints.value": fuzzyFp,
+        };
+        if (authorRegex) {
+          fuzzyQuery.$or = [
+            { primaryCreator: authorRegex },
+            { author: authorRegex },
+          ];
+        }
+        collectable = await Collectable.findOne(fuzzyQuery);
+        if (collectable) {
+          matchSource = "fuzzy";
+        }
+      }
+
+      if (!collectable && lightweightFp) {
+        collectable = await Collectable.findOne({ lightweightFingerprint: lightweightFp });
+        if (collectable) {
+          matchSource = "lightweight";
+        }
+      }
 
       if (!collectable) {
         const titleRegex = new RegExp(`^${escapeRegex(title)}$`, "i");
-        const authorRegex = author ? new RegExp(`^${escapeRegex(author)}$`, "i") : null;
         const fallbackQuery = authorRegex
           ? {
               title: titleRegex,
@@ -800,16 +867,12 @@ async function matchExistingCollectables(items, userId, shelf) {
         collectable = await Collectable.findOne(fallbackQuery);
 
         if (collectable) {
-          console.log("[shelfVision.fingerprint] fallback-match", {
-            index,
-            title,
-            author,
-            collectableId: String(collectable._id || ""),
-          });
+          matchSource = matchSource || "fallback";
 
           if (!collectable.lightweightFingerprint) {
             const calcTitle = collectable.title || collectable.name || title;
-            const calcCreator = collectable.primaryCreator || collectable.author || author;
+            const calcCreator =
+              collectable.primaryCreator || collectable.author || author;
             const computed = makeLightweightFingerprint(calcTitle, calcCreator);
             if (computed) {
               collectable.lightweightFingerprint = computed;
@@ -838,7 +901,7 @@ async function matchExistingCollectables(items, userId, shelf) {
         continue;
       }
 
-      const matchedLwf = collectable.lightweightFingerprint || lwf;
+      const matchedLwf = collectable.lightweightFingerprint || lightweightFp;
       if (!collectable.lightweightFingerprint && matchedLwf) {
         try {
           await Collectable.updateOne(
@@ -864,6 +927,7 @@ async function matchExistingCollectables(items, userId, shelf) {
         title,
         author,
         collectableId: String(collectable._id || ""),
+        via: matchSource || "fingerprint",
       });
 
       const alreadyLinked = await UserCollection.findOne({
@@ -880,7 +944,8 @@ async function matchExistingCollectables(items, userId, shelf) {
         });
 
         const displayTitle = collectable.title || collectable.name || title;
-        const displayCreator = collectable.primaryCreator || collectable.author || author;
+        const displayCreator =
+          collectable.primaryCreator || collectable.author || author;
 
         await logShelfEvent({
           userId,
@@ -899,22 +964,26 @@ async function matchExistingCollectables(items, userId, shelf) {
             year: collectable.year || "",
             description: collectable.description || "",
             type: collectable.type,
-            source: "fingerprint",
+            source: matchSource || "fingerprint",
           },
         });
 
-        results.push({ status: "linked", collectable, source: "fingerprint" });
+        results.push({ status: "linked", collectable, source: matchSource || "fingerprint" });
       } else {
-        results.push({ status: "existing", collectable, source: "fingerprint" });
+        results.push({ status: "existing", collectable, source: matchSource || "fingerprint" });
       }
     } catch (err) {
-      console.error("[shelfVision.fingerprint] lookup failed", { index, title, author, error: err?.message || err });
+      console.error("[shelfVision.fingerprint] lookup failed", {
+        index,
+        title,
+        author,
+        error: err?.message || err,
+      });
       remaining.push(item);
     }
   }
 
-  
-return { results, remaining };
+  return { results, remaining };
 }
 
 async function processShelfVision(req, res) {
@@ -1075,6 +1144,93 @@ async function processShelfVision(req, res) {
             continue;
           }
 
+          const isAiCollectable = Boolean(entry.enrichment?.__collectable);
+          let confidenceScore = null;
+          if (isAiCollectable) {
+            const rawConfidence = entry.enrichment?.collectable?.sources?.[0]?.raw?.confidence;
+            if (typeof rawConfidence === "number") {
+              confidenceScore = rawConfidence;
+            } else if (typeof rawConfidence === "string" && rawConfidence.trim()) {
+              const parsed = Number.parseFloat(rawConfidence);
+              if (Number.isFinite(parsed)) confidenceScore = parsed;
+            }
+            if (Number.isFinite(confidenceScore)) {
+              confidenceScore = Math.max(0, Math.min(1, confidenceScore));
+            } else {
+              confidenceScore = null;
+            }
+          }
+
+          const needsReview =
+            isAiCollectable && (confidenceScore === null || confidenceScore < AI_REVIEW_CONFIDENCE_THRESHOLD);
+
+          if (isAiCollectable && confidenceScore !== null && confidenceScore >= OCR_CONFIDENCE_THRESHOLD) {
+            const rawTitle = String(item.name || item.title || "").trim();
+            const rawAuthor = String(item.author || "").trim();
+            const normalizedItemAuthor = normalizeFingerprintComponent(rawAuthor);
+            const normalizedCollectableAuthor = normalizeFingerprintComponent(
+              collectable.primaryCreator ||
+                collectable.author ||
+                (Array.isArray(collectable.creators) ? collectable.creators[0] : ""),
+            );
+            const fuzzyValue = makeVisionOcrFingerprint(rawTitle, rawAuthor);
+            const authorMatches =
+              normalizedItemAuthor &&
+              normalizedCollectableAuthor &&
+              normalizedItemAuthor === normalizedCollectableAuthor;
+
+            if (fuzzyValue && authorMatches) {
+              const fingerprints = Array.isArray(collectable.fuzzyFingerprints)
+                ? collectable.fuzzyFingerprints
+                : [];
+              const alreadyStored = fingerprints.some((fp) => fp && fp.value === fuzzyValue);
+
+              if (!alreadyStored) {
+                const fingerprintDoc = {
+                  value: fuzzyValue,
+                  source: VISION_FINGERPRINT_SOURCE,
+                  rawTitle,
+                  rawCreator: rawAuthor,
+                  mediaType:
+                    collectable.type ||
+                    (item.type ? String(item.type).trim() : shelf.type || null),
+                  confidence: confidenceScore,
+                  createdAt: new Date(),
+                };
+                try {
+                  const updateResult = await Collectable.updateOne(
+                    {
+                      _id: collectable._id,
+                      'fuzzyFingerprints.value': { $ne: fuzzyValue },
+                    },
+                    { $push: { fuzzyFingerprints: fingerprintDoc } },
+                  );
+
+                  if (updateResult?.modifiedCount || updateResult?.nModified) {
+                    collectable.fuzzyFingerprints = fingerprints.concat([fingerprintDoc]);
+                    console.log("[shelfVision.ocrFingerprint] recorded", {
+                      collectableId: String(collectable._id || ""),
+                      fingerprint: fuzzyValue,
+                      confidence: confidenceScore,
+                    });
+                  } else {
+                    console.log("[shelfVision.ocrFingerprint] skipped (exists)", {
+                      collectableId: String(collectable._id || ""),
+                      fingerprint: fuzzyValue,
+                    });
+                  }
+                } catch (fpErr) {
+                  console.error("[shelfVision.ocrFingerprint] save failed", {
+                    collectableId: String(collectable._id || ""),
+                    error: fpErr?.message || fpErr,
+                  });
+                }
+              }
+            }
+          }
+
+          const resultSource = isAiCollectable ? "openai" : "catalog";
+
           const existing = await UserCollection.findOne({
             user: req.user.id,
             shelf: shelf._id,
@@ -1087,6 +1243,7 @@ async function processShelfVision(req, res) {
               shelf: shelf._id,
               collectable: collectable._id,
             });
+            const joinId = String(join._id);
 
             const displayTitle = collectable.title || collectable.name || "";
             const displayCreator =
@@ -1109,13 +1266,29 @@ async function processShelfVision(req, res) {
                 year: collectable.year || "",
                 description: collectable.description || "",
                 type: collectable.type,
-                source: entry.enrichment.__collectable ? "openai" : "vision",
+                source: resultSource,
+                confidence: confidenceScore,
+                needsReview,
               },
             });
 
-            results.push({ status: "linked", collectable });
+            results.push({
+              status: "linked",
+              collectable,
+              source: resultSource,
+              needsReview,
+              confidence: confidenceScore,
+              itemId: joinId,
+            });
           } else {
-            results.push({ status: "existing", collectable });
+            results.push({
+              status: "existing",
+              collectable,
+              source: resultSource,
+              needsReview,
+              confidence: confidenceScore,
+              itemId: String(existing._id || ""),
+            });
           }
         } else {
           // ❌ Nothing found → manual entry
@@ -1151,7 +1324,12 @@ async function processShelfVision(req, res) {
               needsReview: true,
             },
           });
-          results.push({ status: "manual_added", itemId: String(join._id), manual });
+          results.push({
+            status: "manual_added",
+            itemId: String(join._id),
+            manual,
+            needsReview: true,
+          });
         }
       }
     }

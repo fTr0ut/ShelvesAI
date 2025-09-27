@@ -35,6 +35,16 @@ const EditionSchema = new mongoose.Schema({
   },
 }, { _id: false });
 
+const FuzzyFingerprintSchema = new mongoose.Schema({
+  value: { type: String, required: true },
+  source: { type: String, trim: true, default: 'vision-ocr' },
+  rawTitle: { type: String, trim: true },
+  rawCreator: { type: String, trim: true },
+  mediaType: { type: String, trim: true },
+  confidence: { type: Number, min: 0, max: 1 },
+  createdAt: { type: Date, default: Date.now },
+}, { _id: false });
+
 // ---- Existing schema + new fields ----
 const CollectableSchema = new mongoose.Schema({
   // Existing fields (unchanged)
@@ -94,10 +104,15 @@ const CollectableSchema = new mongoose.Schema({
 
   //Lightweight Hash on title+creator
   lightweightFingerprint: { type: String, index: true, sparse: true },
+
+  // Vision/OCR fingerprints for noisy inputs
+  fuzzyFingerprints: { type: [FuzzyFingerprintSchema], default: [] },
 }, { timestamps: true });
 
 // Existing index
 CollectableSchema.index({ title: "text", type: 1 });
+
+CollectableSchema.index({ 'fuzzyFingerprints.value': 1 }, { sparse: true });
 
 // New sparse uniques on strong IDs (won’t affect docs that don’t have them)
 CollectableSchema.index({ 'identifiers.openlibrary.work': 1 }, { unique: true, sparse: true });

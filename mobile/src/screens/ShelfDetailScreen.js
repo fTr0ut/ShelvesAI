@@ -559,11 +559,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
         const resultList = data.results;
 
         const reviewIds = resultList
-         .filter(r => r.status === "manual_added" || r.status === "edit_required")
-         .map(r => {
-            // New flow returns the shelf-join id as itemId
-            if (r.status === "manual_added") return r.itemId ?? r.itemID ?? null;
-            // Old flow had no join yet; no id to highlight -> return null
+          .map((r) => {
+            if (r && r.needsReview) {
+              return r.itemId ?? r.itemID ?? null;
+            }
+            if (r && (r.status === "manual_added" || r.status === "edit_required")) {
+              return r.itemId ?? r.itemID ?? null;
+            }
             return null;
           })
           .filter(Boolean);
