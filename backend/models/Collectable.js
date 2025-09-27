@@ -57,8 +57,6 @@ const CollectableSchema = new mongoose.Schema({
   format: { type: String, trim: true }, // paperback, hardcover
   publisher: { type: String, trim: true },
   year: { type: String, trim: true },
-  position: { type: String, trim: true },
-
   openLibraryId: { type: String, trim: true, index: true }, // legacy single ID
   coverUrl: { type: String, trim: true },                   // legacy single image
 

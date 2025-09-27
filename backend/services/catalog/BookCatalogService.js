@@ -433,8 +433,6 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
         extras: {},
       };
 
-      if (orig.position) collectable.position = orig.position;
-
       results.push({
         status: 'resolved',
         input: orig,
@@ -490,7 +488,6 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
 
     const payload = openLibraryToCollectable({
       ...entry.enrichment,
-      position: item?.position || null,
       lightweightFingerprint: lightweightFingerprint || null,
     });
 

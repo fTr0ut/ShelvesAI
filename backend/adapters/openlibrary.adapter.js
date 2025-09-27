@@ -115,7 +115,6 @@ function openLibraryToCollectable(h) {
 
     year,
 
-    position: h.position || null,
     tags: unique(h.subjects || []),
 
     lightweightFingerprint: lwf || null,
