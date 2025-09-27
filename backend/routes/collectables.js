@@ -48,7 +48,6 @@ router.post("/", async (req, res) => {
     format,
     publisher,
     year,
-    position,
     tags,
   } = req.body ?? {};
 
@@ -66,7 +65,6 @@ router.post("/", async (req, res) => {
     format: normalizeString(format),
     publisher: normalizeString(publisher),
     year: normalizeString(year),
-    position: normalizeString(position),
     tags: normalizeTags(tags),
   });
 
@@ -127,10 +125,6 @@ router.put("/:collectableId", async (req, res) => {
 
   if (body.year !== undefined) {
     updates.year = normalizeString(body.year);
-  }
-
-  if (body.position !== undefined) {
-    updates.position = normalizeString(body.position);
   }
 
   if (body.tags !== undefined) {

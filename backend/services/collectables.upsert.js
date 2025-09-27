@@ -64,8 +64,6 @@ async function upsertCollectable(Collectable, incoming) {
       sources: incoming.sources || [],
       extras: incoming.extras || {},
 
-      position: incoming.position ?? null,
-
       // merge identifiers (union arrays)
       // NOTE: doing this in app code makes it easy to keep Map fields consistent
     },

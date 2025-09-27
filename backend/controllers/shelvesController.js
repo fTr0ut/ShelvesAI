@@ -290,6 +290,120 @@ function normalizeVisionTags(raw) {
   return tags;
 }
 
+function clampUnit(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Math.max(0, Math.min(1, num));
+}
+
+function parseVisionCoordinates(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+
+  let x = null;
+  let y = null;
+
+  if (typeof raw === "string") {
+    const parts = raw.split(/[,\s]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      x = clampUnit(parts[0]);
+      y = clampUnit(parts[1]);
+    }
+  } else if (Array.isArray(raw)) {
+    if (raw.length >= 2) {
+      x = clampUnit(raw[0]);
+      y = clampUnit(raw[1]);
+    }
+  } else if (typeof raw === "object") {
+    const candidateX = raw.x ?? raw[0];
+    const candidateY = raw.y ?? raw[1];
+    x = clampUnit(candidateX);
+    y = clampUnit(candidateY);
+  }
+
+  if (x === null || y === null) return null;
+
+  return { x, y };
+}
+
+function parseVisionRating(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+
+  let candidate = raw;
+
+  if (typeof candidate === "string") {
+    const fraction = candidate.match(/([0-9]+(?:\.[0-9]+)?)\s*\/\s*([0-9]+(?:\.[0-9]+)?)/);
+    if (fraction) {
+      const value = Number.parseFloat(fraction[1]);
+      const denom = Number.parseFloat(fraction[2]);
+      if (Number.isFinite(value) && Number.isFinite(denom) && denom > 0) {
+        const scaled = (value / denom) * 5;
+        return Math.max(0, Math.min(5, scaled));
+      }
+    }
+
+    const numeric = candidate.match(/-?\d+(?:\.\d+)?/);
+    if (numeric) {
+      candidate = Number.parseFloat(numeric[0]);
+    }
+  }
+
+  const num = Number(candidate);
+  if (!Number.isFinite(num)) return null;
+
+  return Math.max(0, Math.min(5, num));
+}
+
+function buildUserCollectionMetadata(item) {
+  if (!item) return {};
+
+  const metadata = {};
+
+  const label = typeof item.position === "string" ? item.position.trim() : "";
+  const coords = item.positionCoordinates;
+
+  if (label || (coords && typeof coords === "object")) {
+    const position = {};
+    if (label) position.label = label;
+    if (coords && typeof coords === "object") {
+      const cx = clampUnit(coords.x ?? coords[0]);
+      const cy = clampUnit(coords.y ?? coords[1]);
+      if (cx !== null && cy !== null) {
+        position.coordinates = { x: cx, y: cy };
+      }
+    }
+    if (Object.keys(position).length) {
+      metadata.position = position;
+    }
+  }
+
+  if (typeof item.notes === "string" && item.notes.trim()) {
+    metadata.notes = item.notes.trim();
+  }
+
+  if (typeof item.rating === "number" && Number.isFinite(item.rating)) {
+    metadata.rating = Math.max(0, Math.min(5, item.rating));
+  }
+
+  return metadata;
+}
+
+function applyUserCollectionMetadata(doc, metadata) {
+  if (!doc || !metadata) return false;
+  const entries = Object.entries(metadata);
+  if (!entries.length) return false;
+
+  let changed = false;
+
+  for (const [key, value] of entries) {
+    if (value === undefined) continue;
+    doc[key] = value;
+    changed = true;
+  }
+
+  return changed;
+}
+
 function sanitizeVisionItems(items, fallbackType) {
   if (!Array.isArray(items)) return [];
 
@@ -334,6 +448,22 @@ function sanitizeVisionItems(items, fallbackType) {
       const normalizedTags = normalizeVisionTags(item.tags);
       item.tags = normalizedTags;
 
+      const coordinatesRaw =
+        item.coordinates ??
+        item.positionCoordinates ??
+        item.positionCoords ??
+        item.coords ??
+        null;
+      const positionCoordinates = parseVisionCoordinates(coordinatesRaw);
+
+      const rating = parseVisionRating(
+        item.rating ??
+          item.stars ??
+          item.starRating ??
+          item.score ??
+          item.reviewRating,
+      );
+
       const confidence =
         typeof item.confidence === "number"
           ? Math.max(0, Math.min(1, item.confidence))
@@ -358,8 +488,10 @@ function sanitizeVisionItems(items, fallbackType) {
           item.slot ||
           item.relativeLocation ||
           undefined,
+        positionCoordinates,
         tags: normalizedTags,
         confidence,
+        rating,
       };
     })
     .filter(Boolean);
@@ -454,6 +586,9 @@ async function hydrateShelfItems(userId, shelfId) {
     id: e._id,
     collectable: e.collectable || null,
     manual: e.manual || null,
+    position: e.position || null,
+    notes: e.notes || null,
+    rating: e.rating ?? null,
     createdAt: e.createdAt,
   }));
 }
@@ -617,7 +752,9 @@ async function addManualEntry(req, res) {
 
   if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-  const { name, type, description } = req.body ?? {};
+  const body = req.body ?? {};
+
+  const { name, type, description } = body;
 
   if (!name) return res.status(400).json({ error: "name is required" });
 
@@ -629,11 +766,32 @@ async function addManualEntry(req, res) {
     description,
   });
 
-  const join = await UserCollection.create({
+  const joinMetadata = buildUserCollectionMetadata({
+    position:
+      typeof body.position === "string"
+        ? body.position
+        : body.position && typeof body.position === "object"
+          ? body.position.label ?? undefined
+          : undefined,
+    positionCoordinates:
+      body.position && typeof body.position === "object"
+        ? body.position.coordinates ?? body.position
+        : undefined,
+    notes: typeof body.notes === "string" ? body.notes : undefined,
+    rating:
+      typeof body.rating === "number"
+        ? body.rating
+        : parseVisionRating(body.rating),
+  });
+
+  const joinPayload = {
     user: req.user.id,
     shelf: shelf._id,
     manual: manual._id,
-  });
+    ...joinMetadata,
+  };
+
+  const join = await UserCollection.create(joinPayload);
 
   await logShelfEvent({
     userId: req.user.id,
@@ -651,7 +809,15 @@ async function addManualEntry(req, res) {
     },
   });
 
-  res.status(201).json({ item: { id: join._id, manual } });
+  res.status(201).json({
+    item: {
+      id: join._id,
+      manual,
+      position: join.position || null,
+      notes: join.notes || null,
+      rating: join.rating ?? null,
+    },
+  });
 }
 
 async function addCollectable(req, res) {
@@ -659,7 +825,9 @@ async function addCollectable(req, res) {
 
   if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-  const { collectableId } = req.body ?? {};
+  const body = req.body ?? {};
+
+  const { collectableId } = body;
 
   if (!collectableId)
     return res.status(400).json({ error: "collectableId is required" });
@@ -675,14 +843,47 @@ async function addCollectable(req, res) {
     collectable: collectable._id,
   });
 
-  if (existing)
-    return res.status(200).json({ item: { id: existing._id, collectable } });
+  const joinMetadata = buildUserCollectionMetadata({
+    position:
+      typeof body.position === "string"
+        ? body.position
+        : body.position && typeof body.position === "object"
+          ? body.position.label ?? undefined
+          : undefined,
+    positionCoordinates:
+      body.position && typeof body.position === "object"
+        ? body.position.coordinates ?? body.position
+        : undefined,
+    notes: typeof body.notes === "string" ? body.notes : undefined,
+    rating:
+      typeof body.rating === "number"
+        ? body.rating
+        : parseVisionRating(body.rating),
+  });
 
-  const join = await UserCollection.create({
+  if (existing) {
+    if (applyUserCollectionMetadata(existing, joinMetadata)) {
+      await existing.save();
+    }
+    return res.status(200).json({
+      item: {
+        id: existing._id,
+        collectable,
+        position: existing.position || null,
+        notes: existing.notes || null,
+        rating: existing.rating ?? null,
+      },
+    });
+  }
+
+  const joinPayload = {
     user: req.user.id,
     shelf: shelf._id,
     collectable: collectable._id,
-  });
+    ...joinMetadata,
+  };
+
+  const join = await UserCollection.create(joinPayload);
 
   const displayTitle = collectable.title || collectable.name || "";
   const displayCreator =
@@ -712,7 +913,15 @@ async function addCollectable(req, res) {
     },
   });
 
-  res.status(201).json({ item: { id: join._id, collectable } });
+  res.status(201).json({
+    item: {
+      id: join._id,
+      collectable,
+      position: join.position || null,
+      notes: join.notes || null,
+      rating: join.rating ?? null,
+    },
+  });
 }
 
 async function removeShelfItem(req, res) {
@@ -936,12 +1145,17 @@ async function matchExistingCollectables(items, userId, shelf) {
         collectable: collectable._id,
       });
 
+      const joinMetadata = buildUserCollectionMetadata(item);
+
       if (!alreadyLinked) {
-        const join = await UserCollection.create({
+        const joinPayload = {
           user: userId,
           shelf: shelf._id,
           collectable: collectable._id,
-        });
+          ...joinMetadata,
+        };
+
+        const join = await UserCollection.create(joinPayload);
 
         const displayTitle = collectable.title || collectable.name || title;
         const displayCreator =
@@ -968,9 +1182,22 @@ async function matchExistingCollectables(items, userId, shelf) {
           },
         });
 
-        results.push({ status: "linked", collectable, source: matchSource || "fingerprint" });
+        results.push({
+          status: "linked",
+          collectable,
+          source: matchSource || "fingerprint",
+          itemId: String(join._id || ""),
+        });
       } else {
-        results.push({ status: "existing", collectable, source: matchSource || "fingerprint" });
+        if (applyUserCollectionMetadata(alreadyLinked, joinMetadata)) {
+          await alreadyLinked.save();
+        }
+        results.push({
+          status: "existing",
+          collectable,
+          source: matchSource || "fingerprint",
+          itemId: String(alreadyLinked._id || ""),
+        });
       }
     } catch (err) {
       console.error("[shelfVision.fingerprint] lookup failed", {
@@ -1237,12 +1464,16 @@ async function processShelfVision(req, res) {
             collectable: collectable._id,
           });
 
+          const joinMetadata = buildUserCollectionMetadata(item);
+
           if (!existing) {
-            const join = await UserCollection.create({
+            const joinPayload = {
               user: req.user.id,
               shelf: shelf._id,
               collectable: collectable._id,
-            });
+              ...joinMetadata,
+            };
+            const join = await UserCollection.create(joinPayload);
             const joinId = String(join._id);
 
             const displayTitle = collectable.title || collectable.name || "";
@@ -1289,6 +1520,9 @@ async function processShelfVision(req, res) {
               confidence: confidenceScore,
               itemId: String(existing._id || ""),
             });
+            if (applyUserCollectionMetadata(existing, joinMetadata)) {
+              await existing.save();
+            }
           }
         } else {
           // ❌ Nothing found → manual entry
@@ -1302,15 +1536,17 @@ async function processShelfVision(req, res) {
             publisher: item.publisher || "",
             format: item.format || "",
             year: item.year || "",
-            position: item.position || "",
             tags: item.tags || [],
           };
           const manual = await UserManual.create(manualPayload);
-          const join = await UserCollection.create({
+          const joinMetadata = buildUserCollectionMetadata(item);
+          const joinPayload = {
             user: req.user.id,
             shelf: shelf._id,
             manual: manual._id,
-          });
+            ...joinMetadata,
+          };
+          const join = await UserCollection.create(joinPayload);
           await logShelfEvent({
             userId: req.user.id,
             shelfId: shelf._id,

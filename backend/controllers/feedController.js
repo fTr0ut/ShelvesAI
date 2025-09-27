@@ -38,7 +38,14 @@ function summarizeItems(entries) {
     if (!map.has(key)) map.set(key, []);
     const arr = map.get(key);
     if (arr.length < 5) {
-      arr.push({ id: entry._id, collectable: entry.collectable || null, manual: entry.manual || null });
+      arr.push({
+        id: entry._id,
+        collectable: entry.collectable || null,
+        manual: entry.manual || null,
+        position: entry.position || null,
+        notes: entry.notes || null,
+        rating: entry.rating ?? null,
+      });
     }
   });
   return map;
@@ -212,6 +219,9 @@ async function getFeedEntryDetails(req, res) {
       id: String(entryDoc._id),
       collectable: entryDoc.collectable || null,
       manual: entryDoc.manual || null,
+      position: entryDoc.position || null,
+      notes: entryDoc.notes || null,
+      rating: entryDoc.rating ?? null,
       createdAt: entryDoc.createdAt,
       updatedAt: entryDoc.updatedAt,
     })),
