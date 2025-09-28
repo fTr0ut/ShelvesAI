@@ -23,13 +23,13 @@ const VISION_PROMPT_RULES = [
   {
     match: ["book", "books", "novel", "novels", "comic", "manga"],
 
-    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a single book or a collection of books. Provide the canonical title, the primary author, and the physical format (e.g., hardcover, paperback, omnibus). Preserve accents, diacritics, and any mixed-language words exactly as printed; do not anglicize, translate, or substitute similarly sounding English phrases. If characters are ambiguous, match the visible glyphs rather than guessing a different word. Include "coordinates" in the format of "x,y" describing the relative physical location in the photo. Zoom into the photo if needed. Do not include explanations.`,
+    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a single book or a collection of books. Provide the canonical title, the primary author, and the physical format (e.g., hardcover, paperback, omnibus). Preserve accents, diacritics, and any mixed-language words exactly as printed; do not anglicize, translate, or substitute similarly sounding English phrases. If characters are ambiguous, match the visible glyphs rather than guessing a different word. Always populate the "genre" field when known. Include "coordinates" in the format of "x,y" describing the relative physical location in the photo. Zoom into the photo if needed. Do not include explanations.`,
   },
 
   {
     match: ["movie", "movies", "film", "films", "blu-ray", "dvd", "4k"],
 
-    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a movie or a collection of movies. Report the primary director in the "author" field, use "format" for the medium (Blu-ray, DVD, 4K, digital, etc.), use "publisher" for the studio or distributor, and provide the original release year. If any metadata is missing, research reliable film databases before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
+    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a movie or a collection of movies. Report the primary director in the "author" field, use "format" for the medium (Blu-ray, DVD, 4K, digital, etc.), use "publisher" for the studio or distributor, and provide the original release year. Always populate the "genre" field when known. If any metadata is missing, research reliable film databases before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
   },
 
   {
@@ -42,13 +42,13 @@ const VISION_PROMPT_RULES = [
       "board games",
     ],
 
-    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a game or a collection of games. For video games, place the primary developer or studio in "author", the platform or edition in "format", the publishing company in "publisher", and the release year in "year". For board games, use the lead designer in "author" and the publisher in "publisher". Search authoritative sources when information is missing. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
+    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a game or a collection of games. For video games, place the primary developer or studio in "author" and also in "developer", record the platform or edition in "format", set "systemName" to the exact hardware/platform name, capture the publishing company in "publisher", note the release region in "region" when visible, include direct links in "urlCoverFront" and "urlCoverBack" when discernible, and provide the release year in "year". Always populate the "genre" field when known. For board games, use the lead designer in "author" and the publisher in "publisher". Search authoritative sources when information is missing. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
   },
 
   {
     match: ["music", "album", "albums", "vinyl", "records", "cd", "cds"],
 
-    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a music collection (vinyl, CDs, tapes, etc.) Use "author" for the primary artist, "format" for the medium or edition, "publisher" for the record label, and "year" for the original release or pressing year. If any detail is missing, consult trusted music databases before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
+    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a music collection (vinyl, CDs, tapes, etc.) Use "author" for the primary artist, "format" for the medium or edition, "publisher" for the record label, and "year" for the original release or pressing year. Always populate the "genre" field when known. If any detail is missing, consult trusted music databases before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
   },
 
   {
@@ -63,7 +63,7 @@ const VISION_PROMPT_RULES = [
       "tequila",
     ],
 
-    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a collection of wine or spirits. Use "author" for the producer, winery, or distillery, "format" for the varietal or bottle/edition details, "publisher" for the region or bottler, and "year" for the vintage or bottling year. If any metadata is missing, research reputable wine or spirits sources before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
+    prompt: `You are assisting with cataloging physical collections. The user has indicated that this photo is a collection of wine or spirits. Use "author" for the producer, winery, or distillery, "format" for the varietal or bottle/edition details, "publisher" for the region or bottler, and "year" for the vintage or bottling year. Always populate the "genre" field when known. If any metadata is missing, research reputable wine or spirits sources before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`,
   },
 ];
 
@@ -184,9 +184,43 @@ const structuredVisionFormat = {
 
             format: { type: ["string", "null"] },
 
+            publisher: { type: ["string", "null"] },
+
+            year: { type: ["string", "null"] },
+
+            developer: { type: ["string", "null"] },
+
+            region: { type: ["string", "null"] },
+
+            systemName: { type: ["string", "null"] },
+
+            urlCoverFront: { type: ["string", "null"] },
+
+            urlCoverBack: { type: ["string", "null"] },
+
+            genre: {
+              anyOf: [
+                { type: "string" },
+                { type: "array", items: { type: "string" } },
+                { type: "null" },
+              ],
+            },
+
+            tags: {
+              anyOf: [
+                { type: "array", items: { type: "string" } },
+                { type: "string" },
+                { type: "null" },
+              ],
+            },
+
+            notes: { type: ["string", "null"] },
+
             position: { type: ["string", "null"] },
 
             confidence: { type: "number", minimum: 0, maximum: 1 },
+
+            rating: { type: ["number", "null"], minimum: 0, maximum: 5 },
           },
 
           required: [
@@ -226,7 +260,7 @@ function buildVisionPrompt(shelfType) {
     .toLowerCase();
 
   if (!normalized) {
-    return `You are assisting with cataloging physical collections. The user has provided a photo of a collection. If any data is missing, research additional sources before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`;
+    return `You are assisting with cataloging physical collections. The user has provided a photo of a collection. If any data is missing, research additional sources before responding. Always populate the "genre" field when known. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`;
   }
 
   for (const rule of VISION_PROMPT_RULES) {
@@ -235,7 +269,7 @@ function buildVisionPrompt(shelfType) {
     }
   }
 
-  return `You are assisting with cataloging physical collections. The user has indicated that this photo contains ${normalized}. If any metadata is missing, research additional reputable sources before responding. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`;
+  return `You are assisting with cataloging physical collections. The user has indicated that this photo contains ${normalized}. If any metadata is missing, research additional reputable sources before responding. Always populate the "genre" field when known. Include "position" describing the relative physical location in the photo (e.g., "top shelf, far left"). Do not include explanations.`;
 }
 
 function getOpenAIClient() {
@@ -266,6 +300,16 @@ function normalizeVisionTags(raw) {
     tags.push(trimmed);
   }
   return tags;
+}
+
+function normalizeVisionGenres(raw) {
+  if (raw === undefined || raw === null || raw === "") return [];
+  if (Array.isArray(raw)) return normalizeVisionTags(raw);
+  if (typeof raw === "string") {
+    const replaced = raw.replace(/[\/|]+/g, ",");
+    return normalizeVisionTags(replaced);
+  }
+  return normalizeVisionTags(raw);
 }
 
 function clampUnit(value) {
@@ -585,6 +629,7 @@ function sanitizeVisionItems(items, fallbackType) {
       const type =
         String(item.type || item.category || fallbackType || "").trim() ||
         fallbackType;
+      const normalizedType = String(type || "").toLowerCase();
       const author =
         item.author ||
         item.creator ||
@@ -594,14 +639,14 @@ function sanitizeVisionItems(items, fallbackType) {
         item.developer ||
         item.designer ||
         item.maker;
-      const format =
+      const formatCandidate =
         item.format ||
         item.edition ||
         item.media ||
         item.platform ||
         item.binding ||
         item.formatType;
-      const publisher =
+      const publisherRaw =
         item.publisher ||
         item.label ||
         item.studio ||
@@ -609,6 +654,38 @@ function sanitizeVisionItems(items, fallbackType) {
         item.producer ||
         item.manufacturer ||
         item.winery;
+      const developerRaw =
+        item.developer ||
+        item.studio ||
+        item.maker ||
+        item.developmentStudio ||
+        item.developerName;
+      let publisher = publisherRaw;
+      let developer = developerRaw;
+      if (normalizedType.includes("game")) {
+        if (!developer && publisher) developer = publisher;
+        if (!publisher && developer) publisher = developer;
+      }
+      const systemNameRaw =
+        item.systemName ||
+        item.system ||
+        item.console ||
+        item.hardware ||
+        item.platform ||
+        item.machine;
+      const region = item.region || item.territory || item.releaseRegion;
+      const urlCoverFront =
+        item.urlCoverFront ||
+        item.coverFront ||
+        item.frontCoverUrl ||
+        item.frontImage ||
+        item.coverFrontUrl;
+      const urlCoverBack =
+        item.urlCoverBack ||
+        item.coverBack ||
+        item.backCoverUrl ||
+        item.rearImage ||
+        item.coverBackUrl;
       const year =
         item.year ||
         item.releaseYear ||
@@ -617,6 +694,10 @@ function sanitizeVisionItems(items, fallbackType) {
         item.releaseDate;
       const normalizedTags = normalizeVisionTags(item.tags);
       item.tags = normalizedTags;
+      const normalizedGenres = normalizeVisionGenres(
+        item.genre ?? item.genres ?? item.categoryLabels ?? null,
+      );
+      item.genre = normalizedGenres;
 
       const {
         label: normalizedPositionLabel,
@@ -642,8 +723,13 @@ function sanitizeVisionItems(items, fallbackType) {
         name,
         type,
         author: author ? String(author).trim() : undefined,
-        format: format ? String(format).trim() : undefined,
+        format: formatCandidate ? String(formatCandidate).trim() : undefined,
         publisher: publisher ? String(publisher).trim() : undefined,
+        developer: developer ? String(developer).trim() : undefined,
+        region: region ? String(region).trim() : undefined,
+        systemName: systemNameRaw ? String(systemNameRaw).trim() : undefined,
+        urlCoverFront: urlCoverFront ? String(urlCoverFront).trim() : undefined,
+        urlCoverBack: urlCoverBack ? String(urlCoverBack).trim() : undefined,
         year: year ? String(year).trim() : undefined,
         notes:
           item.notes || item.description || item.summary
@@ -652,6 +738,7 @@ function sanitizeVisionItems(items, fallbackType) {
         position: normalizedPositionLabel,
         positionCoordinates: normalizedPositionCoordinates,
         tags: normalizedTags,
+        genre: normalizedGenres,
         confidence,
         rating,
       };

@@ -18,11 +18,37 @@ function mergeIdentifiers(existingIds = {}, incomingIds = {}) {
   return out;
 }
 
+function normalizeStringArray(values) {
+  if (values == null || values === "") return [];
+
+  const source = Array.isArray(values)
+    ? values
+    : typeof values === "string"
+      ? values.split(/[\s,]+/)
+      : [];
+
+  const seen = new Set();
+  const cleaned = [];
+
+  for (const entry of source) {
+    const trimmed = String(entry ?? "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(trimmed);
+  }
+
+  return cleaned;
+}
+
 async function upsertCollectable(Collectable, incoming) {
   const mediaKind = incoming?.kind || incoming?.type;
   if (!mediaKind || !incoming?.title) return null;
   incoming.kind = mediaKind;
   if (!incoming.type) incoming.type = mediaKind;
+
+  const normalizedGenre = normalizeStringArray(incoming.genre);
 
   // Dedup priority: provider-strong IDs â†’ global IDs â†’ fingerprint
   const or = [];
@@ -67,6 +93,14 @@ async function upsertCollectable(Collectable, incoming) {
       creators: incoming.creators || [],
       year: incoming.year ?? null,
       tags: incoming.tags || [],
+      genre: normalizedGenre,
+
+      publisher: incoming.publisher ?? null,
+      developer: incoming.developer ?? null,
+      region: incoming.region ?? null,
+      systemName: incoming.systemName ?? null,
+      urlCoverFront: incoming.urlCoverFront ?? null,
+      urlCoverBack: incoming.urlCoverBack ?? null,
 
       physical: incoming.physical || {},
 
