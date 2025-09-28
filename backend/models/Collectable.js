@@ -1,6 +1,29 @@
 // models/Collectable.js (v1.5 non-breaking)
 const mongoose = require("mongoose");
 
+function normalizeStringList(values) {
+  if (values == null || values === "") return [];
+  const source = Array.isArray(values)
+    ? values
+    : typeof values === "string"
+      ? values.split(/[\s,]+/)
+      : [];
+
+  const seen = new Set();
+  const cleaned = [];
+
+  for (const entry of source) {
+    const trimmed = String(entry ?? "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(trimmed);
+  }
+
+  return cleaned;
+}
+
 const ImageSchema = new mongoose.Schema({
   kind: { type: String, default: "cover" },
   urlSmall: { type: String, trim: true },
@@ -64,25 +87,23 @@ const CollectableSchema = new mongoose.Schema({
   tags: {
     type: [String],
     default: [],
-    set: (values) => {
-      if (values == null || values === "") return [];
-      const source = Array.isArray(values)
-        ? values
-        : typeof values === "string"
-          ? values.split(/[\s,]+/)
-          : [];
-      const seen = new Set();
-      const cleaned = [];
-      for (const entry of source) {
-        const trimmed = String(entry ?? "").trim();
-        if (!trimmed) continue;
-        const key = trimmed.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        cleaned.push(trimmed); // <-- fix from append() to push()
-      }
-      return cleaned;
-    },
+    set: normalizeStringList,
+  },
+
+  developer: { type: String, trim: true },
+
+  region: { type: String, trim: true },
+
+  systemName: { type: String, trim: true },
+
+  urlCoverFront: { type: String, trim: true },
+
+  urlCoverBack: { type: String, trim: true },
+
+  genre: {
+    type: [String],
+    default: [],
+    set: normalizeStringList,
   },
 
   // ---- New cross-provider fields ----
