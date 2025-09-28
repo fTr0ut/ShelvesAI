@@ -468,6 +468,17 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       direct.kind = direct.kind || item?.kind || 'book';
       direct.lightweightFingerprint =
         direct.lightweightFingerprint || lightweightFingerprint || null;
+      if (!direct.fingerprint) {
+        const computedFingerprint = makeCollectableFingerprint({
+          title: direct.title,
+          primaryCreator: direct.primaryCreator,
+          releaseYear: direct.year,
+          mediaType: direct.type || direct.kind,
+          format: direct.physical?.format,
+          platforms: direct.platform || direct.platforms,
+        });
+        direct.fingerprint = computedFingerprint || null;
+      }
       direct.identifiers = direct.identifiers || {};
       direct.images = Array.isArray(direct.images)
         ? direct.images
@@ -494,6 +505,18 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
 
     if (payload && lightweightFingerprint && !payload.lightweightFingerprint) {
       payload.lightweightFingerprint = lightweightFingerprint;
+    }
+
+    if (payload && !payload.fingerprint) {
+      const computedFingerprint = makeCollectableFingerprint({
+        title: payload.title,
+        primaryCreator: payload.primaryCreator,
+        releaseYear: payload.year,
+        mediaType: payload.type || payload.kind,
+        format: payload.physical?.format,
+        platforms: payload.platform || payload.platforms,
+      });
+      payload.fingerprint = computedFingerprint || null;
     }
 
     return payload;
