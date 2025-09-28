@@ -1,4 +1,4 @@
-const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
+const { makeCollectableFingerprint } = require('../collectables/fingerprint');\nconst { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
 const {
   lookupWorkBookMetadata,
   lookupWorkByISBN,
@@ -541,3 +541,4 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
 }
 
 module.exports = { BookCatalogService };
+

@@ -1,3 +1,4 @@
+const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./collectables/fingerprint');
 // openLibrary.js
 // Enhances search results by hydrating each result from Work/Edition/Author .json endpoints.
 //
@@ -448,15 +449,6 @@ function uniqueStrings(arr) {
  * Ex: sha1("title|author|year")
  */
 const crypto = require('crypto');
-function makeFingerprint({ title, primaryAuthor, publishYear }) {
-  const base = [
-    (title || '').trim().toLowerCase(),
-    (primaryAuthor || '').trim().toLowerCase(),
-    (publishYear || '').trim(),
-  ].join('|');
-  return crypto.createHash('sha1').update(base).digest('hex');
-}
-
 /**
  * Turn a hydrated Open Library object into a canonical "Collection" doc.
  * Input: one element from searchAndHydrateBooks() or lookupWorkBookMetadata()
@@ -501,7 +493,7 @@ function toCollectionDoc(h) {
     // Stable refs
     workId: h.workId,                     // "OL1892617W"
     editionId: h.edition?.id || null,     // e.g., "OL12345M"
-    fingerprint: makeFingerprint({ title: h.title, primaryAuthor, publishYear }),
+    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator: primaryAuthor, releaseYear: publishYear }),
 
     // Canonical bibliographic fields
     title: h.title || null,
@@ -577,3 +569,4 @@ module.exports = {
   // Canonical Collection doc mapper
   toCollectionDoc,
 };
+

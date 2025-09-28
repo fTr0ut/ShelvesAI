@@ -13,7 +13,7 @@
       "backgroundColor": "#0b0f14"
     },
     "extra": {
-      "API_BASE": "http://localhost:5001",
+      "API_BASE": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev",
       "auth0": {
         "domain": "dev-0b3u5la73y4qw1gk.us.auth0.com",
         "clientId": "WRrmNATBOpAuG6j12TQ1crxyMbqkI2Vo",

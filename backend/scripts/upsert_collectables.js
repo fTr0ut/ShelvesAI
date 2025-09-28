@@ -21,8 +21,10 @@
 
 import fs from "node:fs";
 import readline from "node:readline";
-import crypto from "node:crypto";
+import { createRequire } from 'node:module';
 import { MongoClient } from "mongodb";
+const require = createRequire(import.meta.url);
+const { makeCollectableFingerprint, makeLightweightFingerprint } = require('../services/collectables/fingerprint');
 
 /* ------------------------------ CLI ------------------------------ */
 
@@ -41,35 +43,12 @@ function argMap(argv) {
 
 /* ----------------------- Fingerprint helpers ---------------------- */
 
-function makeLightweightFingerprint(title, primaryCreator) {
-  const base = `${(title || "").trim().toLowerCase()}|${(primaryCreator || "")
-    .trim()
-    .toLowerCase()}`;
-  return crypto.createHash("sha1").update(base).digest("hex");
-}
-
-function makeFingerprint({ title, primaryCreator, year }) {
-  const base = [
-    title?.trim().toLowerCase() || "",
-    primaryCreator?.trim().toLowerCase() || "",
-    year || "",
-  ].join("|");
-  return crypto.createHash("sha1").update(base).digest("hex");
-}
-
 function ensureFingerprints(doc) {
   if (!doc.lightweightFingerprint) {
-    doc.lightweightFingerprint = makeLightweightFingerprint(
-      doc.title || "",
-      doc.primaryCreator || ""
-    );
+    doc.lightweightFingerprint = makeLightweightFingerprint({ title: doc.title || '', primaryCreator: doc.primaryCreator || '' });
   }
   if (!doc.fingerprint) {
-    doc.fingerprint = makeFingerprint({
-      title: doc.title || "",
-      primaryCreator: doc.primaryCreator || "",
-      year: doc.year || "",
-    });
+    doc.fingerprint = makeCollectableFingerprint({ title: doc.title || '', primaryCreator: doc.primaryCreator || '', releaseYear: doc.year || '' });
   }
   return doc;
 }

@@ -29,6 +29,90 @@ function normalizeDate(value) {
   return time
 }
 
+function normalizeCandidate(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number') return String(value)
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const normalized = normalizeCandidate(item)
+      if (normalized) return normalized
+    }
+    return ''
+  }
+  if (typeof value === 'object') {
+    const fields = ['fullName', 'displayName', 'name', 'title', 'label', 'value', 'text']
+    for (const field of fields) {
+      if (value[field] != null) {
+        const normalized = normalizeCandidate(value[field])
+        if (normalized) return normalized
+      }
+    }
+  }
+  return ''
+}
+
+function formatFeedItemPreview(entry) {
+  if (!entry) return { title: 'Untitled item', summary: '' }
+  const collectable =
+    entry.collectable ||
+    entry.item ||
+    entry.collectableSnapshot ||
+    entry.collectableItem ||
+    null
+  const manual =
+    entry.manual ||
+    entry.manualItem ||
+    entry.manualSnapshot ||
+    (entry.item && entry.item.manual) ||
+    null
+
+  const titleCandidates = [
+    collectable?.title,
+    collectable?.name,
+    collectable?.displayTitle,
+    collectable?.displayName,
+    collectable?.metadata?.title,
+    manual?.title,
+    manual?.name,
+    entry?.title,
+    entry?.name,
+  ]
+
+  let title = ''
+  for (const candidate of titleCandidates) {
+    title = normalizeCandidate(candidate)
+    if (title) break
+  }
+  if (!title) title = 'Untitled item'
+
+  const details = []
+  const addDetail = (value) => {
+    const text = normalizeCandidate(value)
+    if (!text) return
+    const lower = text.toLowerCase()
+    if (details.some((existing) => existing.toLowerCase() === lower)) return
+    details.push(text)
+  }
+
+  addDetail(collectable?.primaryCreator)
+  addDetail(collectable?.author)
+  addDetail(collectable?.creators)
+  addDetail(manual?.primaryCreator)
+  addDetail(manual?.author)
+  addDetail(collectable?.format)
+  addDetail(manual?.format)
+  addDetail(manual?.type)
+  addDetail(collectable?.publisher)
+  addDetail(manual?.publisher)
+  addDetail(collectable?.year)
+  addDetail(manual?.year)
+
+  const summary = details.slice(0, 3).join(' | ')
+
+  return { title, summary }
+}
+
 export default function SocialFeedScreen({ navigation }) {
   const { token, apiBase } = useContext(AuthContext)
   const [publicEntries, setPublicEntries] = useState([])
@@ -156,11 +240,20 @@ export default function SocialFeedScreen({ navigation }) {
         {shelf?.description ? <Text style={styles.shelfDescription}>{shelf.description}</Text> : null}
         {items?.length ? (
           <View style={styles.itemsPreview}>
-            {items.map((entry) => {
-              const label = entry.collectable?.name || entry.manual?.name || 'Unknown item'
+            {items.map((entry, idx) => {
+              const { title, summary } = formatFeedItemPreview(entry)
+              const key =
+                entry?.id ||
+                entry?._id ||
+                entry?.collectable?._id ||
+                entry?.collectable?.id ||
+                entry?.manual?._id ||
+                entry?.manual?.id ||
+                `item-${idx}`
               return (
-                <Text key={entry.id} style={styles.itemLine} numberOfLines={1}>
-                  - {label}
+                <Text key={key} style={styles.itemLine} numberOfLines={2}>
+                  - {title}
+                  {summary ? ` | ${summary}` : ''}
                 </Text>
               )
             })}

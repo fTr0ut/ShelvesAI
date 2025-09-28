@@ -19,7 +19,10 @@ function mergeIdentifiers(existingIds = {}, incomingIds = {}) {
 }
 
 async function upsertCollectable(Collectable, incoming) {
-  if (!incoming?.kind || !incoming?.title) return null;
+  const mediaKind = incoming?.kind || incoming?.type;
+  if (!mediaKind || !incoming?.title) return null;
+  incoming.kind = mediaKind;
+  if (!incoming.type) incoming.type = mediaKind;
 
   // Dedup priority: provider-strong IDs â†’ global IDs â†’ fingerprint
   const or = [];
@@ -36,6 +39,14 @@ async function upsertCollectable(Collectable, incoming) {
   const upc = incoming.identifiers?.upc;
   if (Array.isArray(upc) && upc.length) or.push({ 'identifiers.upc': { $in: upc } });
 
+  // Steam AppID
+  const steamAppIds = incoming.identifiers?.steam?.appId;
+  if (Array.isArray(steamAppIds) && steamAppIds.length) {
+    or.push({ 'identifiers.steam.appId': { $in: steamAppIds } });
+  } else if (typeof steamAppIds === 'string' && steamAppIds) {
+    or.push({ 'identifiers.steam.appId': steamAppIds });
+  }
+
   // Fallback: fingerprint
   if (incoming.fingerprint) or.push({ fingerprint: incoming.fingerprint });
 
@@ -46,6 +57,7 @@ async function upsertCollectable(Collectable, incoming) {
   const update = {
     $set: {
       kind: incoming.kind,
+      type: incoming.type,
       title: incoming.title,
       lightweightFingerprint: incoming.lightweightFingerprint ?? null,
       subtitle: incoming.subtitle ?? null,

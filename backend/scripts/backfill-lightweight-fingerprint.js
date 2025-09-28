@@ -2,14 +2,8 @@
 /* eslint-disable no-console */
 require("dotenv").config();
 const mongoose = require("mongoose");
+const { makeLightweightFingerprint } = require("../services/collectables/fingerprint");
 
-function makeLightweightFingerprint(title, creator) {
-  const base = [
-    (title || "").trim().toLowerCase(),
-    (creator || "").trim().toLowerCase(),
-  ].join("|");
-  return require("crypto").createHash("sha1").update(base).digest("hex");
-}
 
 async function main() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI;

@@ -11,6 +11,7 @@ const accountRoutes = require('./routes/account');
 const collectablesRoutes = require('./routes/collectables');
 const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
+const steamRoutes = require('./routes/steam');
 
 const app = express();
 // Minimal request log (dev only)
@@ -22,6 +23,16 @@ if (process.env.NODE_ENV !== 'production') {
 }
 app.use(cors());            // allow Vite (5173) during dev
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
+
+const mediaRoot = path.join(__dirname, 'cache');
+try {
+  if (!fs.existsSync(mediaRoot)) {
+    fs.mkdirSync(mediaRoot, { recursive: true });
+  }
+  app.use('/media', express.static(mediaRoot));
+} catch (err) {
+  console.warn('Failed to initialize media cache directory:', err.message);
+}
 
 // DB connection
 // if (process.env.MONGO_URI) {
@@ -42,6 +53,7 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
+app.use('/api/steam', steamRoutes);
 // Optional: Auth0-protected example route when configured
 try {
   const { auth: auth0Jwt } = require('express-oauth2-jwt-bearer');

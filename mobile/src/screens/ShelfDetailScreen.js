@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -25,7 +26,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 
 import FooterNav from "../components/FooterNav";
-
+import ShelfVisionModal from "../components/ShelfVisionModal";
 
 const MIME_EXTENSIONS = {
   jpg: 'image/jpeg',
@@ -121,10 +122,15 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
   const [visionMessage, setVisionMessage] = useState("");
 
+  const [visionOpen, setVisionOpen] = useState(false);
+
   const [analysis, setAnalysis] = useState(null);
 
   const [ediItem, setEditItem] = useState(null);
   const [needsReviewIds, setNeedsReviewIds] = useState([]);
+
+  const openShelfVision = useCallback(() => setVisionOpen(true), []);
+  const closeShelfVision = useCallback(() => setVisionOpen(false), []);
 
   const hasLoadedRef = useRef(false);
 
@@ -165,6 +171,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
       }
     }, [load]),
   );
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          style={styles.headerAction}
+          onPress={openShelfVision}
+          accessibilityLabel="Open Shelf Vision"
+        >
+          <Text style={styles.headerActionText}>Shelf Vision</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, openShelfVision]);
 
   const sortedItems = useMemo(() => {
     const list = Array.isArray(items) ? [...items] : [];
@@ -1105,6 +1125,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
       </ScrollView>
 
       <FooterNav navigation={navigation} active="shelves" />
+
+      <ShelfVisionModal
+        visible={visionOpen}
+        onClose={closeShelfVision}
+        items={items}
+        apiBase={apiBase}
+      />
     </View>
   );
 }
@@ -1115,6 +1142,21 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0b0f14" },
 
   content: { padding: 16, paddingBottom: 40 },
+
+  headerAction: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#1f2d44",
+    backgroundColor: "#121b2d",
+  },
+
+  headerActionText: {
+    color: "#9ec1ff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
 
   card: {
     backgroundColor: "transparent",

@@ -1,5 +1,5 @@
 const { upsertCollectable } = require("../services/collectables.upsert");
-const crypto = require("crypto");
+const { makeLightweightFingerprint, makeVisionOcrFingerprint, normalizeFingerprintComponent } = require('../services/collectables/fingerprint');
 
 const Shelf = require("../models/Shelf");
 
@@ -75,29 +75,7 @@ function coerceNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
-function makeLightweightFingerprint(title, creator) {
-  const base = `${(title || "").trim().toLowerCase()}|${(creator || "").trim().toLowerCase()}`;
-  return crypto.createHash("sha1").update(base).digest("hex");
-}
-
 const DEFAULT_OCR_CONFIDENCE_THRESHOLD = 0.7;
-
-function normalizeFingerprintComponent(value) {
-  return String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function makeVisionOcrFingerprint(title, creator) {
-  const normalizedTitle = normalizeFingerprintComponent(title);
-  const normalizedCreator = normalizeFingerprintComponent(creator);
-  if (!normalizedTitle || !normalizedCreator) return null;
-  return crypto.createHash("sha1").update(normalizedTitle + "|" + normalizedCreator).digest("hex");
-}
 
 const OCR_CONFIDENCE_THRESHOLD = (() => {
   const raw = parseFloat(
@@ -326,6 +304,143 @@ function parseVisionCoordinates(raw) {
   return { x, y };
 }
 
+function extractNormalizedPositionFields(item) {
+  if (!item || typeof item !== "object") {
+    return { label: undefined, coordinates: undefined };
+  }
+
+  const normalizeString = (value) => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
+
+  let label;
+
+  if (typeof item.position === "string") {
+    label = normalizeString(item.position);
+  } else if (item.position && typeof item.position === "object") {
+    label =
+      normalizeString(item.position.label) ||
+      normalizeString(item.position.name) ||
+      normalizeString(item.position.title) ||
+      normalizeString(item.position.value);
+  }
+
+  if (!label) {
+    label =
+      normalizeString(item.location) ||
+      normalizeString(item.slot) ||
+      normalizeString(item.relativeLocation) ||
+      normalizeString(item.positionLabel);
+  }
+
+  const coordinateSources = [];
+
+  if (item.position && typeof item.position === "object") {
+    coordinateSources.push(
+      item.position.coordinates,
+      item.position.coords,
+      item.position.positionCoordinates,
+      item.position.positionCoords
+    );
+
+    if (item.position.x !== undefined || item.position.y !== undefined) {
+      coordinateSources.push({ x: item.position.x, y: item.position.y });
+    }
+
+    coordinateSources.push(item.position);
+  }
+
+  coordinateSources.push(
+    item.coordinates,
+    item.positionCoordinates,
+    item.positionCoords,
+    item.coords
+  );
+
+  let coordinates;
+  for (const source of coordinateSources) {
+    const parsed = parseVisionCoordinates(source);
+    if (parsed) {
+      coordinates = parsed;
+      break;
+    }
+  }
+
+  if (!coordinates) {
+    const labelSource =
+      label ||
+      (typeof item.position === "string" ? item.position : undefined) ||
+      (typeof item.location === "string" ? item.location : undefined) ||
+      (typeof item.slot === "string" ? item.slot : undefined);
+    const parsedFromLabel = parseVisionCoordinates(labelSource);
+    if (parsedFromLabel) {
+      coordinates = parsedFromLabel;
+    }
+  }
+
+  return {
+    label,
+    coordinates,
+  };
+}
+
+function normalizePositionDocument(value) {
+  if (!value || typeof value !== "object") return undefined;
+
+  const label =
+    typeof value.label === "string" && value.label.trim()
+      ? value.label.trim()
+      : undefined;
+
+  let coordinates;
+  if (value.coordinates && typeof value.coordinates === "object") {
+    const cx = clampUnit(value.coordinates.x ?? value.coordinates[0]);
+    const cy = clampUnit(value.coordinates.y ?? value.coordinates[1]);
+    if (cx !== null && cy !== null) {
+      coordinates = { x: cx, y: cy };
+    }
+  } else if (value.position && typeof value.position === "object") {
+    const cx = clampUnit(value.position.x ?? value.position[0]);
+    const cy = clampUnit(value.position.y ?? value.position[1]);
+    if (cx !== null && cy !== null) {
+      coordinates = { x: cx, y: cy };
+    }
+  } else if (value.x !== undefined || value.y !== undefined) {
+    const cx = clampUnit(value.x);
+    const cy = clampUnit(value.y);
+    if (cx !== null && cy !== null) {
+      coordinates = { x: cx, y: cy };
+    }
+  }
+
+  if (!label && !coordinates) return undefined;
+
+  const normalized = {};
+  if (label) normalized.label = label;
+  if (coordinates) normalized.coordinates = coordinates;
+  return normalized;
+}
+
+function positionsEqual(a, b) {
+  const normalizedA = normalizePositionDocument(a);
+  const normalizedB = normalizePositionDocument(b);
+
+  if (!normalizedA && !normalizedB) return true;
+  if (!normalizedA || !normalizedB) return false;
+
+  const labelsEqual = (normalizedA.label || "") === (normalizedB.label || "");
+  const coordinatesEqual =
+    (!normalizedA.coordinates && !normalizedB.coordinates) ||
+    (normalizedA.coordinates &&
+      normalizedB.coordinates &&
+      normalizedA.coordinates.x === normalizedB.coordinates.x &&
+      normalizedA.coordinates.y === normalizedB.coordinates.y);
+
+  return labelsEqual && coordinatesEqual;
+}
+
 function parseVisionRating(raw) {
   if (raw === undefined || raw === null || raw === "") return null;
 
@@ -359,21 +474,24 @@ function buildUserCollectionMetadata(item) {
 
   const metadata = {};
 
-  const label = typeof item.position === "string" ? item.position.trim() : "";
-  const coords = item.positionCoordinates;
+  const { label: positionLabel, coordinates: positionCoordinates } =
+    extractNormalizedPositionFields(item);
 
-  if (label || (coords && typeof coords === "object")) {
+  if (positionLabel || positionCoordinates) {
     const position = {};
-    if (label) position.label = label;
-    if (coords && typeof coords === "object") {
-      const cx = clampUnit(coords.x ?? coords[0]);
-      const cy = clampUnit(coords.y ?? coords[1]);
-      if (cx !== null && cy !== null) {
-        position.coordinates = { x: cx, y: cy };
-      }
+    if (positionLabel) position.label = positionLabel;
+    if (positionCoordinates) {
+      position.coordinates = { x: positionCoordinates.x, y: positionCoordinates.y };
     }
     if (Object.keys(position).length) {
       metadata.position = position;
+    }
+  }
+
+  if (typeof item.format === "string") {
+    const trimmedFormat = item.format.trim();
+    if (trimmedFormat) {
+      metadata.format = trimmedFormat;
     }
   }
 
@@ -390,15 +508,67 @@ function buildUserCollectionMetadata(item) {
 
 function applyUserCollectionMetadata(doc, metadata) {
   if (!doc || !metadata) return false;
-  const entries = Object.entries(metadata);
+  const entries = Object.entries(metadata).filter(([, value]) => value !== undefined);
   if (!entries.length) return false;
 
   let changed = false;
 
   for (const [key, value] of entries) {
-    if (value === undefined) continue;
-    doc[key] = value;
-    changed = true;
+    if (key === "position") {
+      const existingRaw =
+        doc.position && typeof doc.position.toObject === "function"
+          ? doc.position.toObject()
+          : doc.position;
+      const nextPosition = normalizePositionDocument(value);
+      if (!positionsEqual(existingRaw, nextPosition)) {
+        doc.position = nextPosition;
+        if (typeof doc.markModified === "function") {
+          doc.markModified("position");
+        }
+        changed = true;
+      }
+      continue;
+    }
+
+    if (key === "format") {
+      const normalized =
+        typeof value === "string" && value.trim() ? value.trim() : undefined;
+      if ((doc.format || undefined) !== normalized) {
+        doc.format = normalized;
+        if (typeof doc.markModified === "function") {
+          doc.markModified("format");
+        }
+        changed = true;
+      }
+      continue;
+    }
+
+    if (key === "notes") {
+      const normalized =
+        typeof value === "string" && value.trim() ? value.trim() : undefined;
+      if ((doc.notes || undefined) !== normalized) {
+        doc.notes = normalized;
+        changed = true;
+      }
+      continue;
+    }
+
+    if (key === "rating") {
+      const numeric =
+        typeof value === "number" && Number.isFinite(value)
+          ? Math.max(0, Math.min(5, value))
+          : undefined;
+      if ((doc.rating ?? undefined) !== numeric) {
+        doc.rating = numeric;
+        changed = true;
+      }
+      continue;
+    }
+
+    if (doc[key] !== value) {
+      doc[key] = value;
+      changed = true;
+    }
   }
 
   return changed;
@@ -448,13 +618,10 @@ function sanitizeVisionItems(items, fallbackType) {
       const normalizedTags = normalizeVisionTags(item.tags);
       item.tags = normalizedTags;
 
-      const coordinatesRaw =
-        item.coordinates ??
-        item.positionCoordinates ??
-        item.positionCoords ??
-        item.coords ??
-        null;
-      const positionCoordinates = parseVisionCoordinates(coordinatesRaw);
+      const {
+        label: normalizedPositionLabel,
+        coordinates: normalizedPositionCoordinates,
+      } = extractNormalizedPositionFields(item);
 
       const rating = parseVisionRating(
         item.rating ??
@@ -482,13 +649,8 @@ function sanitizeVisionItems(items, fallbackType) {
           item.notes || item.description || item.summary
             ? String(item.notes || item.description || item.summary).trim()
             : undefined,
-        position:
-          item.position ||
-          item.location ||
-          item.slot ||
-          item.relativeLocation ||
-          undefined,
-        positionCoordinates,
+        position: normalizedPositionLabel,
+        positionCoordinates: normalizedPositionCoordinates,
         tags: normalizedTags,
         confidence,
         rating,
@@ -587,6 +749,7 @@ async function hydrateShelfItems(userId, shelfId) {
     collectable: e.collectable || null,
     manual: e.manual || null,
     position: e.position || null,
+    format: e.format || null,
     notes: e.notes || null,
     rating: e.rating ?? null,
     createdAt: e.createdAt,
@@ -777,6 +940,7 @@ async function addManualEntry(req, res) {
       body.position && typeof body.position === "object"
         ? body.position.coordinates ?? body.position
         : undefined,
+    format: typeof body.format === "string" ? body.format : undefined,
     notes: typeof body.notes === "string" ? body.notes : undefined,
     rating:
       typeof body.rating === "number"
@@ -814,6 +978,7 @@ async function addManualEntry(req, res) {
       id: join._id,
       manual,
       position: join.position || null,
+      format: join.format || null,
       notes: join.notes || null,
       rating: join.rating ?? null,
     },
@@ -854,6 +1019,7 @@ async function addCollectable(req, res) {
       body.position && typeof body.position === "object"
         ? body.position.coordinates ?? body.position
         : undefined,
+    format: typeof body.format === "string" ? body.format : undefined,
     notes: typeof body.notes === "string" ? body.notes : undefined,
     rating:
       typeof body.rating === "number"
@@ -870,6 +1036,7 @@ async function addCollectable(req, res) {
         id: existing._id,
         collectable,
         position: existing.position || null,
+        format: existing.format || null,
         notes: existing.notes || null,
         rating: existing.rating ?? null,
       },
@@ -918,6 +1085,7 @@ async function addCollectable(req, res) {
       id: join._id,
       collectable,
       position: join.position || null,
+      format: join.format || null,
       notes: join.notes || null,
       rating: join.rating ?? null,
     },
@@ -1256,7 +1424,9 @@ async function processShelfVision(req, res) {
     return res.status(400).json({ error: "Image too large; limit to 8MB base64 payload" });
 
   const imageDataUrl = `data:${mimeType || "image/jpeg"};base64,${cleaned}`;
-  const systemPrompt = prompt || buildVisionPrompt(shelf.type);
+  const normalizedShelfType = String(shelf.type || "").trim().toLowerCase();
+  const visionShelfType = normalizedShelfType === "game" ? "video game" : shelf.type;
+  const systemPrompt = prompt || buildVisionPrompt(visionShelfType);
 
   try {
     // --- Step 1: Run Vision ---
@@ -1642,3 +1812,4 @@ module.exports = {
 
   updateManualEntry,
 };
+

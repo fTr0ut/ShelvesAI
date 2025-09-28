@@ -19,6 +19,7 @@ const UserCollectionSchema = new mongoose.Schema(
     collectable: { type: mongoose.Schema.Types.ObjectId, ref: 'Collectable' },
     manual: { type: mongoose.Schema.Types.ObjectId, ref: 'UserManual' },
     position: { type: positionSchema, default: undefined },
+    format: { type: String, trim: true },
     notes: { type: String, trim: true },
     rating: { type: Number, min: 0, max: 5 },
   },

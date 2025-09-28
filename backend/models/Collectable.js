@@ -7,6 +7,7 @@ const ImageSchema = new mongoose.Schema({
   urlMedium: { type: String, trim: true },
   urlLarge: { type: String, trim: true },
   provider: { type: String, trim: true },
+  cachedSmallPath: { type: String, trim: true },
 }, { _id: false });
 
 const SourceSchema = new mongoose.Schema({
@@ -116,5 +117,6 @@ CollectableSchema.index({ 'fuzzyFingerprints.value': 1 }, { sparse: true });
 CollectableSchema.index({ 'identifiers.openlibrary.work': 1 }, { unique: true, sparse: true });
 CollectableSchema.index({ 'identifiers.isbn13': 1 }, { unique: true, sparse: true });
 CollectableSchema.index({ 'identifiers.upc': 1 }, { unique: true, sparse: true });
+CollectableSchema.index({ 'identifiers.steam.appId': 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("Collectable", CollectableSchema);

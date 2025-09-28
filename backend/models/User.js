@@ -43,6 +43,27 @@ function buildSearchTokens(source) {
   return Array.from(tokens).slice(0, 40);
 }
 
+const SteamAccountSchema = new mongoose.Schema(
+  {
+    steamId: { type: String, trim: true },
+    personaName: { type: String, trim: true },
+    profileUrl: { type: String, trim: true },
+    avatar: { type: String, trim: true },
+    avatarMedium: { type: String, trim: true },
+    avatarFull: { type: String, trim: true },
+    countryCode: { type: String, trim: true },
+    visibilityState: { type: Number },
+    visibility: { type: String, trim: true },
+    linkedAt: { type: Date },
+    lastSyncedAt: { type: Date },
+    lastImportedAt: { type: Date },
+    totalGames: { type: Number },
+    lastShelfId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shelf' },
+    optedIntoLibrarySync: { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
 const UserSchema = new mongoose.Schema(
   {
     // App username: required for local accounts; optional for Auth0-first accounts (set later)
@@ -66,6 +87,7 @@ const UserSchema = new mongoose.Schema(
     city: { type: String, trim: true },
     state: { type: String, trim: true },
     isPrivate: { type: Boolean, default: false },
+    steam: { type: SteamAccountSchema, default: undefined },
   },
   { timestamps: true }
 );
@@ -73,6 +95,7 @@ const UserSchema = new mongoose.Schema(
 UserSchema.index({ usernameLower: 1 });
 UserSchema.index({ usernameCategory: 1, usernameLower: 1 });
 UserSchema.index({ searchTokens: 1 });
+UserSchema.index({ 'steam.steamId': 1 }, { unique: true, sparse: true });
 
 UserSchema.methods.refreshSearchMetadata = function refreshSearchMetadata() {
   const usernameLower = this.username ? String(this.username).toLowerCase().trim() : undefined;

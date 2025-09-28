@@ -1,23 +1,8 @@
-// adapters/openlibrary.adapter.js
-const crypto = require('crypto');
+const { makeCollectableFingerprint, makeLightweightFingerprint } = require('../services/collectables/fingerprint');
 
+// adapters/openlibrary.adapter.js
 function unique(arr) {
   return Array.from(new Set((arr || []).filter(Boolean)));
-}
-
-function makeFingerprint({ title, primaryCreator, year }) {
-  const base = [title?.trim().toLowerCase() || '',
-                primaryCreator?.trim().toLowerCase() || '',
-                year || ''].join('|');
-  return crypto.createHash('sha1').update(base).digest('hex');
-}
-
-function makeLightweightFingerprint(title, creator) {
-  const base = [
-    (title || '').trim().toLowerCase(),
-    (creator || '').trim().toLowerCase(),
-  ].join('|');
-  return crypto.createHash('sha1').update(base).digest('hex');
 }
 
 /**
@@ -100,7 +85,7 @@ function openLibraryToCollectable(h) {
     });
   }
 
-  const lwf = h.lightweightFingerprint || makeLightweightFingerprint(h.title, primaryCreator);
+  const lwf = h.lightweightFingerprint || makeLightweightFingerprint({ title: h.title, primaryCreator });
 
   const doc = {
     kind: 'book',
@@ -133,7 +118,7 @@ function openLibraryToCollectable(h) {
     editions,
     sources,
 
-    fingerprint: makeFingerprint({ title: h.title, primaryCreator, year }),
+    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator, releaseYear: year }),
     extras: {},
   };
 
@@ -141,3 +126,4 @@ function openLibraryToCollectable(h) {
 }
 
 module.exports = { openLibraryToCollectable };
+
