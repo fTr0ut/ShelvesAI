@@ -1,4 +1,5 @@
-const { makeCollectableFingerprint } = require('../collectables/fingerprint');\nconst { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
+const { makeCollectableFingerprint } = require('../collectables/fingerprint');
+const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
 const {
   lookupWorkBookMetadata,
   lookupWorkByISBN,
