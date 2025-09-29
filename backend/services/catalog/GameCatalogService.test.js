@@ -42,8 +42,10 @@ describe('GameCatalogService.safeLookup', () => {
     expect(result.game.version_parent).toBe(1);
 
     const query = service.callIgdb.mock.calls[0][1];
+
     expect(query).toContain('category = (8, 9, 10, 11)');
     expect(query).toContain('(category = 0 & version_parent = null)');
+ main
   });
 
   it('returns ports that would previously be filtered out', async () => {
@@ -68,7 +70,7 @@ describe('GameCatalogService.safeLookup', () => {
     expect(result.game.category).toBe(11);
 
     const query = service.callIgdb.mock.calls[0][1];
-    expect(query).toContain('category = (8, 9, 10, 11)');
+    expect(query).toContain('category = (0, 8, 9, 10, 11)');
   });
 
   it('retries with a platform filter when the first search yields no results', async () => {
