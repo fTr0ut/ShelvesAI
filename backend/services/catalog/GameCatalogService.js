@@ -403,10 +403,13 @@ class GameCatalogService {
       'url',
     ];
 
+    const categoryFilter =
+      'where category = (0, 8, 9, 10, 11);';
+
     const parts = [
       `search "${sanitizedTitle}";`,
       `fields ${fields.join(',')};`,
-      'where (category = 0 & version_parent = null) | category = (8, 9, 10, 11);',
+      categoryFilter,
       `limit ${cappedLimit};`,
     ];
 
