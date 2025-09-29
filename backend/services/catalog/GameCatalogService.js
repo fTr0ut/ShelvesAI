@@ -810,6 +810,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
                           items: { type: 'string' },
                         },
                       },
+                      required: ['igdb', 'slug', 'upc'],
                     },
                   },
                   required: [

@@ -226,6 +226,7 @@ const gameCatalogService = new GameCatalogService();
 const catalogServices = [gameCatalogService, bookCatalogService];
 
 function resolveCatalogServiceForShelf(type) {
+  console.log("[resolveCatalogServiceForShelf]", { type });
   for (const service of catalogServices) {
     try {
       if (service.supportsShelfType(type)) return service;
@@ -1548,7 +1549,7 @@ async function processShelfVision(req, res) {
 
     // --- Step 2: Type-specific lookup + enrichment ---
     const catalogService = resolveCatalogServiceForShelf(shelf.type);
-
+    console.log("[shelfVision.catalog] using service", {catalogService: catalogService ? catalogService.serviceName : null});
     let resolved = [];
     let unresolved = itemsForLookup.map((input) => ({
       status: "unresolved",
