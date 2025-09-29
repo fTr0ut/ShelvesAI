@@ -119,21 +119,6 @@ function secondsToYear(timestampSeconds) {
   return String(date.getUTCFullYear());
 }
 
-function pickBest(list, scorer) {
-  if (!Array.isArray(list) || !list.length) return null;
-  let best = null;
-  let bestScore = -Infinity;
-  for (const item of list) {
-    const score = Number.isFinite(item?.score) ? item.score : scorer(item) || 0;
-    if (score > bestScore) {
-      bestScore = score;
-      best = { item, score };
-    }
-  }
-  if (!best) return null;
-  return { value: best.item, score: bestScore };
-}
-
 function makeDelay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -326,34 +311,28 @@ class GameCatalogService {
           });
           return null;
         }
-        const scored = payload
-          .map((game) => ({
-            game,
-            score: this.scoreCandidate(game, {
+        const candidates = payload
+          .map((game) =>
+            this.scoreCandidate(game, {
               title,
-              developer,
               platform,
-              publisher,
-              year,
             }),
-          }))
-          .filter((entry) => Number.isFinite(entry.score));
+          )
+          .filter(Boolean);
 
-        const best = pickBest(scored, (entry) => entry.score);
-        if (!best || best.score < 25) {
+        const best = this.pickBestCandidate(candidates);
+        if (!best) {
           console.info('[GameCatalogService.safeLookup] lookup.skipped', {
             ...logContext,
-            reason: 'low-score',
+            reason: 'no-matching-candidates',
             attempt,
             payloadLength: payload.length,
-            topCandidateName: best?.value?.game?.name,
-            topCandidateScore: best?.score,
           });
           return null;
         }
         return {
           provider: 'igdb',
-          game: best.value.game,
+          game: best.game,
           score: best.score,
         };
       } catch (err) {
@@ -424,9 +403,7 @@ class GameCatalogService {
       'url',
     ];
 
-    const filters = [
-      '(category = (0, 8, 9, 10, 11) | (category = 0 & version_parent = null))',
-    ];
+    const filters = [];
 
     if (sanitizedPlatform) {
       const platformFilters = [
@@ -438,86 +415,99 @@ class GameCatalogService {
       filters.push(`(${platformFilters.join(' | ')})`);
     }
 
-    const whereClause = `where ${filters.join(' & ')};`;
-
     const parts = [
       `search "${sanitizedTitle}";`,
       `fields ${fields.join(',')};`,
-      whereClause,
       `limit ${cappedLimit};`,
     ];
+
+    if (filters.length) {
+      parts.splice(2, 0, `where ${filters.join(' & ')};`);
+    }
 
     return parts.join('\n');
   }
 
-  scoreCandidate(game, expected = {}) {
-    if (!game) return 0;
-    const titleNeedle = normalizeCompare(expected.title);
-    const developerNeedle = normalizeCompare(expected.developer);
-    const platformNeedle = normalizeCompare(expected.platform);
-    const publisherNeedle = normalizeCompare(expected.publisher);
-    const yearNeedle = normalizeString(expected.year);
+  pickBestCandidate(candidates = []) {
+    if (!Array.isArray(candidates) || !candidates.length) return null;
+    const sorted = candidates.slice().sort((a, b) => {
+      if (a.exactTitleMatch !== b.exactTitleMatch) {
+        return a.exactTitleMatch ? -1 : 1;
+      }
+      if (a.exactPlatformMatch !== b.exactPlatformMatch) {
+        return a.exactPlatformMatch ? -1 : 1;
+      }
+      if (a.partialTitleMatch !== b.partialTitleMatch) {
+        return a.partialTitleMatch ? -1 : 1;
+      }
+      if (a.partialPlatformMatch !== b.partialPlatformMatch) {
+        return a.partialPlatformMatch ? -1 : 1;
+      }
+      if (a.releaseYearValue !== b.releaseYearValue) {
+        return a.releaseYearValue - b.releaseYearValue;
+      }
+      return b.score - a.score;
+    });
+    return sorted[0];
+  }
 
-    let score = 0;
+  scoreCandidate(game, expected = {}) {
+    if (!game) return null;
+    const titleNeedle = normalizeCompare(expected.title);
+    const platformNeedle = normalizeCompare(expected.platform);
 
     const gameTitle = normalizeCompare(game.name);
-    if (titleNeedle && gameTitle) {
-      if (gameTitle === titleNeedle) score += 60;
-      else if (gameTitle.includes(titleNeedle) || titleNeedle.includes(gameTitle))
-        score += 40;
-      else {
-        const distance = Math.abs(gameTitle.length - titleNeedle.length);
-        if (distance <= 2) score += 20;
-      }
+    if (!gameTitle || !titleNeedle) return null;
+
+    const exactTitleMatch = gameTitle === titleNeedle;
+    const partialTitleMatch =
+      !exactTitleMatch &&
+      (gameTitle.includes(titleNeedle) || titleNeedle.includes(gameTitle));
+
+    if (!exactTitleMatch && !partialTitleMatch) {
+      return null;
     }
 
-    const developers = this.extractCompanyNames(game, 'developer');
-    if (developerNeedle && developers.length) {
-      const hasMatch = developers.some(
-        (name) => normalizeCompare(name) === developerNeedle,
+    const platforms = this.extractPlatformNames(game).map((name) =>
+      normalizeCompare(name),
+    );
+    const exactPlatformMatch =
+      platformNeedle && platforms.includes(platformNeedle);
+    const partialPlatformMatch =
+      platformNeedle &&
+      !exactPlatformMatch &&
+      platforms.some(
+        (name) =>
+          name &&
+          (name.includes(platformNeedle) || platformNeedle.includes(name)),
       );
-      const partialMatch = developers.some((name) =>
-        normalizeCompare(name).includes(developerNeedle),
-      );
-      if (hasMatch) score += 40;
-      else if (partialMatch) score += 20;
+
+    const releaseYear = this.extractReleaseYear(game);
+    const parsedYear = Number.parseInt(releaseYear, 10);
+    const releaseYearValue = Number.isFinite(parsedYear)
+      ? parsedYear
+      : Number.POSITIVE_INFINITY;
+
+    let score = 0;
+    if (exactTitleMatch) score += 200;
+    else if (partialTitleMatch) score += 100;
+
+    if (exactPlatformMatch) score += 50;
+    else if (partialPlatformMatch) score += 20;
+
+    if (Number.isFinite(parsedYear)) {
+      score += Math.max(0, 5000 - parsedYear);
     }
 
-    const publishers = this.extractCompanyNames(game, 'publisher');
-    if (publisherNeedle && publishers.length) {
-      const hasMatch = publishers.some(
-        (name) => normalizeCompare(name) === publisherNeedle,
-      );
-      const partialMatch = publishers.some((name) =>
-        normalizeCompare(name).includes(publisherNeedle),
-      );
-      if (hasMatch) score += 25;
-      else if (partialMatch) score += 10;
-    }
-
-    const platforms = this.extractPlatformNames(game);
-    if (platformNeedle && platforms.length) {
-      const hasMatch = platforms.some(
-        (name) => normalizeCompare(name) === platformNeedle,
-      );
-      const partialMatch = platforms.some((name) =>
-        normalizeCompare(name).includes(platformNeedle),
-      );
-      if (hasMatch) score += 25;
-      else if (partialMatch) score += 10;
-    }
-
-    const releaseYear =
-      secondsToYear(game.first_release_date) || this.extractReleaseYear(game);
-    if (yearNeedle && releaseYear) {
-      if (normalizeString(releaseYear) === yearNeedle) score += 15;
-    }
-
-    if (Array.isArray(game.keywords) && game.keywords.length) {
-      score += 2;
-    }
-
-    return score;
+    return {
+      game,
+      score,
+      exactTitleMatch,
+      partialTitleMatch,
+      exactPlatformMatch,
+      partialPlatformMatch,
+      releaseYearValue,
+    };
   }
 
   extractCompanyNames(game, role) {

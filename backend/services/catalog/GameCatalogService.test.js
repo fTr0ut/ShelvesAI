@@ -24,60 +24,62 @@ describe('GameCatalogService.safeLookup', () => {
     return service;
   }
 
-  it('returns remasters even when they retain their version parent', async () => {
-    const remaster = {
+  it('omits category filters and prefers the earliest release year among exact matches', async () => {
+    const olderRelease = {
       id: 2,
       name: 'Super Mario 64',
-      category: 9,
-      version_parent: 1,
+      first_release_date: Date.UTC(1996, 5, 23) / 1000,
       platforms: [{ name: 'Nintendo Switch' }],
     };
 
-    const service = createService([remaster]);
+    const newerRelease = {
+      id: 3,
+      name: 'Super Mario 64',
+      first_release_date: Date.UTC(2020, 8, 18) / 1000,
+      platforms: [{ name: 'Nintendo Switch' }],
+    };
+
+    const service = createService([newerRelease, olderRelease]);
 
     const result = await service.safeLookup(baseInput);
 
     expect(result).toBeTruthy();
-    expect(result.game).toBe(remaster);
-    expect(result.game.version_parent).toBe(1);
+    expect(result.game).toBe(olderRelease);
 
     const query = service.callIgdb.mock.calls[0][1];
-
-    expect(query).toContain('category = (8, 9, 10, 11)');
-    expect(query).toContain('(category = 0 & version_parent = null)');
- main
+    expect(query).not.toContain('category =');
   });
 
-  it('returns ports that would previously be filtered out', async () => {
-    const port = {
-      id: 3,
-      name: 'Super Mario 64 3D',
-      category: 11,
-      version_parent: 1,
-      platforms: [{ name: 'Nintendo 3DS' }],
+  it('prefers exact title matches over partial matches when choosing results', async () => {
+    const partialMatch = {
+      id: 4,
+      name: 'Super Mario 64 DS',
+      first_release_date: Date.UTC(2004, 10, 21) / 1000,
+      platforms: [{ name: 'Nintendo Switch' }],
     };
 
-    const service = createService([port]);
+    const exactMatch = {
+      id: 5,
+      name: 'Super Mario 64',
+      first_release_date: Date.UTC(2015, 8, 24) / 1000,
+      platforms: [{ name: 'Nintendo Switch' }],
+    };
 
-    const result = await service.safeLookup({
-      title: 'Super Mario 64 3D',
-      name: 'Super Mario 64 3D',
-      platform: 'Nintendo 3DS',
-    });
+    const service = createService([partialMatch, exactMatch]);
+
+    const result = await service.safeLookup(baseInput);
 
     expect(result).toBeTruthy();
-    expect(result.game).toBe(port);
-    expect(result.game.category).toBe(11);
+    expect(result.game).toBe(exactMatch);
 
     const query = service.callIgdb.mock.calls[0][1];
-    expect(query).toContain('category = (0, 8, 9, 10, 11)');
+    expect(query).not.toContain('category =');
   });
 
   it('retries with a platform filter when the first search yields no results', async () => {
     const fallbackResult = {
-      id: 5,
+      id: 6,
       name: 'Super Mario 64',
-      category: 9,
       platforms: [{ name: 'Nintendo Switch' }],
     };
 
