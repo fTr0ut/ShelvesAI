@@ -12,6 +12,7 @@ const collectablesRoutes = require('./routes/collectables');
 const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
 const steamRoutes = require('./routes/steam');
+const steamOpenIdRoutes = require('./routes/steamOpenId');
 
 const app = express();
 // Minimal request log (dev only)
@@ -53,6 +54,7 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
+app.use('/steam', steamOpenIdRoutes);
 app.use('/api/steam', steamRoutes);
 // Optional: Auth0-protected example route when configured
 try {
