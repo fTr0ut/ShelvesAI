@@ -295,12 +295,29 @@ class GameCatalogService {
       return null;
     }
 
-    const query = this.buildSearchQuery({ title, limit: this.maxResults });
+    let query = this.buildSearchQuery({ title, limit: this.maxResults });
+    let usingPlatformFilter = false;
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= retries; ) {
       try {
         const payload = await this.callIgdb('games', query);
         if (!Array.isArray(payload) || payload.length === 0) {
+          if (platform && !usingPlatformFilter) {
+            usingPlatformFilter = true;
+            query = this.buildSearchQuery({
+              title,
+              limit: this.maxResults,
+              platform,
+            });
+            console.info('[GameCatalogService.safeLookup] lookup.retry', {
+              ...logContext,
+              reason: 'no-results',
+              payloadLength: 0,
+              attempt,
+              fallback: 'platform-filter',
+            });
+            continue;
+          }
           console.info('[GameCatalogService.safeLookup] lookup.skipped', {
             ...logContext,
             reason: 'no-results',
@@ -342,6 +359,7 @@ class GameCatalogService {
       } catch (err) {
         const message = String(err?.message || err);
         if (message.includes('401') && attempt < retries) {
+          attempt += 1;
           await this.getAccessToken({ forceRefresh: true });
           continue;
         }
@@ -352,6 +370,7 @@ class GameCatalogService {
             title,
           });
           await makeDelay(backoff);
+          attempt += 1;
           continue;
         }
         if (message.includes('aborted') && attempt < retries) {
@@ -361,6 +380,7 @@ class GameCatalogService {
             title,
           });
           await makeDelay(backoff);
+          attempt += 1;
           continue;
         }
         throw err;
@@ -370,8 +390,9 @@ class GameCatalogService {
     return null;
   }
 
-  buildSearchQuery({ title, limit }) {
+  buildSearchQuery({ title, limit, platform }) {
     const sanitizedTitle = normalizeString(title).replace(/"/g, '\\"');
+    const sanitizedPlatform = normalizeString(platform).replace(/"/g, '\\"');
     const cappedLimit = Math.max(1, Math.min(limit || this.maxResults, 50));
     const fields = [
       'id',
@@ -403,13 +424,26 @@ class GameCatalogService {
       'url',
     ];
 
-    const categoryFilter =
-      'where category = (0, 8, 9, 10, 11);';
+    const filters = [
+      '(category = (8, 9, 10, 11) | (category = 0 & version_parent = null))',
+    ];
+
+    if (sanitizedPlatform) {
+      const platformFilters = [
+        `platforms.name ~ *"${sanitizedPlatform}"*`,
+        `platforms.abbreviation ~ *"${sanitizedPlatform}"*`,
+        `release_dates.platform.name ~ *"${sanitizedPlatform}"*`,
+        `release_dates.platform.abbreviation ~ *"${sanitizedPlatform}"*`,
+      ];
+      filters.push(`(${platformFilters.join(' | ')})`);
+    }
+
+    const whereClause = `where ${filters.join(' & ')};`;
 
     const parts = [
       `search "${sanitizedTitle}";`,
       `fields ${fields.join(',')};`,
-      categoryFilter,
+      whereClause,
       `limit ${cappedLimit};`,
     ];
 
