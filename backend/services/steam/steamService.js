@@ -12,6 +12,35 @@ const STEAM_API_BASE = 'https://api.steampowered.com';
 const STEAM_STORE_BASE = 'https://store.steampowered.com/app';
 const STEAM_IMAGE_CDN = 'https://cdn.cloudflare.steamstatic.com/steam/apps';
 
+function normalizeReturnUrl(returnTo, fallback) {
+  const requested = returnTo || '';
+  const candidateUrls = [];
+  if (requested) candidateUrls.push(requested);
+  if (fallback) candidateUrls.push(fallback);
+  if (!fallback && process.env.STEAM_OPENID_RETURN_URL) {
+    candidateUrls.push(process.env.STEAM_OPENID_RETURN_URL);
+  }
+
+  for (const candidate of candidateUrls) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return {
+          requested: requested || null,
+          url: parsed,
+          usingFallback: candidate !== requested,
+        };
+      }
+    } catch (err) {
+      // Ignore invalid URLs and continue searching for a usable fallback.
+    }
+  }
+
+  const err = new Error('Steam OpenID return URL must use http or https');
+  err.code = 'STEAM_RETURN_URL_INVALID';
+  throw err;
+}
+
 function ensureApiKey() {
   const key = (process.env.STEAM_WEB_API_KEY || process.env.STEAM_API_KEY || '').trim();
   if (!key) {
@@ -55,8 +84,7 @@ async function callSteamApi(path, params = {}) {
 }
 
 function buildOpenIdLoginUrl({ returnTo, realm, state }) {
-  if (!returnTo) throw new Error('returnTo is required to initiate Steam OpenID login');
-  const returnUrl = new URL(returnTo);
+  const { url: returnUrl } = normalizeReturnUrl(returnTo);
   if (state) {
     returnUrl.searchParams.set('state', state);
   }
@@ -223,4 +251,5 @@ module.exports = {
   getOwnedGames,
   resolveVanityUrl,
   ensureCollectableForSteamGame,
+  normalizeReturnUrl,
 };

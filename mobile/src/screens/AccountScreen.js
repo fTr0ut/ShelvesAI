@@ -116,7 +116,8 @@ export default function AccountScreen({ navigation }) {
         throw new Error('Steam sign-in is unavailable right now')
       }
 
-      const result = await WebBrowser.openAuthSessionAsync(start.redirectUrl, returnUrl)
+      const authReturnTo = start?.returnTo || start?.requestedReturnTo || returnUrl
+      const result = await WebBrowser.openAuthSessionAsync(start.redirectUrl, authReturnTo)
       if (result.type === 'cancel' || result.type === 'dismiss') {
         setSteamMessage('Steam linking was cancelled.')
         return

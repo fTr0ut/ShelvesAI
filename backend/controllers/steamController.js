@@ -11,6 +11,7 @@ const {
   getPlayerSummary,
   getOwnedGames,
   ensureCollectableForSteamGame,
+  normalizeReturnUrl,
 } = require('../services/steam/steamService');
 
 const DEFAULT_IMPORT_LIMIT = 250;
@@ -25,9 +26,14 @@ function ensureJwtSecret() {
   return secret;
 }
 
-function signLinkState(userId) {
+function signLinkState(userId, metadata = {}) {
   const secret = ensureJwtSecret();
-  return jwt.sign({ sub: userId, purpose: 'steam-link' }, secret, { expiresIn: '10m' });
+  const payload = { sub: userId, purpose: 'steam-link' };
+  if (metadata && typeof metadata === 'object') {
+    if (metadata.clientReturnTo) payload.clientReturnTo = metadata.clientReturnTo;
+    if (metadata.returnTo) payload.returnTo = metadata.returnTo;
+  }
+  return jwt.sign(payload, secret, { expiresIn: '10m' });
 }
 
 function verifyLinkState(token) {
@@ -75,17 +81,30 @@ async function getStatus(req, res) {
 async function startLink(req, res) {
   try {
     const body = req.body ?? {};
-    const callbackUrl = body.returnUrl || body.redirectUri || process.env.STEAM_OPENID_RETURN_URL;
-    if (!callbackUrl) {
+    const fallbackReturnUrl = process.env.STEAM_OPENID_RETURN_URL;
+    const requestedReturnUrl = body.returnUrl || body.redirectUri || fallbackReturnUrl;
+    if (!requestedReturnUrl) {
       return res.status(400).json({ error: 'returnUrl is required' });
     }
-    const state = signLinkState(req.user.id);
+    const { url: sanitizedReturnUrl, usingFallback } = normalizeReturnUrl(requestedReturnUrl, fallbackReturnUrl);
+    if (usingFallback && requestedReturnUrl) {
+      sanitizedReturnUrl.searchParams.set('client_return_to', requestedReturnUrl);
+    }
+    const sanitizedReturnTo = sanitizedReturnUrl.toString();
+    const state = signLinkState(req.user.id, {
+      clientReturnTo: requestedReturnUrl,
+      returnTo: sanitizedReturnTo,
+    });
     const { redirectUrl, returnTo, realm } = buildOpenIdLoginUrl({
-      returnTo: callbackUrl,
+      returnTo: sanitizedReturnTo,
       realm: body.realm || process.env.STEAM_OPENID_REALM,
       state,
     });
-    res.json({ redirectUrl, state, returnTo, realm });
+    const payload = { redirectUrl, state, returnTo, realm };
+    if (requestedReturnUrl) {
+      payload.requestedReturnTo = requestedReturnUrl;
+    }
+    res.json(payload);
   } catch (err) {
     console.error('[steam] startLink failed', err);
     const status = err.code === "JWT_SECRET_MISSING" ? 500 : 500;
