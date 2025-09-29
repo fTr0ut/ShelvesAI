@@ -14,6 +14,7 @@ const OpenAI = require("openai");
 const EventLog = require("../models/EventLog");
 
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
+const { GameCatalogService } = require("../services/catalog/GameCatalogService");
 
 let openaiClient;
 
@@ -221,6 +222,21 @@ const structuredVisionFormat = {
 };
 
 const bookCatalogService = new BookCatalogService();
+const gameCatalogService = new GameCatalogService();
+const catalogServices = [gameCatalogService, bookCatalogService];
+
+function resolveCatalogServiceForShelf(type) {
+  for (const service of catalogServices) {
+    try {
+      if (service.supportsShelfType(type)) return service;
+    } catch (err) {
+      console.error('[shelfVision.catalogService] supportsShelfType failed', {
+        error: err?.message || err,
+      });
+    }
+  }
+  return null;
+}
 
 function getVisionMaxOutputTokens() {
   const envValue = parseInt(
@@ -1531,9 +1547,7 @@ async function processShelfVision(req, res) {
     });
 
     // --- Step 2: Type-specific lookup + enrichment ---
-    const catalogService = bookCatalogService.supportsShelfType(shelf.type)
-      ? bookCatalogService
-      : null;
+    const catalogService = resolveCatalogServiceForShelf(shelf.type);
 
     let resolved = [];
     let unresolved = itemsForLookup.map((input) => ({
