@@ -27,7 +27,15 @@ export default function AccountScreen({ navigation }) {
 
   const extraConfig = useMemo(() => getExtraConfig(), [])
   const scheme = useMemo(() => extraConfig?.auth0?.scheme || Constants?.expoConfig?.scheme || 'shelvesai', [extraConfig])
-  const steamReturnUrl = useMemo(() => makeRedirectUri({ scheme, path: 'steam-link' }), [scheme])
+  const isExpoGo = Constants?.appOwnership === 'expo'
+  const steamReturnUrl = useMemo(() => {
+    const config = { scheme, path: 'steam-link' }
+    if (isExpoGo) {
+      config.useProxy = true
+    }
+    return makeRedirectUri(config)
+  }, [scheme, isExpoGo])
+  const steamClientReturnTo = useMemo(() => `${scheme}://steam-link`, [scheme])
 
   useEffect(() => {
     (async () => {
@@ -110,13 +118,22 @@ export default function AccountScreen({ navigation }) {
     setSteamError('')
     setSteamMessage('')
     try {
-      const returnUrl = steamReturnUrl
-      const start = await apiRequest({ apiBase, path: '/api/steam/link/start', method: 'POST', token, body: { returnUrl } })
+      const requestedReturnUrl = (() => {
+        if (!isExpoGo) return steamReturnUrl
+        try {
+          const url = new URL(steamReturnUrl)
+          url.searchParams.set('client_return_to', steamClientReturnTo)
+          return url.toString()
+        } catch (err) {
+          return steamReturnUrl
+        }
+      })()
+      const start = await apiRequest({ apiBase, path: '/api/steam/link/start', method: 'POST', token, body: { returnUrl: requestedReturnUrl } })
       if (!start?.redirectUrl) {
         throw new Error('Steam sign-in is unavailable right now')
       }
 
-      const authReturnTo = start?.returnTo || start?.requestedReturnTo || returnUrl
+      const authReturnTo = start?.requestedReturnTo || start?.returnTo || requestedReturnUrl
       const result = await WebBrowser.openAuthSessionAsync(start.redirectUrl, authReturnTo)
       if (result.type === 'cancel' || result.type === 'dismiss') {
         setSteamMessage('Steam linking was cancelled.')
@@ -149,7 +166,7 @@ export default function AccountScreen({ navigation }) {
     } finally {
       setSteamBusy(false)
     }
-  }, [steamBusy, token, steamReturnUrl, apiBase, loadSteamStatus])
+  }, [steamBusy, token, steamReturnUrl, steamClientReturnTo, isExpoGo, apiBase, loadSteamStatus])
 
   const handleUnlinkSteam = useCallback(async () => {
     if (steamBusy || !token) return
