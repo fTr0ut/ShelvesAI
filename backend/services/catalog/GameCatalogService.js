@@ -257,13 +257,29 @@ class GameCatalogService {
 
   async safeLookup(item, retries = DEFAULT_RETRIES) {
     const title = normalizeString(item?.name || item?.title);
-    if (!title) return null;
     const developer = normalizeString(
       item?.author || item?.primaryCreator || item?.developer,
     );
     const platform = normalizeString(item?.systemName || item?.platform);
     const publisher = normalizeString(item?.publisher);
     const year = normalizeString(item?.year);
+
+    const logContext = pruneObject({
+      ...summarizeItemForLog(item),
+      title: title || undefined,
+      developer: developer || undefined,
+      platform: platform || undefined,
+      publisher: publisher || undefined,
+      year: year || undefined,
+    });
+
+    if (!title) {
+      console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+        ...logContext,
+        reason: 'missing-title',
+      });
+      return null;
+    }
 
     if (!this.clientId || !this.clientSecret) {
       if (!this._warnedMissingCredentials) {
@@ -272,6 +288,10 @@ class GameCatalogService {
         );
         this._warnedMissingCredentials = true;
       }
+      console.warn('[GameCatalogService.safeLookup] lookup.skipped', {
+        ...logContext,
+        reason: 'missing-credentials',
+      });
       return null;
     }
 
@@ -281,6 +301,12 @@ class GameCatalogService {
       try {
         const payload = await this.callIgdb('games', query);
         if (!Array.isArray(payload) || payload.length === 0) {
+          console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+            ...logContext,
+            reason: 'no-results',
+            payloadLength: Array.isArray(payload) ? payload.length : 0,
+            attempt,
+          });
           return null;
         }
         const scored = payload
@@ -298,6 +324,14 @@ class GameCatalogService {
 
         const best = pickBest(scored, (entry) => entry.score);
         if (!best || best.score < 25) {
+          console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+            ...logContext,
+            reason: 'low-score',
+            attempt,
+            payloadLength: payload.length,
+            topCandidateName: best?.value?.game?.name,
+            topCandidateScore: best?.score,
+          });
           return null;
         }
         return {
