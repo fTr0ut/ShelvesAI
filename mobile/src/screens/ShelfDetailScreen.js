@@ -17,7 +17,8 @@ import {
   StyleSheet,
   Alert,
   FlatList,
-  Modal
+  Modal,
+  ActivityIndicator,
 } from "react-native";
 
 import { useFocusEffect } from "@react-navigation/native";
@@ -37,6 +38,8 @@ const MIME_EXTENSIONS = {
 };
 
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+const VIDEO_GAME_KEYWORDS = ['video game', 'video games', 'game', 'games'];
 
 async function ensureBase64Image(asset) {
   if (!asset) return null;
@@ -77,6 +80,75 @@ function resolveMimeType(asset) {
     }
   }
   return 'image/jpeg';
+}
+
+function normalizeShelfType(type) {
+  if (!type) return '';
+  return String(type).trim().toLowerCase();
+}
+
+function isVideoGameShelfType(type) {
+  const normalized = normalizeShelfType(type);
+  if (!normalized) return false;
+  return VIDEO_GAME_KEYWORDS.some((keyword) =>
+    normalized === keyword || normalized.includes(keyword)
+  );
+}
+
+function transformSteamGameToCollectable(game) {
+  if (!game) return null;
+
+  const appIdRaw = game.appId ?? game.appid ?? game.id ?? game.appID ?? null;
+  const appId = appIdRaw ? String(appIdRaw) : null;
+  const title =
+    game.title || game.name || game.originalTitle || 'Untitled game';
+
+  const playtime = Number(
+    game.playtimeForever ??
+      game.playtime_forever ??
+      game.playtime ??
+      game.totalPlaytimeMinutes ??
+      0
+  );
+
+  const lastPlayedRaw =
+    game.lastPlayedAt ??
+    game.lastPlayed ??
+    game.rtime_last_played ??
+    null;
+
+  const lastPlayedDate = (() => {
+    if (!lastPlayedRaw && lastPlayedRaw !== 0) return null;
+    if (typeof lastPlayedRaw === 'string') return lastPlayedRaw;
+    if (typeof lastPlayedRaw === 'number') {
+      if (lastPlayedRaw > 10 ** 12) {
+        return new Date(lastPlayedRaw).toISOString();
+      }
+      return new Date(lastPlayedRaw * 1000).toISOString();
+    }
+    return null;
+  })();
+
+  return {
+    _id: appId ? `steam-${appId}` : `steam-${Math.random().toString(36).slice(2)}`,
+    kind: 'game',
+    type: 'Video Game',
+    title,
+    primaryCreator: game.primaryCreator || game.developer || null,
+    format: 'Digital',
+    publisher: game.publisher || null,
+    year: game.year ?? game.releaseYear ?? null,
+    identifiers: appId
+      ? { steam: { appId: [appId] } }
+      : {},
+    extras: {
+      steam: {
+        appId: appId || null,
+        playtimeForeverMinutes: Number.isFinite(playtime) ? playtime : 0,
+        lastPlayedAt: lastPlayedDate,
+      },
+    },
+  };
 }
 
 
@@ -128,6 +200,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
   const [ediItem, setEditItem] = useState(null);
   const [needsReviewIds, setNeedsReviewIds] = useState([]);
+  const [steamStatus, setSteamStatus] = useState(null);
+  const [steamLoading, setSteamLoading] = useState(false);
+  const [steamBusy, setSteamBusy] = useState(false);
+  const [steamError, setSteamError] = useState("");
+  const [steamMessage, setSteamMessage] = useState("");
+  const [steamPreview, setSteamPreview] = useState([]);
+  const [steamSummary, setSteamSummary] = useState(null);
+
+  const isVideoGameShelf = useMemo(() => {
+    const type = shelf?.type || route?.params?.type || "";
+    return isVideoGameShelfType(type);
+  }, [shelf?.type, route?.params?.type]);
 
   const openShelfVision = useCallback(() => setVisionOpen(true), []);
   const closeShelfVision = useCallback(() => setVisionOpen(false), []);
@@ -171,6 +255,46 @@ export default function ShelfDetailScreen({ route, navigation }) {
       }
     }, [load]),
   );
+
+  useEffect(() => {
+    if (!isVideoGameShelf || !token) {
+      setSteamStatus(null);
+      setSteamPreview([]);
+      setSteamSummary(null);
+      setSteamMessage("");
+      setSteamError("");
+      setSteamBusy(false);
+      setSteamLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setSteamLoading(true);
+    setSteamError("");
+
+    (async () => {
+      try {
+        const data = await apiRequest({ apiBase, path: "/api/steam/status", token });
+        if (!cancelled) {
+          setSteamStatus(data.steam || null);
+          setSteamError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSteamError(err.message);
+        }
+      } finally {
+        if (!cancelled) {
+          setSteamLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, token, isVideoGameShelf]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -482,7 +606,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }
   }, [items, itemSortMode]);
 
-  const refreshItems = async () => {
+  const refreshItems = useCallback(async () => {
     try {
       const data = await apiRequest({
         apiBase,
@@ -496,7 +620,164 @@ export default function ShelfDetailScreen({ route, navigation }) {
     } catch (e) {
       setError(e.message);
     }
-  };
+  }, [apiBase, id, token]);
+
+  const steamPreviewCount = steamPreview.length;
+
+  const previewSteamLibrary = useCallback(async () => {
+    if (steamBusy) return;
+    if (!token) {
+      setSteamError("Authentication required to access Steam.");
+      return;
+    }
+    if (!isVideoGameShelf) return;
+    if (!steamStatus?.steamId) {
+      setSteamError("Link your Steam account in Account settings to import.");
+      return;
+    }
+
+    setSteamBusy(true);
+    setSteamError("");
+    setSteamMessage("");
+
+    try {
+      const data = await apiRequest({
+        apiBase,
+        path: "/api/steam/library/import",
+        method: "POST",
+        token,
+        body: { shelfId: id, dryRun: true },
+      });
+
+      const previewRaw = Array.isArray(data?.summary?.preview)
+        ? data.summary.preview
+        : [];
+      const transformed = previewRaw
+        .map((game) => transformSteamGameToCollectable(game))
+        .filter(Boolean);
+
+      const summaryInfo = data?.summary
+        ? {
+            ...data.summary,
+            totalGames: data?.totalGames ?? null,
+            processed: data?.processed ?? transformed.length,
+            dryRun: true,
+          }
+        : null;
+
+      setSteamPreview(transformed);
+      setSteamSummary(summaryInfo);
+
+      if (!transformed.length) {
+        setSteamMessage("No new Steam games to import right now.");
+      } else {
+        const total = data?.totalGames ?? transformed.length;
+        setSteamMessage(
+          `Previewing ${transformed.length} of ${total} games from your Steam library.`
+        );
+      }
+    } catch (err) {
+      setSteamError(err.message || "Failed to load Steam preview");
+      setSteamPreview([]);
+    } finally {
+      setSteamBusy(false);
+    }
+  }, [steamBusy, token, isVideoGameShelf, steamStatus, apiBase, id]);
+
+  const performSteamImport = useCallback(async () => {
+    if (steamBusy) return;
+    if (!token) {
+      setSteamError("Authentication required to import from Steam.");
+      return;
+    }
+    if (!isVideoGameShelf) return;
+    if (!steamStatus?.steamId) {
+      setSteamError("Link your Steam account in Account settings to import.");
+      return;
+    }
+
+    setSteamBusy(true);
+    setSteamError("");
+
+    try {
+      const data = await apiRequest({
+        apiBase,
+        path: "/api/steam/library/import",
+        method: "POST",
+        token,
+        body: { shelfId: id },
+      });
+
+      const summaryInfo = data?.summary
+        ? {
+            ...data.summary,
+            totalGames: data?.totalGames ?? null,
+            processed: data?.processed ?? null,
+            dryRun: false,
+          }
+        : null;
+
+      setSteamSummary(summaryInfo);
+      setSteamPreview([]);
+
+      const imported = data?.summary?.imported ?? 0;
+      const skipped = data?.summary?.skippedExisting ?? 0;
+
+      if (!imported && !skipped) {
+        setSteamMessage("No new Steam games were imported.");
+      } else {
+        const messageParts = [];
+        messageParts.push(
+          `Imported ${imported} game${imported === 1 ? "" : "s"} from Steam.`
+        );
+        if (skipped) {
+          messageParts.push(
+            `Skipped ${skipped} already on this shelf.`
+          );
+        }
+        if (data?.totalGames && imported) {
+          messageParts.push(`Library size: ${data.totalGames}.`);
+        }
+        setSteamMessage(messageParts.join(" "));
+      }
+
+      try {
+        const statusData = await apiRequest({
+          apiBase,
+          path: "/api/steam/status",
+          token,
+        });
+        setSteamStatus(statusData.steam || null);
+      } catch (_ignored) {
+        // silently ignore status refresh errors
+      }
+
+      await refreshItems();
+    } catch (err) {
+      setSteamError(err.message || "Steam import failed");
+    } finally {
+      setSteamBusy(false);
+    }
+  }, [steamBusy, token, isVideoGameShelf, steamStatus, apiBase, id, refreshItems]);
+
+  const handleSteamImport = useCallback(() => {
+    if (steamBusy) return;
+    if (!steamStatus?.steamId) {
+      setSteamError("Link your Steam account in Account settings to import.");
+      return;
+    }
+
+    const message = steamPreviewCount
+      ? `Import ${steamPreviewCount} previewed game${
+          steamPreviewCount === 1 ? "" : "s"
+        } from Steam?`
+      : "Import your Steam library into this shelf? This may take a moment.";
+
+    Alert.alert("Import from Steam", message, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Import", onPress: () => performSteamImport() },
+    ]);
+  }, [steamBusy, steamStatus, steamPreviewCount, performSteamImport]);
 
   const openShelfEdit = useCallback(() => {
     if (!shelf) return;
@@ -777,6 +1058,112 @@ export default function ShelfDetailScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
         </View>
+
+        {isVideoGameShelf ? (
+          <View style={styles.card}>
+            <Text style={styles.section}>Steam Library</Text>
+
+            {steamError ? <Text style={styles.error}>{steamError}</Text> : null}
+
+            {steamMessage ? (
+              <Text style={styles.success}>{steamMessage}</Text>
+            ) : null}
+
+            {steamLoading ? (
+              <View style={styles.steamStatusRow}>
+                <ActivityIndicator size="small" color="#9ec1ff" />
+                <Text style={styles.itemMeta}>Checking Steam link…</Text>
+              </View>
+            ) : steamStatus?.steamId ? (
+              <>
+                <Text style={styles.itemMeta} numberOfLines={2}>
+                  Linked as {steamStatus.personaName || `SteamID: ${steamStatus.steamId}`}
+                </Text>
+
+                {steamStatus.totalGames ? (
+                  <Text style={styles.itemMeta}>
+                    Library size: {steamStatus.totalGames}
+                  </Text>
+                ) : null}
+
+                {steamSummary &&
+                steamSummary.processed !== undefined &&
+                steamSummary.processed !== null ? (
+                  <Text style={styles.itemMeta}>
+                    Last run processed {steamSummary.processed} items
+                    {typeof steamSummary.imported === "number"
+                      ? `, imported ${steamSummary.imported}`
+                      : ""}
+                    .
+                  </Text>
+                ) : null}
+
+                {steamPreviewCount ? (
+                  <View style={styles.steamPreviewList}>
+                    {steamPreview.map((preview) => {
+                      const appId =
+                        preview?.identifiers?.steam?.appId?.[0] ||
+                        preview?.extras?.steam?.appId ||
+                        null;
+                      return (
+                        <View key={preview._id} style={styles.steamPreviewItem}>
+                          <Text style={styles.steamPreviewTitle} numberOfLines={1}>
+                            {preview.title}
+                          </Text>
+                          {appId ? (
+                            <Text style={styles.steamPreviewMeta}>AppID {appId}</Text>
+                          ) : null}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
+
+                <View style={styles.steamActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.smallButton,
+                      styles.steamButton,
+                      steamBusy && styles.buttonDisabled,
+                    ]}
+                    onPress={previewSteamLibrary}
+                    disabled={steamBusy}
+                  >
+                    <Text style={[styles.smallButtonText, styles.steamButtonText]}>
+                      {steamBusy ? "Working…" : "Preview import"}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.smallButton,
+                      styles.primarySmallButton,
+                      steamBusy && styles.buttonDisabled,
+                    ]}
+                    onPress={handleSteamImport}
+                    disabled={steamBusy}
+                  >
+                    <Text style={styles.smallButtonText}>Import from Steam</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.itemMeta}>
+                  Link your Steam account from the Account tab to import your library.
+                </Text>
+
+                <TouchableOpacity
+                  style={[styles.smallButton, styles.steamButton, steamBusy && styles.buttonDisabled]}
+                  onPress={() => navigation.navigate("Account")}
+                  disabled={steamBusy}
+                >
+                  <Text style={[styles.smallButtonText, styles.steamButtonText]}>Open Account</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.section}>Items</Text>
@@ -1359,6 +1746,8 @@ const styles = StyleSheet.create({
 
   primaryButton: { backgroundColor: "#5a8efc" },
 
+  buttonDisabled: { opacity: 0.6 },
+
   buttonText: { color: "#0b0f14", fontWeight: "700" },
 
   success: { color: "#a5e3bf", marginTop: 8 },
@@ -1431,7 +1820,51 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
 
+  primarySmallButton: { backgroundColor: "#5a8efc" },
+
+  steamButton: { backgroundColor: "#1c2a3f" },
+
+  steamButtonText: { color: "#e6edf3" },
+
   smallButtonText: { color: "#0b0f14", fontWeight: "700" },
+
+  steamStatusRow: {
+    flexDirection: "row",
+
+    alignItems: "center",
+
+    gap: 8,
+
+    marginTop: 8,
+  },
+
+  steamPreviewList: { marginTop: 12, gap: 8 },
+
+  steamPreviewItem: {
+    borderWidth: 1,
+
+    borderColor: "#223043",
+
+    borderRadius: 10,
+
+    padding: 10,
+
+    backgroundColor: "#0e1522",
+  },
+
+  steamPreviewTitle: { color: "#e6edf3", fontWeight: "600", fontSize: 13 },
+
+  steamPreviewMeta: { color: "#55657a", fontSize: 11, marginTop: 2 },
+
+  steamActions: {
+    flexDirection: "row",
+
+    alignItems: "center",
+
+    gap: 12,
+
+    marginTop: 12,
+  },
 
   muted: { color: "#9aa6b2" },
 
