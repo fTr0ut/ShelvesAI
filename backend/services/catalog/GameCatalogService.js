@@ -77,6 +77,35 @@ function pruneObject(source) {
   return out;
 }
 
+function summarizeItemForLog(item, index) {
+  const title = normalizeString(item?.name || item?.title);
+  const platform = normalizeString(item?.systemName || item?.platform);
+  const developer = normalizeString(
+    item?.author || item?.primaryCreator || item?.developer,
+  );
+
+  return pruneObject({
+    index,
+    title: title ? title.slice(0, 80) : undefined,
+    platform: platform ? platform.slice(0, 60) : undefined,
+    developer: developer ? developer.slice(0, 60) : undefined,
+    year: normalizeString(item?.year) || undefined,
+  });
+}
+
+function summarizeEnrichment(enrichment) {
+  if (!enrichment) return null;
+
+  const gameTitle = normalizeString(enrichment.game?.name);
+
+  return pruneObject({
+    provider: enrichment.provider,
+    gameId: enrichment.game?.id,
+    title: gameTitle ? gameTitle.slice(0, 80) : undefined,
+    score: Number.isFinite(enrichment.score) ? enrichment.score : undefined,
+  });
+}
+
 function igdbImageUrl(imageId, size) {
   if (!imageId) return null;
   const preset = size || 't_cover_big';
@@ -168,26 +197,54 @@ class GameCatalogService {
     const results = new Array(items.length);
     let index = 0;
 
+    const previewSize = Math.min(items.length, 3);
+    const preview = [];
+    for (let i = 0; i < previewSize; i++) {
+      preview.push(summarizeItemForLog(items[i], i));
+    }
+    console.info('[GameCatalogService.lookupFirstPass] starting batch', {
+      total: items.length,
+      preview,
+    });
+
     const worker = async () => {
       while (index < items.length) {
         const currentIndex = index++;
         const input = items[currentIndex];
+        const logContext = summarizeItemForLog(input, currentIndex);
+        console.info('[GameCatalogService.lookupFirstPass] lookup.start', logContext);
+        let enrichment = null;
+        let status = 'unresolved';
         try {
-          const enrichment = await this.safeLookup(input, retries);
+          enrichment = await this.safeLookup(input, retries);
           if (enrichment) {
             results[currentIndex] = {
               status: 'resolved',
               input,
               enrichment,
             };
+            status = 'resolved';
           } else {
             results[currentIndex] = { status: 'unresolved', input };
+            status = 'unresolved';
           }
         } catch (err) {
+          status = 'error';
           console.error('[GameCatalogService.lookupFirstPass] failed', {
+            ...logContext,
             message: err?.message || err,
           });
           results[currentIndex] = { status: 'unresolved', input };
+        } finally {
+          const enrichmentSummary = summarizeEnrichment(enrichment);
+          const payload = {
+            ...logContext,
+            status,
+          };
+          if (enrichmentSummary) {
+            payload.enrichment = enrichmentSummary;
+          }
+          console.info('[GameCatalogService.lookupFirstPass] lookup.finish', payload);
         }
       }
     };
