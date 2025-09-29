@@ -16,7 +16,11 @@ describe('GameCatalogService.safeLookup', () => {
       clientId: 'client',
       clientSecret: 'secret',
     });
-    jest.spyOn(service, 'callIgdb').mockResolvedValue(mockResults);
+    if (mockResults !== undefined) {
+      jest.spyOn(service, 'callIgdb').mockResolvedValue(mockResults);
+    } else {
+      jest.spyOn(service, 'callIgdb');
+    }
     return service;
   }
 
@@ -39,7 +43,7 @@ describe('GameCatalogService.safeLookup', () => {
 
     const query = service.callIgdb.mock.calls[0][1];
     expect(query).toContain('category = (8, 9, 10, 11)');
-    expect(query).toContain('(category = 0 & version_parent = null) |');
+    expect(query).toContain('(category = 0 & version_parent = null)');
   });
 
   it('returns ports that would previously be filtered out', async () => {
@@ -65,5 +69,34 @@ describe('GameCatalogService.safeLookup', () => {
 
     const query = service.callIgdb.mock.calls[0][1];
     expect(query).toContain('category = (8, 9, 10, 11)');
+  });
+
+  it('retries with a platform filter when the first search yields no results', async () => {
+    const fallbackResult = {
+      id: 5,
+      name: 'Super Mario 64',
+      category: 9,
+      platforms: [{ name: 'Nintendo Switch' }],
+    };
+
+    const service = createService();
+    service.callIgdb
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([fallbackResult]);
+
+    const result = await service.safeLookup(baseInput);
+
+    expect(service.callIgdb).toHaveBeenCalledTimes(2);
+    const firstQuery = service.callIgdb.mock.calls[0][1];
+    const secondQuery = service.callIgdb.mock.calls[1][1];
+
+    expect(firstQuery).not.toContain('platforms.name ~ *"Nintendo Switch"*');
+    expect(secondQuery).toContain('platforms.name ~ *"Nintendo Switch"*');
+    expect(secondQuery).toContain(
+      'release_dates.platform.abbreviation ~ *"Nintendo Switch"*',
+    );
+
+    expect(result).toBeTruthy();
+    expect(result.game).toBe(fallbackResult);
   });
 });
