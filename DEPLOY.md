@@ -19,6 +19,7 @@ Option A — Web Service (recommended)
 - Environment
   - `MONGO_URI` = your MongoDB Atlas connection string
   - `JWT_SECRET` = a long random string
+  - `TMDB_API_KEY` = API key for The Movie Database cataloging
   - Optional `AUTH0_DOMAIN`, `AUTH0_AUDIENCE` if you use Auth0
   - Optional `FRONTEND_DIST` if serving a built frontend (see Option B)
 - Instance type: free tier
