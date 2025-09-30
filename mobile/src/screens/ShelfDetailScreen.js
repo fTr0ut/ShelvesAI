@@ -198,6 +198,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
   const [analysis, setAnalysis] = useState(null);
 
+  const [visionMetadata, setVisionMetadata] = useState(null);
+
   const [ediItem, setEditItem] = useState(null);
   const [needsReviewIds, setNeedsReviewIds] = useState([]);
   const [steamStatus, setSteamStatus] = useState(null);
@@ -983,6 +985,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
       });
 
       setAnalysis(data.analysis);
+      setVisionMetadata(
+        data && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? data.metadata
+          : null,
+      );
 
       if (Array.isArray(data.results)) {
         // const needsEdit = data.results.filter(r => r.status === "edit_required");
@@ -1027,6 +1034,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
 
     } catch (e) {
+      setVisionMetadata(null);
       setError(e.message);
     } finally {
       setVisionLoading(false);
@@ -1372,6 +1380,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
               {visionLoading ? "Analyzing photo..." : "Capture shelf photo"}
             </Text>
           </TouchableOpacity>
+
+          {visionLoading && visionMetadata?.igdbRateLimited ? (
+            <Text style={styles.rateLimitNotice}>
+              IGDB is rate-limiting us, this may take a bit longer.
+            </Text>
+          ) : null}
 
           {!!visionMessage && (
             <Text style={styles.success}>{visionMessage}</Text>
@@ -1751,6 +1765,13 @@ const styles = StyleSheet.create({
   buttonText: { color: "#0b0f14", fontWeight: "700" },
 
   success: { color: "#a5e3bf", marginTop: 8 },
+
+  rateLimitNotice: {
+    marginTop: 12,
+    color: "#f5c16c",
+    fontSize: 14,
+    fontWeight: "500",
+  },
 
   helper: { color: "#55657a", fontSize: 12, marginTop: 8 },
 

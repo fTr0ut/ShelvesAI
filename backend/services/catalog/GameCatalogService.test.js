@@ -182,4 +182,34 @@ describe('GameCatalogService.safeLookup', () => {
     expect(result).toBeTruthy();
     expect(result.game).toBe(fallbackResult);
   });
+
+  it('provides metadata when lookupFirstPass encounters IGDB rate limiting', async () => {
+    const service = new GameCatalogService({
+      clientId: 'client',
+      clientSecret: 'secret',
+    });
+
+    jest
+      .spyOn(service, 'safeLookup')
+      .mockImplementation(async (item, retries, observer) => {
+        observer?.onRateLimited?.({
+          backoff: 500,
+          attempt: 0,
+          willRetry: true,
+          item: { title: item?.title || item?.name || '' },
+        });
+        return null;
+      });
+
+    const items = [{ title: 'Test Game', name: 'Test Game' }];
+    const results = await service.lookupFirstPass(items);
+
+    expect(results.metadata).toBeTruthy();
+    expect(results.metadata.igdbRateLimited).toBe(true);
+    expect(Array.isArray(results.metadata.warnings)).toBe(true);
+    expect(results.metadata.warnings[0]).toMatchObject({
+      type: 'igdb-rate-limit',
+      index: 0,
+    });
+  });
 });
