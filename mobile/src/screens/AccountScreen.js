@@ -8,6 +8,7 @@ import { AuthContext } from '../App'
 import { apiRequest, clearToken } from '../services/api'
 import useAuthDebug from '../hooks/useAuthDebug'
 
+
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext)
   const [friendships, setFriendships] = useState([])

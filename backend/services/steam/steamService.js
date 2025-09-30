@@ -64,7 +64,7 @@ async function callSteamApi(path, params = {}) {
     }
   });
 
-  const controller = new AbortController();
+  const controller = globalThis.AbortController;
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
     const res = await fetch(url.toString(), { signal: controller.signal });
