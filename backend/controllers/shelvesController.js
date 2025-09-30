@@ -1549,7 +1549,15 @@ async function processShelfVision(req, res) {
 
     // --- Step 2: Type-specific lookup + enrichment ---
     const catalogService = resolveCatalogServiceForShelf(shelf.type);
-    console.log("[shelfVision.catalog] using service", {catalogService: catalogService ? catalogService.serviceName : null});
+    console.log("[shelfVision.catalog] using service", {
+      catalogService: catalogService ? catalogService.serviceName : null,
+      igdbRateLimit: catalogService
+        ? {
+            requestsPerSecond: catalogService.requestsPerSecond,
+            maxConcurrency: catalogService.maxConcurrency,
+          }
+        : null,
+    });
     let resolved = [];
     let unresolved = itemsForLookup.map((input) => ({
       status: "unresolved",
@@ -1557,9 +1565,7 @@ async function processShelfVision(req, res) {
     }));
 
     if (catalogService) {
-      const firstPass = await catalogService.lookupFirstPass(itemsForLookup, {
-        concurrency: 5,
-      });
+      const firstPass = await catalogService.lookupFirstPass(itemsForLookup);
       resolved = firstPass.filter((r) => r.status === "resolved");
       unresolved = firstPass.filter((r) => r.status === "unresolved");
     }

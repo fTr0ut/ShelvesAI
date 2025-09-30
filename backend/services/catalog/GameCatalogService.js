@@ -7,7 +7,8 @@ const {
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_REQUESTS_PER_SECOND = 4;
 const DEFAULT_RETRIES = 2;
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RESULTS = 8;
@@ -123,6 +124,12 @@ function makeDelay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function coerceNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
 class GameCatalogService {
   constructor(options = {}) {
     const enableSecondPass =
@@ -131,6 +138,8 @@ class GameCatalogService {
     this.enableSecondPass = String(enableSecondPass || 'false')
       .trim()
       .toLowerCase() === 'true';
+
+    this.serviceName = 'igdb';
 
     this.clientId =
       normalizeString(options.clientId || process.env.IGDB_CLIENT_ID) || null;
@@ -152,9 +161,34 @@ class GameCatalogService {
       : Number.parseInt(process.env.IGDB_MAX_RESULTS || '', 10) ||
         DEFAULT_MAX_RESULTS;
 
+    const envRequestsPerSecond = coerceNumber(
+      process.env.IGDB_REQUESTS_PER_SECOND,
+    );
+    const envConcurrency = coerceNumber(process.env.IGDB_CONCURRENCY);
+    const optionRequestsPerSecond = coerceNumber(options.requestsPerSecond);
+    const optionConcurrency = coerceNumber(options.concurrency);
+
+    const rawRequestsPerSecond =
+      optionRequestsPerSecond ?? envRequestsPerSecond ?? DEFAULT_REQUESTS_PER_SECOND;
+    const rawConcurrency =
+      optionConcurrency ?? envConcurrency ?? DEFAULT_CONCURRENCY;
+
+    this.requestsPerSecond = Math.max(0.1, rawRequestsPerSecond);
+    this.maxConcurrency = Math.max(1, Math.floor(rawConcurrency));
+    this._minRequestIntervalMs =
+      this.requestsPerSecond > 0
+        ? Math.ceil(1000 / this.requestsPerSecond)
+        : 0;
+
+    this.fetch = typeof options.fetch === 'function' ? options.fetch : fetch;
+    this.delayFn = typeof options.delayFn === 'function' ? options.delayFn : makeDelay;
+
     this._token = null;
     this._tokenExpiresAt = 0;
     this._warnedMissingCredentials = false;
+    this._activeRequests = 0;
+    this._waitingCount = 0;
+    this._lastRequestTime = Number.NEGATIVE_INFINITY;
   }
 
   supportsShelfType(type) {
@@ -177,7 +211,7 @@ class GameCatalogService {
 
   async lookupFirstPass(items = [], options = {}) {
     if (!Array.isArray(items) || !items.length) return [];
-    const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
+    const concurrency = this._resolveConcurrency(options.concurrency);
     const retries = options.retries ?? DEFAULT_RETRIES;
     const results = new Array(items.length);
     let index = 0;
@@ -190,6 +224,8 @@ class GameCatalogService {
     console.info('[GameCatalogService.lookupFirstPass] starting batch', {
       total: items.length,
       preview,
+      concurrency,
+      requestsPerSecond: this.requestsPerSecond,
     });
 
     const worker = async () => {
@@ -238,6 +274,12 @@ class GameCatalogService {
       Array.from({ length: Math.min(concurrency, items.length) }, worker),
     );
     return results;
+  }
+
+  _resolveConcurrency(requested) {
+    const value = coerceNumber(requested);
+    if (value === null) return this.maxConcurrency;
+    return Math.max(1, Math.min(Math.floor(value), this.maxConcurrency));
   }
 
   async safeLookup(item, retries = DEFAULT_RETRIES) {
@@ -348,7 +390,7 @@ class GameCatalogService {
             backoff,
             title,
           });
-          await makeDelay(backoff);
+          await this.delayFn(backoff);
           attempt += 1;
           continue;
         }
@@ -358,7 +400,7 @@ class GameCatalogService {
             backoff,
             title,
           });
-          await makeDelay(backoff);
+          await this.delayFn(backoff);
           attempt += 1;
           continue;
         }
@@ -1246,6 +1288,61 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
     return this._token;
   }
 
+  async _withRateLimit(task) {
+    await this._acquireSlot();
+    try {
+      return await task();
+    } finally {
+      this._releaseSlot();
+    }
+  }
+
+  async _acquireSlot() {
+    let loggedReason = null;
+    this._waitingCount += 1;
+    try {
+      for (;;) {
+        const now = Date.now();
+        const minInterval = this._minRequestIntervalMs;
+        const timeSinceLast = now - this._lastRequestTime;
+        const rateSatisfied = minInterval <= 0 || timeSinceLast >= minInterval;
+        const concurrencyAvailable = this._activeRequests < this.maxConcurrency;
+
+        if (rateSatisfied && concurrencyAvailable) {
+          this._activeRequests += 1;
+          this._lastRequestTime = now;
+          return;
+        }
+
+        const reason = !rateSatisfied ? 'rate-limit' : 'concurrency';
+        const waitMs = !rateSatisfied
+          ? Math.max(minInterval - timeSinceLast, 10)
+          : 50;
+
+        if (loggedReason !== reason) {
+          console.info('[GameCatalogService.rateLimit] throttling', {
+            reason,
+            waitMs,
+            activeRequests: this._activeRequests,
+            maxConcurrency: this.maxConcurrency,
+            requestsPerSecond: this.requestsPerSecond,
+            queueSize: this._waitingCount,
+            minIntervalMs: this._minRequestIntervalMs,
+          });
+          loggedReason = reason;
+        }
+
+        await this.delayFn(waitMs);
+      }
+    } finally {
+      this._waitingCount = Math.max(0, this._waitingCount - 1);
+    }
+  }
+
+  _releaseSlot() {
+    this._activeRequests = Math.max(0, this._activeRequests - 1);
+  }
+
   async callIgdb(endpoint, query) {
     const token = await this.getAccessToken();
     if (!token) return null;
@@ -1257,17 +1354,19 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       : null;
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Client-ID': this.clientId,
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'text/plain',
-          Accept: 'application/json',
-        },
-        body: query,
-        signal: controller ? controller.signal : undefined,
-      });
+      const res = await this._withRateLimit(() =>
+        this.fetch(url, {
+          method: 'POST',
+          headers: {
+            'Client-ID': this.clientId,
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'text/plain',
+            Accept: 'application/json',
+          },
+          body: query,
+          signal: controller ? controller.signal : undefined,
+        }),
+      );
 
       if (res.status === 401) {
         this._token = null;

@@ -50,6 +50,85 @@ describe('GameCatalogService.safeLookup', () => {
     expect(query).not.toContain('category =');
   });
 
+  it('respects the configured concurrency limit during lookupFirstPass', async () => {
+    const service = new GameCatalogService({
+      clientId: 'client',
+      clientSecret: 'secret',
+      concurrency: 1,
+      requestsPerSecond: 100,
+    });
+
+    const items = Array.from({ length: 4 }, (_, index) => ({
+      title: `Test Game ${index}`,
+      name: `Test Game ${index}`,
+    }));
+
+    let activeLookups = 0;
+    let peakConcurrency = 0;
+
+    jest.spyOn(service, 'safeLookup').mockImplementation(async () => {
+      activeLookups += 1;
+      peakConcurrency = Math.max(peakConcurrency, activeLookups);
+      try {
+        await Promise.resolve();
+        return null;
+      } finally {
+        activeLookups -= 1;
+      }
+    });
+
+    await service.lookupFirstPass(items, { concurrency: 5 });
+
+    expect(peakConcurrency).toBeLessThanOrEqual(1);
+  });
+
+  it('throttles IGDB requests according to the configured rate', async () => {
+    const response = {
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValue([]),
+      text: jest.fn().mockResolvedValue(''),
+    };
+
+    const fetchMock = jest.fn().mockResolvedValue(response);
+    let currentTime = 1000;
+
+    jest.spyOn(Date, 'now').mockImplementation(() => currentTime);
+
+    const delayFn = jest
+      .fn()
+      .mockImplementation(async (ms) => {
+        currentTime += ms;
+      });
+
+    const service = new GameCatalogService({
+      clientId: 'client',
+      clientSecret: 'secret',
+      fetch: fetchMock,
+      delayFn,
+      concurrency: 1,
+      requestsPerSecond: 1,
+    });
+
+    jest.spyOn(service, 'getAccessToken').mockResolvedValue('token');
+    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+
+    await Promise.all([
+      service.callIgdb('games', 'fields name;'),
+      service.callIgdb('games', 'fields summary;'),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(delayFn).toHaveBeenCalled();
+    expect(infoSpy.mock.calls.some(([message]) =>
+      typeof message === 'string' &&
+      message.includes('[GameCatalogService.rateLimit] throttling'),
+    )).toBe(true);
+
+    const waitedMs = delayFn.mock.calls.map(([ms]) => ms);
+    expect(waitedMs.some((ms) => ms >= 1000)).toBe(true);
+  });
+
   it('prefers exact title matches over partial matches when choosing results', async () => {
     const partialMatch = {
       id: 4,
