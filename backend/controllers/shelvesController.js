@@ -15,6 +15,7 @@ const EventLog = require("../models/EventLog");
 
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
 const { GameCatalogService } = require("../services/catalog/GameCatalogService");
+const { MovieCatalogService } = require("../services/catalog/MovieCatalogService");
 
 let openaiClient;
 
@@ -223,7 +224,8 @@ const structuredVisionFormat = {
 
 const bookCatalogService = new BookCatalogService();
 const gameCatalogService = new GameCatalogService();
-const catalogServices = [gameCatalogService, bookCatalogService];
+const movieCatalogService = new MovieCatalogService();
+const catalogServices = [gameCatalogService, movieCatalogService, bookCatalogService];
 
 function resolveCatalogServiceForShelf(type) {
   console.log("[resolveCatalogServiceForShelf]", { type });
