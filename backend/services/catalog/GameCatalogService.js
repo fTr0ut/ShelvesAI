@@ -215,6 +215,8 @@ class GameCatalogService {
     const retries = options.retries ?? DEFAULT_RETRIES;
     const results = new Array(items.length);
     let index = 0;
+    let igdbRateLimited = false;
+    const warnings = [];
 
     const previewSize = Math.min(items.length, 3);
     const preview = [];
@@ -236,8 +238,25 @@ class GameCatalogService {
         console.info('[GameCatalogService.lookupFirstPass] lookup.start', logContext);
         let enrichment = null;
         let status = 'unresolved';
+        const observer = {
+          onRateLimited: (payload = {}) => {
+            igdbRateLimited = true;
+            const warningPayload = pruneObject({
+              type: 'igdb-rate-limit',
+              index: currentIndex,
+              backoff: payload.backoff ?? null,
+              attempt: payload.attempt ?? null,
+              willRetry: payload.willRetry ?? null,
+            });
+            const warningItem = payload.item || logContext;
+            if (warningItem) {
+              warningPayload.item = pruneObject(warningItem);
+            }
+            warnings.push(warningPayload);
+          },
+        };
         try {
-          enrichment = await this.safeLookup(input, retries);
+          enrichment = await this.safeLookup(input, retries, observer);
           if (enrichment) {
             results[currentIndex] = {
               status: 'resolved',
@@ -273,6 +292,15 @@ class GameCatalogService {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, items.length) }, worker),
     );
+
+    if (igdbRateLimited || warnings.length) {
+      const metadata = {};
+      if (igdbRateLimited) metadata.igdbRateLimited = true;
+      if (warnings.length) {
+        metadata.warnings = warnings.map((warning) => ({ ...warning }));
+      }
+      results.metadata = metadata;
+    }
     return results;
   }
 
@@ -282,7 +310,7 @@ class GameCatalogService {
     return Math.max(1, Math.min(Math.floor(value), this.maxConcurrency));
   }
 
-  async safeLookup(item, retries = DEFAULT_RETRIES) {
+  async safeLookup(item, retries = DEFAULT_RETRIES, observer = null) {
     const title = normalizeString(item?.name || item?.title);
     const developer = normalizeString(
       item?.author || item?.primaryCreator || item?.developer,
@@ -384,15 +412,24 @@ class GameCatalogService {
           await this.getAccessToken({ forceRefresh: true });
           continue;
         }
-        if (message.includes('429') && attempt < retries) {
-          const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[GameCatalogService.safeLookup] rate limited', {
+        if (message.includes('429')) {
+          const willRetry = attempt < retries;
+          const backoff = willRetry ? 500 * Math.pow(2, attempt) : null;
+          observer?.onRateLimited?.({
             backoff,
-            title,
+            attempt,
+            willRetry,
+            item: logContext,
           });
-          await this.delayFn(backoff);
-          attempt += 1;
-          continue;
+          if (willRetry) {
+            console.warn('[GameCatalogService.safeLookup] rate limited', {
+              backoff,
+              title,
+            });
+            await this.delayFn(backoff);
+            attempt += 1;
+            continue;
+          }
         }
         if (message.includes('aborted') && attempt < retries) {
           const backoff = 1000 * (attempt + 1);

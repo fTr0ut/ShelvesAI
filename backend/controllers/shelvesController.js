@@ -1475,7 +1475,7 @@ async function processShelfVision(req, res) {
   const {
     imageBase64,
     autoApply = true,
-    metadata = {},
+    metadata: requestMetadata = {},
     prompt,
   } = req.body ?? {};
 
@@ -1564,10 +1564,14 @@ async function processShelfVision(req, res) {
       input,
     }));
 
+    let catalogMetadata = null;
     if (catalogService) {
       const firstPass = await catalogService.lookupFirstPass(itemsForLookup);
       resolved = firstPass.filter((r) => r.status === "resolved");
       unresolved = firstPass.filter((r) => r.status === "unresolved");
+      if (firstPass && firstPass.metadata) {
+        catalogMetadata = firstPass.metadata;
+      }
     }
 
     // --- Step 3: Only unresolved go to OpenAI ---
@@ -1831,12 +1835,28 @@ async function processShelfVision(req, res) {
 
     const items = await hydrateShelfItems(req.user.id, shelf._id);
 
+    const responseMetadata = (() => {
+      const base =
+        requestMetadata &&
+        typeof requestMetadata === "object" &&
+        !Array.isArray(requestMetadata)
+          ? { ...requestMetadata }
+          : {};
+      if (catalogMetadata?.igdbRateLimited) {
+        base.igdbRateLimited = true;
+      }
+      if (Array.isArray(catalogMetadata?.warnings) && catalogMetadata.warnings.length) {
+        base.catalogWarnings = catalogMetadata.warnings;
+      }
+      return base;
+    })();
+
     res.json({
       analysis: { ...parsed, items: normalizedItems },
       visionStatus: { status: response?.status || null },
       results,
       items,
-      metadata,
+      metadata: responseMetadata,
     });
   } catch (err) {
     console.error("Vision analysis failed", err);
