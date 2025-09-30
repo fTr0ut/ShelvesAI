@@ -77,6 +77,19 @@ function coerceNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function parsePaginationParams(query, { defaultLimit = 20, maxLimit = 100 } = {}) {
+  const rawLimit = query?.limit ?? defaultLimit;
+  let limit = parseInt(rawLimit, 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = defaultLimit;
+  limit = Math.min(Math.max(limit, 1), maxLimit);
+
+  const rawSkip = query?.skip ?? 0;
+  let skip = parseInt(rawSkip, 10);
+  if (!Number.isFinite(skip) || skip < 0) skip = 0;
+
+  return { limit, skip };
+}
+
 const DEFAULT_OCR_CONFIDENCE_THRESHOLD = 0.7;
 
 const OCR_CONFIDENCE_THRESHOLD = (() => {
@@ -822,14 +835,24 @@ async function loadShelfForUser(userId, shelfId) {
   return Shelf.findOne({ _id: shelfId, owner: userId });
 }
 
-async function hydrateShelfItems(userId, shelfId) {
-  const entries = await UserCollection.find({ user: userId, shelf: shelfId })
+async function hydrateShelfItems(userId, shelfId, { limit, skip } = {}) {
+  let query = UserCollection.find({ user: userId, shelf: shelfId })
 
     .populate("collectable")
 
     .populate("manual")
 
     .sort({ createdAt: -1 });
+
+  if (skip) {
+    query = query.skip(skip);
+  }
+
+  if (limit) {
+    query = query.limit(limit);
+  }
+
+  const entries = await query;
 
   return entries.map((e) => ({
     id: e._id,
@@ -844,11 +867,25 @@ async function hydrateShelfItems(userId, shelfId) {
 }
 
 async function listShelves(req, res) {
-  const shelves = await Shelf.find({ owner: req.user.id }).sort({
-    createdAt: -1,
-  });
+  const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 20, maxLimit: 100 });
 
-  res.json({ shelves });
+  const [shelves, total] = await Promise.all([
+    Shelf.find({ owner: req.user.id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Shelf.countDocuments({ owner: req.user.id }),
+  ]);
+
+  res.json({
+    shelves,
+    pagination: {
+      limit,
+      skip,
+      total,
+      hasMore: skip + shelves.length < total,
+    },
+  });
 }
 
 async function createShelf(req, res) {
@@ -992,9 +1029,22 @@ async function listShelfItems(req, res) {
 
   if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-  const items = await hydrateShelfItems(req.user.id, shelf._id);
+  const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 25, maxLimit: 200 });
 
-  res.json({ items });
+  const [items, total] = await Promise.all([
+    hydrateShelfItems(req.user.id, shelf._id, { limit, skip }),
+    UserCollection.countDocuments({ user: req.user.id, shelf: shelf._id }),
+  ]);
+
+  res.json({
+    items,
+    pagination: {
+      limit,
+      skip,
+      total,
+      hasMore: skip + items.length < total,
+    },
+  });
 }
 
 async function addManualEntry(req, res) {

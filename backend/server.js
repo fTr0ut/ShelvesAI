@@ -22,7 +22,46 @@ if (process.env.NODE_ENV !== 'production') {
     next();
   });
 }
-app.use(cors());            // allow Vite (5173) during dev
+const defaultCorsOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://studio.plasmic.app',
+  'https://app.tryplasmic.com',
+  'https://host.plasmic.app',
+];
+
+const envCorsOrigins = [];
+if (process.env.FRONTEND_URL) envCorsOrigins.push(process.env.FRONTEND_URL.trim());
+if (process.env.NEXT_PUBLIC_SITE_URL) envCorsOrigins.push(process.env.NEXT_PUBLIC_SITE_URL.trim());
+if (process.env.CORS_ORIGINS) {
+  envCorsOrigins.push(
+    ...process.env.CORS_ORIGINS.split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+if (process.env.VERCEL_URL) {
+  const normalized = process.env.VERCEL_URL.trim().replace(/^https?:\/\//i, '');
+  if (normalized) envCorsOrigins.push(`https://${normalized}`);
+}
+
+const corsAllowList = Array.from(new Set([...defaultCorsOrigins, ...envCorsOrigins]));
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (corsAllowList.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`Blocked CORS origin: ${origin}`);
+    return callback(null, false);
+  },
+  credentials: true,
+  exposedHeaders: ['Content-Length', 'Content-Range', 'X-Total-Count'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
 
 const mediaRoot = path.join(__dirname, 'cache');

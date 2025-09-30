@@ -29,6 +29,19 @@ function categorizeUsernameLower(value) {
   return '*';
 }
 
+function parsePaginationParams(query, { defaultLimit = 20, maxLimit = 100 } = {}) {
+  const rawLimit = query?.limit ?? defaultLimit;
+  let limit = parseInt(rawLimit, 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = defaultLimit;
+  limit = Math.min(Math.max(limit, 1), maxLimit);
+
+  const rawSkip = query?.skip ?? 0;
+  let skip = parseInt(rawSkip, 10);
+  if (!Number.isFinite(skip) || skip < 0) skip = 0;
+
+  return { limit, skip };
+}
+
 async function searchUsers(req, res) {
   const rawQuery = req.query.q !== undefined ? req.query.q : req.query.query;
   const query = String(rawQuery || '').trim();
@@ -127,15 +140,23 @@ async function searchUsers(req, res) {
   res.json({ users });
 }
 async function listFriendships(req, res) {
-  const friendships = await Friendship.find({
+  const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 20, maxLimit: 200 });
+  const filter = {
     $or: [
       { requester: req.user.id },
       { addressee: req.user.id },
     ],
-  })
-    .populate('requester', 'username name firstName lastName picture')
-    .populate('addressee', 'username name firstName lastName picture')
-    .sort({ updatedAt: -1 });
+  };
+
+  const [friendships, total] = await Promise.all([
+    Friendship.find(filter)
+      .populate('requester', 'username name firstName lastName picture')
+      .populate('addressee', 'username name firstName lastName picture')
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Friendship.countDocuments(filter),
+  ]);
 
   const items = friendships.map((entry) => ({
     id: String(entry._id),
@@ -148,7 +169,15 @@ async function listFriendships(req, res) {
     message: entry.message || null,
   }));
 
-  res.json({ friendships: items });
+  res.json({
+    friendships: items,
+    pagination: {
+      limit,
+      skip,
+      total,
+      hasMore: skip + items.length < total,
+    },
+  });
 }
 
 async function sendFriendRequest(req, res) {
