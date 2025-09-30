@@ -27,7 +27,7 @@ export default function AccountScreen({ navigation }) {
 
   const extraConfig = useMemo(() => getExtraConfig(), [])
   const scheme = useMemo(() => extraConfig?.auth0?.scheme || Constants?.expoConfig?.scheme || 'shelvesai', [extraConfig])
-  const isExpoGo = Constants?.appOwnership === 'expo'
+  const isExpoGo = Constants?.executionEnvironment === 'expo'
   const steamReturnUrl = useMemo(() => {
     const config = { scheme, path: 'steam-link' }
     if (isExpoGo) {
