@@ -1,14 +1,44 @@
-import type { PlasmicComponentLoader } from '@plasmicapp/loader-react'
-import {
-  CreateShelfAction as MobileCreateShelfAction,
-  AddShelfItemAction as MobileAddShelfItemAction,
-  SendFriendRequestAction as MobileSendFriendRequestAction,
-} from '@mobile/plasmic/actions'
+import type {
+  CodeComponentMeta,
+  PlasmicComponentLoader,
+} from '@plasmicapp/loader-react'
+
+type MobileActionsModule = typeof import('@mobile/plasmic/actions')
+
+let cachedMobileActions: MobileActionsModule | null | undefined
+
+function loadMobileActions(): MobileActionsModule | null {
+  if (cachedMobileActions !== undefined) {
+    return cachedMobileActions
+  }
+
+  try {
+    const actions = (eval('require') as typeof require)('@mobile/plasmic/actions')
+    cachedMobileActions = actions as MobileActionsModule
+  } catch (err) {
+    console.warn('Unable to load mobile Plasmic actions for registration.', err)
+    cachedMobileActions = null
+  }
+
+  return cachedMobileActions
+}
 
 export function registerActions(loader: PlasmicComponentLoader) {
-  loader.registerComponent(MobileCreateShelfAction, {
+  const actions = loadMobileActions()
+  if (!actions) {
+    return
+  }
+
+  const {
+    CreateShelfAction: MobileCreateShelfAction,
+    AddShelfItemAction: MobileAddShelfItemAction,
+    SendFriendRequestAction: MobileSendFriendRequestAction,
+  } = actions
+
+  loader.registerComponent(MobileCreateShelfAction as any, {
     name: 'CollectorMobileCreateShelfAction',
-    description: 'Creates a new shelf for the authenticated viewer.',
+    importPath: '@mobile/plasmic/actions',
+    importName: 'CreateShelfAction',
     props: {
       name: {
         type: 'string',
@@ -54,11 +84,12 @@ export function registerActions(loader: PlasmicComponentLoader) {
       },
     },
     providesData: true,
-  })
+  } as unknown as CodeComponentMeta<any>)
 
-  loader.registerComponent(MobileAddShelfItemAction, {
+  loader.registerComponent(MobileAddShelfItemAction as any, {
     name: 'CollectorMobileAddShelfItemAction',
-    description: 'Adds a collectable to a shelf and refreshes local data.',
+    importPath: '@mobile/plasmic/actions',
+    importName: 'AddShelfItemAction',
     props: {
       shelfId: {
         type: 'string',
@@ -92,11 +123,12 @@ export function registerActions(loader: PlasmicComponentLoader) {
       },
     },
     providesData: true,
-  })
+  } as unknown as CodeComponentMeta<any>)
 
-  loader.registerComponent(MobileSendFriendRequestAction, {
+  loader.registerComponent(MobileSendFriendRequestAction as any, {
     name: 'CollectorMobileSendFriendRequestAction',
-    description: 'Sends a friend request from the current viewer to the given user.',
+    importPath: '@mobile/plasmic/actions',
+    importName: 'SendFriendRequestAction',
     props: {
       userId: {
         type: 'string',
@@ -130,5 +162,5 @@ export function registerActions(loader: PlasmicComponentLoader) {
       },
     },
     providesData: true,
-  })
+  } as unknown as CodeComponentMeta<any>)
 }

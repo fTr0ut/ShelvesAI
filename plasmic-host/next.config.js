@@ -1,6 +1,8 @@
 const path = require('path');
 
 /** @type {import('next').NextConfig} */
+const reactNativeWeb = require.resolve('react-native-web')
+
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
@@ -12,7 +14,7 @@ const nextConfig = {
       '@shared': path.resolve(__dirname, '../shared'),
       '@frontend': path.resolve(__dirname, '../frontend/src'),
       '@mobile': path.resolve(__dirname, '../mobile/src'),
-      'react-native$': 'react-native-web',
+      'react-native': reactNativeWeb,
     };
     return config;
   },

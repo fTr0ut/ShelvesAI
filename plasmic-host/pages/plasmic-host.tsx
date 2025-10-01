@@ -1,4 +1,5 @@
-import { PlasmicCanvasHost } from '@plasmicapp/loader-react';
+import { PlasmicCanvasHost } from '@plasmicapp/host';
+import { PlasmicRootProvider } from '@plasmicapp/loader-react';
 import Head from 'next/head';
 import { PLASMIC } from '../plasmic-init';
 
@@ -8,7 +9,9 @@ export default function PlasmicHost() {
       <Head>
         <title>Plasmic Host</title>
       </Head>
-      <PlasmicCanvasHost loader={PLASMIC} />
+      <PlasmicRootProvider loader={PLASMIC}>
+        <PlasmicCanvasHost />
+      </PlasmicRootProvider>
     </>
   );
 }

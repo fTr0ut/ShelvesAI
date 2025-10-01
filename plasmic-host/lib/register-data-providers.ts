@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import type { PlasmicComponentLoader } from '@plasmicapp/loader-react'
+import type { CodeComponentMeta } from '@plasmicapp/host'
 import {
   AccountProvider,
   CollectableProvider,
@@ -11,14 +12,22 @@ import {
 function registerProvider(
   loader: PlasmicComponentLoader,
   component: ComponentType<any>,
-  options: Parameters<PlasmicComponentLoader['registerComponent']>[1],
+  options: CodeComponentMeta<any>,
 ) {
-  loader.registerComponent(component, { providesData: true, ...options })
+  loader.registerComponent(
+    component as any,
+    {
+      providesData: true,
+      ...(options as unknown as Record<string, any>),
+    } as unknown as CodeComponentMeta<any>,
+  )
 }
 
 export function registerDataProviders(loader: PlasmicComponentLoader) {
   registerProvider(loader, ShelvesProvider, {
     name: 'ShelvesProvider',
+    importPath: '../../frontend/src/plasmic/data',
+    importName: 'ShelvesProvider',
     description: 'Fetches the current user\'s shelves with pagination controls.',
     props: {
       apiBase: {
@@ -48,6 +57,8 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, FeedProvider, {
     name: 'FeedProvider',
+    importPath: '../../frontend/src/plasmic/data',
+    importName: 'FeedProvider',
     description: 'Loads activity feed entries for the signed-in viewer.',
     props: {
       apiBase: {
@@ -97,6 +108,8 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, ShelfDetailProvider, {
     name: 'ShelfDetailProvider',
+    importPath: '../../frontend/src/plasmic/data',
+    importName: 'ShelfDetailProvider',
     description: 'Fetches a shelf, its metadata, and items.',
     props: {
       apiBase: {
@@ -130,6 +143,8 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, CollectableProvider, {
     name: 'CollectableProvider',
+    importPath: '../../frontend/src/plasmic/data',
+    importName: 'CollectableProvider',
     description: 'Loads a single catalog entry by id.',
     props: {
       apiBase: {
@@ -151,6 +166,8 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, AccountProvider, {
     name: 'AccountProvider',
+    importPath: '../../frontend/src/plasmic/data',
+    importName: 'AccountProvider',
     description: 'Loads account details for the current viewer.',
     props: {
       apiBase: {
