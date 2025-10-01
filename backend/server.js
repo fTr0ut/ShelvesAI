@@ -6,6 +6,7 @@ const cors = require('cors');
 const fs = require('fs');
 const cookie = require('cookie');
 const signature = require('cookie-signature');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const authRoutes = require('./routes/auth');
 const shelvesRoutes = require('./routes/shelves');
@@ -99,6 +100,33 @@ app.use((req, _res, next) => {
   next();
 });
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
+
+const plasmicHostOrigin = (process.env.PLASMIC_HOST_ORIGIN || '').trim();
+
+if (plasmicHostOrigin) {
+  console.log(`Proxying /plasmic-host to ${plasmicHostOrigin}`);
+  app.use(
+    '/plasmic-host',
+    createProxyMiddleware({
+      target: plasmicHostOrigin,
+      changeOrigin: true,
+      pathRewrite: (path, req) => {
+        const source = req.originalUrl || path || '/';
+        const rewritten = source.replace(/^\/plasmic-host/, '');
+        if (!rewritten) return '/';
+        return rewritten.startsWith('/') ? rewritten : `/${rewritten}`;
+      },
+      onError(err, _req, res) {
+        console.error('Proxy error for /plasmic-host:', err.message);
+        if (!res.headersSent) {
+          res.status(502).send('Proxy Error');
+        } else {
+          res.end();
+        }
+      },
+    })
+  );
+}
 
 const mediaRoot = path.join(__dirname, 'cache');
 try {

@@ -21,6 +21,7 @@
         "cookie-signature": "^1.2.2",
         "cors": "^2.8.5",
         "dotenv": "^17.2.1",
+        "http-proxy-middleware": "file:libs/http-proxy-middleware",
         "express": "^5.1.0",
         "express-oauth2-jwt-bearer": "^1.7.1",
         "jsonwebtoken": "^9.0.2",
