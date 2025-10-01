@@ -273,6 +273,7 @@ export default function App() {
         <Route path="/shelves/:id" element={<ShelfDetail />} />
         <Route path="/collectables/:id" element={<CollectableDetail />} />
         <Route path="/account" element={<Account />} />
+        <Route path="/plasmic-host/*" element={<PlasmicHostRedirect />} />
         <Route path="*" element={<Home />} />
       </Route>
     </Routes>
@@ -298,4 +299,14 @@ function Layout() {
       </main>
     </>
   )
+}
+
+function PlasmicHostRedirect() {
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.location.replace('/plasmic-host')
+    }
+  }, [])
+
+  return null
 }
