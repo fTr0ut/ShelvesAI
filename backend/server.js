@@ -208,6 +208,9 @@ if (fs.existsSync(distPath)) {
     if (req.path.startsWith('/api') || req.path.startsWith('/steam')) {
       return next();
     }
+    if (req.path.startsWith('/plasmic-host')) {
+      return next();
+    }
     res.sendFile(indexPath);
   });
 } else {
