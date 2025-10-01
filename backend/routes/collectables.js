@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
 const Collectable = require("../models/Collectable");
 
@@ -30,6 +31,25 @@ function normalizeString(value) {
   if (value == null) return undefined;
   const trimmed = String(value).trim();
   return trimmed || undefined;
+}
+
+function parsePaginationParams(query, { defaultLimit = 10, maxLimit = 50 } = {}) {
+  const rawLimit = query?.limit ?? defaultLimit;
+  let limit = parseInt(rawLimit, 10);
+  if (!Number.isFinite(limit) || limit <= 0) limit = defaultLimit;
+  limit = Math.min(Math.max(limit, 1), maxLimit);
+
+  const rawSkip = query?.skip ?? 0;
+  let skip = parseInt(rawSkip, 10);
+  if (!Number.isFinite(skip) || skip < 0) skip = 0;
+
+  const rawCursor = query?.cursor ? String(query.cursor).trim() : null;
+  let cursorId = null;
+  if (rawCursor && mongoose.Types.ObjectId.isValid(rawCursor)) {
+    cursorId = new mongoose.Types.ObjectId(rawCursor);
+  }
+
+  return { limit, skip, cursor: rawCursor && cursorId ? rawCursor : null, cursorId };
 }
 
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
@@ -75,16 +95,47 @@ router.post("/", async (req, res) => {
 router.get("/", async (req, res) => {
   const q = String(req.query.q || "").trim();
   const type = String(req.query.type || "").trim();
-  const limit = Math.min(parseInt(req.query.limit || "10", 10), 50);
-  const filter = {};
-  if (type) filter.type = type;
-  if (q)
-    filter.title = {
+  const { limit, skip, cursor, cursorId } = parsePaginationParams(req.query);
+  const baseFilter = {};
+  if (type) baseFilter.type = type;
+  if (q) {
+    baseFilter.title = {
       $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
       $options: "i",
     };
-  const results = await Collectable.find(filter).limit(limit);
-  res.json({ results });
+  }
+
+  const filter = { ...baseFilter };
+
+  let queryBuilder = Collectable.find(filter).sort({ _id: 1 });
+
+  if (cursorId) {
+    queryBuilder = queryBuilder.where({ _id: { $gt: cursorId } });
+  }
+
+  if (skip) {
+    queryBuilder = queryBuilder.skip(skip);
+  }
+
+  const docs = await queryBuilder.limit(limit + 1);
+  const hasMore = docs.length > limit;
+  const results = hasMore ? docs.slice(0, limit) : docs;
+  const nextCursor = hasMore ? String(results[results.length - 1]._id) : null;
+
+  const total = await Collectable.countDocuments(baseFilter);
+
+  res.json({
+    results,
+    pagination: {
+      limit,
+      skip,
+      total,
+      cursor: cursor || null,
+      nextCursor,
+      hasMore,
+      count: results.length,
+    },
+  });
 });
 
 // Retrieve a single collectable by id
