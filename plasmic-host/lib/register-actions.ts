@@ -132,4 +132,3 @@ export function registerActions(loader: PlasmicComponentLoader) {
     providesData: true,
   })
 }
-

@@ -3,7 +3,7 @@ import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
-const ShelvesContext = createContext(null)
+export const ShelvesContext = createContext(null)
 
 const DEFAULT_PAGINATION = { limit: 20, skip: 0, total: 0, hasMore: false }
 

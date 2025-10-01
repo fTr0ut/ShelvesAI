@@ -1,6 +1,7 @@
 import { initPlasmicLoader } from '@plasmicapp/loader-react';
 import { getPlasmicHostUrl, getPlasmicProjects } from './lib/config';
 import { registerDataProviders } from './lib/register-data-providers';
+import { registerCollectorActions } from './lib/register-actions';
 import { registerCollectorComponents, registerCollectorMobileComponents } from './lib/register-components';
 import { registerActions } from './lib/register-actions';
 
@@ -33,6 +34,7 @@ export const PLASMIC = initPlasmicLoader({
 
 registerDataProviders(PLASMIC);
 registerCollectorComponents(PLASMIC);
+registerCollectorActions(PLASMIC);
 
 registerCollectorMobileComponents(PLASMIC);
 registerActions(PLASMIC);
