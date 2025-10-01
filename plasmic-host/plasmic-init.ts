@@ -1,7 +1,7 @@
 import { initPlasmicLoader } from '@plasmicapp/loader-react';
 import { getPlasmicHostUrl, getPlasmicProjects } from './lib/config';
 import { registerDataProviders } from './lib/register-data-providers';
-import { registerCollectorActions } from './lib/register-actions';
+//import { registerCollectorActions } from './lib/register-actions';
 import { registerCollectorComponents, registerCollectorMobileComponents } from './lib/register-components';
 import { registerActions } from './lib/register-actions';
 
@@ -14,27 +14,20 @@ if (!projects.length) {
   );
 }
 
+
 export const PLASMIC = initPlasmicLoader({
   projects,
-  preview: true,
-  host: getPlasmicHostUrl(),
+  preview: true,                  // set false in prod
+  host: getPlasmicHostUrl(),      // fine to keep; Studio uses it
   fetcher: async (url, options) => {
-    const response = await fetch(url, {
-      ...options,
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      console.warn(`Plasmic fetch failed: ${response.status} ${response.statusText}`);
-    }
-
-    return response;
+    const res = await fetch(url, { ...options, credentials: "include" });
+    if (!res.ok) console.warn(`Plasmic fetch failed: ${res.status} ${res.statusText}`);
+    return res;
   },
 });
 
 registerDataProviders(PLASMIC);
 registerCollectorComponents(PLASMIC);
-registerCollectorActions(PLASMIC);
-
+//registerCollectorActions(PLASMIC);
 registerCollectorMobileComponents(PLASMIC);
 registerActions(PLASMIC);

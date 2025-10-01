@@ -31,6 +31,7 @@ const defaultCorsOrigins = [
   'https://studio.plasmic.app',
   'https://app.tryplasmic.com',
   'https://host.plasmic.app',
+  'https://nonresilient-rylan-nondebilitating.ngrok-free.dev'
 ];
 
 const envCorsOrigins = [];
