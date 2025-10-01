@@ -21,14 +21,18 @@ export function getBrowserToken(explicitToken) {
   }
 }
 
-export async function apiFetch(path, { apiBase = '', token = '', ...options } = {}) {
+export async function apiFetch(path, { apiBase = '', token = '', credentials, ...options } = {}) {
   const base = resolveApiBase(apiBase)
   const url = `${base}${path}`
   const headers = new Headers(options.headers || {})
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  const response = await fetch(url, { ...options, headers })
+  const fetchOptions = { ...options, headers }
+  if (credentials) {
+    fetchOptions.credentials = credentials
+  }
+  const response = await fetch(url, fetchOptions)
   let data = null
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {

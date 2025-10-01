@@ -3,7 +3,7 @@ import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
-const AccountContext = createContext(null)
+export const AccountContext = createContext(null)
 
 export function AccountProvider({ apiBase = '', token: tokenProp, children }) {
   const token = getBrowserToken(tokenProp)
