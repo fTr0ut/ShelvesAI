@@ -4,6 +4,8 @@ require('dotenv').config({ path: path.join(__dirname, '.env'), override: true })
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
+const cookie = require('cookie');
+const signature = require('cookie-signature');
 
 const authRoutes = require('./routes/auth');
 const shelvesRoutes = require('./routes/shelves');
@@ -63,6 +65,32 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+app.use((req, _res, next) => {
+  const secret =
+    process.env.COOKIE_SECRET || process.env.JWT_SECRET || 'collector-cookie-secret';
+  req.secret = secret;
+
+  const header = req.headers?.cookie;
+  const parsed = header ? cookie.parse(header) : {};
+  const cookies = {};
+  const signedCookies = {};
+
+  for (const [name, value] of Object.entries(parsed)) {
+    let decodedValue = value;
+    if (secret && typeof value === 'string' && value.startsWith('s:')) {
+      const unsigned = signature.unsign(value.slice(2), secret);
+      if (unsigned !== false) {
+        signedCookies[name] = value;
+        decodedValue = unsigned;
+      }
+    }
+    cookies[name] = decodedValue;
+  }
+
+  req.cookies = cookies;
+  req.signedCookies = signedCookies;
+  next();
+});
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
 
 const mediaRoot = path.join(__dirname, 'cache');
