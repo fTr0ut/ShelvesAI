@@ -1,66 +1,41 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { ShelvesProvider, useShelves } from '../plasmic/data/ShelvesProvider'
 
 const VISIBILITY_LABELS = { private: 'Private', friends: 'Friends', public: 'Public' }
 const VISIBILITY_OPTIONS = ['private', 'friends', 'public']
 
-export default function Shelves({ apiBase = '' }) {
-  const navigate = useNavigate()
-  const [shelves, setShelves] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+function ShelvesContent({ onCreate }) {
+  const { shelves, loading, error, createShelf } = useShelves()
   const [form, setForm] = useState({ name: '', type: '', description: '', visibility: 'private' })
+  const [submitError, setSubmitError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = apiBase || envBase
-  const api = (p) => `${base}${p}`
-  const token = localStorage.getItem('token') || ''
-
-  useEffect(() => {
-    if (!token) {
-      navigate('/')
-      return
-    }
-    const load = async () => {
-      try {
-        setLoading(true)
-        const res = await fetch(api('/api/shelves'), { headers: { Authorization: `Bearer ${token}` } })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data?.error || 'Failed to load shelves')
-        setShelves(data.shelves)
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [token])
-
-  const create = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
+    setSubmitError('')
     try {
-      const res = await fetch(api('/api/shelves'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          name: form.name,
-          type: form.type,
-          description: form.description,
-          visibility: form.visibility,
-        }),
+      setSubmitting(true)
+      const shelf = await createShelf({
+        name: form.name,
+        type: form.type,
+        description: form.description,
+        visibility: form.visibility,
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Create failed')
-      setForm({ name: '', type: '', description: '', visibility: form.visibility })
-      navigate(`/shelves/${data.shelf._id}`)
-    } catch (e) {
-      setError(e.message)
+      if (shelf) {
+        setForm({ name: '', type: '', description: '', visibility: form.visibility })
+        onCreate?.(shelf)
+      }
+    } catch (err) {
+      setSubmitError(err.message || 'Create failed')
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  if (loading) return <div className="app"><div className="message info">Loading shelves...</div></div>
+  if (loading) {
+    return <div className="app"><div className="message info">Loading shelves...</div></div>
+  }
 
   return (
     <div className="app">
@@ -69,22 +44,43 @@ export default function Shelves({ apiBase = '' }) {
         <p>Organize collections by type and description.</p>
       </div>
 
-      {error && <div className="message error">{error}</div>}
+      {(error || submitError) && <div className="message error">{submitError || error}</div>}
 
       <div className="grid grid-2" style={{ marginTop: 8 }}>
         <div className="card">
           <h3>Create Shelf</h3>
-          <form className="stack" onSubmit={create}>
-            <input className="input" placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <input className="input" placeholder="Type (e.g., books, movies)" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} />
-            <input className="input" placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            <select className="input" value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })}>
+          <form className="stack" onSubmit={handleSubmit}>
+            <input
+              className="input"
+              placeholder="Name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+            <input
+              className="input"
+              placeholder="Type (e.g., books, movies)"
+              value={form.type}
+              onChange={(e) => setForm({ ...form, type: e.target.value })}
+            />
+            <input
+              className="input"
+              placeholder="Description"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+            <select
+              className="input"
+              value={form.visibility}
+              onChange={(e) => setForm({ ...form, visibility: e.target.value })}
+            >
               {VISIBILITY_OPTIONS.map((option) => (
                 <option key={option} value={option}>{VISIBILITY_LABELS[option]}</option>
               ))}
             </select>
             <div className="row">
-              <button className="btn primary" type="submit">Create</button>
+              <button className="btn primary" type="submit" disabled={submitting}>
+                {submitting ? 'Creating…' : 'Create'}
+              </button>
             </div>
           </form>
         </div>
@@ -110,3 +106,21 @@ export default function Shelves({ apiBase = '' }) {
   )
 }
 
+export default function Shelves({ apiBase = '' }) {
+  const navigate = useNavigate()
+  const token = useMemo(() => localStorage.getItem('token') || '', [])
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/')
+    }
+  }, [navigate, token])
+
+  if (!token) return null
+
+  return (
+    <ShelvesProvider apiBase={apiBase} token={token}>
+      <ShelvesContent onCreate={(shelf) => shelf?._id && navigate(`/shelves/${shelf._id}`)} />
+    </ShelvesProvider>
+  )
+}

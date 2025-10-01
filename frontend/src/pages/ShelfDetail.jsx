@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ShelfDetailProvider, useShelfDetail } from '../plasmic/data/ShelfDetailProvider'
 
 const VISIBILITY_OPTIONS = [
   { value: 'private', label: 'Private (only me)' },
@@ -7,139 +8,81 @@ const VISIBILITY_OPTIONS = [
   { value: 'public', label: 'Public' },
 ]
 
-export default function ShelfDetail({ apiBase = '' }) {
-  const { id } = useParams()
-  const navigate = useNavigate()
-  const token = useMemo(() => localStorage.getItem('token') || '', [])
-  const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = apiBase || envBase
-  const api = (p) => `${base}${p}`
+function ShelfDetailContent() {
+  const {
+    shelf,
+    items,
+    loading,
+    error,
+    message,
+    changeVisibility,
+    savingVisibility,
+    addManual,
+    addCollectable,
+    removeItem,
+    searchCollectables,
+  } = useShelfDetail()
 
-  const [shelf, setShelf] = useState(null)
-  const [items, setItems] = useState([])
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
-  const [loading, setLoading] = useState(true)
   const [manual, setManual] = useState({ name: '', type: '', description: '' })
   const [q, setQ] = useState('')
   const [results, setResults] = useState([])
-  const [visibilitySaving, setVisibilitySaving] = useState(false)
+  const [actionError, setActionError] = useState('')
+  const [searching, setSearching] = useState(false)
 
-  useEffect(() => {
-    if (!token) {
-      navigate('/')
+  const handleVisibilityChange = async (value) => {
+    try {
+      await changeVisibility(value)
+      setActionError('')
+    } catch (err) {
+      setActionError(err.message || 'Failed to update visibility')
+    }
+  }
+
+  const handleManualSubmit = async (e) => {
+    e.preventDefault()
+    setActionError('')
+    try {
+      await addManual(manual)
+      setManual({ name: '', type: '', description: '' })
+    } catch (err) {
+      setActionError(err.message || 'Failed to add item')
+    }
+  }
+
+  const handleSearch = async (term) => {
+    const qv = (term ?? q).trim()
+    setQ(qv)
+    if (!qv) {
+      setResults([])
       return
     }
-    const load = async () => {
-      try {
-        setLoading(true)
-        const [sRes, iRes] = await Promise.all([
-          fetch(api(`/api/shelves/${id}`), { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(api(`/api/shelves/${id}/items`), { headers: { Authorization: `Bearer ${token}` } }),
-        ])
-        const sData = await sRes.json()
-        const iData = await iRes.json()
-        if (!sRes.ok) throw new Error(sData?.error || 'Failed to load shelf')
-        if (!iRes.ok) throw new Error(iData?.error || 'Failed to load items')
-        setShelf(sData.shelf)
-        setItems(iData.items)
-        setError('')
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [id, token])
-
-  const refreshItems = async () => {
-    const res = await fetch(api(`/api/shelves/${id}/items`), { headers: { Authorization: `Bearer ${token}` } })
-    const data = await res.json()
-    if (res.ok) setItems(data.items)
-  }
-
-  const changeVisibility = async (value) => {
-    if (!shelf || shelf.visibility === value) return
-    setVisibilitySaving(true)
-    setMessage('')
     try {
-      const res = await fetch(api(`/api/shelves/${id}`), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ visibility: value }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Failed to update visibility')
-      setShelf(data.shelf)
-      setMessage(`Visibility updated to ${value}`)
-    } catch (e) {
-      setError(e.message)
+      setSearching(true)
+      const r = await searchCollectables(qv)
+      setResults(r)
+    } catch (err) {
+      setActionError(err.message || 'Search failed')
     } finally {
-      setVisibilitySaving(false)
+      setSearching(false)
     }
   }
 
-  const addManual = async (e) => {
-    e.preventDefault()
-    setError('')
+  const handleAddCollectable = async (collectableId) => {
     try {
-      const res = await fetch(api(`/api/shelves/${id}/manual`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(manual),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Failed to add item')
-      setManual({ name: '', type: '', description: '' })
-      await refreshItems()
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  const search = async (term) => {
-    const qv = (term ?? q).trim()
-    if (!qv) { setResults([]); return }
-    try {
-      const res = await fetch(api(`/api/shelves/${id}/search?q=${encodeURIComponent(qv)}`), { headers: { Authorization: `Bearer ${token}` } })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Search failed')
-      setResults(data.results)
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
-  const addCollectable = async (collectableId) => {
-    try {
-      const res = await fetch(api(`/api/shelves/${id}/items`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ collectableId }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Add failed')
+      setActionError('')
+      await addCollectable(collectableId)
       setResults([])
-      await refreshItems()
-    } catch (e) {
-      setError(e.message)
+    } catch (err) {
+      setActionError(err.message || 'Add failed')
     }
   }
 
-  const removeItem = async (itemId) => {
-    setError('')
+  const handleRemoveItem = async (itemId) => {
     try {
-      const res = await fetch(api(`/api/shelves/${id}/items/${itemId}`), {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Remove failed')
-      setItems(data.items || [])
-      setMessage('Item removed from shelf')
-    } catch (e) {
-      setError(e.message)
+      setActionError('')
+      await removeItem(itemId)
+    } catch (err) {
+      setActionError(err.message || 'Remove failed')
     }
   }
 
@@ -156,8 +99,8 @@ export default function ShelfDetail({ apiBase = '' }) {
             id="visibility"
             className="input"
             value={shelf.visibility || 'private'}
-            onChange={(e) => changeVisibility(e.target.value)}
-            disabled={visibilitySaving}
+            onChange={(e) => handleVisibilityChange(e.target.value)}
+            disabled={savingVisibility}
             style={{ maxWidth: 220 }}
           >
             {VISIBILITY_OPTIONS.map((opt) => (
@@ -166,7 +109,7 @@ export default function ShelfDetail({ apiBase = '' }) {
           </select>
         </div>
         {message && <div className="message success" style={{ marginTop: 8 }}>{message}</div>}
-        {error && <div className="message error" style={{ marginTop: 8 }}>{error}</div>}
+        {(error || actionError) && <div className="message error" style={{ marginTop: 8 }}>{actionError || error}</div>}
       </div>
 
       <div className="grid grid-2" style={{ alignItems: 'start' }}>
@@ -182,11 +125,11 @@ export default function ShelfDetail({ apiBase = '' }) {
                 it.collectable.format || '',
                 it.collectable.publisher || '',
                 it.collectable.year || '',
-              ].filter(Boolean).join(' • ') : ''
+              ].filter(Boolean).join('  ') : ''
               const manualMeta = !isCollectable && it.manual ? [
                 it.manual.type || '',
                 it.manual.description || '',
-              ].filter(Boolean).join(' • ') : ''
+              ].filter(Boolean).join('  ') : ''
 
               return (
                 <li key={it.id} className="row item-row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -202,48 +145,72 @@ export default function ShelfDetail({ apiBase = '' }) {
                         {manualMeta && <span className="label">{manualMeta}</span>}
                       </div>
                     ) : (
-                      <em>Unknown</em>
+                      <div className="item-link">
+                        <strong>Untitled item</strong>
+                      </div>
                     )}
                   </div>
-                  <button className="btn danger" type="button" onClick={() => removeItem(it.id)}>Remove</button>
+                  <button className="btn ghost" onClick={() => handleRemoveItem(it.id)}>Remove</button>
                 </li>
               )
             })}
-            {!items.length && <li className="label">No items yet</li>}
+            {!items.length && <li className="label">No items yet. Add something below!</li>}
           </ul>
         </div>
 
-        <div className="card">
-          <h3>Manually add entry</h3>
-          <form className="stack" onSubmit={addManual}>
-            <input className="input" placeholder="Name" value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} />
-            <input className="input" placeholder="Type" value={manual.type} onChange={(e) => setManual({ ...manual, type: e.target.value })} />
-            <input className="input" placeholder="Description" value={manual.description} onChange={(e) => setManual({ ...manual, description: e.target.value })} />
-            <div className="row"><button className="btn primary" type="submit">Add</button></div>
-          </form>
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="card">
+            <h3>Add Manual Item</h3>
+            <form className="stack" onSubmit={handleManualSubmit}>
+              <input
+                className="input"
+                placeholder="Name"
+                value={manual.name}
+                onChange={(e) => setManual({ ...manual, name: e.target.value })}
+              />
+              <input
+                className="input"
+                placeholder="Type"
+                value={manual.type}
+                onChange={(e) => setManual({ ...manual, type: e.target.value })}
+              />
+              <textarea
+                className="input"
+                placeholder="Description"
+                value={manual.description}
+                onChange={(e) => setManual({ ...manual, description: e.target.value })}
+              />
+              <div className="row">
+                <button className="btn primary" type="submit">Add</button>
+              </div>
+            </form>
+          </div>
 
-          <h3 className="section-title">Search catalog</h3>
-          <input
-            className="input"
-            placeholder="Search by title"
-            value={q}
-            onChange={(e) => {
-              const value = e.target.value
-              setQ(value)
-              if (value.trim().length >= 2) search(value)
-              else setResults([])
-            }}
-          />
-          {results.length > 0 && (
-            <ul className="list" style={{ marginTop: 8 }}>
-              {results.map((r) => (
-                <li key={r._id} className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{r.name}{r.author ? ` by ${r.author}` : ''}{r.format ? ` [${r.format}]` : ''}</span>
-                  <button className="btn" type="button" onClick={() => addCollectable(r._id)}>Add</button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="card">
+            <h3>Search Catalog</h3>
+            <div className="stack">
+              <input
+                className="input"
+                placeholder="Search for items"
+                value={q}
+                onChange={(e) => handleSearch(e.target.value)}
+                onBlur={() => handleSearch(q)}
+              />
+              {searching && <div className="label">Searchingâ€¦</div>}
+              {!searching && !results.length && q && <div className="label">No results yet.</div>}
+              <ul className="list">
+                {results.map((res) => (
+                  <li key={res.id || res._id || res.collectableId} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                    <div>
+                      <strong>{res.name}</strong>
+                      <div className="label">{[res.type, res.author, res.year].filter(Boolean).join(' Â· ')}</div>
+                    </div>
+                    <button className="btn" onClick={() => handleAddCollectable(res.id || res._id || res.collectableId)}>Add</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -254,3 +221,22 @@ export default function ShelfDetail({ apiBase = '' }) {
   )
 }
 
+export default function ShelfDetail({ apiBase = '' }) {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const token = useMemo(() => localStorage.getItem('token') || '', [])
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/')
+    }
+  }, [navigate, token])
+
+  if (!token) return null
+
+  return (
+    <ShelfDetailProvider apiBase={apiBase} token={token} shelfId={id}>
+      <ShelfDetailContent />
+    </ShelfDetailProvider>
+  )
+}
