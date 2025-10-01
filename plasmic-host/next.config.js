@@ -11,6 +11,8 @@ const nextConfig = {
       ...(config.resolve.alias || {}),
       '@shared': path.resolve(__dirname, '../shared'),
       '@frontend': path.resolve(__dirname, '../frontend/src'),
+      '@mobile': path.resolve(__dirname, '../mobile/src'),
+      'react-native$': 'react-native-web',
     };
     return config;
   },

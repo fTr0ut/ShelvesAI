@@ -18,7 +18,8 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["../shared/*"],
-      "@frontend/*": ["../frontend/src/*"]
+      "@frontend/*": ["../frontend/src/*"],
+      "@mobile/*": ["../mobile/src/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
