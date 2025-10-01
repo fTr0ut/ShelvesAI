@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { AppLayout, Button, Card, Hero } from '../components'
 import { FeedProvider, useFeed } from '../plasmic/data/FeedProvider'
 
 const SCOPES = [
@@ -13,43 +14,42 @@ function FeedContent() {
   const { entries, scope, setScope, loading, error } = useFeed()
 
   return (
-    <div className="app">
-      <div className="hero">
-        <h1>Social Feed</h1>
-        <p className="label">Recent shelf updates from your community.</p>
-      </div>
+    <AppLayout>
+      <Hero title="Social Feed" description="Recent shelf updates from your community." />
 
       <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {SCOPES.map((opt) => (
-          <button
+          <Button
             key={opt.value}
-            className={`btn ${scope === opt.value ? 'primary' : ''}`}
+            variant={scope === opt.value ? 'primary' : 'ghost'}
             onClick={() => setScope(opt.value)}
             disabled={loading && scope === opt.value}
           >
             {opt.label}
-          </button>
+          </Button>
         ))}
-        <Link className="btn" to="/shelves">Create shelf</Link>
+        <Button as={Link} to="/shelves">
+          Create shelf
+        </Button>
       </div>
 
       {error && <div className="message error">{error}</div>}
 
       <div className="stack" style={{ gap: 16 }}>
         {loading && !entries.length ? (
-          <div className="card">
+          <Card>
             <p className="label">Loading feed</p>
-          </div>
+          </Card>
         ) : null}
 
         {!loading && !entries.length && !error ? (
-          <div className="card">
+          <Card>
             <p className="label">No activity yet. Add friends or start sharing your shelves!</p>
-          </div>
+          </Card>
         ) : null}
 
         {entries.map((entry) => (
-          <div key={entry.shelf?.id || Math.random()} className="card" style={{ display: 'grid', gap: 12 }}>
+          <Card key={entry.shelf?.id || Math.random()}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
               <div>
                 <strong>{entry.owner?.name || entry.owner?.username || 'Collector'}</strong>
@@ -88,10 +88,10 @@ function FeedContent() {
             <div className="label" style={{ textAlign: 'right' }}>
               Updated {entry.shelf?.updatedAt ? new Date(entry.shelf.updatedAt).toLocaleString() : 'recently'}
             </div>
-          </div>
+          </Card>
         ))}
       </div>
-    </div>
+    </AppLayout>
   )
 }
 

@@ -15,7 +15,12 @@
     "jsx": "preserve",
     "incremental": true,
     "types": ["node"],
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../shared/*"],
+      "@frontend/*": ["../frontend/src/*"],
+      "@mobile/*": ["../mobile/src/*"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
