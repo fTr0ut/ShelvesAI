@@ -13,6 +13,7 @@ const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
 const steamRoutes = require('./routes/steam');
 const steamOpenIdRoutes = require('./routes/steamOpenId');
+const plasmicRoutes = require('./routes/plasmic');
 
 const app = express();
 // Minimal request log (dev only)
@@ -56,6 +57,7 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
 app.use('/steam', steamOpenIdRoutes);
 app.use('/api/steam', steamRoutes);
+app.use('/', plasmicRoutes);
 // Optional: Auth0-protected example route when configured
 try {
   const { auth: auth0Jwt } = require('express-oauth2-jwt-bearer');
