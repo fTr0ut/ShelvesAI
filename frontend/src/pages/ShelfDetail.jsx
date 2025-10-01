@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { AppLayout, Button, Card, Grid, Hero } from '../components'
 import { ShelfDetailProvider, useShelfDetail } from '../plasmic/data/ShelfDetailProvider'
 
 const VISIBILITY_OPTIONS = [
@@ -86,36 +87,40 @@ function ShelfDetailContent() {
     }
   }
 
-  if (loading) return <div className="app"><div className="message info">Loading shelf...</div></div>
-  if (!shelf) return <div className="app"><div className="message error">{error || 'Shelf not found'}</div></div>
+  if (loading) return <AppLayout><div className="message info">Loading shelf...</div></AppLayout>
+  if (!shelf) return <AppLayout><div className="message error">{error || 'Shelf not found'}</div></AppLayout>
 
   return (
-    <div className="app">
-      <div className="hero">
-        <h1>{shelf.name} <span className="pill">{shelf.type}</span></h1>
-        <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-          <label className="label" htmlFor="visibility">Visibility</label>
-          <select
-            id="visibility"
-            className="input"
-            value={shelf.visibility || 'private'}
-            onChange={(e) => handleVisibilityChange(e.target.value)}
-            disabled={savingVisibility}
-            style={{ maxWidth: 220 }}
-          >
-            {VISIBILITY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-        {message && <div className="message success" style={{ marginTop: 8 }}>{message}</div>}
-        {(error || actionError) && <div className="message error" style={{ marginTop: 8 }}>{actionError || error}</div>}
-      </div>
+    <AppLayout>
+      <Hero
+        title={shelf.name}
+        description={shelf.description}
+        actions={
+          <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+            <label className="label" htmlFor="visibility">Visibility</label>
+            <select
+              id="visibility"
+              className="input"
+              value={shelf.visibility || 'private'}
+              onChange={(e) => handleVisibilityChange(e.target.value)}
+              disabled={savingVisibility}
+              style={{ maxWidth: 220 }}
+            >
+              {VISIBILITY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        }
+      >
+        <span className="pill">{shelf.type}</span>
+        {message && <div className="message success">{message}</div>}
+        {(error || actionError) && <div className="message error">{actionError || error}</div>}
+      </Hero>
 
-      <div className="grid grid-2" style={{ alignItems: 'start' }}>
-        <div className="card">
-          <h3>Items</h3>
-          <ul className="list">
+      <Grid columns={2} style={{ alignItems: 'start' }}>
+        <Card title="Items">
+          <div className="stack" style={{ gap: 12 }}>
             {items.map((it) => {
               const isCollectable = Boolean(it.collectable)
               const collectableId = isCollectable ? (it.collectable?._id || it.collectable?.id) : null
@@ -132,7 +137,7 @@ function ShelfDetailContent() {
               ].filter(Boolean).join('  ') : ''
 
               return (
-                <li key={it.id} className="row item-row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div key={it.id} className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                   <div style={{ flex: '1 1 auto', minWidth: 0 }}>
                     {isCollectable && linkTarget ? (
                       <Link className="item-link" to={linkTarget}>
@@ -150,17 +155,16 @@ function ShelfDetailContent() {
                       </div>
                     )}
                   </div>
-                  <button className="btn ghost" onClick={() => handleRemoveItem(it.id)}>Remove</button>
-                </li>
+                  <Button variant="ghost" onClick={() => handleRemoveItem(it.id)}>Remove</Button>
+                </div>
               )
             })}
-            {!items.length && <li className="label">No items yet. Add something below!</li>}
-          </ul>
-        </div>
+            {!items.length && <div className="label">No items yet. Add something below!</div>}
+          </div>
+        </Card>
 
         <div className="stack" style={{ gap: 16 }}>
-          <div className="card">
-            <h3>Add Manual Item</h3>
+          <Card title="Add Manual Item">
             <form className="stack" onSubmit={handleManualSubmit}>
               <input
                 className="input"
@@ -181,13 +185,12 @@ function ShelfDetailContent() {
                 onChange={(e) => setManual({ ...manual, description: e.target.value })}
               />
               <div className="row">
-                <button className="btn primary" type="submit">Add</button>
+                <Button variant="primary" type="submit">Add</Button>
               </div>
             </form>
-          </div>
+          </Card>
 
-          <div className="card">
-            <h3>Search Catalog</h3>
+          <Card title="Search Catalog">
             <div className="stack">
               <input
                 className="input"
@@ -198,26 +201,26 @@ function ShelfDetailContent() {
               />
               {searching && <div className="label">Searching…</div>}
               {!searching && !results.length && q && <div className="label">No results yet.</div>}
-              <ul className="list">
+              <div className="stack" style={{ gap: 8 }}>
                 {results.map((res) => (
-                  <li key={res.id || res._id || res.collectableId} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                  <div key={res.id || res._id || res.collectableId} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
                     <div>
                       <strong>{res.name}</strong>
                       <div className="label">{[res.type, res.author, res.year].filter(Boolean).join(' · ')}</div>
                     </div>
-                    <button className="btn" onClick={() => handleAddCollectable(res.id || res._id || res.collectableId)}>Add</button>
-                  </li>
+                    <Button onClick={() => handleAddCollectable(res.id || res._id || res.collectableId)}>Add</Button>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
-          </div>
+          </Card>
         </div>
-      </div>
+      </Grid>
 
       <p style={{ marginTop: 16 }}>
-        <Link className="btn" to="/shelves">Back to shelves</Link>
+        <Button as={Link} to="/shelves">Back to shelves</Button>
       </p>
-    </div>
+    </AppLayout>
   )
 }
 

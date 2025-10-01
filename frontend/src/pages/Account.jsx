@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { AppLayout, Button, Card, Grid, Hero } from '../components'
 import { AccountProvider, useAccount } from '../plasmic/data/AccountProvider'
 
 function AccountContent() {
@@ -14,16 +15,16 @@ function AccountContent() {
     }
   }, [account])
 
-  if (loading) return <div className="app"><div className="message info">Loading…</div></div>
+  if (loading) return <AppLayout><div className="message info">Loading…</div></AppLayout>
 
   if (!account) {
     return (
-      <div className="app">
+      <AppLayout>
         <div className="message error">{error || 'Account not found'}</div>
         <p style={{ marginTop: 12 }}>
-          <Link className="btn" to="/shelves">Back to shelves</Link>
+          <Button as={Link} to="/shelves">Back to shelves</Button>
         </p>
-      </div>
+      </AppLayout>
     )
   }
 
@@ -43,19 +44,16 @@ function AccountContent() {
   }
 
   return (
-    <div className="app">
-      <div className="hero">
-        <h1>Account & Settings</h1>
-        <p>Control your profile details and privacy.</p>
-      </div>
+    <AppLayout>
+      <Hero title="Account & Settings" description="Control your profile details and privacy." />
       {(msg || formError || error) && (
         <>
           {msg && <div className="message success">{msg}</div>}
           {(formError || error) && <div className="message error">{formError || error}</div>}
         </>
       )}
-      <div className="card">
-        <form className="grid grid-2" onSubmit={handleSubmit}>
+      <Card>
+        <Grid as="form" columns={2} onSubmit={handleSubmit} style={{ gap: 16 }}>
           <div className="stack">
             <label className="label">First Name</label>
             <input className="input" value={form.firstName || ''} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
@@ -80,17 +78,19 @@ function AccountContent() {
             <label className="label">State</label>
             <input className="input" value={form.state || ''} onChange={(e) => setForm({ ...form, state: e.target.value })} />
           </div>
-          <div className="stack">
+          <div className="stack" style={{ gridColumn: '1 / -1' }}>
             <label className="label">Private Profile</label>
             <div className="row"><input type="checkbox" checked={!!form.isPrivate} onChange={(e) => setForm({ ...form, isPrivate: e.target.checked })} /><span className="label">Only friends can view your page</span></div>
           </div>
-          <div className="row"><button className="btn primary" type="submit">Save</button></div>
-        </form>
-      </div>
+          <div className="row" style={{ gridColumn: '1 / -1' }}>
+            <Button variant="primary" type="submit">Save</Button>
+          </div>
+        </Grid>
+      </Card>
       <p style={{ marginTop: 12 }}>
-        <Link className="btn" to="/">Home</Link> <span className="label">·</span> <Link className="btn ghost" to="/shelves">My Shelves</Link>
+        <Button as={Link} to="/">Home</Button> <span className="label">·</span> <Button as={Link} to="/shelves" variant="ghost">My Shelves</Button>
       </p>
-    </div>
+    </AppLayout>
   )
 }
 
