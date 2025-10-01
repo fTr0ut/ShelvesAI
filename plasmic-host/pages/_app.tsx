@@ -1,20 +1,23 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { PlasmicCanvasHost } from "@plasmicapp/loader-react";
-import { PLASMIC } from "./plasmic-init";
-import AppChrome from "./AppChrome"; // your normal layout/providers
+import type { AppProps } from 'next/app'
+import { useRouter } from 'next/router'
+import { PlasmicCanvasHost } from '@plasmicapp/host'
+import { PlasmicRootProvider } from '@plasmicapp/loader-react'
+import { PLASMIC } from '../plasmic-init'
 
 function HostOnly() {
-  // Absolutely no app chrome/auth/providers here
-  return <PlasmicCanvasHost loader={PLASMIC} />;
+  return (
+    <PlasmicRootProvider loader={PLASMIC}>
+      <PlasmicCanvasHost />
+    </PlasmicRootProvider>
+  )
 }
 
-export default function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/plasmic-host" element={<HostOnly />} />
-        <Route path="/*" element={<AppChrome />} />
-      </Routes>
-    </BrowserRouter>
-  );
+export default function App({ Component, pageProps }: AppProps) {
+  const router = useRouter()
+
+  if (router.pathname === '/plasmic-host') {
+    return <HostOnly />
+  }
+
+  return <Component {...pageProps} />
 }

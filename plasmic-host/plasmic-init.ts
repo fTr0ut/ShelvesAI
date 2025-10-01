@@ -19,11 +19,6 @@ export const PLASMIC = initPlasmicLoader({
   projects,
   preview: true,                  // set false in prod
   host: getPlasmicHostUrl(),      // fine to keep; Studio uses it
-  fetcher: async (url, options) => {
-    const res = await fetch(url, { ...options, credentials: "include" });
-    if (!res.ok) console.warn(`Plasmic fetch failed: ${res.status} ${res.statusText}`);
-    return res;
-  },
 });
 
 registerDataProviders(PLASMIC);
