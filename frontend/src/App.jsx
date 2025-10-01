@@ -304,7 +304,8 @@ function Layout() {
 function PlasmicHostRedirect() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      window.location.replace('/plasmic-host')
+      const { pathname, search, hash } = window.location
+      window.location.replace(`${pathname}${search}${hash}`)
     }
   }, [])
 
