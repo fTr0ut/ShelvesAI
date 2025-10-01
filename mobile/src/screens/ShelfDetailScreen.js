@@ -155,6 +155,7 @@ function transformSteamGameToCollectable(game) {
 import { AuthContext } from "../App";
 
 import { apiRequest } from "../services/api";
+import { ShelfDetailSyncProvider } from "../hooks/useShelfDetailSync";
 
 
 const ITEM_SORT_OPTIONS = [
@@ -624,6 +625,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }
   }, [apiBase, id, token]);
 
+  const handleItemsUpdated = useCallback(async () => {
+    setResults([]);
+    await refreshItems();
+  }, [refreshItems, setResults]);
+
   const steamPreviewCount = steamPreview.length;
 
   const previewSteamLibrary = useCallback(async () => {
@@ -813,7 +819,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       setManual({ title: "", type: "", description: "" });
 
-      await refreshItems();
+      await handleItemsUpdated();
     } catch (e) {
       setError(e.message);
     }
@@ -843,29 +849,30 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }
   };
 
-  const addCollectable = async (collectableId) => {
-    setError("");
+  const addCollectable = useCallback(
+    async (collectableId) => {
+      setError("");
 
-    try {
-      await apiRequest({
-        apiBase,
+      try {
+        await apiRequest({
+          apiBase,
 
-        path: `/api/shelves/${id}/items`,
+          path: `/api/shelves/${id}/items`,
 
-        method: "POST",
+          method: "POST",
 
-        token,
+          token,
 
-        body: { collectableId },
-      });
+          body: { collectableId },
+        });
 
-      setResults([]);
-
-      await refreshItems();
-    } catch (e) {
-      setError(e.message);
-    }
-  };
+        await handleItemsUpdated();
+      } catch (e) {
+        setError(e.message);
+      }
+    },
+    [apiBase, id, token, handleItemsUpdated],
+  );
 
   const removeItem = async (itemId) => {
     setError("");
@@ -902,6 +909,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
       },
     ]);
   };
+
+  const shelfDetailSyncValue = useMemo(
+    () => ({ shelfId: id, refreshItems, onItemAdded: handleItemsUpdated }),
+    [id, refreshItems, handleItemsUpdated],
+  );
 
   const openCollectable = (collectable) => {
     const collectableId = collectable?._id || collectable?.id;
@@ -1046,11 +1058,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
     : null;
 
   return (
-    <View style={styles.screen}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-      >
+    <ShelfDetailSyncProvider value={shelfDetailSyncValue}>
+      <View style={styles.screen}>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+        >
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <View style={styles.card}>
@@ -1523,17 +1536,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
             </View>
           ) : null}
         </View>
-      </ScrollView>
+        </ScrollView>
 
-      <FooterNav navigation={navigation} active="shelves" />
+        <FooterNav navigation={navigation} active="shelves" />
 
-      <ShelfVisionModal
-        visible={visionOpen}
-        onClose={closeShelfVision}
-        items={items}
-        apiBase={apiBase}
-      />
-    </View>
+        <ShelfVisionModal
+          visible={visionOpen}
+          onClose={closeShelfVision}
+          items={items}
+          apiBase={apiBase}
+        />
+      </View>
+    </ShelfDetailSyncProvider>
   );
 }
 

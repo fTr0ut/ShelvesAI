@@ -11,6 +11,7 @@ import {
 import FooterNav from '../components/FooterNav'
 import { AuthContext } from '../App'
 import { apiRequest } from '../services/api'
+import { FriendSearchSyncProvider } from '../hooks/useFriendSearchSync'
 
 const MIN_QUERY_LENGTH = 2
 
@@ -34,7 +35,7 @@ export default function FriendSearchScreen({ navigation }) {
   const [error, setError] = useState('')
   const [busyMap, setBusyMap] = useState({})
 
-  const setBusy = useCallback((id, value) => {
+  const setBusyForUser = useCallback((id, value) => {
     setBusyMap((prev) => ({ ...prev, [id]: value }))
   }, [])
 
@@ -95,10 +96,62 @@ export default function FriendSearchScreen({ navigation }) {
     setResults((prev) => prev.map((item) => (item.id === userId ? updater(item) : item)))
   }, [])
 
+  const handleRequestSuccess = useCallback(
+    (userId, data) => {
+      const friendship = data?.friendship
+      const autoAccepted = data?.autoAccepted || data?.alreadyFriends
+      const nextStatus =
+        friendship?.status || (autoAccepted ? 'accepted' : 'pending')
+      const relation = nextStatus === 'accepted' || autoAccepted ? 'friends' : 'outgoing'
+
+      mutateResult(userId, (prev) => ({
+        ...prev,
+        relation,
+        status: nextStatus,
+        direction: relation === 'outgoing' ? 'outgoing' : null,
+        friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
+      }))
+      setError('')
+    },
+    [mutateResult, setError],
+  )
+
+  const handleRespondSuccess = useCallback(
+    ({ userId, action, data }) => {
+      if (action === 'accept') {
+        const friendship = data?.friendship
+        mutateResult(userId, (prev) => ({
+          ...prev,
+          relation: 'friends',
+          status: 'accepted',
+          direction: null,
+          friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
+        }))
+      } else {
+        mutateResult(userId, (prev) => ({
+          ...prev,
+          relation: 'none',
+          status: null,
+          direction: null,
+          friendshipId: null,
+        }))
+      }
+      setError('')
+    },
+    [mutateResult, setError],
+  )
+
+  const handleMutationError = useCallback(
+    (message) => {
+      setError(message || '')
+    },
+    [setError],
+  )
+
   const handleSendRequest = useCallback(
     async (user) => {
       const userId = user.id
-      setBusy(userId, true)
+      setBusyForUser(userId, true)
       try {
         const data = await apiRequest({
           apiBase,
@@ -107,29 +160,20 @@ export default function FriendSearchScreen({ navigation }) {
           token,
           body: { targetUserId: userId },
         })
-        const friendship = data.friendship
-        const nextStatus = friendship?.status || (data.autoAccepted || data.alreadyFriends ? 'accepted' : 'pending')
-        const relation = nextStatus === 'accepted' || data.autoAccepted || data.alreadyFriends ? 'friends' : 'outgoing'
-        mutateResult(userId, (prev) => ({
-          ...prev,
-          relation,
-          status: nextStatus,
-          direction: relation === 'outgoing' ? 'outgoing' : null,
-          friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
-        }))
+        handleRequestSuccess(userId, data)
       } catch (e) {
-        setError(e.message)
+        handleMutationError(e.message)
       } finally {
-        setBusy(userId, false)
+        setBusyForUser(userId, false)
       }
     },
-    [apiBase, mutateResult, setBusy, token],
+    [apiBase, handleMutationError, handleRequestSuccess, setBusyForUser, token],
   )
 
   const handleRespond = useCallback(
     async ({ friendshipId, action, userId }) => {
       if (!friendshipId) return
-      setBusy(userId, true)
+      setBusyForUser(userId, true)
       try {
         const data = await apiRequest({
           apiBase,
@@ -138,31 +182,14 @@ export default function FriendSearchScreen({ navigation }) {
           token,
           body: { friendshipId, action },
         })
-        if (action === 'accept') {
-          const friendship = data.friendship
-          mutateResult(userId, (prev) => ({
-            ...prev,
-            relation: 'friends',
-            status: 'accepted',
-            direction: null,
-            friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
-          }))
-        } else {
-          mutateResult(userId, (prev) => ({
-            ...prev,
-            relation: 'none',
-            status: null,
-            direction: null,
-            friendshipId: null,
-          }))
-        }
+        handleRespondSuccess({ userId, action, data })
       } catch (e) {
-        setError(e.message)
+        handleMutationError(e.message)
       } finally {
-        setBusy(userId, false)
+        setBusyForUser(userId, false)
       }
     },
-    [apiBase, mutateResult, setBusy, token],
+    [apiBase, handleMutationError, handleRespondSuccess, setBusyForUser, token],
   )
 
   const renderItem = useCallback(
@@ -246,34 +273,46 @@ export default function FriendSearchScreen({ navigation }) {
     return <Text style={styles.muted}>No collectors found. Try a different search.</Text>
   }, [error, loading, query])
 
-  return (
-    <View style={styles.screen}>
-      <View style={styles.container}>
-        <Text style={styles.title}>Find Friends</Text>
-        <Text style={styles.subtitle}>Search for collectors to build your network.</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by name or username"
-          placeholderTextColor="#55657a"
-          value={query}
-          onChangeText={setQuery}
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-        {error && query.trim().length >= MIN_QUERY_LENGTH ? <Text style={styles.error}>{error}</Text> : null}
+  const friendSyncValue = useMemo(
+    () => ({
+      setBusyForUser,
+      handleRequestSuccess,
+      handleRespondSuccess,
+      handleMutationError,
+    }),
+    [handleMutationError, handleRequestSuccess, handleRespondSuccess, setBusyForUser],
+  )
 
-        <FlatList
-          data={results}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={results.length ? styles.listContent : styles.listEmpty}
-          ListEmptyComponent={listEmpty}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        />
+  return (
+    <FriendSearchSyncProvider value={friendSyncValue}>
+      <View style={styles.screen}>
+        <View style={styles.container}>
+          <Text style={styles.title}>Find Friends</Text>
+          <Text style={styles.subtitle}>Search for collectors to build your network.</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search by name or username"
+            placeholderTextColor="#55657a"
+            value={query}
+            onChangeText={setQuery}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {error && query.trim().length >= MIN_QUERY_LENGTH ? <Text style={styles.error}>{error}</Text> : null}
+
+          <FlatList
+            data={results}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            contentContainerStyle={results.length ? styles.listContent : styles.listEmpty}
+            ListEmptyComponent={listEmpty}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
+        <FooterNav navigation={navigation} active="home" />
       </View>
-      <FooterNav navigation={navigation} active="home" />
-    </View>
+    </FriendSearchSyncProvider>
   )
 }
 

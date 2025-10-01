@@ -3,6 +3,7 @@ import { getPlasmicHostUrl, getPlasmicProjects } from './lib/config';
 import { registerDataProviders } from './lib/register-data-providers';
 import { registerCollectorActions } from './lib/register-actions';
 import { registerCollectorComponents, registerCollectorMobileComponents } from './lib/register-components';
+import { registerActions } from './lib/register-actions';
 
 
 const projects = getPlasmicProjects();
@@ -36,3 +37,4 @@ registerCollectorComponents(PLASMIC);
 registerCollectorActions(PLASMIC);
 
 registerCollectorMobileComponents(PLASMIC);
+registerActions(PLASMIC);

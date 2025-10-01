@@ -1,158 +1,134 @@
+import type { PlasmicComponentLoader } from '@plasmicapp/loader-react'
 import {
-  AddShelfItemAction,
-  CreateShelfAction,
-  SendFriendRequestAction,
-} from '@frontend/plasmic/actions';
+  CreateShelfAction as MobileCreateShelfAction,
+  AddShelfItemAction as MobileAddShelfItemAction,
+  SendFriendRequestAction as MobileSendFriendRequestAction,
+} from '@mobile/plasmic/actions'
 
-type PlasmicLoader = {
-  registerComponent: (...args: any[]) => void;
-};
-
-export function registerCollectorActions(loader: PlasmicLoader) {
-  loader.registerComponent(CreateShelfAction, {
-    name: 'CreateShelfAction',
-    displayName: 'Create Shelf Action',
-    description: 'Calls POST /api/shelves and exposes the API response.',
+export function registerActions(loader: PlasmicComponentLoader) {
+  loader.registerComponent(MobileCreateShelfAction, {
+    name: 'CollectorMobileCreateShelfAction',
+    description: 'Creates a new shelf for the authenticated viewer.',
     props: {
       name: {
         type: 'string',
-        displayName: 'Shelf name',
-        description: 'Default name for the shelf when the action runs.',
+        displayName: 'Name',
+        description: 'Shelf name to create.',
       },
       type: {
         type: 'string',
-        displayName: 'Shelf type',
-        description: 'Type slug for the shelf (e.g. books, vinyl, movies).',
+        displayName: 'Type',
+        description: 'Optional shelf type label.',
       },
       description: {
         type: 'string',
         displayName: 'Description',
-        description: 'Optional description sent to the API.',
+        description: 'Optional description for the shelf.',
       },
       visibility: {
         type: 'choice',
-        options: ['private', 'friends', 'public'],
         displayName: 'Visibility',
-        description: 'Visibility level to persist with the new shelf.',
+        options: ['private', 'friends', 'public'],
+        description: 'Visibility level for the new shelf.',
         defaultValueHint: 'private',
       },
-      position: {
+      payload: {
         type: 'object',
-        displayName: 'Position payload',
-        description: 'Optional positioning object forwarded to the API.',
+        displayName: 'Extra Payload',
+        description: 'Additional properties to merge into the POST body.',
       },
-      apiBase: {
-        type: 'string',
-        displayName: 'API base URL',
-        description: 'Override the API base URL; defaults to providers/env.',
+      onSuccess: {
+        type: 'eventHandler',
+        displayName: 'onSuccess',
+      },
+      onError: {
+        type: 'eventHandler',
+        displayName: 'onError',
       },
       children: {
         type: 'slot',
-        defaultValue: null,
-        description: 'Optional children rendered within the action wrapper.',
+        defaultValue: {
+          type: 'button',
+          label: 'Create Shelf',
+        },
       },
     },
-    styleSections: false,
-    refActions: {
-      run: {
-        displayName: 'Create shelf',
-        description: 'Execute the shelf creation request.',
-        argTypes: [
-          {
-            name: 'overrides',
-            displayName: 'Overrides',
-            type: {
-              type: 'object',
-            },
-          },
-        ],
-      },
-    },
-  });
+    providesData: true,
+  })
 
-  loader.registerComponent(AddShelfItemAction, {
-    name: 'AddShelfItemAction',
-    displayName: 'Add Shelf Item Action',
-    description: 'Calls POST /api/shelves/:id/items to add an existing collectable.',
+  loader.registerComponent(MobileAddShelfItemAction, {
+    name: 'CollectorMobileAddShelfItemAction',
+    description: 'Adds a collectable to a shelf and refreshes local data.',
     props: {
       shelfId: {
         type: 'string',
         displayName: 'Shelf ID',
-        description: 'Shelf id to target; inferred from ShelfDetailProvider when omitted.',
+        description: 'Explicit shelf id. Uses surrounding shelf context if omitted.',
       },
       collectableId: {
         type: 'string',
         displayName: 'Collectable ID',
-        description: 'Collectable id that should be added to the shelf.',
+        description: 'Collectable to add to the shelf.',
       },
-      apiBase: {
-        type: 'string',
-        displayName: 'API base URL',
-        description: 'Override the API base URL; defaults to providers/env.',
+      payload: {
+        type: 'object',
+        displayName: 'Extra Payload',
+        description: 'Additional body fields for the POST request.',
+      },
+      onSuccess: {
+        type: 'eventHandler',
+        displayName: 'onSuccess',
+      },
+      onError: {
+        type: 'eventHandler',
+        displayName: 'onError',
       },
       children: {
         type: 'slot',
-        defaultValue: null,
+        defaultValue: {
+          type: 'button',
+          label: 'Add to Shelf',
+        },
       },
     },
-    styleSections: false,
-    refActions: {
-      run: {
-        displayName: 'Add item',
-        description: 'Execute the add item mutation.',
-        argTypes: [
-          {
-            name: 'overrides',
-            displayName: 'Overrides',
-            type: {
-              type: 'object',
-            },
-          },
-        ],
-      },
-    },
-  });
+    providesData: true,
+  })
 
-  loader.registerComponent(SendFriendRequestAction, {
-    name: 'SendFriendRequestAction',
-    displayName: 'Send Friend Request Action',
-    description: 'Calls POST /api/friends/request for the active viewer.',
+  loader.registerComponent(MobileSendFriendRequestAction, {
+    name: 'CollectorMobileSendFriendRequestAction',
+    description: 'Sends a friend request from the current viewer to the given user.',
     props: {
-      targetUserId: {
+      userId: {
         type: 'string',
-        displayName: 'Target user ID',
-        description: 'User id to send the request to.',
+        displayName: 'Target User ID',
+        description: 'The user id to send the request to.',
       },
       message: {
         type: 'string',
         displayName: 'Message',
-        description: 'Optional request message.',
+        description: 'Optional message to include with the request.',
       },
-      apiBase: {
-        type: 'string',
-        displayName: 'API base URL',
-        description: 'Override the API base URL; defaults to providers/env.',
+      payload: {
+        type: 'object',
+        displayName: 'Extra Payload',
+        description: 'Additional request body fields.',
+      },
+      onSuccess: {
+        type: 'eventHandler',
+        displayName: 'onSuccess',
+      },
+      onError: {
+        type: 'eventHandler',
+        displayName: 'onError',
       },
       children: {
         type: 'slot',
-        defaultValue: null,
+        defaultValue: {
+          type: 'button',
+          label: 'Send Friend Request',
+        },
       },
     },
-    styleSections: false,
-    refActions: {
-      run: {
-        displayName: 'Send request',
-        description: 'Execute the friend request mutation.',
-        argTypes: [
-          {
-            name: 'overrides',
-            displayName: 'Overrides',
-            type: {
-              type: 'object',
-            },
-          },
-        ],
-      },
-    },
-  });
+    providesData: true,
+  })
 }
