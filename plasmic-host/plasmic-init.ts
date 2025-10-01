@@ -3,6 +3,7 @@ import { getPlasmicHostUrl, getPlasmicProjects } from './lib/config';
 import { registerDataProviders } from './lib/register-data-providers';
 import { registerCollectorComponents, registerCollectorMobileComponents } from './lib/register-components';
 
+
 const projects = getPlasmicProjects();
 
 if (!projects.length) {
@@ -31,4 +32,5 @@ export const PLASMIC = initPlasmicLoader({
 
 registerDataProviders(PLASMIC);
 registerCollectorComponents(PLASMIC);
+
 registerCollectorMobileComponents(PLASMIC);
