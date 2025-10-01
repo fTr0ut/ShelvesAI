@@ -1,13 +1,14 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { AppLayout, Button, Card, Hero } from '../components'
 import { CollectableProvider, useCollectable } from '../plasmic/data/CollectableProvider'
 
 function CollectableContent() {
   const { collectable, loading, error } = useCollectable()
 
-  if (loading) return <div className="app"><div className="message info">Loading collectable...</div></div>
-  if (error) return <div className="app"><div className="message error">{error}</div><p><Link className="btn" to="/shelves">Back to shelves</Link></p></div>
-  if (!collectable) return <div className="app"><div className="message error">Collectable not found</div><p><Link className="btn" to="/shelves">Back to shelves</Link></p></div>
+  if (loading) return <AppLayout><div className="message info">Loading collectable...</div></AppLayout>
+  if (error) return <AppLayout><div className="message error">{error}</div><p><Button as={Link} to="/shelves">Back to shelves</Button></p></AppLayout>
+  if (!collectable) return <AppLayout><div className="message error">Collectable not found</div><p><Button as={Link} to="/shelves">Back to shelves</Button></p></AppLayout>
 
   const rows = [
     { label: 'Type', value: collectable.type },
@@ -19,13 +20,10 @@ function CollectableContent() {
   ].filter((row) => row.value)
 
   return (
-    <div className="app">
-      <div className="hero">
-        <h1>{collectable.name}</h1>
-        <p className="label">Detailed metadata for this catalog entry.</p>
-      </div>
+    <AppLayout>
+      <Hero title={collectable.name} description="Detailed metadata for this catalog entry." />
 
-      <div className="card" style={{ maxWidth: 640 }}>
+      <Card style={{ maxWidth: 640 }}>
         <div className="stack" style={{ gap: 14 }}>
           {rows.length ? rows.map((row) => (
             <div key={row.label}>
@@ -36,12 +34,12 @@ function CollectableContent() {
             <div className="message info">No additional metadata available.</div>
           )}
         </div>
-      </div>
+      </Card>
 
       <p style={{ marginTop: 16 }}>
-        <Link className="btn" to="/shelves">Back to shelves</Link>
+        <Button as={Link} to="/shelves">Back to shelves</Button>
       </p>
-    </div>
+    </AppLayout>
   )
 }
 
