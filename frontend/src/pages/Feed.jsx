@@ -1,51 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { FeedProvider, useFeed } from '../plasmic/data/FeedProvider'
 
-export default function Feed({ apiBase = '' }) {
-  const navigate = useNavigate()
-  const token = useMemo(() => localStorage.getItem('token') || '', [])
-  const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = apiBase || envBase
-  const api = (path) => `${base}${path}`
+const SCOPES = [
+  { value: 'friends', label: 'Friends' },
+  { value: 'mine', label: 'My Shelves' },
+  { value: 'global', label: 'Global' },
+  { value: 'nearby', label: 'Nearby' },
+]
 
-  const [entries, setEntries] = useState([])
-  const [scope, setScope] = useState('friends')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!token) {
-      navigate('/')
-      return
-    }
-    const controller = new AbortController()
-    const load = async () => {
-      try {
-        setLoading(true)
-        setError('')
-        const res = await fetch(api(`/api/feed?scope=${scope}`), { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data?.error || 'Failed to load feed')
-        setEntries(data.entries || [])
-      } catch (e) {
-        setError(e.message || 'Failed to load feed')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-    }
-
-    load()
-    return () => controller.abort()
-  }, [apiBase, base, navigate, scope, token])
-
-  const scopes = [
-    { value: 'friends', label: 'Friends' },
-    { value: 'mine', label: 'My Shelves' },
-    { value: 'global', label: 'Global' },
-    { value: 'nearby', label: 'Nearby' },
-  ]
+function FeedContent() {
+  const { entries, scope, setScope, loading, error } = useFeed()
 
   return (
     <div className="app">
@@ -55,7 +20,7 @@ export default function Feed({ apiBase = '' }) {
       </div>
 
       <div className="row" style={{ gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {scopes.map((opt) => (
+        {SCOPES.map((opt) => (
           <button
             key={opt.value}
             className={`btn ${scope === opt.value ? 'primary' : ''}`}
@@ -73,7 +38,7 @@ export default function Feed({ apiBase = '' }) {
       <div className="stack" style={{ gap: 16 }}>
         {loading && !entries.length ? (
           <div className="card">
-            <p className="label">Loading feed…</p>
+            <p className="label">Loading feed</p>
           </div>
         ) : null}
 
@@ -108,7 +73,7 @@ export default function Feed({ apiBase = '' }) {
                   const label = item.collectable?.name || item.manual?.name || 'Unknown item'
                   return (
                     <div key={item.id} className="label">
-                      • {label}
+                      {label}
                     </div>
                   )
                 })}
@@ -127,5 +92,24 @@ export default function Feed({ apiBase = '' }) {
         ))}
       </div>
     </div>
+  )
+}
+
+export default function Feed({ apiBase = '' }) {
+  const navigate = useNavigate()
+  const token = useMemo(() => localStorage.getItem('token') || '', [])
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/')
+    }
+  }, [navigate, token])
+
+  if (!token) return null
+
+  return (
+    <FeedProvider apiBase={apiBase} token={token}>
+      <FeedContent />
+    </FeedProvider>
   )
 }

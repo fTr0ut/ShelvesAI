@@ -1,38 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { CollectableProvider, useCollectable } from '../plasmic/data/CollectableProvider'
 
-export default function CollectableDetail({ apiBase = '' }) {
-  const { id } = useParams()
-  const navigate = useNavigate()
-  const token = useMemo(() => localStorage.getItem('token') || '', [])
-  const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = apiBase || envBase
-
-  const [collectable, setCollectable] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!token) {
-      navigate('/')
-      return
-    }
-    const fetchCollectable = async () => {
-      try {
-        setLoading(true)
-        const res = await fetch(`${base}/api/collectables/${id}`, { headers: { Authorization: `Bearer ${token}` } })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data?.error || 'Collectable not found')
-        setCollectable(data.collectable)
-        setError('')
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchCollectable()
-  }, [base, id, navigate, token])
+function CollectableContent() {
+  const { collectable, loading, error } = useCollectable()
 
   if (loading) return <div className="app"><div className="message info">Loading collectable...</div></div>
   if (error) return <div className="app"><div className="message error">{error}</div><p><Link className="btn" to="/shelves">Back to shelves</Link></p></div>
@@ -74,3 +45,22 @@ export default function CollectableDetail({ apiBase = '' }) {
   )
 }
 
+export default function CollectableDetail({ apiBase = '' }) {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const token = useMemo(() => localStorage.getItem('token') || '', [])
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/')
+    }
+  }, [navigate, token])
+
+  if (!token) return null
+
+  return (
+    <CollectableProvider apiBase={apiBase} token={token} collectableId={id}>
+      <CollectableContent />
+    </CollectableProvider>
+  )
+}

@@ -1,5 +1,6 @@
 import { initPlasmicLoader } from '@plasmicapp/loader-react';
 import { getPlasmicHostUrl, getPlasmicProjects } from './lib/config';
+import { registerDataProviders } from './lib/register-data-providers';
 
 const projects = getPlasmicProjects();
 
@@ -26,3 +27,5 @@ export const PLASMIC = initPlasmicLoader({
     return response;
   },
 });
+
+registerDataProviders(PLASMIC);
