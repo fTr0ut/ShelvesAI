@@ -63,8 +63,14 @@ const corsOptions = {
   exposedHeaders: ['Content-Length', 'Content-Range', 'X-Total-Count'],
 };
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+const corsMiddleware = cors(corsOptions);
+app.use(corsMiddleware);
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 app.use((req, _res, next) => {
   const secret =
     process.env.COOKIE_SECRET || process.env.JWT_SECRET || 'collector-cookie-secret';
@@ -196,7 +202,11 @@ if (fs.existsSync(distPath)) {
   // Serve static assets
   app.use(express.static(distPath));
   // SPA fallback: send index.html for non-API routes
-  app.get(/^(?!\/api).*/, (req, res) => {
+  app.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/steam')) {
+      return next();
+    }
     res.sendFile(indexPath);
   });
 } else {
