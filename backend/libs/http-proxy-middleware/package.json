@@ -1,0 +1,5 @@
+{
+  "name": "http-proxy-middleware",
+  "version": "0.0.0-local",
+  "main": "index.js"
+}
