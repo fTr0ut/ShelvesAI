@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero, ShelfListItem } from '../components'
+import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
 import { ShelvesProvider, useShelves } from '../plasmic/data/ShelvesProvider'
 
 const VISIBILITY_LABELS = { private: 'Private', friends: 'Friends', public: 'Public' }
@@ -76,7 +77,7 @@ function ShelvesContent({ onCreate }) {
             </select>
             <div className="row">
               <Button variant="primary" type="submit" disabled={submitting}>
-                {submitting ? 'Creating…' : 'Create'}
+                {submitting ? 'Creating...' : 'Create'}
               </Button>
             </div>
           </form>
@@ -91,7 +92,7 @@ function ShelvesContent({ onCreate }) {
                 visibilityLabel={VISIBILITY_LABELS[s.visibility] || s.visibility}
                 description={s.description}
                 actions={(
-                  <Button as={Link} to={`/shelves/${s._id}`} variant="ghost">
+                  <Button as={Link} to={legacyPath(`/shelves/${s._id}`)} variant="ghost">
                     Open
                   </Button>
                 )}
@@ -101,7 +102,7 @@ function ShelvesContent({ onCreate }) {
           </div>
         </Card>
       </Grid>
-      <p style={{ marginTop: 12 }}><Link to="/">Back home</Link></p>
+      <p style={{ marginTop: 12 }}><Link to={legacyPath()}>Back home</Link></p>
     </AppLayout>
   )
 }
@@ -112,7 +113,7 @@ export default function Shelves({ apiBase = '' }) {
 
   useEffect(() => {
     if (!token) {
-      navigate('/')
+      navigate(LEGACY_BASE_PATH)
     }
   }, [navigate, token])
 
@@ -120,7 +121,9 @@ export default function Shelves({ apiBase = '' }) {
 
   return (
     <ShelvesProvider apiBase={apiBase} token={token}>
-      <ShelvesContent onCreate={(shelf) => shelf?._id && navigate(`/shelves/${shelf._id}`)} />
+      <ShelvesContent onCreate={(shelf) => shelf?._id && navigate(legacyPath(`/shelves/${shelf._id}`))} />
     </ShelvesProvider>
   )
 }
+
+

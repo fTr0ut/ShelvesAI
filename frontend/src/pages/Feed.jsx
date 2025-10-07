@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Hero } from '../components'
+import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
 import { FeedProvider, useFeed } from '../plasmic/data/FeedProvider'
 
 const SCOPES = [
@@ -28,7 +29,7 @@ function FeedContent() {
             {opt.label}
           </Button>
         ))}
-        <Button as={Link} to="/shelves">
+        <Button as={Link} to={legacyPath('/shelves')}>
           Create shelf
         </Button>
       </div>
@@ -61,7 +62,7 @@ function FeedContent() {
             </div>
 
             <div>
-              <Link className="item-link" to={`/shelves/${entry.shelf?.id || ''}`}>
+              <Link className="item-link" to={legacyPath(`/shelves/${entry.shelf?.id || ''}`)}>
                 <strong style={{ fontSize: 18 }}>{entry.shelf?.name}</strong>
                 {entry.shelf?.description && <div className="label" style={{ marginTop: 4 }}>{entry.shelf.description}</div>}
               </Link>
@@ -101,7 +102,7 @@ export default function Feed({ apiBase = '' }) {
 
   useEffect(() => {
     if (!token) {
-      navigate('/')
+      navigate(LEGACY_BASE_PATH)
     }
   }, [navigate, token])
 
@@ -113,3 +114,6 @@ export default function Feed({ apiBase = '' }) {
     </FeedProvider>
   )
 }
+
+
+

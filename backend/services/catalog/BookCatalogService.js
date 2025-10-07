@@ -470,12 +470,16 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
         direct.lightweightFingerprint || lightweightFingerprint || null;
       if (!direct.fingerprint) {
         const computedFingerprint = makeCollectableFingerprint({
-          title: direct.title,
-          primaryCreator: direct.primaryCreator,
-          releaseYear: direct.year,
-          mediaType: direct.type || direct.kind,
-          format: direct.physical?.format,
-          platforms: direct.platform || direct.platforms,
+          title: direct.title || item?.title || item?.name,
+          primaryCreator:
+            direct.primaryCreator ||
+            direct.primaryAuthor ||
+            item?.author ||
+            item?.creator,
+          releaseYear: direct.year || direct.releaseYear || item?.year,
+          mediaType: direct.type || direct.kind || item?.type,
+          format: direct.physical?.format || direct.format || item?.format,
+          platforms: direct.platform || direct.platforms || item?.platform,
         });
         direct.fingerprint = computedFingerprint || null;
       }
@@ -503,20 +507,26 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       lightweightFingerprint: lightweightFingerprint || null,
     });
 
-    if (payload && lightweightFingerprint && !payload.lightweightFingerprint) {
-      payload.lightweightFingerprint = lightweightFingerprint;
-    }
+    if (payload) {
+      if (lightweightFingerprint && !payload.lightweightFingerprint) {
+        payload.lightweightFingerprint = lightweightFingerprint;
+      }
 
-    if (payload && !payload.fingerprint) {
-      const computedFingerprint = makeCollectableFingerprint({
-        title: payload.title,
-        primaryCreator: payload.primaryCreator,
-        releaseYear: payload.year,
-        mediaType: payload.type || payload.kind,
-        format: payload.physical?.format,
-        platforms: payload.platform || payload.platforms,
-      });
-      payload.fingerprint = computedFingerprint || null;
+      if (!payload.fingerprint) {
+        const computedFingerprint = makeCollectableFingerprint({
+          title: payload.title || item?.title || item?.name,
+          primaryCreator:
+            payload.primaryCreator ||
+            payload.primaryAuthor ||
+            item?.author ||
+            item?.creator,
+          releaseYear: payload.year || payload.publishYear || item?.year,
+          mediaType: payload.type || payload.kind || item?.type,
+          format: payload.physical?.format || payload.format || item?.format,
+          platforms: payload.platform || payload.platforms || item?.platform,
+        });
+        payload.fingerprint = computedFingerprint || null;
+      }
     }
 
     return payload;

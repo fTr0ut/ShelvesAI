@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.4.0",
+    "@plasmicapp/host": "^1.0.226",
+    "@plasmicapp/loader-react": "^1.0.399",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.1"

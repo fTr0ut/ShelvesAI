@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero } from '../components'
+import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
 import { ShelfDetailProvider, useShelfDetail } from '../plasmic/data/ShelfDetailProvider'
 
 const VISIBILITY_OPTIONS = [
@@ -124,7 +125,7 @@ function ShelfDetailContent() {
             {items.map((it) => {
               const isCollectable = Boolean(it.collectable)
               const collectableId = isCollectable ? (it.collectable?._id || it.collectable?.id) : null
-              const linkTarget = collectableId ? `/collectables/${collectableId}` : null
+              const linkTarget = collectableId ? legacyPath(`/collectables/${collectableId}`) : null
               const collectableMeta = isCollectable ? [
                 it.collectable.author ? `by ${it.collectable.author}` : '',
                 it.collectable.format || '',
@@ -199,14 +200,14 @@ function ShelfDetailContent() {
                 onChange={(e) => handleSearch(e.target.value)}
                 onBlur={() => handleSearch(q)}
               />
-              {searching && <div className="label">Searching…</div>}
+              {searching && <div className="label">Searching...</div>}
               {!searching && !results.length && q && <div className="label">No results yet.</div>}
               <div className="stack" style={{ gap: 8 }}>
                 {results.map((res) => (
                   <div key={res.id || res._id || res.collectableId} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
                     <div>
                       <strong>{res.name}</strong>
-                      <div className="label">{[res.type, res.author, res.year].filter(Boolean).join(' · ')}</div>
+                      <div className="label">{[res.type, res.author, res.year].filter(Boolean).join(' / ')}</div>
                     </div>
                     <Button onClick={() => handleAddCollectable(res.id || res._id || res.collectableId)}>Add</Button>
                   </div>
@@ -218,7 +219,7 @@ function ShelfDetailContent() {
       </Grid>
 
       <p style={{ marginTop: 16 }}>
-        <Button as={Link} to="/shelves">Back to shelves</Button>
+        <Button as={Link} to={legacyPath('/shelves')}>Back to shelves</Button>
       </p>
     </AppLayout>
   )
@@ -231,7 +232,7 @@ export default function ShelfDetail({ apiBase = '' }) {
 
   useEffect(() => {
     if (!token) {
-      navigate('/')
+      navigate(LEGACY_BASE_PATH)
     }
   }, [navigate, token])
 
@@ -243,3 +244,5 @@ export default function ShelfDetail({ apiBase = '' }) {
     </ShelfDetailProvider>
   )
 }
+
+

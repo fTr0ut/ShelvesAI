@@ -2,16 +2,16 @@
   "name": "plasmic-host",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "dev": "next dev --port 3002",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 3002",
+    "lint": "eslint --ext .ts,.tsx src lib plasmic-init.ts"
   },
   "dependencies": {
     "@plasmicapp/host": "^1.0.226",
     "@plasmicapp/loader-react": "^1.0.399",
-    "next": "^14.2.33",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-native-web": "^0.19.12"
@@ -20,8 +20,9 @@
     "@types/node": "^20.14.11",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.5",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vite": "^5.4.11"
   }
 }

@@ -1,14 +1,15 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AppLayout, Button, Card, Hero } from '../components'
+import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
 import { CollectableProvider, useCollectable } from '../plasmic/data/CollectableProvider'
 
 function CollectableContent() {
   const { collectable, loading, error } = useCollectable()
 
   if (loading) return <AppLayout><div className="message info">Loading collectable...</div></AppLayout>
-  if (error) return <AppLayout><div className="message error">{error}</div><p><Button as={Link} to="/shelves">Back to shelves</Button></p></AppLayout>
-  if (!collectable) return <AppLayout><div className="message error">Collectable not found</div><p><Button as={Link} to="/shelves">Back to shelves</Button></p></AppLayout>
+  if (error) return <AppLayout><div className="message error">{error}</div><p><Button as={Link} to={legacyPath('/shelves')}>Back to shelves</Button></p></AppLayout>
+  if (!collectable) return <AppLayout><div className="message error">Collectable not found</div><p><Button as={Link} to={legacyPath('/shelves')}>Back to shelves</Button></p></AppLayout>
 
   const rows = [
     { label: 'Type', value: collectable.type },
@@ -37,7 +38,7 @@ function CollectableContent() {
       </Card>
 
       <p style={{ marginTop: 16 }}>
-        <Button as={Link} to="/shelves">Back to shelves</Button>
+        <Button as={Link} to={legacyPath('/shelves')}>Back to shelves</Button>
       </p>
     </AppLayout>
   )
@@ -50,7 +51,7 @@ export default function CollectableDetail({ apiBase = '' }) {
 
   useEffect(() => {
     if (!token) {
-      navigate('/')
+      navigate(LEGACY_BASE_PATH)
     }
   }, [navigate, token])
 

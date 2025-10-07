@@ -1,14 +1,12 @@
 # dependencies
 /node_modules
 
-# production
-/.next
-/out
+# production builds
+/dist
 
 # misc
 .DS_Store
 *.log
-.next
 
 # local env
 .env.local

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Link, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
+import { Link, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
 import { AppLayout, Button, Card, Grid, Hero } from './components'
 import Shelves from './pages/Shelves.jsx'
 import ShelfDetail from './pages/ShelfDetail.jsx'
-import Feed from './pages/Feed.jsx'
+import LegacyFeed from './pages/Feed.jsx'
+import PlasmicRuntime from './pages/PlasmicRuntime.jsx'
+import { LEGACY_BASE_PATH, legacyPath } from './legacy/constants.js'
 import CollectableDetail from './pages/CollectableDetail.jsx'
 import Account from './pages/Account.jsx'
 
@@ -23,9 +25,9 @@ function Home({ apiBase = '' }) {
   const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
   const base = (apiBase || envBase)
   const api = (path) => `${base}${path}`
-  const goProtected = () => navigate('/protected')
-  const goFeed = () => navigate('/feed')
-  const goShelves = () => navigate('/shelves')
+  const goProtected = () => navigate(legacyPath('/protected'))
+  const goFeed = () => navigate(legacyPath('/feed'))
+  const goShelves = () => navigate(legacyPath('/shelves'))
 
   useEffect(() => {
     if (!token) { setMe(null); return }
@@ -236,16 +238,16 @@ function Protected({ apiBase = '' }) {
 
   useEffect(() => {
     const t = localStorage.getItem('token')
-    if (!t) { setStatus('no-token'); navigate('/'); return }
+    if (!t) { setStatus('no-token'); navigate(LEGACY_BASE_PATH); return }
     const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
     const base = (apiBase || envBase)
     fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${t}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((data) => { setUser(data.user); setStatus('ok') })
-      .catch(() => { setStatus('unauthorized'); navigate('/') })
+      .catch(() => { setStatus('unauthorized'); navigate(LEGACY_BASE_PATH) })
   }, [apiBase, navigate])
 
-  if (status !== 'ok') return <AppLayout><div className="message info">Loading…</div></AppLayout>
+  if (status !== 'ok') return <AppLayout><div className="message info">Loading...</div></AppLayout>
   return (
     <AppLayout>
       <Card>
@@ -254,7 +256,7 @@ function Protected({ apiBase = '' }) {
           Welcome, <strong>{user.username}</strong>
         </p>
         <p className="label">This content is protected by your local JWT.</p>
-        <Button as={Link} to="/">
+        <Button as={Link} to={legacyPath()}>
           Go Home
         </Button>
       </Card>
@@ -265,32 +267,33 @@ function Protected({ apiBase = '' }) {
 export default function App() {
   return (
     <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Home />} />
-        <Route path="/feed" element={<Feed />} />
-        <Route path="/protected" element={<Protected />} />
-        <Route path="/shelves" element={<Shelves />} />
-        <Route path="/shelves/:id" element={<ShelfDetail />} />
-        <Route path="/collectables/:id" element={<CollectableDetail />} />
-        <Route path="/account" element={<Account />} />
-        <Route path="/plasmic-host/*" element={<PlasmicHostRedirect />} />
-        <Route path="*" element={<Home />} />
+      <Route path="/plasmic-host/*" element={<PlasmicHostRedirect />} />
+      <Route path="/plasmic/*" element={<PlasmicRuntime routePrefix="/plasmic" />} />
+      <Route path={`${LEGACY_BASE_PATH}/*`} element={<LegacyLayout />}>
+        <Route index element={<Home />} />
+        <Route path="feed" element={<LegacyFeed />} />
+        <Route path="protected" element={<Protected />} />
+        <Route path="shelves" element={<Shelves />} />
+        <Route path="shelves/:id" element={<ShelfDetail />} />
+        <Route path="collectables/:id" element={<CollectableDetail />} />
+        <Route path="account" element={<Account />} />
+        <Route path="*" element={<Navigate to={LEGACY_BASE_PATH} replace />} />
       </Route>
+      <Route path="*" element={<PlasmicRuntime />} />
     </Routes>
   )
 }
-
-function Layout() {
+function LegacyLayout() {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''
   return (
     <>
       <header className="navbar">
-        <div className="brand"><Link to="/">Shelves.AI</Link></div>
+        <div className="brand"><Link to={legacyPath()}>Shelves.AI</Link></div>
         <nav>
-          <Link to="/feed">Feed</Link>
-          <Link to="/shelves">Shelves</Link>
-          <Link to="/account">Account</Link>
-          <Link to="/">Home</Link>
+          <Link to={legacyPath('/feed')}>Feed</Link>
+          <Link to={legacyPath('/shelves')}>Shelves</Link>
+          <Link to={legacyPath('/account')}>Account</Link>
+          <Link to={legacyPath()}>Home</Link>
           {token ? <span className="pill">Logged in</span> : <span className="pill">Guest</span>}
         </nav>
       </header>
@@ -311,3 +314,5 @@ function PlasmicHostRedirect() {
 
   return null
 }
+
+

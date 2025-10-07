@@ -1,20 +1,22 @@
-# Plasmic Host (Next.js)
+# Plasmic Host (React + Vite)
 
-This app exposes the minimal endpoints Plasmic Studio requires when working with
+This app exposes the minimal routes Plasmic Studio requires when working with
 code components that rely on the Collector Express backend.
 
 ## Available routes
 
 - `/plasmic-host` – Canvas host for Plasmic Studio.
-- `/plasmic-loader.json` – Loader configuration consumed by the Plasmic Studio
-  UI and the loader runtime.
+- `/plasmic-loader.json` – Loader configuration consumed by Plasmic Studio and the loader runtime.
+
+The Express backend now serves the Plasmic host directly; you no longer need to
+run a separate Next.js server.
 
 ## Environment variables
 
 Create a `.env.local` file with the following values:
 
 ```
-# Express API origin used for proxying loader configuration.
+# Express API origin used for loader configuration.
 PLASMIC_BACKEND_ORIGIN=http://localhost:5001
 
 # Either provide a JSON array of projects...
@@ -27,6 +29,12 @@ NEXT_PUBLIC_PLASMIC_PROJECT_PUBLIC_TOKEN=<public-token>
 NEXT_PUBLIC_PLASMIC_HOST_URL=http://localhost:3002/plasmic-host
 ```
 
-When developing locally, run the Express backend from `backend/` as usual and
-start this app with `npm run dev` inside `plasmic-host/`. See the repository
-root README for combined dev workflows.
+## Scripts
+
+- `npm run dev` – Starts Vite in dev mode (used internally by the Express backend).
+- `npm run build` – Produces a production build in `dist/` consumed by the backend.
+- `npm run preview` – Serves the production build locally for debugging.
+
+The root backend process automatically mounts this Vite app in development and
+serves the static build in production. Running `npm run build` inside
+`plasmic-host/` ensures the backend can serve the latest assets when not in dev mode.

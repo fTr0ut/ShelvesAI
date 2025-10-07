@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react'
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, StatusBar } from 'react-native'
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, StatusBar, Switch } from 'react-native'
 import { makeRedirectUri, ResponseType, useAuthRequest } from 'expo-auth-session'
 import { AuthContext } from '../App'
 import { apiRequest, saveToken, exchangeAuth0Token } from '../services/api'
@@ -52,7 +52,7 @@ function Auth0LoginButton({ config, loading, onAccessToken, onError }) {
 }
 
 export default function LoginScreen() {
-  const { setToken, apiBase, auth0, setNeedsOnboarding } = useContext(AuthContext)
+  const { setToken, apiBase, auth0, setNeedsOnboarding, plasmicOptIn, setPlasmicOptIn } = useContext(AuthContext)
   const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -131,6 +131,19 @@ export default function LoginScreen() {
             />
           </>
         )}
+        <View style={styles.optInRow}>
+          <View style={styles.optInCopy}>
+            <Text style={styles.optInTitle}>Preview the Plasmic experience</Text>
+            <Text style={styles.optInSubtitle}>Loads the experimental UI from Plasmic Studio after login.</Text>
+          </View>
+          <Switch
+            value={plasmicOptIn}
+            onValueChange={setPlasmicOptIn}
+            thumbColor={plasmicOptIn ? '#5a8efc' : '#e6edf3'}
+            trackColor={{ false: '#1e2b3d', true: '#5a8efc' }}
+            ios_backgroundColor='#1e2b3d'
+          />
+        </View>
         {!!message && <Text style={styles.message}>{message}</Text>}
       </View>
     </View>
@@ -157,4 +170,18 @@ const styles = StyleSheet.create({
   divider: { flexDirection: 'row', alignItems: 'center', marginVertical: 12 },
   dividerLine: { flex: 1, height: 1, backgroundColor: '#1e2b3d' },
   dividerText: { color: '#9aa6b2', marginHorizontal: 8 },
+  optInRow: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#0b1320',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#223043',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  optInCopy: { flex: 1, marginRight: 12 },
+  optInTitle: { color: '#e6edf3', fontWeight: '600', fontSize: 15 },
+  optInSubtitle: { color: '#9aa6b2', fontSize: 12, marginTop: 4 },
 })

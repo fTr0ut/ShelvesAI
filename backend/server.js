@@ -1,4 +1,5 @@
 const path = require('path');
+const { pathToFileURL } = require('url');
 // Load .env from this folder explicitly so it works no matter CWD
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const express = require('express');
@@ -21,13 +22,32 @@ const plasmicRoutes = require('./routes/plasmic');
 const app = express();
 // Minimal request log (dev only)
 if (process.env.NODE_ENV !== 'production') {
-  app.use((req, _res, next) => {
-    console.log(`[REQ] ${req.method} ${req.url}`);
+  app.use((req, res, next) => {
+    const start = process.hrtime.bigint();
+
+    res.on('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+      const contentLength = res.get('Content-Length') || 0;
+      const logLine = [
+        req.ip,
+        req.method,
+        req.originalUrl,
+        res.statusCode,
+        `${contentLength}b`,
+        `${durationMs.toFixed(2)}ms`,
+        req.get('referer') || '-',
+        req.get('user-agent') || '-',
+      ].join(' | ');
+
+      console.log(logLine);
+    });
+
     next();
   });
 }
 const defaultCorsOrigins = [
   'http://localhost:3000',
+  'http://localhost:5001',
   'http://localhost:5173',
   'https://studio.plasmic.app',
   'https://app.tryplasmic.com',
@@ -99,8 +119,6 @@ app.use((req, _res, next) => {
   req.signedCookies = signedCookies;
   next();
 });
-app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
-
 const plasmicHostOrigin = (process.env.PLASMIC_HOST_ORIGIN || '').trim();
 
 if (plasmicHostOrigin) {
@@ -126,7 +144,91 @@ if (plasmicHostOrigin) {
       },
     })
   );
+} else {
+  setupLocalPlasmicHost(app).catch((err) => {
+    console.error('Failed to initialize local Plasmic host:', err);
+  });
 }
+async function setupLocalPlasmicHost(expressApp) {
+  const hostRoot = path.join(__dirname, '..', 'plasmic-host');
+  const distDir = path.join(hostRoot, 'dist');
+  const indexFile = path.join(distDir, 'index.html');
+  const useDevServer =
+    process.env.NODE_ENV !== 'production' && process.env.PLASMIC_HOST_STATIC_ONLY !== 'true';
+
+  const loadVite = async () => {
+    try {
+      return await import('vite');
+    } catch (rootErr) {
+      const fallbackEntry = path.join(hostRoot, 'node_modules', 'vite', 'dist', 'node', 'index.js');
+      if (fs.existsSync(fallbackEntry)) {
+        return import(pathToFileURL(fallbackEntry).href);
+      }
+      throw rootErr;
+    }
+  };
+
+  if (useDevServer) {
+    try {
+      const { createServer: createViteServer } = await loadVite();
+      const enableHmr = process.env.PLASMIC_HOST_ENABLE_HMR === 'true';
+      const remoteHost = process.env.PLASMIC_REMOTE_HOST || 'https://host.plasmic.app';
+
+      expressApp.use(
+        '/plasmic-host/api',
+        createProxyMiddleware({
+          target: remoteHost,
+          changeOrigin: true,
+          pathRewrite: { '^/plasmic-host': '' },
+          logLevel: process.env.PLASMIC_PROXY_LOG_LEVEL || 'warn',
+        })
+      );
+
+      const vite = await createViteServer({
+        root: hostRoot,
+        base: '/plasmic-host/',
+        server: { middlewareMode: true, hmr: enableHmr ? undefined : false },
+        appType: 'spa',
+        logLevel: process.env.VITE_LOG_LEVEL || 'info',
+      });
+
+      expressApp.use('/plasmic-host', (req, res, next) => {
+        const originalUrl = req.originalUrl || req.url;
+        req.url = originalUrl.replace(/^\/plasmic-host/, '') || '/';
+        vite.middlewares(req, res, next);
+      });
+
+      console.log('Plasmic host dev server mounted via Vite middleware.');
+      return;
+    } catch (err) {
+      console.warn(`Failed to start Plasmic host dev server: ${err.message}`);
+    }
+  }
+
+  if (fs.existsSync(distDir) && fs.existsSync(indexFile)) {
+    console.log(`Serving Plasmic host static build from ${distDir}`);
+    const remoteHost = process.env.PLASMIC_REMOTE_HOST || 'https://host.plasmic.app';
+    expressApp.use(
+      '/plasmic-host/api',
+      createProxyMiddleware({
+        target: remoteHost,
+        changeOrigin: true,
+        pathRewrite: { '^/plasmic-host': '' },
+        logLevel: process.env.PLASMIC_PROXY_LOG_LEVEL || 'warn',
+      })
+    );
+    expressApp.use('/plasmic-host', express.static(distDir, { index: 'index.html', fallthrough: true }));
+    expressApp.get('/plasmic-host*', (_req, res) => {
+      res.sendFile(indexFile);
+    });
+  } else {
+    console.warn(
+      'No Plasmic host build found. Run "npm run build" inside /plasmic-host to generate the static assets.'
+    );
+  }
+}
+
+app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
 
 const mediaRoot = path.join(__dirname, 'cache');
 try {
@@ -260,5 +362,6 @@ app.get('/__debug', (req, res) => {
 });
 
 module.exports = app;
+
 
 

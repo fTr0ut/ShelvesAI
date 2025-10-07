@@ -20,6 +20,13 @@
         "audience": "https://dev-0b3u5la73y4qw1gk.us.auth0.com/api/v2/",
         "scheme": "shelvesai",
         "useProxy": true
+      },
+      "plasmic": {
+        "projectId": "crU26EU5sF5QWmZoX1Jupb",
+        "publicToken": "jfiW0G9E9YvhmNyiPpWOFNTMwhlviXirHgynZnQ9uXmhn5ApDevjzypSeaEoa0YKZ8vQRPu4K1iH5UQS7g",
+        "component": "Homepage",
+        "pagePath": "/",
+        "webViewUrl": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev/plasmic/feed"
       }
     },
     "ios": {
@@ -49,7 +56,6 @@
           "cameraPermission": "Allow Shelves.AI to capture your shelves."
         }
       ],
-      "expo-secure-store",
       "expo-web-browser"
     ]
   }

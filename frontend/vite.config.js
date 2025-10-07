@@ -8,10 +8,17 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
+      '@frontend': fileURLToPath(new URL('./src', import.meta.url)),
+      '@mobile': fileURLToPath(new URL('../mobile/src', import.meta.url)),
+      react: fileURLToPath(new URL('../node_modules/react', import.meta.url)),
+      'react-dom/server': fileURLToPath(new URL('../node_modules/react-dom/server.browser.js', import.meta.url)),
+      util: fileURLToPath(new URL('./src/polyfills/util.js', import.meta.url)),
     },
+    dedupe: ['react', 'react-dom'],
   },
   build: {
     outDir: 'dist',
+    chunkSizeWarningLimit: 1800,
   },
   server: {
     fs: {
@@ -26,3 +33,6 @@ export default defineConfig({
     },
   },
 })
+
+
+

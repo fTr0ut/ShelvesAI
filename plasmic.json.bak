@@ -1,0 +1,16 @@
+{
+  "projects": [
+    {
+      "projectId": "crU26EU5sF5QWmZoX1Jupb",
+      "projectApiToken": "jfiW0G9E9YvhmNyiPpWOFNTMwhlviXirHgynZnQ9uXmhn5ApDevjzypSeaEoa0YKZ8vQRPu4K1iH5UQS7g",
+      "version": "latest",
+      "code": {
+        "scheme": "srcDir",
+        "srcDir": "frontend/src/plasmic-codegen"
+      }
+    }
+  ],
+  "common": {
+    "platform": "react"
+  }
+}

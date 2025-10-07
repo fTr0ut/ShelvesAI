@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero } from '../components'
+import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
 import { AccountProvider, useAccount } from '../plasmic/data/AccountProvider'
 
 function AccountContent() {
@@ -15,14 +16,14 @@ function AccountContent() {
     }
   }, [account])
 
-  if (loading) return <AppLayout><div className="message info">Loading…</div></AppLayout>
+  if (loading) return <AppLayout><div className="message info">Loading...</div></AppLayout>
 
   if (!account) {
     return (
       <AppLayout>
         <div className="message error">{error || 'Account not found'}</div>
         <p style={{ marginTop: 12 }}>
-          <Button as={Link} to="/shelves">Back to shelves</Button>
+          <Button as={Link} to={legacyPath('/shelves')}>Back to shelves</Button>
         </p>
       </AppLayout>
     )
@@ -88,7 +89,7 @@ function AccountContent() {
         </Grid>
       </Card>
       <p style={{ marginTop: 12 }}>
-        <Button as={Link} to="/">Home</Button> <span className="label">·</span> <Button as={Link} to="/shelves" variant="ghost">My Shelves</Button>
+        <Button as={Link} to={legacyPath()}>Home</Button> <span className="label">/</span> <Button as={Link} to={legacyPath('/shelves')} variant="ghost">My Shelves</Button>
       </p>
     </AppLayout>
   )
@@ -99,7 +100,7 @@ export default function Account({ apiBase = '' }) {
   const token = useMemo(() => localStorage.getItem('token') || '', [])
 
   useEffect(() => {
-    if (!token) { navigate('/'); }
+    if (!token) { navigate(LEGACY_BASE_PATH); }
   }, [navigate, token])
 
   if (!token) return null
@@ -110,3 +111,6 @@ export default function Account({ apiBase = '' }) {
     </AccountProvider>
   )
 }
+
+
+

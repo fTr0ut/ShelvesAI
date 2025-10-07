@@ -7,7 +7,7 @@ import {
   FeedProvider,
   ShelfDetailProvider,
   ShelvesProvider,
-} from '../../frontend/src/plasmic/data'
+} from '@frontend/plasmic/data'
 
 function registerProvider(
   loader: PlasmicComponentLoader,
@@ -26,7 +26,7 @@ function registerProvider(
 export function registerDataProviders(loader: PlasmicComponentLoader) {
   registerProvider(loader, ShelvesProvider, {
     name: 'ShelvesProvider',
-    importPath: '../../frontend/src/plasmic/data',
+    importPath: '@frontend/plasmic/data',
     importName: 'ShelvesProvider',
     description: 'Fetches the current user\'s shelves with pagination controls.',
     props: {
@@ -57,7 +57,7 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, FeedProvider, {
     name: 'FeedProvider',
-    importPath: '../../frontend/src/plasmic/data',
+    importPath: '@frontend/plasmic/data',
     importName: 'FeedProvider',
     description: 'Loads activity feed entries for the signed-in viewer.',
     props: {
@@ -108,7 +108,7 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, ShelfDetailProvider, {
     name: 'ShelfDetailProvider',
-    importPath: '../../frontend/src/plasmic/data',
+    importPath: '@frontend/plasmic/data',
     importName: 'ShelfDetailProvider',
     description: 'Fetches a shelf, its metadata, and items.',
     props: {
@@ -143,7 +143,7 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, CollectableProvider, {
     name: 'CollectableProvider',
-    importPath: '../../frontend/src/plasmic/data',
+    importPath: '@frontend/plasmic/data',
     importName: 'CollectableProvider',
     description: 'Loads a single catalog entry by id.',
     props: {
@@ -166,7 +166,7 @@ export function registerDataProviders(loader: PlasmicComponentLoader) {
 
   registerProvider(loader, AccountProvider, {
     name: 'AccountProvider',
-    importPath: '../../frontend/src/plasmic/data',
+    importPath: '@frontend/plasmic/data',
     importName: 'AccountProvider',
     description: 'Loads account details for the current viewer.',
     props: {
