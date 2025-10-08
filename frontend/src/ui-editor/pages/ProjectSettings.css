@@ -48,6 +48,7 @@
 }
 
 .project-settings__form input[type='url'],
+.project-settings__form input[type='password'],
 .project-settings__form textarea {
   width: 100%;
   border-radius: 0.75rem;
@@ -61,6 +62,7 @@
 }
 
 .project-settings__form input[type='url']:focus,
+.project-settings__form input[type='password']:focus,
 .project-settings__form textarea:focus {
   outline: none;
   border-color: rgba(94, 234, 212, 0.6);
@@ -118,6 +120,38 @@
   border-radius: 0.5rem;
   border: 1px solid rgba(148, 163, 184, 0.2);
   color: rgba(226, 232, 240, 0.85);
+}
+
+.project-settings__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.project-settings__option {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.35);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.project-settings__option input[type='radio'] {
+  margin-top: 0.4rem;
+}
+
+.project-settings__option-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.project-settings__option--active {
+  border-color: rgba(94, 234, 212, 0.4);
+  background: rgba(13, 148, 136, 0.12);
 }
 
 .project-settings__actions button {

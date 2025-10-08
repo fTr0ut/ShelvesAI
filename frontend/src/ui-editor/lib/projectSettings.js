@@ -1,10 +1,17 @@
 import { normaliseEndpointSpec } from './endpointSpec'
 
+export const AUTH_METHODS = {
+  BROWSER_SESSION: 'browser-session',
+  API_TOKEN: 'api-token',
+}
+
 const STORAGE_KEY = 'collector.uiEditor.projectSettings.v1'
 
 const defaultRawSettings = {
   apiBase: '',
   endpointDocument: null,
+  authMethod: AUTH_METHODS.BROWSER_SESSION,
+  authToken: '',
   updatedAt: null,
 }
 
@@ -37,10 +44,16 @@ const computeState = (raw, version) => {
   const apiBase = raw?.apiBase ? String(raw.apiBase).trim() : ''
   const endpointDocument = raw?.endpointDocument ?? null
   const endpointMeta = normaliseEndpointSpec(endpointDocument)
+  const rawAuthMethod = raw?.authMethod
+  const authMethod =
+    rawAuthMethod === AUTH_METHODS.API_TOKEN ? AUTH_METHODS.API_TOKEN : AUTH_METHODS.BROWSER_SESSION
+  const authToken = authMethod === AUTH_METHODS.API_TOKEN && raw?.authToken ? String(raw.authToken) : ''
   return {
     apiBase,
     endpointDocument,
     endpointMeta,
+    authMethod,
+    authToken,
     updatedAt: raw?.updatedAt ?? null,
     version,
   }
@@ -88,12 +101,17 @@ const replaceSettings = (rawSettings, { persist = true, bumpVersion = true } = {
   const nextVersion = bumpVersion ? base.version + 1 : base.version
   currentSettings = computeState({ ...defaultRawSettings, ...rawSettings }, nextVersion)
   if (persist) {
-    if (rawSettings === defaultRawSettings || (!rawSettings.apiBase && !rawSettings.endpointDocument && !rawSettings.updatedAt)) {
+    if (
+      rawSettings === defaultRawSettings ||
+      (!rawSettings.apiBase && !rawSettings.endpointDocument && !rawSettings.updatedAt && !rawSettings.authToken)
+    ) {
       persistRawSettings(null)
     } else {
       persistRawSettings({
         apiBase: currentSettings.apiBase,
         endpointDocument: currentSettings.endpointDocument,
+        authMethod: currentSettings.authMethod,
+        authToken: currentSettings.authToken,
         updatedAt: currentSettings.updatedAt,
       })
     }
@@ -114,6 +132,8 @@ export const updateProjectSettings = (partial = {}) => {
   const raw = {
     apiBase: partial.apiBase ?? base.apiBase,
     endpointDocument: partial.endpointDocument ?? base.endpointDocument,
+    authMethod: partial.authMethod ?? base.authMethod,
+    authToken: partial.authToken ?? base.authToken,
     updatedAt: new Date().toISOString(),
   }
   return replaceSettings(raw)
@@ -138,6 +158,8 @@ export const exportProjectSettings = () => {
   return {
     apiBase: settings.apiBase,
     endpointDocument: settings.endpointDocument,
+    authMethod: settings.authMethod,
+    authToken: settings.authToken,
     updatedAt: settings.updatedAt,
   }
 }
