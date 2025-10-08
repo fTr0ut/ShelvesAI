@@ -1,3 +1,5 @@
+import { getProjectSettings } from '../lib/projectSettings'
+
 const stripTrailingSlash = (value) => value.replace(/\/+$/, '')
 
 const resolveFromWindow = () => {
@@ -8,7 +10,7 @@ const resolveFromWindow = () => {
   return window.location.origin
 }
 
-export const getApiOrigin = () => {
+const getEnvironmentApiOrigin = () => {
   const envOrigin = import.meta.env.VITE_API_BASE
   if (envOrigin) {
     return stripTrailingSlash(envOrigin)
@@ -21,6 +23,16 @@ export const getApiOrigin = () => {
 
   return 'http://localhost:5001'
 }
+
+export const getApiOrigin = () => {
+  const settingsOrigin = getProjectSettings()?.apiBase
+  if (settingsOrigin) {
+    return stripTrailingSlash(settingsOrigin)
+  }
+  return getEnvironmentApiOrigin()
+}
+
+export const getDefaultApiOrigin = () => getEnvironmentApiOrigin()
 
 export const resolveApiUrl = (path = '') => {
   const origin = getApiOrigin()
@@ -49,3 +61,7 @@ export const fetchJson = async (path, options = {}) => {
   if (response.status === 204) return null
   return response.json()
 }
+
+export const getConfiguredEndpoints = () => getProjectSettings()?.endpointMeta?.endpoints || []
+
+export const getEndpointCatalogue = () => getProjectSettings()?.endpointMeta || { format: null, endpoints: [] }

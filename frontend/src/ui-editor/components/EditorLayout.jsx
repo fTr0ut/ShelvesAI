@@ -1,14 +1,17 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { uiEditorPath } from '../constants'
 import { getApiOrigin } from '../api/client'
+import { useProjectSettings } from '../lib/useProjectSettings'
 import './EditorLayout.css'
 
 const navItems = [
   { label: 'Overview', to: '.' },
+  { label: 'Project settings', to: 'settings' },
 ]
 
 export default function EditorLayout() {
-  const apiOrigin = getApiOrigin()
+  const settings = useProjectSettings()
+  const apiOrigin = settings?.apiBase ? settings.apiBase : getApiOrigin()
 
   return (
     <div className="ui-editor">
