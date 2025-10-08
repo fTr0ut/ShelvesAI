@@ -5,6 +5,7 @@ import './EditorLayout.css'
 
 const navItems = [
   { label: 'Overview', to: '.' },
+  { label: 'Routes', to: 'routes' },
 ]
 
 export default function EditorLayout() {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
@@ -25,11 +25,11 @@ function Home({ apiBase = '' }) {
   const [needsUsername, setNeedsUsername] = useState(false)
 
   const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = (apiBase || envBase)
-  const api = (path) => `${base}${path}`
-  const goProtected = () => navigate(legacyPath('/protected'))
-  const goFeed = () => navigate(legacyPath('/feed'))
-  const goShelves = () => navigate(legacyPath('/shelves'))
+  const base = apiBase || envBase
+  const api = useCallback((path) => `${base}${path}`, [base])
+  const goProtected = useCallback(() => navigate(legacyPath('/protected')), [navigate])
+  const goFeed = useCallback(() => navigate(legacyPath('/feed')), [navigate])
+  const goShelves = useCallback(() => navigate(legacyPath('/shelves')), [navigate])
 
   useEffect(() => {
     if (!token) { setMe(null); return }
@@ -37,7 +37,7 @@ function Home({ apiBase = '' }) {
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((data) => setMe(data.user))
       .catch(() => setMe(null))
-  }, [token])
+  }, [token, api])
 
   useEffect(() => {
     const run = async () => {
@@ -59,8 +59,7 @@ function Home({ apiBase = '' }) {
       }
     }
     run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
+  }, [api, getAccessTokenSilently, goFeed, isAuthenticated, token])
 
   const handleLogin = async (e) => {
     e.preventDefault()
