@@ -1,0 +1,2468 @@
+﻿openapi: 3.1.0
+info:
+  title: Collector API
+  version: 0.1.0
+  description: >
+    REST API powering the Collector application. Covers authentication, shelf management,
+    catalog search, social graph, and Steam integrations.
+servers:
+  - url: http://localhost:5001
+    description: Local development server
+  - url: https://{host}
+    description: Remote deployment or secure tunnel. Replace the host variable as needed.
+    variables:
+      host:
+        default: nonresilient-rylan-nondebilitating.ngrok-free.dev
+        description: Example ngrok-free tunnel hostname
+tags:
+  - name: Auth
+    description: Username/password and Auth0 authentication flows.
+  - name: Account
+    description: Profile management for the signed-in user.
+  - name: Shelves
+    description: Shelf lifecycle and item management.
+  - name: Catalog
+    description: Collectable catalog search and maintenance.
+  - name: Feed
+    description: Activity feed endpoints.
+  - name: Friends
+    description: Social graph operations.
+  - name: Steam
+    description: Steam account linking and bulk import flows.
+  - name: Plasmic
+    description: Plasmic host configuration helpers.
+  - name: Misc
+    description: Miscellaneous helper endpoints.
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Local JWT issued by /api/login or /api/auth0/consume using the backend JWT_SECRET.
+    auth0Jwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Auth0 access token validated when AUTH0_DOMAIN and AUTH0_AUDIENCE are configured.
+  parameters:
+    ShelfId:
+      name: shelfId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Shelf identifier (Mongo ObjectId)
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Shelf item identifier (Mongo ObjectId)
+    CollectableId:
+      name: collectableId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Collectable catalog identifier (Mongo ObjectId)
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        missing:
+          type: array
+          items:
+            type: string
+          description: Fields that were required but missing.
+      required:
+        - error
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+      required:
+        - username
+        - password
+    RegisterRequest:
+      allOf:
+        - $ref: '#/components/schemas/LoginRequest'
+    BasicUser:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Mongo ObjectId
+        username:
+          type: string
+          nullable: true
+      required:
+        - id
+    DetailedUser:
+      allOf:
+        - $ref: '#/components/schemas/BasicUser'
+        - type: object
+          properties:
+            email:
+              type: string
+              format: email
+              nullable: true
+            name:
+              type: string
+              nullable: true
+            picture:
+              type: string
+              format: uri
+              nullable: true
+    AuthTokenResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/BasicUser'
+        token:
+          type: string
+          description: Signed JWT bearer token
+      required:
+        - user
+        - token
+    RegisterResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        user:
+          $ref: '#/components/schemas/BasicUser'
+      required:
+        - message
+        - user
+    UserProfile:
+      allOf:
+        - $ref: '#/components/schemas/DetailedUser'
+        - type: object
+          properties:
+            firstName:
+              type: string
+              nullable: true
+            lastName:
+              type: string
+              nullable: true
+            phoneNumber:
+              type: string
+              nullable: true
+            country:
+              type: string
+              nullable: true
+            state:
+              type: string
+              nullable: true
+            city:
+              type: string
+              nullable: true
+            isPrivate:
+              type: boolean
+              default: false
+          required:
+            - isPrivate
+    AccountUpdateRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phoneNumber:
+          type: string
+        country:
+          type: string
+        state:
+          type: string
+        city:
+          type: string
+        isPrivate:
+          type: boolean
+        name:
+          type: string
+        picture:
+          type: string
+          format: uri
+    ShelfPosition:
+      type: object
+      properties:
+        x:
+          type: number
+          format: float
+        y:
+          type: number
+          format: float
+      required:
+        - x
+        - y
+    Shelf:
+      type: object
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+          description: Owner user id
+        name:
+          type: string
+        type:
+          type: string
+          description: Domain of items (book, movie, game, etc.)
+        description:
+          type: string
+          nullable: true
+        visibility:
+          type: string
+          enum:
+            - private
+            - friends
+            - public
+        position:
+          $ref: '#/components/schemas/ShelfPosition'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - owner
+        - name
+        - type
+        - visibility
+        - position
+        - createdAt
+        - updatedAt
+    ShelfPagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        skip:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        hasMore:
+          type: boolean
+      required:
+        - limit
+        - skip
+        - total
+        - hasMore
+    ShelfListResponse:
+      type: object
+      properties:
+        shelves:
+          type: array
+          items:
+            $ref: '#/components/schemas/Shelf'
+        pagination:
+          $ref: '#/components/schemas/ShelfPagination'
+      required:
+        - shelves
+        - pagination
+    ShelfCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - private
+            - friends
+            - public
+        position:
+          $ref: '#/components/schemas/ShelfPosition'
+      required:
+        - name
+        - type
+    ShelfUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - private
+            - friends
+            - public
+        position:
+          $ref: '#/components/schemas/ShelfPosition'
+    ShelfEnvelope:
+      type: object
+      properties:
+        shelf:
+          $ref: '#/components/schemas/Shelf'
+      required:
+        - shelf
+    ShelfSlot:
+      type: object
+      properties:
+        label:
+          type: string
+          nullable: true
+        coordinates:
+          type: object
+          properties:
+            x:
+              type: number
+              minimum: 0
+              maximum: 1
+            y:
+              type: number
+              minimum: 0
+              maximum: 1
+    ManualEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        author:
+          type: string
+          nullable: true
+        publisher:
+          type: string
+          nullable: true
+        format:
+          type: string
+          nullable: true
+        year:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - name
+    Collectable:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        primaryCreator:
+          type: string
+          nullable: true
+        format:
+          type: string
+          nullable: true
+        publisher:
+          type: string
+          nullable: true
+        year:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        genre:
+          type: array
+          items:
+            type: string
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+              urlSmall:
+                type: string
+                format: uri
+                nullable: true
+              urlMedium:
+                type: string
+                format: uri
+                nullable: true
+              urlLarge:
+                type: string
+                format: uri
+                nullable: true
+              provider:
+                type: string
+                nullable: true
+        identifiers:
+          type: object
+          additionalProperties: true
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              provider:
+                type: string
+              ids:
+                type: object
+                additionalProperties:
+                  type: string
+              urls:
+                type: object
+                additionalProperties:
+                  type: string
+              fetchedAt:
+                type: string
+                format: date-time
+              raw:
+                type: object
+        fingerprint:
+          type: string
+          nullable: true
+        lightweightFingerprint:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - type
+    CollectableSingleResponse:
+      type: object
+      properties:
+        collectable:
+          $ref: '#/components/schemas/Collectable'
+      required:
+        - collectable
+    CollectableCreateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        name:
+          type: string
+          description: Optional alias for title
+        type:
+          type: string
+        description:
+          type: string
+        author:
+          type: string
+        primaryCreator:
+          type: string
+        format:
+          type: string
+        publisher:
+          type: string
+        year:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - type
+      description: Requires ALLOW_CATALOG_WRITE=true on the server.
+    CollectableCreateResponse:
+      type: object
+      properties:
+        item:
+          $ref: '#/components/schemas/Collectable'
+      required:
+        - item
+    CollectableUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        name:
+          type: string
+        primaryCreator:
+          type: string
+        author:
+          type: string
+        publisher:
+          type: string
+        format:
+          type: string
+        year:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    CollectableListResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Collectable'
+        pagination:
+          type: object
+          properties:
+            limit:
+              type: integer
+            skip:
+              type: integer
+            total:
+              type: integer
+            cursor:
+              type: string
+              nullable: true
+            nextCursor:
+              type: string
+              nullable: true
+            hasMore:
+              type: boolean
+            count:
+              type: integer
+          required:
+            - limit
+            - skip
+            - total
+            - hasMore
+            - count
+      required:
+        - results
+        - pagination
+    ShelfItem:
+      type: object
+      properties:
+        id:
+          type: string
+        collectable:
+          oneOf:
+            - $ref: '#/components/schemas/Collectable'
+            - type: 'null'
+        manual:
+          oneOf:
+            - $ref: '#/components/schemas/ManualEntry'
+            - type: 'null'
+        position:
+          oneOf:
+            - $ref: '#/components/schemas/ShelfSlot'
+            - type: 'null'
+        format:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        rating:
+          type: number
+          minimum: 0
+          maximum: 5
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+    ShelfItemEnvelope:
+      type: object
+      properties:
+        item:
+          $ref: '#/components/schemas/ShelfItem'
+      required:
+        - item
+    ShelfItemsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShelfItem'
+        pagination:
+          $ref: '#/components/schemas/ShelfPagination'
+      required:
+        - items
+        - pagination
+    AddCollectableRequest:
+      type: object
+      properties:
+        collectableId:
+          type: string
+        position:
+          oneOf:
+            - $ref: '#/components/schemas/ShelfSlot'
+            - type: string
+        format:
+          type: string
+        notes:
+          type: string
+        rating:
+          type: number
+      required:
+        - collectableId
+    AddManualRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        position:
+          oneOf:
+            - $ref: '#/components/schemas/ShelfSlot'
+            - type: string
+        format:
+          type: string
+        notes:
+          type: string
+        rating:
+          type: number
+      required:
+        - name
+    ManualUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        author:
+          type: string
+        publisher:
+          type: string
+        format:
+          type: string
+        year:
+          type: string
+    ShelfItemRemovalResponse:
+      type: object
+      properties:
+        removedId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShelfItem'
+      required:
+        - removedId
+        - items
+    ShelfSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Collectable'
+      required:
+        - results
+    VisionRequest:
+      type: object
+      properties:
+        imageBase64:
+          type: string
+          description: Raw or data URI base64 image payload (<=8MB after trimming)
+        autoApply:
+          type: boolean
+          default: true
+        metadata:
+          type: object
+          description: Arbitrary client metadata echoed back in response
+        prompt:
+          type: string
+          description: Optional override for the default vision system prompt
+      required:
+        - imageBase64
+    VisionDetectedItem:
+      type: object
+      properties:
+        name:
+          type: string
+        author:
+          type: string
+          nullable: true
+        publisher:
+          type: string
+          nullable: true
+        format:
+          type: string
+          nullable: true
+        year:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        coordinates:
+          type: string
+          description: Relative x,y coordinates captured from the prompt
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+    VisionResult:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Outcome for the processed item (resolved, collectable_added, manual_added, unresolved, etc.)
+        itemId:
+          type: string
+          nullable: true
+        manual:
+          oneOf:
+            - $ref: '#/components/schemas/ManualEntry'
+            - type: 'null'
+        collectable:
+          oneOf:
+            - $ref: '#/components/schemas/Collectable'
+            - type: 'null'
+        needsReview:
+          type: boolean
+          nullable: true
+        input:
+          $ref: '#/components/schemas/VisionDetectedItem'
+    VisionResponse:
+      type: object
+      properties:
+        analysis:
+          type: object
+          description: Raw vision output and normalization metadata
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/VisionDetectedItem'
+          additionalProperties: true
+        visionStatus:
+          type: object
+          properties:
+            status:
+              type: string
+              nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisionResult'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShelfItem'
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - analysis
+        - results
+        - items
+    FeedOwner:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        picture:
+          type: string
+          format: uri
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+      required:
+        - id
+    FeedShelf:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        visibility:
+          type: string
+          enum:
+            - private
+            - friends
+            - public
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        itemCount:
+          type: integer
+      required:
+        - id
+        - name
+        - type
+        - visibility
+        - createdAt
+        - updatedAt
+        - itemCount
+    FeedItem:
+      type: object
+      properties:
+        id:
+          type: string
+        collectable:
+          oneOf:
+            - $ref: '#/components/schemas/Collectable'
+            - type: 'null'
+        manual:
+          oneOf:
+            - $ref: '#/components/schemas/ManualEntry'
+            - type: 'null'
+        position:
+          oneOf:
+            - $ref: '#/components/schemas/ShelfSlot'
+            - type: 'null'
+        notes:
+          type: string
+          nullable: true
+        rating:
+          type: number
+          nullable: true
+      required:
+        - id
+    Paging:
+      type: object
+      properties:
+        limit:
+          type: integer
+        skip:
+          type: integer
+        hasMore:
+          type: boolean
+      required:
+        - limit
+        - skip
+        - hasMore
+    FeedEntry:
+      type: object
+      properties:
+        shelf:
+          $ref: '#/components/schemas/FeedShelf'
+        owner:
+          $ref: '#/components/schemas/FeedOwner'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+      required:
+        - shelf
+        - owner
+        - items
+    FeedResponse:
+      type: object
+      properties:
+        scope:
+          type: string
+        filters:
+          type: object
+          properties:
+            type:
+              type: string
+              nullable: true
+            ownerId:
+              type: string
+              nullable: true
+        paging:
+          $ref: '#/components/schemas/Paging'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedEntry'
+      required:
+        - scope
+        - filters
+        - paging
+        - entries
+    FeedEntryResponse:
+      type: object
+      properties:
+        entry:
+          $ref: '#/components/schemas/FeedEntry'
+      required:
+        - entry
+    Friendship:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - accepted
+            - blocked
+        requester:
+          $ref: '#/components/schemas/FeedOwner'
+        addressee:
+          $ref: '#/components/schemas/FeedOwner'
+        isRequester:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - status
+        - requester
+        - addressee
+        - isRequester
+        - createdAt
+        - updatedAt
+    FriendshipListResponse:
+      type: object
+      properties:
+        friendships:
+          type: array
+          items:
+            $ref: '#/components/schemas/Friendship'
+        pagination:
+          $ref: '#/components/schemas/ShelfPagination'
+      required:
+        - friendships
+        - pagination
+    FriendRequest:
+      type: object
+      properties:
+        targetUserId:
+          type: string
+        message:
+          type: string
+      required:
+        - targetUserId
+    FriendRequestResponse:
+      type: object
+      properties:
+        friendship:
+          $ref: '#/components/schemas/Friendship'
+        autoAccepted:
+          type: boolean
+          nullable: true
+        alreadyFriends:
+          type: boolean
+          nullable: true
+        refreshed:
+          type: boolean
+          nullable: true
+      required:
+        - friendship
+    FriendRespondRequest:
+      type: object
+      properties:
+        friendshipId:
+          type: string
+        action:
+          type: string
+          enum:
+            - accept
+            - reject
+            - cancel
+            - block
+      required:
+        - friendshipId
+        - action
+    FriendRespondResponse:
+      oneOf:
+        - type: object
+          properties:
+            friendship:
+              $ref: '#/components/schemas/Friendship'
+          required:
+            - friendship
+        - type: object
+          properties:
+            removed:
+              type: boolean
+          required:
+            - removed
+    UserSearchResult:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        picture:
+          type: string
+          format: uri
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        relation:
+          type: string
+          enum:
+            - none
+            - friends
+            - outgoing
+            - incoming
+            - blocked
+            - pending
+        status:
+          type: string
+          nullable: true
+        direction:
+          type: string
+          nullable: true
+        friendshipId:
+          type: string
+          nullable: true
+      required:
+        - id
+        - relation
+    UserSearchResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSearchResult'
+      required:
+        - users
+    SteamStatusResponse:
+      type: object
+      properties:
+        steam:
+          type: object
+          nullable: true
+          properties:
+            steamId:
+              type: string
+            personaName:
+              type: string
+              nullable: true
+            profileUrl:
+              type: string
+              format: uri
+              nullable: true
+            avatar:
+              type: string
+              format: uri
+              nullable: true
+            avatarMedium:
+              type: string
+              format: uri
+              nullable: true
+            avatarFull:
+              type: string
+              format: uri
+              nullable: true
+            countryCode:
+              type: string
+              nullable: true
+            visibilityState:
+              type: integer
+              nullable: true
+            visibility:
+              type: string
+              enum:
+                - private
+                - friends
+                - public
+              nullable: true
+            linkedAt:
+              type: string
+              format: date-time
+              nullable: true
+            lastSyncedAt:
+              type: string
+              format: date-time
+              nullable: true
+            lastImportedAt:
+              type: string
+              format: date-time
+              nullable: true
+            totalGames:
+              type: integer
+              nullable: true
+            lastShelfId:
+              type: string
+              nullable: true
+            optedIntoLibrarySync:
+              type: boolean
+              default: true
+      required:
+        - steam
+    SteamLinkStartRequest:
+      type: object
+      properties:
+        returnUrl:
+          type: string
+          format: uri
+          description: Preferred client redirect URL
+        redirectUri:
+          type: string
+          format: uri
+          description: Alias for returnUrl
+        realm:
+          type: string
+          format: uri
+          description: Optional OpenID realm override
+    SteamLinkStartResponse:
+      type: object
+      properties:
+        redirectUrl:
+          type: string
+          format: uri
+        state:
+          type: string
+        returnTo:
+          type: string
+          format: uri
+        realm:
+          type: string
+          format: uri
+        requestedReturnTo:
+          type: string
+          format: uri
+          nullable: true
+      required:
+        - redirectUrl
+        - state
+        - returnTo
+        - realm
+    SteamLinkCompleteRequest:
+      type: object
+      properties:
+        state:
+          type: string
+        params:
+          type: object
+          description: Object containing the OpenID response (keys like openid.sig, openid.claimed_id, etc.)
+        query:
+          type: object
+        openid:
+          type: object
+      required:
+        - state
+      description: Provide whichever property holds the OpenID payload returned from Steam.
+    SteamImportError:
+      type: object
+      properties:
+        appId:
+          type: integer
+        name:
+          type: string
+        message:
+          type: string
+      required:
+        - appId
+        - message
+    SteamImportSummary:
+      type: object
+      properties:
+        imported:
+          type: integer
+        skippedExisting:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/SteamImportError'
+        preview:
+          type: array
+          items:
+            type: object
+            properties:
+              appId:
+                type: integer
+              name:
+                type: string
+        importedSamples:
+          type: array
+          items:
+            type: object
+            properties:
+              appId:
+                type: integer
+              collectableId:
+                type: string
+      required:
+        - imported
+        - skippedExisting
+        - errors
+    SteamLibraryImportRequest:
+      type: object
+      properties:
+        shelfId:
+          type: string
+        includeFreeGames:
+          type: boolean
+          default: true
+        limit:
+          type: integer
+          description: Deprecated alias for maxItems
+        maxItems:
+          type: integer
+        dryRun:
+          type: boolean
+          default: false
+      required:
+        - shelfId
+    SteamLibraryImportResponse:
+      type: object
+      properties:
+        summary:
+          $ref: '#/components/schemas/SteamImportSummary'
+        totalGames:
+          type: integer
+        processed:
+          type: integer
+        shelfId:
+          type: string
+        dryRun:
+          type: boolean
+      required:
+        - summary
+        - totalGames
+        - processed
+        - shelfId
+        - dryRun
+    PlasmicProject:
+      type: object
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+      required:
+        - id
+        - token
+    PlasmicLoaderResponse:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlasmicProject'
+        hostUrl:
+          type: string
+          format: uri
+          nullable: true
+        apiBaseUrl:
+          type: string
+          format: uri
+          nullable: true
+      required:
+        - projects
+    DebugResponse:
+      type: object
+      properties:
+        frontendPath:
+          type: string
+        frontendExists:
+          type: boolean
+        indexPath:
+          type: string
+        indexExists:
+          type: boolean
+        cwd:
+          type: string
+        dirname:
+          type: string
+      required:
+        - frontendPath
+        - frontendExists
+        - indexPath
+        - indexExists
+        - cwd
+        - dirname
+    Auth0ConsumeResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/DetailedUser'
+        needsUsername:
+          type: boolean
+      required:
+        - token
+        - user
+        - needsUsername
+    Auth0Profile:
+      type: object
+      properties:
+        id:
+          type: string
+        sub:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        name:
+          type: string
+          nullable: true
+      required:
+        - id
+        - sub
+    Auth0SyncResponse:
+      type: object
+      properties:
+        synced:
+          type: boolean
+        profile:
+          $ref: '#/components/schemas/Auth0Profile'
+      required:
+        - synced
+        - profile
+    Auth0ClaimsResponse:
+      type: object
+      properties:
+        auth0:
+          type: object
+          description: Token claims returned by express-oauth2-jwt-bearer
+paths:
+  /api/login:
+    post:
+      tags:
+        - Auth
+      summary: Log in with username/password
+      description: Issues a JWT for the local auth system.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          description: Invalid or missing credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/register:
+    post:
+      tags:
+        - Auth
+      summary: Create a new local user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Validation error (missing fields or username taken)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/me:
+    get:
+      tags:
+        - Auth
+      summary: Fetch the signed-in user
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/BasicUser'
+                required:
+                  - user
+        '401':
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/username:
+    post:
+      tags:
+        - Auth
+      summary: Set or change the caller's username
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+              required:
+                - username
+      responses:
+        '200':
+          description: Username updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/DetailedUser'
+                required:
+                  - user
+        '400':
+          description: Invalid username supplied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Username already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/account:
+    get:
+      tags:
+        - Account
+      summary: Retrieve the account profile for the caller
+      responses:
+        '200':
+          description: Account profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                  - user
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Account
+      summary: Update profile fields for the caller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountUpdateRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                  - user
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves:
+    get:
+      tags:
+        - Shelves
+      summary: List shelves belonging to the caller
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum shelves to return (default 20)
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Number of shelves to skip (default 0)
+      responses:
+        '200':
+          description: Shelves for the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfListResponse'
+    post:
+      tags:
+        - Shelves
+      summary: Create a new shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfCreateRequest'
+      responses:
+        '201':
+          description: Shelf created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfEnvelope'
+        '400':
+          description: Missing name or type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags:
+        - Shelves
+      summary: Retrieve a shelf owned by the caller
+      responses:
+        '200':
+          description: Shelf details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfEnvelope'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Shelves
+      summary: Update shelf metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShelfUpdateRequest'
+      responses:
+        '200':
+          description: Updated shelf
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfEnvelope'
+        '400':
+          description: Invalid visibility or payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/items:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags:
+        - Shelves
+      summary: List items on a shelf
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum items to return (default 25, max 200)
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Number of items to skip (default 0)
+      responses:
+        '200':
+          description: Shelf items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemsResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - Shelves
+      summary: Add an existing catalog collectable to the shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddCollectableRequest'
+      responses:
+        '200':
+          description: Collectable already on shelf (metadata refreshed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemEnvelope'
+        '201':
+          description: Collectable linked to shelf
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemEnvelope'
+        '400':
+          description: collectableId missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf or collectable not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/manual:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    post:
+      tags:
+        - Shelves
+      summary: Add a manual entry to the shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddManualRequest'
+      responses:
+        '201':
+          description: Manual entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemEnvelope'
+        '400':
+          description: Name is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/manual/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+      - $ref: '#/components/parameters/ItemId'
+    put:
+      tags:
+        - Shelves
+      summary: Update a manual shelf item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualUpdateRequest'
+      responses:
+        '200':
+          description: Manual entry updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemEnvelope'
+        '404':
+          description: Shelf or manual item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+      - $ref: '#/components/parameters/ItemId'
+    delete:
+      tags:
+        - Shelves
+      summary: Remove an item from the shelf
+      responses:
+        '200':
+          description: Item removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfItemRemovalResponse'
+        '404':
+          description: Shelf or item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/search:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags:
+        - Shelves
+      summary: Search catalog items matching the shelf type
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search term (case insensitive). Empty string returns recent items.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+          description: Maximum number of results (default 10)
+      responses:
+        '200':
+          description: Matching catalog entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfSearchResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/shelves/{shelfId}/vision:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    post:
+      tags:
+        - Shelves
+      summary: Analyze a shelf photo and optionally auto-add items
+      description: Requires OPENAI credentials on the server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VisionRequest'
+      responses:
+        '200':
+          description: Vision analysis results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisionResponse'
+        '400':
+          description: Invalid payload (missing imageBase64 or malformed base64)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Vision AI is not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream vision provider failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/collectables:
+    get:
+      tags:
+        - Catalog
+      summary: Search the collectable catalog
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Text search over title (regex, case insensitive)
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Restrict results to a media type (e.g. book, game)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+          description: Page size (default 10)
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for traditional paging
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Start after the given ObjectId (cursor-based pagination)
+      responses:
+        '200':
+          description: Catalog search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectableListResponse'
+    post:
+      tags:
+        - Catalog
+      summary: Create a catalog collectable (admin/dev only)
+      description: Requires ALLOW_CATALOG_WRITE=true on the server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectableCreateRequest'
+      responses:
+        '201':
+          description: Collectable created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectableCreateResponse'
+        '400':
+          description: Missing title/type or validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Catalog writes disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/collectables/{collectableId}:
+    parameters:
+      - $ref: '#/components/parameters/CollectableId'
+    get:
+      tags:
+        - Catalog
+      summary: Fetch a collectable by id
+      responses:
+        '200':
+          description: Collectable details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectableSingleResponse'
+        '404':
+          description: Collectable not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Catalog
+      summary: Update core metadata for a collectable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectableUpdateRequest'
+      responses:
+        '200':
+          description: Updated collectable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectableSingleResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Collectable not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/feed:
+    get:
+      tags:
+        - Feed
+      summary: Fetch shelf activity for various scopes
+      parameters:
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum:
+              - global
+              - friends
+              - mine
+              - nearby
+          description: Defaults to global.
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Optional shelf type filter.
+        - name: ownerId
+          in: query
+          schema:
+            type: string
+          description: Force feed to a specific owner (overrides scope).
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only include shelves updated since this timestamp.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+          description: Page size (default 20)
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Number of shelves to skip (default 0)
+      responses:
+        '200':
+          description: Feed entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+  /api/feed/{shelfId}:
+    parameters:
+      - $ref: '#/components/parameters/ShelfId'
+    get:
+      tags:
+        - Feed
+      summary: Fetch full detail for a feed shelf
+      responses:
+        '200':
+          description: Detailed feed entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedEntryResponse'
+        '403':
+          description: Viewer does not have access (visibility rules)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/friends/search:
+    get:
+      tags:
+        - Friends
+      summary: Search for users to befriend
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query (required). Returns empty list when omitted.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+          description: Maximum number of users to return (default 20)
+      responses:
+        '200':
+          description: Matching users and relationship status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSearchResponse'
+  /api/friends:
+    get:
+      tags:
+        - Friends
+      summary: List friendships for the caller
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+          description: Page size (default 20)
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset (default 0)
+      responses:
+        '200':
+          description: Friendship list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendshipListResponse'
+  /api/friends/request:
+    post:
+      tags:
+        - Friends
+      summary: Send or update a friend request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FriendRequest'
+      responses:
+        '201':
+          description: Friend request created (or auto accepted)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRequestResponse'
+        '200':
+          description: Existing request updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRequestResponse'
+        '400':
+          description: Invalid request (missing targetUserId or self friend)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Target user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/friends/respond:
+    post:
+      tags:
+        - Friends
+      summary: Accept, reject, cancel, or block a friendship
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FriendRespondRequest'
+      responses:
+        '200':
+          description: Friendship updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRespondResponse'
+        '400':
+          description: Unknown action or missing fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Caller not allowed to perform the action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Friendship not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/steam/status:
+    get:
+      tags:
+        - Steam
+      summary: Retrieve linked Steam account details
+      responses:
+        '200':
+          description: Current Steam linkage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteamStatusResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/steam/link/start:
+    post:
+      tags:
+        - Steam
+      summary: Begin Steam OpenID linking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SteamLinkStartRequest'
+      responses:
+        '200':
+          description: Steam redirect parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteamLinkStartResponse'
+        '400':
+          description: Missing returnUrl or invalid URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: JWT secret missing or unexpected failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/steam/link/complete:
+    post:
+      tags:
+        - Steam
+      summary: Complete Steam linking using the OpenID payload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SteamLinkCompleteRequest'
+      responses:
+        '200':
+          description: Steam account linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteamStatusResponse'
+        '400':
+          description: Invalid or expired state token / missing OpenID params
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: State token does not belong to caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Steam account already linked to another user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Verification failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/steam/link:
+    delete:
+      tags:
+        - Steam
+      summary: Unlink the Steam account from the caller
+      responses:
+        '200':
+          description: Steam account unlinked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteamStatusResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/steam/library/import:
+    post:
+      tags:
+        - Steam
+      summary: Import the caller's Steam library into a shelf
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SteamLibraryImportRequest'
+      responses:
+        '200':
+          description: Import summary (dry run or executed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteamLibraryImportResponse'
+        '400':
+          description: Missing shelfId or Steam not linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf or user not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Steam API key missing or upstream failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/auth0/me:
+    get:
+      tags:
+        - Auth
+      summary: Return claims from a validated Auth0 access token
+      security:
+        - auth0Jwt: []
+      responses:
+        '200':
+          description: Token claims
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Auth0ClaimsResponse'
+        '401':
+          description: Invalid Auth0 token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/auth0/consume:
+    post:
+      tags:
+        - Auth
+      summary: Link or create a local user from an Auth0 token
+      security:
+        - auth0Jwt: []
+      responses:
+        '200':
+          description: Local JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Auth0ConsumeResponse'
+        '400':
+          description: Missing subject claim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Linking failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/auth0/sync:
+    post:
+      tags:
+        - Auth
+      summary: Sync minimal Auth0 profile data into Mongo
+      security:
+        - auth0Jwt: []
+      responses:
+        '200':
+          description: Profile synchronised
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Auth0SyncResponse'
+        '400':
+          description: Missing sub claim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Sync failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /steam/callback:
+    get:
+      tags:
+        - Steam
+      summary: Steam OpenID return helper
+      description: Redirects back to the client_return_to URL with OpenID parameters appended.
+      security: []
+      parameters:
+        - name: client_return_to
+          in: query
+          schema:
+            type: string
+            format: uri
+          description: URL to forward the OpenID payload to (required).
+      responses:
+        '302':
+          description: Redirect to client_return_to with OpenID params preserved.
+        '400':
+          description: Missing or invalid client_return_to parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /plasmic-loader.json:
+    get:
+      tags:
+        - Plasmic
+      summary: Provide Plasmic project metadata for the host
+      security: []
+      responses:
+        '200':
+          description: Plasmic loader configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlasmicLoaderResponse'
+        '500':
+          description: No Plasmic projects configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /__debug:
+    get:
+      tags:
+        - Misc
+      summary: Inspect resolved frontend paths
+      security: []
+      responses:
+        '200':
+          description: Debug information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugResponse'
+

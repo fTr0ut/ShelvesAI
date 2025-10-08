@@ -6,19 +6,6 @@ import { PLASMIC } from '../plasmic-init'
 
 const DEFAULT_PREFIXES = ['/plasmic']
 
-const homepageIndicatorStyle = {
-  position: 'fixed',
-  bottom: '1.5rem',
-  right: '1.5rem',
-  padding: '0.75rem 1rem',
-  borderRadius: '9999px',
-  background: 'rgba(26, 26, 26, 0.88)',
-  color: '#fff',
-  fontWeight: 600,
-  letterSpacing: '0.02em',
-  zIndex: 10,
-  boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
-};
 
 const envRuntimePrefix = (() => {
   if (typeof import.meta !== 'undefined' && import.meta && import.meta.env) {
@@ -164,11 +151,7 @@ export default function PlasmicRuntime({ routePrefix = '', extraPrefixes = [] })
         <PageParamsProvider route={plasmicPath} query={queryParams}>
           <div style={{ position: 'relative' }}>
             <PlasmicComponent component={componentName} />
-            {showHomepageIndicator ? (
-              <div style={homepageIndicatorStyle} data-test="plasmic-homepage-indicator">
-                Plasmic homepage is live
-              </div>
-            ) : null}
+
           </div>
         </PageParamsProvider>
       </GlobalContextsProvider>
