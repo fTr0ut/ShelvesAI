@@ -18,6 +18,7 @@ const friendsRoutes = require('./routes/friends');
 const steamRoutes = require('./routes/steam');
 const steamOpenIdRoutes = require('./routes/steamOpenId');
 const plasmicRoutes = require('./routes/plasmic');
+const uiEditorRoutes = require('./routes/uiEditor');
 
 const app = express();
 // Minimal request log (dev only)
@@ -259,6 +260,7 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
+app.use('/api/ui-editor', uiEditorRoutes);
 app.use('/steam', steamOpenIdRoutes);
 app.use('/api/steam', steamRoutes);
 app.use('/', plasmicRoutes);
