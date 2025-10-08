@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  AUTH_METHODS,
   exportProjectSettings,
   resetProjectSettings,
   updateProjectSettings,
@@ -32,6 +33,8 @@ export default function ProjectSettings() {
   const settings = useProjectSettings()
   const [apiBase, setApiBase] = useState(settings.apiBase)
   const [endpointJson, setEndpointJson] = useState(stringifyDocument(settings.endpointDocument))
+  const [authMethod, setAuthMethod] = useState(settings.authMethod)
+  const [authToken, setAuthToken] = useState(settings.authToken)
   const [parseError, setParseError] = useState('')
   const [saveStatus, setSaveStatus] = useState({ phase: 'idle', message: '' })
   const [testStatus, setTestStatus] = useState({ phase: 'idle', message: '' })
@@ -40,9 +43,11 @@ export default function ProjectSettings() {
   useEffect(() => {
     setApiBase(settings.apiBase)
     setEndpointJson(stringifyDocument(settings.endpointDocument))
+    setAuthMethod(settings.authMethod)
+    setAuthToken(settings.authToken)
     setParseError('')
     setSaveStatus({ phase: 'idle', message: '' })
-  }, [settings.apiBase, settings.endpointDocument, settings.version])
+  }, [settings.apiBase, settings.authMethod, settings.authToken, settings.endpointDocument, settings.version])
 
   const normalisedEndpoints = settings.endpointMeta?.endpoints ?? []
 
@@ -51,8 +56,13 @@ export default function ProjectSettings() {
     const storedBase = (settings.apiBase || '').trim()
     if (trimmedBase !== storedBase) return true
     if ((endpointJson || '').trim() !== stringifyDocument(settings.endpointDocument).trim()) return true
+    if (authMethod !== settings.authMethod) return true
+    const trimmedToken = authMethod === AUTH_METHODS.API_TOKEN ? authToken.trim() : ''
+    const storedToken =
+      settings.authMethod === AUTH_METHODS.API_TOKEN ? (settings.authToken || '').trim() : ''
+    if (trimmedToken !== storedToken) return true
     return false
-  }, [apiBase, endpointJson, settings.apiBase, settings.endpointDocument])
+  }, [apiBase, endpointJson, authMethod, authToken, settings.apiBase, settings.authMethod, settings.authToken, settings.endpointDocument])
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0]
@@ -94,6 +104,8 @@ export default function ProjectSettings() {
     updateProjectSettings({
       apiBase: (apiBase || '').trim(),
       endpointDocument: document,
+      authMethod,
+      authToken: authMethod === AUTH_METHODS.API_TOKEN ? authToken.trim() : '',
     })
     setSaveStatus({ phase: 'success', message: 'Settings saved locally for this browser.' })
   }
@@ -102,6 +114,8 @@ export default function ProjectSettings() {
     resetProjectSettings()
     setApiBase('')
     setEndpointJson('')
+    setAuthMethod(AUTH_METHODS.BROWSER_SESSION)
+    setAuthToken('')
     setParseError('')
     setSaveStatus({ phase: 'success', message: 'Settings reset to defaults.' })
   }
@@ -125,7 +139,16 @@ export default function ProjectSettings() {
     try {
       const candidate = (apiBase || '').trim()
       const url = buildDebugUrl(candidate)
-      const response = await fetch(url, { method: 'GET', credentials: 'include' })
+      const headers = {}
+      if (authMethod === AUTH_METHODS.API_TOKEN) {
+        const token = authToken.trim()
+        if (!token) {
+          setTestStatus({ phase: 'error', message: 'Provide an API token before testing the connection.' })
+          return
+        }
+        headers.Authorization = `Bearer ${token}`
+      }
+      const response = await fetch(url, { method: 'GET', credentials: 'include', headers })
       if (!response.ok) {
         const body = await response.text()
         throw new Error(body || `Response returned status ${response.status}`)
@@ -175,6 +198,73 @@ export default function ProjectSettings() {
           <div className="project-settings__active">
             Active origin: <code>{getApiOrigin()}</code>
           </div>
+        </section>
+
+        <section>
+          <h2>Authentication</h2>
+          <p className="project-settings__hint">
+            Define how the editor authenticates with Collector services while previewing endpoints and generated code.
+          </p>
+          <div className="project-settings__options">
+            <label
+              className={`project-settings__option ${
+                authMethod === AUTH_METHODS.BROWSER_SESSION ? 'project-settings__option--active' : ''
+              }`}
+            >
+              <input
+                type="radio"
+                name="auth-method"
+                value={AUTH_METHODS.BROWSER_SESSION}
+                checked={authMethod === AUTH_METHODS.BROWSER_SESSION}
+                onChange={() => setAuthMethod(AUTH_METHODS.BROWSER_SESSION)}
+              />
+              <div>
+                <div className="project-settings__option-title">Use browser session</div>
+                <p className="project-settings__hint">
+                  Reuse your existing Collector login session. Ideal when working in environments where the UI builder can
+                  share browser cookies with the API.
+                </p>
+              </div>
+            </label>
+            <label
+              className={`project-settings__option ${
+                authMethod === AUTH_METHODS.API_TOKEN ? 'project-settings__option--active' : ''
+              }`}
+            >
+              <input
+                type="radio"
+                name="auth-method"
+                value={AUTH_METHODS.API_TOKEN}
+                checked={authMethod === AUTH_METHODS.API_TOKEN}
+                onChange={() => setAuthMethod(AUTH_METHODS.API_TOKEN)}
+              />
+              <div>
+                <div className="project-settings__option-title">Bearer token</div>
+                <p className="project-settings__hint">
+                  Provide a static API token that will be sent as an <code>Authorization</code> header on every request.
+                </p>
+              </div>
+            </label>
+          </div>
+          {authMethod === AUTH_METHODS.API_TOKEN && (
+            <>
+              <label className="project-settings__label" htmlFor="auth-token-input">
+                API token
+              </label>
+              <input
+                id="auth-token-input"
+                type="password"
+                autoComplete="off"
+                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                value={authToken}
+                onChange={(event) => setAuthToken(event.target.value)}
+              />
+              <p className="project-settings__hint">
+                Tokens are stored locally in this browser and included as <code>Authorization: Bearer TOKEN</code> when the UI
+                builder talks to the API.
+              </p>
+            </>
+          )}
         </section>
 
         <section>

@@ -1,4 +1,4 @@
-import { getProjectSettings } from '../lib/projectSettings'
+import { AUTH_METHODS, getProjectSettings } from '../lib/projectSettings'
 
 const stripTrailingSlash = (value) => value.replace(/\/+$/, '')
 
@@ -44,10 +44,22 @@ export const resolveApiUrl = (path = '') => {
   return `${origin}/${path}`
 }
 
+const buildAuthHeaders = () => {
+  const settings = getProjectSettings()
+  if (settings?.authMethod === AUTH_METHODS.API_TOKEN) {
+    const token = (settings.authToken || '').trim()
+    if (token) {
+      return { Authorization: `Bearer ${token}` }
+    }
+  }
+  return {}
+}
+
 export const fetchJson = async (path, options = {}) => {
+  const authHeaders = buildAuthHeaders()
   const requestInit = {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...authHeaders, ...(options.headers || {}) },
     ...options,
   }
 
