@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchJson, resolveApiUrl } from '../api/client'
+import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import SiteSettingsPanel from '../components/SiteSettingsPanel'
 import ExperiencePreview from '../components/ExperiencePreview'
 import './EditorHome.css'
@@ -109,6 +110,8 @@ export default function EditorHome() {
           <li>Connect live preview panes to backend content using the shared data contracts.</li>
         </ul>
       </section>
+
+      <ComponentLibraryPanel />
     </div>
   )
 }
