@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router-dom'
 import { useAuth0 } from '@auth0/auth0-react'
 import './App.css'
@@ -24,20 +24,23 @@ function Home({ apiBase = '' }) {
   const [, setMe] = useState(null)
   const [needsUsername, setNeedsUsername] = useState(false)
 
-  const envBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
-  const base = (apiBase || envBase)
-  const api = (path) => `${base}${path}`
+  const envBase = useMemo(() => (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, ''), [])
+  const base = useMemo(() => apiBase || envBase, [apiBase, envBase])
+  const api = useCallback((path) => `${base}${path}`, [base])
   const goProtected = () => navigate(legacyPath('/protected'))
   const goFeed = () => navigate(legacyPath('/feed'))
   const goShelves = () => navigate(legacyPath('/shelves'))
 
   useEffect(() => {
-    if (!token) { setMe(null); return }
+    if (!token) {
+      setMe(null)
+      return
+    }
     fetch(api('/api/me'), { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((data) => setMe(data.user))
       .catch(() => setMe(null))
-  }, [token])
+  }, [api, token])
 
   useEffect(() => {
     const run = async () => {
@@ -59,8 +62,7 @@ function Home({ apiBase = '' }) {
       }
     }
     run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
+  }, [api, getAccessTokenSilently, goFeed, isAuthenticated, token])
 
   const handleLogin = async (e) => {
     e.preventDefault()
