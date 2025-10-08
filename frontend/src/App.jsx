@@ -10,6 +10,8 @@ import PlasmicRuntime from './pages/PlasmicRuntime.jsx'
 import { LEGACY_BASE_PATH, legacyPath } from './legacy/constants.js'
 import CollectableDetail from './pages/CollectableDetail.jsx'
 import Account from './pages/Account.jsx'
+import UIEditorApp from './ui-editor/index.jsx'
+import { UI_EDITOR_BASE_PATH } from './ui-editor/constants.js'
 
 function Home({ apiBase = '' }) {
   const navigate = useNavigate()
@@ -279,6 +281,7 @@ export default function App() {
         <Route path="account" element={<Account />} />
         <Route path="*" element={<Navigate to={LEGACY_BASE_PATH} replace />} />
       </Route>
+      <Route path={`${UI_EDITOR_BASE_PATH}/*`} element={<UIEditorApp />} />
       <Route path="*" element={<PlasmicRuntime />} />
     </Routes>
   )
@@ -293,6 +296,7 @@ function LegacyLayout() {
           <Link to={legacyPath('/feed')}>Feed</Link>
           <Link to={legacyPath('/shelves')}>Shelves</Link>
           <Link to={legacyPath('/account')}>Account</Link>
+          <Link to={UI_EDITOR_BASE_PATH}>UI Editor</Link>
           <Link to={legacyPath()}>Home</Link>
           {token ? <span className="pill">Logged in</span> : <span className="pill">Guest</span>}
         </nav>
