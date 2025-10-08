@@ -61,6 +61,10 @@ export default function EditorHome() {
       <section style={{ marginTop: '2.5rem' }}>
         <h2>Next steps</h2>
         <ul>
+          <li>
+            Point the editor at staging or local services by updating <strong>Project settings</strong> with your API base and
+            endpoint catalogue.
+          </li>
           <li>Introduce authenticated flows to persist editor layouts via the Collector API.</li>
           <li>Layer in canvas tooling for arranging shelves, collectables, and new UI primitives.</li>
           <li>Connect live preview panes to backend content using the shared data contracts.</li>
