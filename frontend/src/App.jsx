@@ -62,8 +62,7 @@ function Home({ apiBase = '' }) {
       }
     }
     run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
+  }, [api, getAccessTokenSilently, goFeed, isAuthenticated, token])
 
   const handleLogin = async (e) => {
     e.preventDefault()

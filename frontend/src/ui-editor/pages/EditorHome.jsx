@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchJson, resolveApiUrl } from '../api/client'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
+import SiteSettingsPanel from '../components/SiteSettingsPanel'
+import ExperiencePreview from '../components/ExperiencePreview'
+import './EditorHome.css'
 
 const defaultStatus = {
   phase: 'idle',
@@ -8,8 +11,35 @@ const defaultStatus = {
   meta: null,
 }
 
+const DEFAULT_SETTINGS = {
+  device: 'desktop',
+  colorScheme: 'light',
+  accentColor: '#60a5fa',
+  background: 'soft-gradient',
+  headerStyle: 'centered-logo',
+  footerStyle: 'minimal',
+  showAnnouncement: true,
+}
+
 export default function EditorHome() {
   const [status, setStatus] = useState(defaultStatus)
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
+
+  const theme = useMemo(
+    () => ({
+      isDark: settings.colorScheme === 'dark',
+      accentColor: settings.accentColor,
+      backgroundClass: `${settings.colorScheme === 'dark' ? 'theme-dark' : 'theme-light'} ${settings.background}`,
+    }),
+    [settings.colorScheme, settings.accentColor, settings.background],
+  )
+
+  const handleSettingChange = (name, value) => {
+    setSettings((prev) => ({
+      ...prev,
+      [name]: value,
+    }))
+  }
 
   useEffect(() => {
     let active = true
@@ -39,13 +69,14 @@ export default function EditorHome() {
   }, [])
 
   return (
-    <div>
-      <h1>Welcome to the Collector UI Editor</h1>
-      <p>
-        This workspace will host the React-driven editor for building and arranging collection experiences. The current iteration
-        establishes routing, layout chrome, and a health check against the Collector backend so future tools can rely on a stable
-        foundation.
-      </p>
+    <div className="editor-home">
+      <header className="editor-home__intro">
+        <h1>Collector experience settings</h1>
+        <p className="editor-home__lead">
+          Configure the global presentation system for Collector before diving into collection-level layouts. These settings feed
+          downstream canvases, ensuring both mobile and desktop experiences inherit a consistent tone.
+        </p>
+      </header>
 
       <section
         className={`ui-editor__status ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
@@ -59,9 +90,17 @@ export default function EditorHome() {
         )}
       </section>
 
-      <section style={{ marginTop: '2.5rem' }}>
-        <h2>Next steps</h2>
+      <section className="site-settings">
+        <SiteSettingsPanel settings={settings} onChange={handleSettingChange} />
+        <ExperiencePreview settings={settings} theme={theme} />
+      </section>
+
+      <section className="editor-home__roadmap">
+        <h2>Next steps for the builder</h2>
         <ul>
+          <li>Persist these global settings to the Collector API once endpoint contracts are finalised.</li>
+          <li>Introduce canvas tooling that maps shelves and collectables onto responsive breakpoints.</li>
+          <li>Wire preview panes to live content sources and expose publishing workflows.</li>
           <li>
             Point the editor at staging or local services by updating <strong>Project settings</strong> with your API base and
             endpoint catalogue.

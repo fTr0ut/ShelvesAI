@@ -146,7 +146,6 @@ export default function PlasmicRuntime({ routePrefix = '', extraPrefixes = [] })
         <PageParamsProvider route={plasmicPath} query={queryParams}>
           <div style={{ position: 'relative' }}>
             <PlasmicComponent component={componentName} />
-
           </div>
         </PageParamsProvider>
       </GlobalContextsProvider>
