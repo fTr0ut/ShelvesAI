@@ -116,11 +116,6 @@ export default function PlasmicRuntime({ routePrefix = '', extraPrefixes = [] })
 
   const entryMeta = pageData?.entryCompMetas?.[0]
   const componentName = entryMeta?.name
-  const normalizedComponentName = (componentName || '').toLowerCase()
-  const showHomepageIndicator =
-    plasmicPath === '/' ||
-    normalizedComponentName === 'homepage' ||
-    normalizedComponentName === 'home'
   const pageTitle = entryMeta?.displayName || entryMeta?.name
 
   useEffect(() => {
