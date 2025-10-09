@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import SiteSettingsPanel from '../components/SiteSettingsPanel'
-import ExperiencePreview from '../components/ExperiencePreview'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
@@ -15,7 +14,6 @@ const defaultStatus = {
 }
 
 const DEFAULT_SETTINGS = {
-  device: 'desktop',
   colorScheme: 'light',
   accentColor: '#60a5fa',
   background: 'soft-gradient',
@@ -29,46 +27,50 @@ export default function CanvasWorkspace() {
   const projectSettingsVersion = projectSettings?.version
   const [status, setStatus] = useState(defaultStatus)
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
-  const screenOptions = useMemo(
-    () => [
-      {
-        id: 'home-desktop',
-        name: 'Homepage',
-        device: 'Desktop',
-        description: '1440px wide, marketing hero focus',
-      },
-      {
-        id: 'home-tablet',
-        name: 'Homepage',
-        device: 'Tablet',
-        description: '768px breakpoint with stacked hero',
-      },
-      {
-        id: 'home-mobile',
-        name: 'Homepage',
-        device: 'Mobile',
-        description: 'Small screens and foldables',
-      },
-      {
-        id: 'collection-desktop',
-        name: 'Collection layout',
-        device: 'Desktop',
-        description: 'Grid forward browse experience',
-      },
-      {
-        id: 'collection-mobile',
-        name: 'Collection layout',
-        device: 'Mobile',
-        description: 'Vertical scroll list with filters',
-      },
-    ],
-    [],
-  )
-  const [selectedScreenId, setSelectedScreenId] = useState(screenOptions[0]?.id ?? '')
+  const [screens, setScreens] = useState(() => [
+    {
+      id: 'home-desktop',
+      name: 'Homepage',
+      device: 'Desktop',
+      description: '1440px wide, marketing hero focus',
+    },
+    {
+      id: 'home-tablet',
+      name: 'Homepage',
+      device: 'Tablet',
+      description: '768px breakpoint with stacked hero',
+    },
+    {
+      id: 'home-mobile',
+      name: 'Homepage',
+      device: 'Mobile',
+      description: 'Small screens and foldables',
+    },
+    {
+      id: 'collection-desktop',
+      name: 'Collection layout',
+      device: 'Desktop',
+      description: 'Grid forward browse experience',
+    },
+    {
+      id: 'collection-mobile',
+      name: 'Collection layout',
+      device: 'Mobile',
+      description: 'Vertical scroll list with filters',
+    },
+  ])
+  const [selectedScreenId, setSelectedScreenId] = useState(() => screens[0]?.id ?? '')
   const activeScreen = useMemo(
-    () => screenOptions.find((option) => option.id === selectedScreenId) ?? screenOptions[0],
-    [screenOptions, selectedScreenId],
+    () => screens.find((option) => option.id === selectedScreenId) ?? screens[0],
+    [screens, selectedScreenId],
   )
+  const [isCreateScreenOpen, setIsCreateScreenOpen] = useState(false)
+  const [newScreenForm, setNewScreenForm] = useState({
+    name: '',
+    device: 'Desktop',
+    description: '',
+  })
+  const [createScreenError, setCreateScreenError] = useState('')
   const [pageStyles, setPageStyles] = useState({
     backgroundColor: '#0b1120',
     textColor: '#e2e8f0',
@@ -111,6 +113,71 @@ export default function CanvasWorkspace() {
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
   const workspaceRef = useRef(null)
+
+  const handleSelectScreen = (screenId) => {
+    setSelectedScreenId(screenId)
+  }
+
+  const handleToggleCreateScreen = () => {
+    setIsCreateScreenOpen((previous) => {
+      const next = !previous
+      if (!next) {
+        setNewScreenForm({ name: '', device: 'Desktop', description: '' })
+      }
+      return next
+    })
+    setCreateScreenError('')
+  }
+
+  const handleCreateScreenFieldChange = (field) => (event) => {
+    const { value } = event.target
+    setNewScreenForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }))
+  }
+
+  const handleCreateScreen = (event) => {
+    event.preventDefault()
+    const trimmedName = newScreenForm.name.trim()
+    if (!trimmedName) {
+      setCreateScreenError('Please provide a screen name to continue.')
+      return
+    }
+
+    const normalisedDevice = newScreenForm.device || 'Desktop'
+    const normalise = (value) =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+
+    const baseSlug = normalise(trimmedName) || 'screen'
+    const deviceSlug = normalise(normalisedDevice) || 'device'
+    const baseId = `${baseSlug}-${deviceSlug}`
+    let candidateId = baseId
+    let attempt = 1
+    const existingIds = new Set(screens.map((screen) => screen.id))
+    while (existingIds.has(candidateId)) {
+      attempt += 1
+      candidateId = `${baseId}-${attempt}`
+    }
+
+    const description = newScreenForm.description.trim() || `${normalisedDevice} layout`
+
+    const nextScreen = {
+      id: candidateId,
+      name: trimmedName,
+      device: normalisedDevice,
+      description,
+    }
+
+    setScreens((previous) => [...previous, nextScreen])
+    setSelectedScreenId(candidateId)
+    setIsCreateScreenOpen(false)
+    setNewScreenForm({ name: '', device: 'Desktop', description: '' })
+    setCreateScreenError('')
+  }
 
   const theme = useMemo(
     () => ({
@@ -386,44 +453,116 @@ export default function CanvasWorkspace() {
               </p>
             </header>
 
+            <header className="canvas-workspace__header" data-editor-sticky="true">
+              <div className="canvas-workspace__header-info">
+                <span className="canvas-workspace__header-label">Current screen</span>
+                <div className="canvas-workspace__header-title" aria-live="polite">
+                  {activeScreen ? (
+                    <>
+                      <strong>{activeScreen.name}</strong>
+                      <span className="canvas-workspace__header-device">{activeScreen.device}</span>
+                    </>
+                  ) : (
+                    <strong>No screen selected</strong>
+                  )}
+                </div>
+                {activeScreen?.description ? (
+                  <p className="canvas-workspace__header-description">{activeScreen.description}</p>
+                ) : null}
+              </div>
+              <div className="canvas-workspace__header-controls">
+                <label className="canvas-workspace__header-select">
+                  <span className="canvas-workspace__header-select-label">Switch screen</span>
+                  <select value={selectedScreenId} onChange={(event) => handleSelectScreen(event.target.value)}>
+                    {screens.map((screen) => (
+                      <option key={screen.id} value={screen.id}>
+                        {screen.name} · {screen.device}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="canvas-workspace__header-button"
+                  onClick={handleToggleCreateScreen}
+                  aria-expanded={isCreateScreenOpen}
+                >
+                  {isCreateScreenOpen ? 'Close' : 'New screen'}
+                </button>
+              </div>
+            </header>
+
+            {isCreateScreenOpen ? (
+              <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
+                <div className="canvas-workspace__field">
+                  <label htmlFor="new-screen-name">Screen name</label>
+                  <input
+                    id="new-screen-name"
+                    name="name"
+                    type="text"
+                    value={newScreenForm.name}
+                    onChange={handleCreateScreenFieldChange('name')}
+                    placeholder="eg. Checkout"
+                  />
+                </div>
+                <div className="canvas-workspace__field">
+                  <label htmlFor="new-screen-device">Device</label>
+                  <select
+                    id="new-screen-device"
+                    name="device"
+                    value={newScreenForm.device}
+                    onChange={handleCreateScreenFieldChange('device')}
+                  >
+                    <option>Desktop</option>
+                    <option>Tablet</option>
+                    <option>Mobile</option>
+                    <option>TV</option>
+                  </select>
+                </div>
+                <div className="canvas-workspace__field canvas-workspace__field--wide">
+                  <label htmlFor="new-screen-description">Description</label>
+                  <input
+                    id="new-screen-description"
+                    name="description"
+                    type="text"
+                    value={newScreenForm.description}
+                    onChange={handleCreateScreenFieldChange('description')}
+                    placeholder="Optional description to help the team"
+                  />
+                </div>
+                {createScreenError ? (
+                  <p className="canvas-workspace__form-error" role="alert">
+                    {createScreenError}
+                  </p>
+                ) : null}
+                <div className="canvas-workspace__form-actions">
+                  <button type="submit" className="canvas-workspace__header-button">
+                    Create screen
+                  </button>
+                  <button type="button" className="canvas-workspace__link-button" onClick={handleToggleCreateScreen}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
             <CanvasScreenSelector
-              screens={screenOptions}
+              screens={screens}
               selectedScreenId={activeScreen?.id ?? ''}
               onSelectScreen={setSelectedScreenId}
             />
 
-            <section
-              className={`ui-editor__status editor-home__status ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
-              aria-live="polite"
-            >
-              <strong>Status:</strong> {status.message}
-              {status.meta && (
-                <div className="ui-editor__meta">
-                  <pre>{JSON.stringify(status.meta, null, 2)}</pre>
-                </div>
-              )}
-            </section>
           </div>
 
           <section className="site-settings">
             <SiteSettingsPanel settings={settings} onChange={handleSettingChange} />
-            <ExperiencePreview settings={settings} theme={theme} />
           </section>
 
-          <section className="editor-home__roadmap">
-            <h2>Next steps for the builder</h2>
-            <ul>
-              <li>Persist these global settings to the Collector API once endpoint contracts are finalised.</li>
-              <li>Introduce canvas tooling that maps shelves and collectables onto responsive breakpoints.</li>
-              <li>Wire preview panes to live content sources and expose publishing workflows.</li>
-              <li>
-                Point the editor at staging or local services by updating <strong>Project settings</strong> with your API base
-                and endpoint catalogue.
-              </li>
-              <li>Introduce authenticated flows to persist editor layouts via the Collector API.</li>
-              <li>Layer in canvas tooling for arranging shelves, collectables, and new UI primitives.</li>
-              <li>Connect live preview panes to backend content using the shared data contracts.</li>
-            </ul>
+          <section
+            className={`ui-editor__status editor-home__status-panel ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
+            aria-live="polite"
+          >
+            <strong>Status:</strong> {status.message}
           </section>
 
           <PropertiesPanel

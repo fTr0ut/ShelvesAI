@@ -54,7 +54,7 @@
 
 .ui-editor__content {
   padding: 2rem clamp(1.5rem, 3vw, 3rem);
-  max-width: 1200px;
+  max-width: min(1440px, 100%);
   width: 100%;
   margin: 0 auto;
 }

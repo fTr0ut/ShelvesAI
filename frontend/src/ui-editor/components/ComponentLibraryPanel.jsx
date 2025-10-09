@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   assignComponentBinding,
   clearComponentBinding,
@@ -102,6 +102,11 @@ export default function ComponentLibraryPanel() {
       )
     : []
 
+  const selectedPrimitive = useMemo(
+    () => primitiveComponents.find((primitive) => primitive.id === selectedPrimitiveId) || null,
+    [selectedPrimitiveId]
+  )
+
   const assignedComponent = (() => {
     if (!binding) return null
     const fromLibrary = getComponentById(binding.componentId)
@@ -163,21 +168,26 @@ export default function ComponentLibraryPanel() {
                   className={`component-library__primitive-tile ${isSelected ? 'is-selected' : ''}`}
                   onClick={() => setSelectedPrimitiveId(primitive.id)}
                   aria-pressed={isSelected}
-                  aria-label={`${primitive.label}. ${primitive.description}`}
                 >
-                  <span className="component-library__primitive-help" aria-hidden="true">
-                    <span className="component-library__primitive-help-trigger">?</span>
-                    <span className="component-library__primitive-help-bubble">{primitive.description}</span>
-                  </span>
                   <span className="component-library__primitive-icon" aria-hidden="true">
                     {primitive.icon}
                   </span>
                   <span className="component-library__primitive-label">{primitive.label}</span>
+                  <span className="component-library__primitive-description">{primitive.description}</span>
                 </button>
               </div>
             )
           })}
         </div>
+        {selectedPrimitive && (
+          <aside className="component-library__primitive-detail" aria-live="polite">
+            <h4>{selectedPrimitive.label}</h4>
+            <p>{selectedPrimitive.description}</p>
+            <p className="component-library__primitive-hint">
+              Add this component to the canvas to unlock configuration options within the properties panel.
+            </p>
+          </aside>
+        )}
       </section>
 
       <div className="component-library__summary" role="list">
