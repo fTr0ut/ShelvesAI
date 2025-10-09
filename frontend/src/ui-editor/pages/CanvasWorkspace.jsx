@@ -392,17 +392,6 @@ export default function CanvasWorkspace() {
               onSelectScreen={setSelectedScreenId}
             />
 
-            <section
-              className={`ui-editor__status editor-home__status ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
-              aria-live="polite"
-            >
-              <strong>Status:</strong> {status.message}
-              {status.meta && (
-                <div className="ui-editor__meta">
-                  <pre>{JSON.stringify(status.meta, null, 2)}</pre>
-                </div>
-              )}
-            </section>
           </div>
 
           <section className="site-settings">
@@ -424,6 +413,13 @@ export default function CanvasWorkspace() {
               <li>Layer in canvas tooling for arranging shelves, collectables, and new UI primitives.</li>
               <li>Connect live preview panes to backend content using the shared data contracts.</li>
             </ul>
+          </section>
+
+          <section
+            className={`ui-editor__status editor-home__status-panel ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
+            aria-live="polite"
+          >
+            <strong>Status:</strong> {status.message}
           </section>
 
           <PropertiesPanel
