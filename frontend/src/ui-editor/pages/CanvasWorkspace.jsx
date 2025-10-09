@@ -197,6 +197,7 @@ export default function CanvasWorkspace() {
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
   const [isNavigatorOpen, setNavigatorOpen] = useState(false)
+  const [isHeaderPanelOpen, setHeaderPanelOpen] = useState(false)
   const [isThemePanelOpen, setThemePanelOpen] = useState(false)
   const [navigatorSearch, setNavigatorSearch] = useState('')
   const [openNavigatorSections, setOpenNavigatorSections] = useState({
@@ -647,7 +648,7 @@ export default function CanvasWorkspace() {
         const origin = new URL(finalUrl).origin
         setStatus({
           phase: 'success',
-          message: `Backend reachable at ${origin}. Ready for editor features.`,
+          message: `Backend reachable.`,
           meta: { endpoint: finalUrl, payload, attempts: attemptLog },
         })
         return true
@@ -711,6 +712,10 @@ export default function CanvasWorkspace() {
 
   const toggleNavigator = () => {
     setNavigatorOpen((previous) => !previous)
+  }
+
+  const toggleHeaderPanel = () => {
+    setHeaderPanelOpen((previous) => !previous)
   }
 
   const toggleThemePanel = () => {
@@ -888,109 +893,15 @@ export default function CanvasWorkspace() {
 
 
             <header className="canvas-workspace__header" data-editor-sticky="true">
-              <div className="canvas-workspace__header-main">
-                <div className="canvas-workspace__header-left">
-                  <div className="canvas-workspace__header-info">
-                    <span className="canvas-workspace__header-label">Current screen</span>
-                    <div className="canvas-workspace__header-title" aria-live="polite">
-                      {activeScreen ? (
-                        <>
-                          <strong>{activeScreen.name}</strong>
-                          <span className="canvas-workspace__header-device">{activeScreen.device}</span>
-                        </>
-                      ) : (
-                        <strong>No screen selected</strong>
-                      )}
-                    </div>
-                    {activeScreen?.description ? (
-                      <p className="canvas-workspace__header-description">{activeScreen.description}</p>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="canvas-workspace__header-controls">
-                  <button
-                    type="button"
-                    className="canvas-workspace__header-button"
-                    onClick={handleToggleCreateScreen}
-                    aria-expanded={isCreateScreenOpen}
-                  >
-                    {isCreateScreenOpen ? 'Close' : 'New screen'}
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas-workspace__link-button"
-                    onClick={handleDeleteScreen}
-                    disabled={!selectedScreenId || isDeletingScreen || screens.length === 0}
-                  >
-                    {isDeletingScreen ? 'Deleting…' : 'Delete screen'}
-                  </button>
-                  <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
-                    <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
-                      <span className="canvas-workspace__publish-label-text">Publish target</span>
-                      <input
-                        id={publishTargetInputId}
-                        name="publish-target"
-                        className="canvas-workspace__publish-input"
-                        type="text"
-                        value={publishTarget}
-                        onChange={handlePublishTargetChange}
-                        placeholder="e.g. staging"
-                        list="canvas-workspace-publish-targets"
-                        disabled={isPublishing}
-                      />
-                    </label>
-                    <datalist id="canvas-workspace-publish-targets">
-                      <option value="staging" />
-                      <option value="production" />
-                    </datalist>
-                    <button type="submit" className="canvas-workspace__header-button" disabled={isPublishing}>
-                      {isPublishing ? 'Publishing…' : 'Publish'}
-                    </button>
-                  </form>
-                </div>
-              </div>
-              <div className="canvas-workspace__header-bottom">
-                <div className="canvas-workspace__header-panels">
-                  <button
-                    type="button"
-                    className="canvas-workspace__panel-toggle"
-                    onClick={toggleNavigator}
-                    aria-expanded={isNavigatorOpen}
-                    aria-controls="canvas-workspace-navigator-panel"
-                    data-expanded={isNavigatorOpen}
-                  >
-                    {isNavigatorOpen ? 'Hide workspace navigator' : 'Show workspace navigator'}
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas-workspace__panel-toggle"
-                    onClick={toggleThemePanel}
-                    aria-expanded={isThemePanelOpen}
-                    aria-controls="canvas-workspace-theme-panel"
-                    data-expanded={isThemePanelOpen}
-                  >
-                    {isThemePanelOpen ? 'Hide workspace theme' : 'Show workspace theme'}
-                  </button>
-                </div>
-                <label className="canvas-workspace__header-select">
-                  <span className="canvas-workspace__header-select-label">Switch screen</span>
-                  <select
-                    value={selectedScreenId}
-                    onChange={(event) => handleSelectScreen(event.target.value)}
-                    disabled={screensState.isLoading || screens.length === 0}
-                  >
-                    {screens.length ? (
-                      screens.map((screen) => (
-                        <option key={screen.id} value={screen.id}>
-                          {screen.name} — {screen.device}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">No screens available</option>
-                    )}
-                  </select>
-                </label>
-              </div>
+              <button
+                type="button"
+                className="canvas-workspace__panel-toggle canvas-workspace__panel-toggle--compact"
+                onClick={toggleHeaderPanel}
+                aria-expanded={isHeaderPanelOpen}
+                aria-controls="canvas-workspace-overview-panel"
+              >
+                {isHeaderPanelOpen ? 'Hide workspace overview' : 'Show workspace overview'}
+              </button>
             </header>
 
 
@@ -1000,7 +911,135 @@ export default function CanvasWorkspace() {
               </p>
             ) : null}
 
+            <div className="canvas-workspace__panel-launchers" aria-label="Workspace quick panels">
+              <span className="canvas-workspace__panel-launchers-label">Workspace panels</span>
+              <div className="canvas-workspace__panel-launchers-buttons">
+                <button
+                  type="button"
+                  className="canvas-workspace__panel-toggle"
+                  onClick={toggleNavigator}
+                  aria-expanded={isNavigatorOpen}
+                  aria-controls="canvas-workspace-navigator-panel"
+                  data-expanded={isNavigatorOpen}
+                >
+                  {isNavigatorOpen ? 'Hide workspace navigator' : 'workspace navigator'}
+                </button>
+                <button
+                  type="button"
+                  className="canvas-workspace__panel-toggle"
+                  onClick={toggleThemePanel}
+                  aria-expanded={isThemePanelOpen}
+                  aria-controls="canvas-workspace-theme-panel"
+                  data-expanded={isThemePanelOpen}
+                >
+                  {isThemePanelOpen ? 'Hide workspace theme' : 'workspace theme'}
+                </button>
+              </div>
+            </div>
+
             <div className="canvas-workspace__panel-dock">
+              {isHeaderPanelOpen ? (
+                <section
+                  id="canvas-workspace-overview-panel"
+                  className="canvas-workspace__floating-panel canvas-workspace__overview-panel"
+                  aria-label="Workspace overview"
+                >
+                  <div className="canvas-workspace__overview-header">
+                    <div>
+                      <p className="canvas-workspace__header-label">Workspace overview</p>
+                      <h2 className="canvas-workspace__overview-title">
+                        {activeScreen ? activeScreen.name : 'No screen selected'}
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      className="canvas-workspace__panel-toggle canvas-workspace__panel-toggle--compact"
+                      onClick={toggleHeaderPanel}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="canvas-workspace__overview-body">
+                    <div className="canvas-workspace__header-info">
+                      <span className="canvas-workspace__header-label">Current screen</span>
+                      <div className="canvas-workspace__header-title" aria-live="polite">
+                        {activeScreen ? (
+                          <>
+                            <strong>{activeScreen.name}</strong>
+                            <span className="canvas-workspace__header-device">{activeScreen.device}</span>
+                          </>
+                        ) : (
+                          <strong>No screen selected</strong>
+                        )}
+                      </div>
+                      {activeScreen?.description ? (
+                        <p className="canvas-workspace__header-description">{activeScreen.description}</p>
+                      ) : null}
+                    </div>
+                    <div className="canvas-workspace__overview-controls">
+                      <div className="canvas-workspace__overview-buttons">
+                        <button
+                          type="button"
+                          className="canvas-workspace__header-button"
+                          onClick={handleToggleCreateScreen}
+                          aria-expanded={isCreateScreenOpen}
+                        >
+                          {isCreateScreenOpen ? 'Close' : 'New screen'}
+                        </button>
+                        <button
+                          type="button"
+                          className="canvas-workspace__link-button"
+                          onClick={handleDeleteScreen}
+                          disabled={!selectedScreenId || isDeletingScreen || screens.length === 0}
+                        >
+                          {isDeletingScreen ? 'Deleting…' : 'Delete screen'}
+                        </button>
+                      </div>
+                      <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
+                        <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
+                          <span className="canvas-workspace__publish-label-text">Publish target</span>
+                          <input
+                            id={publishTargetInputId}
+                            name="publish-target"
+                            className="canvas-workspace__publish-input"
+                            type="text"
+                            value={publishTarget}
+                            onChange={handlePublishTargetChange}
+                            placeholder="e.g. staging"
+                            list="canvas-workspace-publish-targets"
+                            disabled={isPublishing}
+                          />
+                        </label>
+                        <datalist id="canvas-workspace-publish-targets">
+                          <option value="staging" />
+                          <option value="production" />
+                        </datalist>
+                        <button type="submit" className="canvas-workspace__header-button" disabled={isPublishing}>
+                          {isPublishing ? 'Publishing…' : 'Publish'}
+                        </button>
+                      </form>
+                      <label className="canvas-workspace__header-select">
+                        <span className="canvas-workspace__header-select-label">Switch screen</span>
+                        <select
+                          value={selectedScreenId}
+                          onChange={(event) => handleSelectScreen(event.target.value)}
+                          disabled={screensState.isLoading || screens.length === 0}
+                        >
+                          {screens.length ? (
+                            screens.map((screen) => (
+                              <option key={screen.id} value={screen.id}>
+                                {screen.name} — {screen.device}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">No screens available</option>
+                          )}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
               {isNavigatorOpen ? (
                 <aside
                   id="canvas-workspace-navigator-panel"
@@ -1012,7 +1051,17 @@ export default function CanvasWorkspace() {
                       <p className="canvas-workspace__navigator-eyebrow">Pages, Components, Arenas</p>
                       <h2>Workspace collections</h2>
                     </div>
-                    <button type="button" className="canvas-workspace__navigator-new">New</button>
+                    <div className="canvas-workspace__navigator-actions">
+                      <button type="button" className="canvas-workspace__navigator-new">New</button>
+                      <button
+                        type="button"
+                        className="canvas-workspace__panel-toggle canvas-workspace__panel-toggle--compact"
+                        onClick={toggleNavigator}
+                        aria-label="Close workspace navigator"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                   <label className="canvas-workspace__navigator-search" htmlFor="canvas-workspace-navigator-search">
                     <span className="sr-only">Search navigator</span>
@@ -1251,112 +1300,113 @@ export default function CanvasWorkspace() {
               onSelectScreen={setSelectedScreenId}
             />
 
-          </div>
+            <div className="editor-home__status-stack">
+              <section
+                className={`ui-editor__status editor-home__status-panel ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
+                aria-live="polite"
+              >
+                <strong>Status:</strong> {status.message}
+              </section>
 
-          <section
-            className={`ui-editor__status editor-home__status-panel ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
-            aria-live="polite"
-          >
-            <strong>Status:</strong> {status.message}
-          </section>
-
-          <section
-            className={`canvas-workspace__publish-status canvas-workspace__publish-status--${publishState.status}`}
-            aria-live="polite"
-          >
-            <div className="canvas-workspace__publish-status-message">{publishState.message}</div>
-            {publishMeta ? (
-              <dl className="canvas-workspace__publish-meta">
-                <div>
-                  <dt>Generated</dt>
-                  <dd>{formatPublishTimestamp(publishMeta.generatedAt)}</dd>
-                </div>
-                <div>
-                  <dt>Routes</dt>
-                  <dd>{publishMeta.routeCount ?? '—'}</dd>
-                </div>
-                <div>
-                  <dt>Screens</dt>
-                  <dd>{publishMeta.screenCount ?? '—'}</dd>
-                </div>
-                {publishMeta.routesUpdatedAt ? (
-                  <div>
-                    <dt>Routes updated</dt>
-                    <dd>{formatPublishTimestamp(publishMeta.routesUpdatedAt)}</dd>
+              <section
+                className={`canvas-workspace__publish-status canvas-workspace__publish-status--${publishState.status}`}
+                aria-live="polite"
+              >
+                <div className="canvas-workspace__publish-status-message">{publishState.message}</div>
+                {publishMeta ? (
+                  <dl className="canvas-workspace__publish-meta">
+                    <div>
+                      <dt>Generated</dt>
+                      <dd>{formatPublishTimestamp(publishMeta.generatedAt)}</dd>
+                    </div>
+                    <div>
+                      <dt>Routes</dt>
+                      <dd>{publishMeta.routeCount ?? '--'}</dd>
+                    </div>
+                    <div>
+                      <dt>Screens</dt>
+                      <dd>{publishMeta.screenCount ?? '--'}</dd>
+                    </div>
+                    {publishMeta.routesUpdatedAt ? (
+                      <div>
+                        <dt>Routes updated</dt>
+                        <dd>{formatPublishTimestamp(publishMeta.routesUpdatedAt)}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : null}
+                {publishWrittenFiles.length ? (
+                  <div className="canvas-workspace__publish-status-block">
+                    <strong>Written files</strong>
+                    <ul className="canvas-workspace__publish-status-list">
+                      {publishWrittenFiles.map((filePath) => (
+                        <li key={filePath}>{filePath}</li>
+                      ))}
+                    </ul>
                   </div>
                 ) : null}
-              </dl>
-            ) : null}
-            {publishWrittenFiles.length ? (
-              <div className="canvas-workspace__publish-status-block">
-                <strong>Written files</strong>
-                <ul className="canvas-workspace__publish-status-list">
-                  {publishWrittenFiles.map((filePath) => (
-                    <li key={filePath}>{filePath}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {publishFailures.length ? (
-              <div className="canvas-workspace__publish-status-block">
-                <strong>Failures</strong>
-                <ul className="canvas-workspace__publish-status-list">
-                  {publishFailures.map((failure, index) => {
-                    const failureEntry =
-                      failure && typeof failure === 'object' && !Array.isArray(failure)
-                        ? failure
-                        : { message: failure }
-                    const key = failureEntry.file || failureEntry.directory || `failure-${index}`
-                    return (
-                      <li key={key}>
-                        <span className="canvas-workspace__publish-failure-path">
-                          {failureEntry.file || failureEntry.directory || 'Unknown destination'}
-                        </span>
-                        {failureEntry.message ? (
-                          <span className="canvas-workspace__publish-failure-message"> — {failureEntry.message}</span>
-                        ) : null}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            ) : null}
-            {publishState.status === 'error' && publishInfo ? (
-              <div className="canvas-workspace__publish-status-block">
-                <strong>Details</strong>
-                {typeof publishInfo === 'object' ? (
-                  <pre className="canvas-workspace__publish-note canvas-workspace__publish-note--pre">
-                    {JSON.stringify(publishInfo, null, 2)}
-                  </pre>
-                ) : (
-                  <p className="canvas-workspace__publish-note">{String(publishInfo)}</p>
-                )}
-              </div>
-            ) : null}
-            {publishState.status === 'error' && publishStatusCode ? (
-              <div className="canvas-workspace__publish-status-block">
-                <strong>Status code</strong>
-                <p className="canvas-workspace__publish-note">{publishStatusCode}</p>
-              </div>
-            ) : null}
-            {publishState.status === 'error' && publishAvailableTargets.length ? (
-              <div className="canvas-workspace__publish-status-block">
-                <strong>Configured targets</strong>
-                <p className="canvas-workspace__publish-note">{publishAvailableTargets.join(', ')}</p>
-              </div>
-            ) : null}
-          </section>
+                {publishFailures.length ? (
+                  <div className="canvas-workspace__publish-status-block">
+                    <strong>Failures</strong>
+                    <ul className="canvas-workspace__publish-status-list">
+                      {publishFailures.map((failure, index) => {
+                        const failureEntry =
+                          failure && typeof failure === 'object' && !Array.isArray(failure)
+                            ? failure
+                            : { message: failure }
+                        const key = failureEntry.file || failureEntry.directory || `failure-${index}`
+                        return (
+                          <li key={key}>
+                            <span className="canvas-workspace__publish-failure-path">
+                              {failureEntry.file || failureEntry.directory || 'Unknown destination'}
+                            </span>
+                            {failureEntry.message ? (
+                              <span className="canvas-workspace__publish-failure-message"> -- {failureEntry.message}</span>
+                            ) : null}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
+                {publishState.status === 'error' && publishInfo ? (
+                  <div className="canvas-workspace__publish-status-block">
+                    <strong>Details</strong>
+                    {typeof publishInfo === 'object' ? (
+                      <pre className="canvas-workspace__publish-note canvas-workspace__publish-note--pre">
+                        {JSON.stringify(publishInfo, null, 2)}
+                      </pre>
+                    ) : (
+                      <p className="canvas-workspace__publish-note">{String(publishInfo)}</p>
+                    )}
+                  </div>
+                ) : null}
+                {publishState.status === 'error' && publishStatusCode ? (
+                  <div className="canvas-workspace__publish-status-block">
+                    <strong>Status code</strong>
+                    <p className="canvas-workspace__publish-note">{publishStatusCode}</p>
+                  </div>
+                ) : null}
+                {publishState.status === 'error' && publishAvailableTargets.length ? (
+                  <div className="canvas-workspace__publish-status-block">
+                    <strong>Configured targets</strong>
+                    <p className="canvas-workspace__publish-note">{publishAvailableTargets.join(', ')}</p>
+                  </div>
+                ) : null}
+              </section>
+            </div>
 
-          <PropertiesPanel
-            activeScreen={activeScreen}
-            pageStyles={pageStyles}
-            onPageStyleChange={handlePageStyleChange}
-            component={activeComponent}
-            onComponentChange={handleComponentChange}
-            className="canvas-workspace__properties-panel"
-          />
+            <PropertiesPanel
+              activeScreen={activeScreen}
+              pageStyles={pageStyles}
+              onPageStyleChange={handlePageStyleChange}
+              component={activeComponent}
+              onComponentChange={handleComponentChange}
+              className="canvas-workspace__properties-panel"
+            />
         </div>
       </div>
     </div>
+  </div>
   )
 }

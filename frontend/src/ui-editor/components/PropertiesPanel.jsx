@@ -14,6 +14,7 @@ export default function PropertiesPanel({
   onPageStyleChange,
   component,
   onComponentChange,
+  className = '',
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('component')
@@ -58,11 +59,16 @@ export default function PropertiesPanel({
     })
   }
 
+  const rootClassName = [
+    'properties-panel',
+    isCollapsed ? 'properties-panel--collapsed' : '',
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <aside
-      className={`properties-panel${isCollapsed ? ' properties-panel--collapsed' : ''}`}
-      aria-label="Canvas properties"
-    >
+    <aside className={rootClassName} aria-label="Canvas properties">
       <div className="properties-panel__header">
         <button
           type="button"
