@@ -19,10 +19,80 @@ const capabilityLabels = {
   query: 'Data fetch',
 }
 
+const primitiveComponents = [
+  {
+    id: 'form',
+    label: 'Form',
+    description: 'Collect input with grouped fields, validation, and submission states.',
+    icon: '📝',
+  },
+  {
+    id: 'columns',
+    label: 'Columns',
+    description: 'Lay out content side-by-side with fixed or fluid column widths.',
+    icon: '⬛',
+  },
+  {
+    id: 'button',
+    label: 'Button',
+    description: 'Trigger actions or submit forms with consistent styling.',
+    icon: '🔘',
+  },
+  {
+    id: 'text-field',
+    label: 'Text field',
+    description: 'Capture single-line input with support for hints and validation.',
+    icon: '⌨️',
+  },
+  {
+    id: 'link-container',
+    label: 'Link container',
+    description: 'Wrap groups of elements in navigable or interactive link targets.',
+    icon: '🔗',
+  },
+  {
+    id: 'page-section',
+    label: 'Page section',
+    description: 'Organise long pages with titled, themed structural sections.',
+    icon: '📄',
+  },
+  {
+    id: 'responsive-columns',
+    label: 'Responsive columns',
+    description: 'Adapt layouts across breakpoints with smart column stacking.',
+    icon: '📐',
+  },
+  {
+    id: 'horizontal-stack',
+    label: 'Horizontal stack',
+    description: 'Arrange components in a row with consistent spacing.',
+    icon: '➡️',
+  },
+  {
+    id: 'vertical-stack',
+    label: 'Vertical stack',
+    description: 'Stack elements vertically with shared spacing tokens.',
+    icon: '⬇️',
+  },
+  {
+    id: 'grid',
+    label: 'Grid',
+    description: 'Create dense, repeating layouts with column and row controls.',
+    icon: '🔲',
+  },
+  {
+    id: 'free-box',
+    label: 'Free box',
+    description: 'Absolutely position content for bespoke hero or overlay layouts.',
+    icon: '🎨',
+  },
+]
+
 export default function ComponentLibraryPanel() {
   const library = useComponentLibrary()
   const binding = useComponentBinding(DEMO_TARGET)
   const [assignError, setAssignError] = useState('')
+  const [selectedPrimitiveId, setSelectedPrimitiveId] = useState(primitiveComponents[0]?.id ?? null)
 
   const slot = getSurfaceSlot(DEMO_TARGET.surfaceId, DEMO_TARGET.slotId)
 
@@ -74,6 +144,41 @@ export default function ComponentLibraryPanel() {
           editors know which endpoint powers a given interaction.
         </p>
       </header>
+
+      <section className="component-library__primitives" aria-labelledby="component-library-primitives-heading">
+        <div className="component-library__primitives-header">
+          <h3 id="component-library-primitives-heading">Layout primitives</h3>
+          <p>
+            Choose a building block for the canvas. Tiles highlight the core structure while the detail panel describes how it
+            adapts inside responsive layouts.
+          </p>
+        </div>
+        <div className="component-library__primitive-grid" role="list">
+          {primitiveComponents.map((primitive) => {
+            const isSelected = primitive.id === selectedPrimitiveId
+            return (
+              <div key={primitive.id} role="listitem" className="component-library__primitive-grid-item">
+                <button
+                  type="button"
+                  className={`component-library__primitive-tile ${isSelected ? 'is-selected' : ''}`}
+                  onClick={() => setSelectedPrimitiveId(primitive.id)}
+                  aria-pressed={isSelected}
+                  aria-label={`${primitive.label}. ${primitive.description}`}
+                >
+                  <span className="component-library__primitive-help" aria-hidden="true">
+                    <span className="component-library__primitive-help-trigger">?</span>
+                    <span className="component-library__primitive-help-bubble">{primitive.description}</span>
+                  </span>
+                  <span className="component-library__primitive-icon" aria-hidden="true">
+                    {primitive.icon}
+                  </span>
+                  <span className="component-library__primitive-label">{primitive.label}</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </section>
 
       <div className="component-library__summary" role="list">
         <div role="listitem">
