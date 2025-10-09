@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
+import { publishUiBundle } from '../api/routes'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import SiteSettingsPanel from '../components/SiteSettingsPanel'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
@@ -11,6 +12,12 @@ const defaultStatus = {
   phase: 'idle',
   message: 'Ready to initialise editor.',
   meta: null,
+}
+
+const defaultPublishState = {
+  status: 'idle',
+  message: 'Choose a target to publish the current screen bundle.',
+  detail: null,
 }
 
 const DEFAULT_SETTINGS = {
@@ -26,6 +33,8 @@ export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
   const projectSettingsVersion = projectSettings?.version
   const [status, setStatus] = useState(defaultStatus)
+  const [publishState, setPublishState] = useState(defaultPublishState)
+  const [publishTarget, setPublishTarget] = useState('staging')
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [screens, setScreens] = useState(() => [
     {
@@ -113,6 +122,118 @@ export default function CanvasWorkspace() {
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
   const workspaceRef = useRef(null)
+  const publishTargetInputId = 'ui-editor-publish-target'
+  const isPublishing = publishState.status === 'pending'
+
+  const formatPublishTimestamp = (value) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+      return value
+    }
+    return date.toLocaleString()
+  }
+
+  const handlePublishTargetChange = (event) => {
+    setPublishTarget(event.target.value)
+  }
+
+  const handlePublish = async (event) => {
+    event.preventDefault()
+    const target = publishTarget.trim()
+    if (!target) {
+      setPublishState({
+        status: 'error',
+        message: 'Enter a publish target to continue.',
+        detail: null,
+      })
+      return
+    }
+
+    setPublishState({
+      status: 'pending',
+      message: `Publishing ${target} bundle…`,
+      detail: null,
+    })
+
+    try {
+      const result = await publishUiBundle({ target })
+      const successCount = Array.isArray(result?.writtenFiles) ? result.writtenFiles.length : 0
+      const failureCount = Array.isArray(result?.failures) ? result.failures.length : 0
+      const pluralise = (count) => (count === 1 ? '' : 's')
+
+      let nextStatus = 'success'
+      let message
+      if (failureCount && successCount) {
+        nextStatus = 'warning'
+        message = `Published bundle to ${successCount} destination${pluralise(successCount)}, but ${failureCount} destination${pluralise(
+          failureCount,
+        )} failed.`
+      } else if (failureCount) {
+        nextStatus = 'error'
+        message = `Publish to ${target} failed. ${failureCount} destination${pluralise(failureCount)} reported an error.`
+      } else {
+        message = `Publish to ${target} completed successfully across ${successCount} destination${pluralise(successCount)}.`
+      }
+
+      setPublishState({
+        status: nextStatus,
+        message,
+        detail: {
+          ...result,
+          target,
+        },
+      })
+    } catch (error) {
+      let message = error?.message || 'Failed to publish screen bundle.'
+      let detail = null
+
+      if (typeof message === 'string') {
+        const trimmed = message.trim()
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            message = parsed?.error || message
+            detail = parsed?.details || parsed || null
+          } catch (parseError) {
+            // Ignore parse failures and keep the original message
+          }
+        }
+      }
+
+      if (!detail) {
+        detail = { status: error?.status ?? null }
+      }
+
+      if (typeof detail !== 'object' || Array.isArray(detail)) {
+        detail = { info: detail }
+      }
+
+      detail.target = target
+      if (detail.status === undefined) {
+        detail.status = error?.status ?? null
+      }
+
+      setPublishState({
+        status: 'error',
+        message,
+        detail,
+      })
+    }
+  }
+
+  const publishDetail =
+    publishState.detail && typeof publishState.detail === 'object' && !Array.isArray(publishState.detail)
+      ? publishState.detail
+      : {}
+  const publishMeta = publishDetail?.meta || null
+  const publishWrittenFiles = Array.isArray(publishDetail?.writtenFiles) ? publishDetail.writtenFiles : []
+  const publishFailures = Array.isArray(publishDetail?.failures) ? publishDetail.failures : []
+  const publishAvailableTargets = Array.isArray(publishDetail?.availableTargets)
+    ? publishDetail.availableTargets
+    : []
+  const publishStatusCode = publishDetail?.status ?? null
+  const publishInfo = publishDetail?.info ?? null
 
   const handleSelectScreen = (screenId) => {
     setSelectedScreenId(screenId)
@@ -489,6 +610,29 @@ export default function CanvasWorkspace() {
                 >
                   {isCreateScreenOpen ? 'Close' : 'New screen'}
                 </button>
+                <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
+                  <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
+                    <span className="canvas-workspace__publish-label-text">Publish target</span>
+                    <input
+                      id={publishTargetInputId}
+                      name="publish-target"
+                      className="canvas-workspace__publish-input"
+                      type="text"
+                      value={publishTarget}
+                      onChange={handlePublishTargetChange}
+                      placeholder="e.g. staging"
+                      list="canvas-workspace-publish-targets"
+                      disabled={isPublishing}
+                    />
+                  </label>
+                  <datalist id="canvas-workspace-publish-targets">
+                    <option value="staging" />
+                    <option value="production" />
+                  </datalist>
+                  <button type="submit" className="canvas-workspace__header-button" disabled={isPublishing}>
+                    {isPublishing ? 'Publishing…' : 'Publish'}
+                  </button>
+                </form>
               </div>
             </header>
 
@@ -563,6 +707,93 @@ export default function CanvasWorkspace() {
             aria-live="polite"
           >
             <strong>Status:</strong> {status.message}
+          </section>
+
+          <section
+            className={`canvas-workspace__publish-status canvas-workspace__publish-status--${publishState.status}`}
+            aria-live="polite"
+          >
+            <div className="canvas-workspace__publish-status-message">{publishState.message}</div>
+            {publishMeta ? (
+              <dl className="canvas-workspace__publish-meta">
+                <div>
+                  <dt>Generated</dt>
+                  <dd>{formatPublishTimestamp(publishMeta.generatedAt)}</dd>
+                </div>
+                <div>
+                  <dt>Routes</dt>
+                  <dd>{publishMeta.routeCount ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>Screens</dt>
+                  <dd>{publishMeta.screenCount ?? '—'}</dd>
+                </div>
+                {publishMeta.routesUpdatedAt ? (
+                  <div>
+                    <dt>Routes updated</dt>
+                    <dd>{formatPublishTimestamp(publishMeta.routesUpdatedAt)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            ) : null}
+            {publishWrittenFiles.length ? (
+              <div className="canvas-workspace__publish-status-block">
+                <strong>Written files</strong>
+                <ul className="canvas-workspace__publish-status-list">
+                  {publishWrittenFiles.map((filePath) => (
+                    <li key={filePath}>{filePath}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {publishFailures.length ? (
+              <div className="canvas-workspace__publish-status-block">
+                <strong>Failures</strong>
+                <ul className="canvas-workspace__publish-status-list">
+                  {publishFailures.map((failure, index) => {
+                    const failureEntry =
+                      failure && typeof failure === 'object' && !Array.isArray(failure)
+                        ? failure
+                        : { message: failure }
+                    const key = failureEntry.file || failureEntry.directory || `failure-${index}`
+                    return (
+                      <li key={key}>
+                        <span className="canvas-workspace__publish-failure-path">
+                          {failureEntry.file || failureEntry.directory || 'Unknown destination'}
+                        </span>
+                        {failureEntry.message ? (
+                          <span className="canvas-workspace__publish-failure-message"> — {failureEntry.message}</span>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ) : null}
+            {publishState.status === 'error' && publishInfo ? (
+              <div className="canvas-workspace__publish-status-block">
+                <strong>Details</strong>
+                {typeof publishInfo === 'object' ? (
+                  <pre className="canvas-workspace__publish-note canvas-workspace__publish-note--pre">
+                    {JSON.stringify(publishInfo, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="canvas-workspace__publish-note">{String(publishInfo)}</p>
+                )}
+              </div>
+            ) : null}
+            {publishState.status === 'error' && publishStatusCode ? (
+              <div className="canvas-workspace__publish-status-block">
+                <strong>Status code</strong>
+                <p className="canvas-workspace__publish-note">{publishStatusCode}</p>
+              </div>
+            ) : null}
+            {publishState.status === 'error' && publishAvailableTargets.length ? (
+              <div className="canvas-workspace__publish-status-block">
+                <strong>Configured targets</strong>
+                <p className="canvas-workspace__publish-note">{publishAvailableTargets.join(', ')}</p>
+              </div>
+            ) : null}
           </section>
 
           <PropertiesPanel
