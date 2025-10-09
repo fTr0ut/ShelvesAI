@@ -19,6 +19,106 @@
   color: rgba(15, 23, 42, 0.75);
 }
 
+.component-library__primitives {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding-top: 1.5rem;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.component-library__primitives-header > h3 {
+  margin: 0 0 0.5rem;
+}
+
+.component-library__primitives-header > p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.component-library__primitive-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.component-library__primitive-grid-item {
+  display: flex;
+}
+
+.component-library__primitive-grid-item > button {
+  flex: 1 1 auto;
+}
+
+.component-library__primitive-tile {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 0.9rem;
+  padding: 1rem;
+  background: #f8fafc;
+  display: grid;
+  gap: 0.65rem;
+  justify-items: start;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  appearance: none;
+  background-image: none;
+}
+
+.component-library__primitive-tile:hover,
+.component-library__primitive-tile:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  border-color: rgba(15, 118, 110, 0.4);
+  outline: none;
+}
+
+.component-library__primitive-tile.is-selected {
+  background: rgba(15, 118, 110, 0.12);
+  border-color: rgba(15, 118, 110, 0.5);
+  box-shadow: 0 12px 30px rgba(15, 118, 110, 0.18);
+}
+
+.component-library__primitive-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.component-library__primitive-label {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.component-library__primitive-description {
+  font-size: 0.95rem;
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.component-library__primitive-detail {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  background: rgba(240, 253, 250, 0.9);
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.component-library__primitive-detail > h4 {
+  margin: 0;
+}
+
+.component-library__primitive-detail > p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.75);
+}
+
+.component-library__primitive-hint {
+  font-size: 0.9rem;
+  color: rgba(15, 118, 110, 0.9);
+}
+
 .component-library__summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
