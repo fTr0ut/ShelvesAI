@@ -17,7 +17,7 @@ export default function EditorLayout() {
 
   return (
     <div className="ui-editor">
-      <header className="ui-editor__header">
+      <header className="ui-editor__header" data-editor-sticky="true">
         <a className="ui-editor__brand" href={uiEditorPath()}>
           Collector UI Editor
         </a>

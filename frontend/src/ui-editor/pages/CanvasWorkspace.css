@@ -1,3 +1,176 @@
+.canvas-workspace {
+  --sidebar-collapsed-width: 72px;
+  --sidebar-expanded-width: 360px;
+  --sidebar-offset-top: 0px;
+  --sidebar-available-height: max(360px, calc(100vh - var(--sidebar-offset-top)));
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.canvas-workspace__sidebar {
+  position: fixed;
+  top: var(--sidebar-offset-top);
+  left: 0;
+  height: var(--sidebar-available-height);
+  max-height: var(--sidebar-available-height);
+  width: var(--sidebar-collapsed-width);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.88));
+  border-right: 1px solid rgba(148, 163, 184, 0.22);
+  padding: 1.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  transition: width 260ms ease, padding 260ms ease, box-shadow 260ms ease;
+  z-index: 10;
+}
+
+.canvas-workspace--sidebar-open .canvas-workspace__sidebar {
+  width: var(--sidebar-expanded-width);
+  align-items: flex-start;
+  padding: 2rem 1.75rem;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.45);
+}
+
+.canvas-workspace__sidebar-toggle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  box-shadow: 0 18px 36px rgba(37, 99, 235, 0.32);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.canvas-workspace__sidebar-toggle:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 20px 40px rgba(37, 99, 235, 0.45);
+}
+
+.canvas-workspace__sidebar-toggle:focus-visible {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 3px;
+}
+
+.canvas-workspace__toggle-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.canvas-workspace__toggle-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.canvas-workspace__sidebar:not(.is-open) .canvas-workspace__toggle-label {
+  display: none;
+}
+
+.canvas-workspace__sidebar-body {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-12px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.canvas-workspace__sidebar.is-open .canvas-workspace__sidebar-body {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.canvas-workspace__sidebar-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  color: #e0f2fe;
+}
+
+.canvas-workspace__sidebar-header p {
+  margin: 0.5rem 0 0;
+  color: rgba(148, 163, 184, 0.85);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.canvas-workspace__sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.canvas-workspace__sidebar-nav-button {
+  width: 100%;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(30, 41, 59, 0.65);
+  color: rgba(226, 232, 240, 0.9);
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.canvas-workspace__sidebar-nav-button:hover,
+.canvas-workspace__sidebar-nav-button.is-active {
+  border-color: rgba(96, 165, 250, 0.65);
+  background: rgba(96, 165, 250, 0.22);
+  color: #e0f2fe;
+}
+
+.canvas-workspace__sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+  padding-right: 0.35rem;
+  padding-bottom: 2rem;
+}
+
+.canvas-workspace__sidebar-content .component-library {
+  margin-top: 0;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.25);
+}
+
+.canvas-workspace__main {
+  flex: 1;
+  margin-left: var(--sidebar-collapsed-width);
+  transition: margin-left 260ms ease;
+  position: relative;
+  z-index: 0;
+}
+
+.canvas-workspace--sidebar-open .canvas-workspace__main {
+  margin-left: var(--sidebar-expanded-width);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
 .editor-home {
   display: flex;
   flex-direction: column;
@@ -5,6 +178,19 @@
   color: #f8fafc;
   position: relative;
   padding-right: clamp(18rem, 28vw, 24rem);
+}
+
+.editor-home__masthead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 2.5rem;
+}
+
+.editor-home__intro {
+  flex: 1;
+  min-width: 260px;
 }
 
 .editor-home__intro h1 {
@@ -17,6 +203,18 @@
   max-width: 60ch;
   color: rgba(226, 232, 240, 0.86);
   font-size: 1.05rem;
+}
+
+.editor-home__status {
+  margin-top: 0;
+  align-self: flex-start;
+  min-width: min(320px, 100%);
+  max-width: 380px;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.editor-home__status .ui-editor__meta {
+  margin-top: 0.75rem;
 }
 
 .site-settings {
@@ -503,6 +701,67 @@
   margin: 0;
   padding-left: 1.4rem;
   color: rgba(226, 232, 240, 0.88);
+}
+
+@media (max-width: 1280px) {
+  .canvas-workspace {
+    --sidebar-expanded-width: 320px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .canvas-workspace {
+    --sidebar-collapsed-width: 68px;
+    --sidebar-expanded-width: 300px;
+  }
+
+  .canvas-workspace__sidebar {
+    padding: 1.35rem 0.85rem;
+  }
+
+  .canvas-workspace--sidebar-open .canvas-workspace__sidebar {
+    padding: 1.75rem 1.35rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .canvas-workspace {
+    --sidebar-collapsed-width: 60px;
+    --sidebar-expanded-width: min(88vw, 300px);
+  }
+
+  .canvas-workspace__sidebar-toggle {
+    width: 52px;
+    height: 52px;
+  }
+
+  .canvas-workspace__main {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+
+  .canvas-workspace--sidebar-open .canvas-workspace__main {
+    margin-left: var(--sidebar-expanded-width);
+  }
+
+  .editor-home__masthead {
+    flex-direction: column;
+    gap: 1.75rem;
+  }
+
+  .editor-home__status {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (max-width: 540px) {
+  .canvas-workspace__sidebar {
+    padding: 1.2rem 0.75rem;
+  }
+
+  .canvas-workspace__sidebar-toggle-label {
+    letter-spacing: 0.12em;
+  }
 }
 
 @media (max-width: 1100px) {
