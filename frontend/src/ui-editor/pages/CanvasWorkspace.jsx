@@ -130,6 +130,73 @@ const mergeWorkspaceSettings = (base, patch = {}) => {
   return next
 }
 
+const canvasDropzoneBlueprints = [
+  {
+    id: 'hero',
+    title: 'Hero spotlight',
+    description: 'Anchor the top of the screen with a hero, announcement or onboarding block.',
+    actionLabel: 'Add hero section',
+    highlightActiveComponent: true,
+    placeholder: 'Drag the highlighted component into this region to set the tone of the screen.',
+  },
+  {
+    id: 'content',
+    title: 'Content stack',
+    description: 'Compose feature grids, text blocks and media rails to tell the collection story.',
+    actionLabel: 'Add content block',
+    placeholder: 'Drop layout primitives to scaffold the story, then layer components inside each cell.',
+  },
+  {
+    id: 'support',
+    title: 'Support rail',
+    description: 'Keep automation hooks, metadata or secondary CTAs pinned to the edge of the layout.',
+    actionLabel: 'Add support element',
+    placeholder: 'Perfect for sticky CTAs, inline forms or cross-navigation anchors.',
+  },
+]
+
+const layoutPrimitives = [
+  {
+    id: 'primitive-stack',
+    label: 'Stack',
+    description: 'Vertical spacing system for hero copy or onboarding journeys.',
+    badge: 'Layout',
+  },
+  {
+    id: 'primitive-grid',
+    label: 'Responsive grid',
+    description: 'Multi-column scaffold mapped to the workspace grid tokens.',
+    badge: `${createDefaultPageStyles().gridColumns}-col`,
+  },
+  {
+    id: 'primitive-rail',
+    label: 'Right rail',
+    description: 'Secondary column for automation, filters or key actions.',
+    badge: 'Add-on',
+  },
+  {
+    id: 'primitive-zone',
+    label: 'Freeform zone',
+    description: 'Absolute positioning surface for immersive hero compositions.',
+    badge: 'Canvas',
+  },
+]
+
+const previewStyleAllowlist = [
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'lineHeight',
+  'letterSpacing',
+  'textAlign',
+  'color',
+  'backgroundColor',
+  'opacity',
+  'padding',
+  'borderRadius',
+  'boxShadow',
+]
+
 export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
   const projectSettingsVersion = projectSettings?.version
@@ -209,6 +276,49 @@ export default function CanvasWorkspace() {
   const workspaceRef = useRef(null)
   const publishTargetInputId = 'ui-editor-publish-target'
   const isPublishing = publishState.status === 'pending'
+  const componentPreviewStyle = useMemo(() => {
+    if (!activeComponent?.styles || typeof activeComponent.styles !== 'object') {
+      return {}
+    }
+
+    const nextStyle = {}
+    previewStyleAllowlist.forEach((property) => {
+      if (activeComponent.styles[property] !== undefined) {
+        nextStyle[property] = activeComponent.styles[property]
+      }
+    })
+    return nextStyle
+  }, [activeComponent])
+
+  const stageArtboardStyle = useMemo(() => {
+    const layoutWidth = pageStyles.layout === 'fluid' ? '100%' : pageStyles.maxWidth || '1200px'
+    const resolvedFontSize =
+      typeof pageStyles.fontSize === 'number' ? `${pageStyles.fontSize}px` : pageStyles.fontSize || '16px'
+
+    return {
+      maxWidth: layoutWidth,
+      backgroundColor: pageStyles.backgroundColor,
+      color: pageStyles.textColor,
+      fontFamily: pageStyles.fontFamily,
+      fontSize: resolvedFontSize,
+      gap: pageStyles.blockSpacing,
+      borderRadius: pageStyles.borderRadius,
+      boxShadow:
+        pageStyles.elevation === 'soft'
+          ? '0 32px 64px rgba(15, 23, 42, 0.32)'
+          : '0 40px 100px rgba(15, 23, 42, 0.45)',
+    }
+  }, [pageStyles])
+
+  const stageLayoutLabel = useMemo(() => {
+    if (pageStyles.layout === 'fluid') {
+      return 'Fluid layout'
+    }
+    if (pageStyles.maxWidth) {
+      return `Max width ${pageStyles.maxWidth}`
+    }
+    return 'Fixed width'
+  }, [pageStyles.layout, pageStyles.maxWidth])
 
   const loadScreens = useCallback(async () => {
     setScreensState((previous) => ({ ...previous, isLoading: true, error: '' }))
@@ -1233,6 +1343,109 @@ export default function CanvasWorkspace() {
                 <div className="canvas-workspace__panel-spacer" aria-hidden="true" />
               ) : null}
             </div>
+
+            <section className="canvas-workspace__canvas" aria-label="Live screen canvas">
+              <div className="canvas-workspace__canvas-header">
+                <div className="canvas-workspace__canvas-heading">
+                  <p className="canvas-workspace__canvas-eyebrow">Live preview</p>
+                  <h2 className="canvas-workspace__canvas-title">
+                    {activeScreen ? `${activeScreen.name} preview` : 'Design canvas'}
+                  </h2>
+                  <p className="canvas-workspace__canvas-subtitle">
+                    Drag components and layout primitives from the library into the drop zones to assemble this
+                    screen.
+                  </p>
+                </div>
+                <div className="canvas-workspace__component-card" aria-live="polite">
+                  <span className="canvas-workspace__component-chip">{activeComponent.type}</span>
+                  <strong className="canvas-workspace__component-card-title">{activeComponent.label}</strong>
+                  <p className="canvas-workspace__component-card-description">Active component ready to place</p>
+                </div>
+              </div>
+
+              <div className="canvas-workspace__canvas-body">
+                <div className="canvas-workspace__stage" role="presentation">
+                  <div className="canvas-workspace__stage-frame">
+                    <div className="canvas-workspace__stage-guides" aria-hidden="true" />
+                    <div className="canvas-workspace__stage-artboard" style={stageArtboardStyle}>
+                      <header className="canvas-workspace__stage-header">
+                        <div>
+                          <span className="canvas-workspace__stage-eyebrow">Screen device</span>
+                          <strong>{activeScreen?.device ?? 'Canvas device'}</strong>
+                        </div>
+                        <div>
+                          <span className="canvas-workspace__stage-eyebrow">Layout</span>
+                          <strong>{stageLayoutLabel}</strong>
+                        </div>
+                      </header>
+                      <div className="canvas-workspace__dropzones">
+                        {canvasDropzoneBlueprints.map((blueprint) => {
+                          const shouldShowComponent = blueprint.highlightActiveComponent && activeComponent
+
+                          return (
+                            <section
+                              key={blueprint.id}
+                              className="canvas-workspace__dropzone"
+                              aria-label={`${blueprint.title} drop zone`}
+                            >
+                              <div className="canvas-workspace__dropzone-header">
+                                <div>
+                                  <h3>{blueprint.title}</h3>
+                                  <p>{blueprint.description}</p>
+                                </div>
+                                <button type="button" className="canvas-workspace__dropzone-action">
+                                  {blueprint.actionLabel}
+                                </button>
+                              </div>
+                              <div
+                                className="canvas-workspace__dropzone-target"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Drop a component to ${blueprint.actionLabel.toLowerCase()}`}
+                              >
+                                <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
+                                  +
+                                </span>
+                                <span className="canvas-workspace__dropzone-hint">Drop component here</span>
+                              </div>
+                              {shouldShowComponent ? (
+                                <div className="canvas-workspace__dropzone-preview">
+                                  <div className="canvas-workspace__component-preview" style={componentPreviewStyle}>
+                                    <span className="canvas-workspace__component-preview-label">
+                                      {activeComponent.label}
+                                    </span>
+                                    <span className="canvas-workspace__component-preview-meta">
+                                      {activeComponent.type} • Active
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="canvas-workspace__dropzone-placeholder">{blueprint.placeholder}</p>
+                              )}
+                            </section>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <aside className="canvas-workspace__primitive-drawer" aria-label="Layout primitives">
+                  <h3>Layout primitives</h3>
+                  <p>Use these structures to stage components before publishing.</p>
+                  <ul className="canvas-workspace__primitive-list">
+                    {layoutPrimitives.map((primitive) => (
+                      <li key={primitive.id} className="canvas-workspace__primitive">
+                        <span className="canvas-workspace__primitive-badge">{primitive.badge}</span>
+                        <div>
+                          <strong>{primitive.label}</strong>
+                          <p>{primitive.description}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </aside>
+              </div>
+            </section>
 
             <div className={`canvas-workspace__create-screen-layer${isCreateScreenOpen ? ' is-open' : ''}`}>
               {isCreateScreenOpen ? (
