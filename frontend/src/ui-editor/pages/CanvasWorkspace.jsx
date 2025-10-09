@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchJson, resolveApiUrl } from '../api/client'
+import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import SiteSettingsPanel from '../components/SiteSettingsPanel'
 import ExperiencePreview from '../components/ExperiencePreview'
-import './EditorHome.css'
+import { useProjectSettings } from '../lib/useProjectSettings'
+import './CanvasWorkspace.css'
 
 const defaultStatus = {
   phase: 'idle',
@@ -21,7 +22,9 @@ const DEFAULT_SETTINGS = {
   showAnnouncement: true,
 }
 
-export default function EditorHome() {
+export default function CanvasWorkspace() {
+  const projectSettings = useProjectSettings()
+  const projectSettingsVersion = projectSettings?.version
   const [status, setStatus] = useState(defaultStatus)
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
 
@@ -44,21 +47,75 @@ export default function EditorHome() {
   useEffect(() => {
     let active = true
 
-    const checkBackend = async () => {
-      setStatus({ phase: 'loading', message: 'Checking Collector backend…', meta: null })
-      try {
-        const data = await fetchJson('/__debug', { method: 'GET' })
-        if (!active) return
-        setStatus({ phase: 'success', message: 'Backend reachable. Ready for editor features.', meta: data })
-      } catch (error) {
-        if (!active) return
-        const endpoint = resolveApiUrl('/__debug')
-        setStatus({
-          phase: 'error',
-          message: error?.message ? `Backend error: ${error.message}` : `Unable to reach backend at ${endpoint}`,
-          meta: { endpoint },
-        })
+    const normaliseOrigin = (origin) => (origin ? origin.replace(/\/+$/, '') : '')
+    const originCandidates = []
+    const pushOrigin = (origin) => {
+      const normalised = normaliseOrigin(origin)
+      if (!normalised) return
+      if (originCandidates.includes(normalised)) return
+      originCandidates.push(normalised)
+    }
+
+    const attemptLog = []
+    const seenEndpoints = new Set()
+
+    const tryEndpoint = async (target) => {
+      const finalUrl = target.startsWith('http') ? target : resolveApiUrl(target)
+      if (seenEndpoints.has(finalUrl)) {
+        return false
       }
+      seenEndpoints.add(finalUrl)
+
+      try {
+        const payload = await fetchJson(target, { method: 'GET' })
+        if (!active) {
+          return true
+        }
+        const origin = new URL(finalUrl).origin
+        setStatus({
+          phase: 'success',
+          message: `Backend reachable at ${origin}. Ready for editor features.`,
+          meta: { endpoint: finalUrl, payload, attempts: attemptLog },
+        })
+        return true
+      } catch (error) {
+        attemptLog.push({ endpoint: finalUrl, error: error?.message || String(error) })
+        return false
+      }
+    }
+
+    const checkBackend = async () => {
+      setStatus({ phase: 'loading', message: 'Checking Collector backend...', meta: null })
+
+      const initialTargets = ['/__debug', '/api/__debug']
+      for (const target of initialTargets) {
+        if (await tryEndpoint(target)) {
+          return
+        }
+      }
+
+      pushOrigin(projectSettings?.apiBase)
+      pushOrigin(getApiOrigin())
+      pushOrigin(getDefaultApiOrigin())
+      ;['http://localhost:5001', 'http://localhost:5000', 'http://127.0.0.1:5001', 'http://127.0.0.1:5000'].forEach(pushOrigin)
+
+      for (const origin of originCandidates) {
+        if (await tryEndpoint(`${origin}/__debug`)) {
+          return
+        }
+        if (await tryEndpoint(`${origin}/api/__debug`)) {
+          return
+        }
+      }
+
+      if (!active) {
+        return
+      }
+      setStatus({
+        phase: 'error',
+        message: 'Unable to reach Collector backend. Configure an API base in Project settings or start the local API.',
+        meta: { attempts: attemptLog },
+      })
     }
 
     checkBackend()
@@ -66,7 +123,7 @@ export default function EditorHome() {
     return () => {
       active = false
     }
-  }, [])
+  }, [projectSettingsVersion])
 
   return (
     <div className="editor-home">

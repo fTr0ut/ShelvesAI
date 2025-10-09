@@ -5,9 +5,10 @@ import { useProjectSettings } from '../lib/useProjectSettings'
 import './EditorLayout.css'
 
 const navItems = [
-  { label: 'Overview', to: '.' },
-  { label: 'Routes', to: 'routes' },
-  { label: 'Project settings', to: 'settings' },
+  { label: 'Overview', to: uiEditorPath(), end: true },
+  { label: 'Canvas', to: uiEditorPath('canvas') },
+  { label: 'Routes', to: uiEditorPath('routes') },
+  { label: 'Project settings', to: uiEditorPath('settings') },
 ]
 
 export default function EditorLayout() {
@@ -22,7 +23,7 @@ export default function EditorLayout() {
         </a>
         <nav className="ui-editor__nav">
           {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === '.'}>
+            <NavLink key={item.to} to={item.to} end={item.end === true}>
               {item.label}
             </NavLink>
           ))}
@@ -37,3 +38,4 @@ export default function EditorLayout() {
     </div>
   )
 }
+

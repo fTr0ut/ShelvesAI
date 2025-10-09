@@ -350,20 +350,24 @@ if (fs.existsSync(distPath)) {
 }
 
 // Debug route to verify resolved paths
-app.get('/__debug', (req, res) => {
-  const fp = path.join(__dirname, '..', 'frontend', 'dist');
-  const ip = path.join(fp, 'index.html');
+const emitFrontendDiagnostics = (req, res) => {
+  const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
+  const indexPath = path.join(frontendPath, 'index.html');
   res.json({
-    frontendPath: fp,
-    frontendExists: fs.existsSync(fp),
-    indexPath: ip,
-    indexExists: fs.existsSync(ip),
+    frontendPath,
+    frontendExists: fs.existsSync(frontendPath),
+    indexPath,
+    indexExists: fs.existsSync(indexPath),
     cwd: process.cwd(),
     dirname: __dirname,
   });
-});
+};
 
+app.get('/__debug', emitFrontendDiagnostics);
+app.get('/api/__debug', emitFrontendDiagnostics);
 module.exports = app;
+
+
 
 
 

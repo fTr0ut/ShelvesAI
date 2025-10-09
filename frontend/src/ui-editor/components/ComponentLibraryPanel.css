@@ -7,6 +7,7 @@
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
   display: grid;
   gap: 2rem;
+  color: #0f172a;
 }
 
 .component-library__header > h2 {
@@ -55,6 +56,8 @@
   border-radius: 0.6rem;
   border: 1px solid rgba(15, 23, 42, 0.12);
   font-size: 1rem;
+  color: #0f172a;
+  background: #fff;
 }
 
 .component-library__demo-button {
