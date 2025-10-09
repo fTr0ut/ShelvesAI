@@ -10,6 +10,14 @@ const {
   saveProjectSettings,
   sanitizeForResponse,
 } = require('../services/ui/projectSettingsStore')
+const {
+  getScreens: getCanvasScreens,
+  createScreen: createCanvasScreen,
+  updateScreen: updateCanvasScreen,
+  deleteScreen: deleteCanvasScreen,
+  getSettings: getCanvasSettings,
+  updateSettings: updateCanvasSettings,
+} = require('../services/ui/canvasStore')
 const { publishScreenBundle } = require('../services/ui/publishScreenBundle')
 
 const router = express.Router()
@@ -46,6 +54,289 @@ router.put('/routes', async (req, res) => {
   } catch (error) {
     console.error('[ui-editor] Failed to persist route config:', error)
     res.status(500).json({ error: 'Unable to persist route configuration.' })
+  }
+})
+
+const parseVersionHeader = (req) => {
+  const rawHeader = req.headers['if-match']
+  if (rawHeader === undefined) {
+    const error = new Error('An If-Match header is required to modify canvas resources.')
+    error.status = 428
+    throw error
+  }
+  const headerValue = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
+  const parsed = Number.parseInt(headerValue, 10)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    const error = new Error('If-Match header must be a non-negative integer version.')
+    error.status = 400
+    throw error
+  }
+  return parsed
+}
+
+const buildScreenPayload = (candidate) => {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw Object.assign(new Error('Request body must include a screen object.'), { status: 400 })
+  }
+
+  const payload = {}
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'id')) {
+    if (candidate.id !== null && candidate.id !== undefined && typeof candidate.id !== 'string') {
+      throw Object.assign(new Error('Screen id must be a string when provided.'), { status: 400 })
+    }
+    payload.id = candidate.id
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'name')) {
+    if (candidate.name !== null && typeof candidate.name !== 'string') {
+      throw Object.assign(new Error('Screen name must be a string.'), { status: 400 })
+    }
+    payload.name = candidate.name
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'device')) {
+    if (candidate.device !== null && typeof candidate.device !== 'string') {
+      throw Object.assign(new Error('Screen device must be a string.'), { status: 400 })
+    }
+    payload.device = candidate.device
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'description')) {
+    if (candidate.description !== null && typeof candidate.description !== 'string') {
+      throw Object.assign(new Error('Screen description must be a string when provided.'), {
+        status: 400,
+      })
+    }
+    payload.description = candidate.description
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'tags')) {
+    if (!Array.isArray(candidate.tags)) {
+      throw Object.assign(new Error('Screen tags must be an array of strings.'), { status: 400 })
+    }
+    payload.tags = candidate.tags
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'status')) {
+    if (candidate.status !== null && typeof candidate.status !== 'string') {
+      throw Object.assign(new Error('Screen status must be a string.'), { status: 400 })
+    }
+    payload.status = candidate.status
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'previewImage')) {
+    if (candidate.previewImage !== null && typeof candidate.previewImage !== 'string') {
+      throw Object.assign(new Error('Screen previewImage must be a string when provided.'), { status: 400 })
+    }
+    payload.previewImage = candidate.previewImage
+  }
+
+  return payload
+}
+
+const buildSettingsPayload = (candidate) => {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw Object.assign(new Error('Request body must include a settings object.'), { status: 400 })
+  }
+
+  const payload = {}
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'themeTokens')) {
+    const theme = candidate.themeTokens
+    if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
+      throw Object.assign(new Error('themeTokens must be an object.'), { status: 400 })
+    }
+    payload.themeTokens = {}
+    if (Object.prototype.hasOwnProperty.call(theme, 'colorScheme')) {
+      payload.themeTokens.colorScheme = theme.colorScheme
+    }
+    if (Object.prototype.hasOwnProperty.call(theme, 'accentColor')) {
+      payload.themeTokens.accentColor = theme.accentColor
+    }
+    if (Object.prototype.hasOwnProperty.call(theme, 'background')) {
+      payload.themeTokens.background = theme.background
+    }
+    if (Object.prototype.hasOwnProperty.call(theme, 'surfaceColor')) {
+      payload.themeTokens.surfaceColor = theme.surfaceColor
+    }
+    if (Object.prototype.hasOwnProperty.call(theme, 'textColor')) {
+      payload.themeTokens.textColor = theme.textColor
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'workspace')) {
+    const workspace = candidate.workspace
+    if (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)) {
+      throw Object.assign(new Error('workspace must be an object.'), { status: 400 })
+    }
+    payload.workspace = {}
+    if (Object.prototype.hasOwnProperty.call(workspace, 'headerStyle')) {
+      payload.workspace.headerStyle = workspace.headerStyle
+    }
+    if (Object.prototype.hasOwnProperty.call(workspace, 'footerStyle')) {
+      payload.workspace.footerStyle = workspace.footerStyle
+    }
+    if (Object.prototype.hasOwnProperty.call(workspace, 'showAnnouncement')) {
+      payload.workspace.showAnnouncement = workspace.showAnnouncement
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(candidate, 'pageStyles')) {
+    const styles = candidate.pageStyles
+    if (!styles || typeof styles !== 'object' || Array.isArray(styles)) {
+      throw Object.assign(new Error('pageStyles must be an object.'), { status: 400 })
+    }
+    payload.pageStyles = { ...styles }
+  }
+
+  return payload
+}
+
+router.get('/canvas/screens', async (_req, res) => {
+  try {
+    const { screens, version, updatedAt } = await getCanvasScreens()
+    res.json({ screens, version, updatedAt })
+  } catch (error) {
+    console.error('[ui-editor] Failed to load canvas screens:', error)
+    res.status(500).json({ error: 'Unable to load canvas screens.' })
+  }
+})
+
+router.post('/canvas/screens', async (req, res) => {
+  let expectedVersion
+  try {
+    expectedVersion = parseVersionHeader(req)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid If-Match header.' })
+  }
+
+  let screenPayload
+  try {
+    const candidate = req.body?.screen ?? req.body
+    screenPayload = buildScreenPayload(candidate)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid screen payload.' })
+  }
+
+  try {
+    const result = await createCanvasScreen(screenPayload, expectedVersion)
+    res.status(201).json(result)
+  } catch (error) {
+    if (error?.code === 'CANVAS_VERSION_CONFLICT') {
+      return res.status(409).json({ error: error.message, actualVersion: error.actual })
+    }
+    if (error?.code === 'CANVAS_DUPLICATE_SCREEN') {
+      return res.status(409).json({ error: error.message })
+    }
+    if (error?.status === 400 || error?.code === 'CANVAS_INVALID_SCREEN') {
+      return res.status(400).json({ error: error.message })
+    }
+    console.error('[ui-editor] Failed to create canvas screen:', error)
+    res.status(500).json({ error: 'Unable to create canvas screen.' })
+  }
+})
+
+router.put('/canvas/screens/:screenId', async (req, res) => {
+  let expectedVersion
+  try {
+    expectedVersion = parseVersionHeader(req)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid If-Match header.' })
+  }
+
+  let screenPayload
+  try {
+    const candidate = req.body?.screen ?? req.body
+    screenPayload = buildScreenPayload(candidate)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid screen payload.' })
+  }
+
+  if (!Object.keys(screenPayload).length) {
+    return res.status(400).json({ error: 'Provide at least one screen property to update.' })
+  }
+
+  try {
+    const result = await updateCanvasScreen(req.params.screenId, screenPayload, expectedVersion)
+    res.json(result)
+  } catch (error) {
+    if (error?.code === 'CANVAS_VERSION_CONFLICT') {
+      return res.status(409).json({ error: error.message, actualVersion: error.actual })
+    }
+    if (error?.code === 'CANVAS_SCREEN_NOT_FOUND') {
+      return res.status(404).json({ error: error.message })
+    }
+    if (error?.status === 400 || error?.code === 'CANVAS_INVALID_SCREEN') {
+      return res.status(400).json({ error: error.message })
+    }
+    console.error('[ui-editor] Failed to update canvas screen:', error)
+    res.status(500).json({ error: 'Unable to update canvas screen.' })
+  }
+})
+
+router.delete('/canvas/screens/:screenId', async (req, res) => {
+  let expectedVersion
+  try {
+    expectedVersion = parseVersionHeader(req)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid If-Match header.' })
+  }
+
+  try {
+    const result = await deleteCanvasScreen(req.params.screenId, expectedVersion)
+    res.json(result)
+  } catch (error) {
+    if (error?.code === 'CANVAS_VERSION_CONFLICT') {
+      return res.status(409).json({ error: error.message, actualVersion: error.actual })
+    }
+    if (error?.code === 'CANVAS_SCREEN_NOT_FOUND') {
+      return res.status(404).json({ error: error.message })
+    }
+    console.error('[ui-editor] Failed to delete canvas screen:', error)
+    res.status(500).json({ error: 'Unable to delete canvas screen.' })
+  }
+})
+
+router.get('/canvas/settings', async (_req, res) => {
+  try {
+    const { settings, version, updatedAt } = await getCanvasSettings()
+    res.json({ settings, version, updatedAt })
+  } catch (error) {
+    console.error('[ui-editor] Failed to load canvas settings:', error)
+    res.status(500).json({ error: 'Unable to load canvas settings.' })
+  }
+})
+
+router.put('/canvas/settings', async (req, res) => {
+  let expectedVersion
+  try {
+    expectedVersion = parseVersionHeader(req)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid If-Match header.' })
+  }
+
+  let settingsPayload
+  try {
+    const candidate = req.body?.settings ?? req.body
+    settingsPayload = buildSettingsPayload(candidate)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid settings payload.' })
+  }
+
+  if (!Object.keys(settingsPayload).length) {
+    return res.status(400).json({ error: 'Provide at least one settings property to update.' })
+  }
+
+  try {
+    const result = await updateCanvasSettings(settingsPayload, expectedVersion)
+    res.json(result)
+  } catch (error) {
+    if (error?.code === 'CANVAS_VERSION_CONFLICT') {
+      return res.status(409).json({ error: error.message, actualVersion: error.actual })
+    }
+    console.error('[ui-editor] Failed to update canvas settings:', error)
+    res.status(500).json({ error: 'Unable to update canvas settings.' })
   }
 })
 
