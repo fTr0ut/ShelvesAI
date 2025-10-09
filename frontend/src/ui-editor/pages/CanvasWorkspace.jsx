@@ -197,6 +197,7 @@ export default function CanvasWorkspace() {
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
   const [isNavigatorOpen, setNavigatorOpen] = useState(false)
+  const [isThemePanelOpen, setThemePanelOpen] = useState(false)
   const [navigatorSearch, setNavigatorSearch] = useState('')
   const [openNavigatorSections, setOpenNavigatorSections] = useState({
     currentScreens: true,
@@ -712,6 +713,10 @@ export default function CanvasWorkspace() {
     setNavigatorOpen((previous) => !previous)
   }
 
+  const toggleThemePanel = () => {
+    setThemePanelOpen((previous) => !previous)
+  }
+
   const handleNavigatorSearchChange = (event) => {
     setNavigatorSearch(event.target.value)
   }
@@ -881,111 +886,92 @@ export default function CanvasWorkspace() {
               </p>
             </header>
 
-            <section className="canvas-workspace__theme-settings">
-              <h2>Workspace theme</h2>
-              <p className="canvas-workspace__theme-description">
-                Tune primary tokens that flow through every screen. Changes are saved automatically for all editors.
-              </p>
-              <div className="canvas-workspace__theme-grid">
-                <div className="canvas-workspace__field">
-                  <label htmlFor="canvas-theme-color-scheme">Color scheme</label>
-                  <select
-                    id="canvas-theme-color-scheme"
-                    value={settings.themeTokens.colorScheme}
-                    onChange={handleThemeTokenChange('colorScheme')}
-                    disabled={settingsState.isLoading || isSavingSettings}
-                  >
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                  </select>
-                </div>
-                <div className="canvas-workspace__field">
-                  <label htmlFor="canvas-theme-accent">Accent color</label>
-                  <input
-                    id="canvas-theme-accent"
-                    type="color"
-                    value={settings.themeTokens.accentColor}
-                    onChange={handleThemeTokenChange('accentColor')}
-                    disabled={settingsState.isLoading || isSavingSettings}
-                  />
-                </div>
-                <div className="canvas-workspace__field">
-                  <label htmlFor="canvas-theme-background">Surface background</label>
-                  <input
-                    id="canvas-theme-background"
-                    type="text"
-                    value={settings.themeTokens.background}
-                    onChange={handleThemeTokenChange('background')}
-                    disabled={settingsState.isLoading || isSavingSettings}
-                    placeholder="soft-gradient"
-                  />
-                </div>
-                <div className="canvas-workspace__field">
-                  <label htmlFor="canvas-workspace-header-style">Header style</label>
-                  <select
-                    id="canvas-workspace-header-style"
-                    value={settings.workspace.headerStyle}
-                    onChange={handleWorkspacePreferenceChange('headerStyle')}
-                    disabled={settingsState.isLoading || isSavingSettings}
-                  >
-                    <option value="centered-logo">Centered logo</option>
-                    <option value="split-navigation">Split navigation</option>
-                    <option value="minimal">Minimal</option>
-                  </select>
-                </div>
-                <div className="canvas-workspace__field canvas-workspace__field--toggle">
-                  <label htmlFor="canvas-workspace-announcement">Announcement banner</label>
-                  <input
-                    id="canvas-workspace-announcement"
-                    type="checkbox"
-                    checked={settings.workspace.showAnnouncement}
-                    onChange={handleWorkspaceToggle('showAnnouncement')}
-                    disabled={settingsState.isLoading || isSavingSettings}
-                  />
-                </div>
-              </div>
-              {settingsError ? (
-                <p className="canvas-workspace__form-error" role="alert">
-                  {settingsError}
-                </p>
-              ) : null}
-              {isSavingSettings ? (
-                <p className="canvas-workspace__publish-note" aria-live="polite">
-                  Saving workspace settings…
-                </p>
-              ) : null}
-            </section>
 
             <header className="canvas-workspace__header" data-editor-sticky="true">
-              <div className="canvas-workspace__header-left">
-                <div className="canvas-workspace__header-info">
-                  <span className="canvas-workspace__header-label">Current screen</span>
-                  <div className="canvas-workspace__header-title" aria-live="polite">
-                    {activeScreen ? (
-                      <>
-                        <strong>{activeScreen.name}</strong>
-                        <span className="canvas-workspace__header-device">{activeScreen.device}</span>
-                      </>
-                    ) : (
-                      <strong>No screen selected</strong>
-                    )}
+              <div className="canvas-workspace__header-main">
+                <div className="canvas-workspace__header-left">
+                  <div className="canvas-workspace__header-info">
+                    <span className="canvas-workspace__header-label">Current screen</span>
+                    <div className="canvas-workspace__header-title" aria-live="polite">
+                      {activeScreen ? (
+                        <>
+                          <strong>{activeScreen.name}</strong>
+                          <span className="canvas-workspace__header-device">{activeScreen.device}</span>
+                        </>
+                      ) : (
+                        <strong>No screen selected</strong>
+                      )}
+                    </div>
+                    {activeScreen?.description ? (
+                      <p className="canvas-workspace__header-description">{activeScreen.description}</p>
+                    ) : null}
                   </div>
-                  {activeScreen?.description ? (
-                    <p className="canvas-workspace__header-description">{activeScreen.description}</p>
-                  ) : null}
                 </div>
-                <button
-                  type="button"
-                  className="canvas-workspace__navigator-toggle"
-                  onClick={toggleNavigator}
-                  aria-expanded={isNavigatorOpen}
-                  aria-controls="canvas-workspace-navigator-panel"
-                  data-expanded={isNavigatorOpen}
-                >
-                  {isNavigatorOpen ? 'Hide workspace navigator' : 'Show workspace navigator'}
-                </button>
+                <div className="canvas-workspace__header-controls">
+                  <button
+                    type="button"
+                    className="canvas-workspace__header-button"
+                    onClick={handleToggleCreateScreen}
+                    aria-expanded={isCreateScreenOpen}
+                  >
+                    {isCreateScreenOpen ? 'Close' : 'New screen'}
+                  </button>
+                  <button
+                    type="button"
+                    className="canvas-workspace__link-button"
+                    onClick={handleDeleteScreen}
+                    disabled={!selectedScreenId || isDeletingScreen || screens.length === 0}
+                  >
+                    {isDeletingScreen ? 'Deleting…' : 'Delete screen'}
+                  </button>
+                  <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
+                    <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
+                      <span className="canvas-workspace__publish-label-text">Publish target</span>
+                      <input
+                        id={publishTargetInputId}
+                        name="publish-target"
+                        className="canvas-workspace__publish-input"
+                        type="text"
+                        value={publishTarget}
+                        onChange={handlePublishTargetChange}
+                        placeholder="e.g. staging"
+                        list="canvas-workspace-publish-targets"
+                        disabled={isPublishing}
+                      />
+                    </label>
+                    <datalist id="canvas-workspace-publish-targets">
+                      <option value="staging" />
+                      <option value="production" />
+                    </datalist>
+                    <button type="submit" className="canvas-workspace__header-button" disabled={isPublishing}>
+                      {isPublishing ? 'Publishing…' : 'Publish'}
+                    </button>
+                  </form>
+                </div>
               </div>
-              <div className="canvas-workspace__header-controls">
+              <div className="canvas-workspace__header-bottom">
+                <div className="canvas-workspace__header-panels">
+                  <button
+                    type="button"
+                    className="canvas-workspace__panel-toggle"
+                    onClick={toggleNavigator}
+                    aria-expanded={isNavigatorOpen}
+                    aria-controls="canvas-workspace-navigator-panel"
+                    data-expanded={isNavigatorOpen}
+                  >
+                    {isNavigatorOpen ? 'Hide workspace navigator' : 'Show workspace navigator'}
+                  </button>
+                  <button
+                    type="button"
+                    className="canvas-workspace__panel-toggle"
+                    onClick={toggleThemePanel}
+                    aria-expanded={isThemePanelOpen}
+                    aria-controls="canvas-workspace-theme-panel"
+                    data-expanded={isThemePanelOpen}
+                  >
+                    {isThemePanelOpen ? 'Hide workspace theme' : 'Show workspace theme'}
+                  </button>
+                </div>
                 <label className="canvas-workspace__header-select">
                   <span className="canvas-workspace__header-select-label">Switch screen</span>
                   <select
@@ -996,7 +982,7 @@ export default function CanvasWorkspace() {
                     {screens.length ? (
                       screens.map((screen) => (
                         <option key={screen.id} value={screen.id}>
-                          {screen.name} · {screen.device}
+                          {screen.name} — {screen.device}
                         </option>
                       ))
                     ) : (
@@ -1004,47 +990,9 @@ export default function CanvasWorkspace() {
                     )}
                   </select>
                 </label>
-                <button
-                  type="button"
-                  className="canvas-workspace__header-button"
-                  onClick={handleToggleCreateScreen}
-                  aria-expanded={isCreateScreenOpen}
-                >
-                  {isCreateScreenOpen ? 'Close' : 'New screen'}
-                </button>
-                <button
-                  type="button"
-                  className="canvas-workspace__link-button"
-                  onClick={handleDeleteScreen}
-                  disabled={!selectedScreenId || isDeletingScreen || screens.length === 0}
-                >
-                  {isDeletingScreen ? 'Deleting…' : 'Delete screen'}
-                </button>
-                <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
-                  <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
-                    <span className="canvas-workspace__publish-label-text">Publish target</span>
-                    <input
-                      id={publishTargetInputId}
-                      name="publish-target"
-                      className="canvas-workspace__publish-input"
-                      type="text"
-                      value={publishTarget}
-                      onChange={handlePublishTargetChange}
-                      placeholder="e.g. staging"
-                      list="canvas-workspace-publish-targets"
-                      disabled={isPublishing}
-                    />
-                  </label>
-                  <datalist id="canvas-workspace-publish-targets">
-                    <option value="staging" />
-                    <option value="production" />
-                  </datalist>
-                  <button type="submit" className="canvas-workspace__header-button" disabled={isPublishing}>
-                    {isPublishing ? 'Publishing…' : 'Publish'}
-                  </button>
-                </form>
               </div>
             </header>
+
 
             {screensState.error && !isCreateScreenOpen ? (
               <p className="canvas-workspace__form-error" role="alert">
@@ -1052,11 +1000,11 @@ export default function CanvasWorkspace() {
               </p>
             ) : null}
 
-            <div className="canvas-workspace__navigator">
+            <div className="canvas-workspace__panel-dock">
               {isNavigatorOpen ? (
                 <aside
                   id="canvas-workspace-navigator-panel"
-                  className="canvas-workspace__navigator-panel"
+                  className="canvas-workspace__floating-panel canvas-workspace__navigator-panel"
                   aria-label="Workspace navigator"
                 >
                   <div className="canvas-workspace__navigator-header">
@@ -1139,65 +1087,163 @@ export default function CanvasWorkspace() {
                   </div>
                 </aside>
               ) : null}
+              {isThemePanelOpen ? (
+                <section
+                  id="canvas-workspace-theme-panel"
+                  className="canvas-workspace__floating-panel canvas-workspace__theme-panel canvas-workspace__theme-settings"
+                  aria-label="Workspace theme"
+                >
+                  <div className="canvas-workspace__theme-panel-header">
+                    <div>
+                      <p className="canvas-workspace__theme-eyebrow">Visual tokens</p>
+                      <h2>Workspace theme</h2>
+                    </div>
+                    <button
+                      type="button"
+                      className="canvas-workspace__panel-toggle canvas-workspace__panel-toggle--compact"
+                      onClick={toggleThemePanel}
+                      aria-label="Close workspace theme"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <p className="canvas-workspace__theme-description">
+                    Tune primary tokens that flow through every screen. Changes are saved automatically for all editors.
+                  </p>
+                  <div className="canvas-workspace__theme-grid">
+                    <div className="canvas-workspace__field">
+                      <label htmlFor="canvas-theme-color-scheme">Color scheme</label>
+                      <select
+                        id="canvas-theme-color-scheme"
+                        value={settings.themeTokens.colorScheme}
+                        onChange={handleThemeTokenChange('colorScheme')}
+                        disabled={settingsState.isLoading || isSavingSettings}
+                      >
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                      </select>
+                    </div>
+                    <div className="canvas-workspace__field">
+                      <label htmlFor="canvas-theme-accent">Accent color</label>
+                      <input
+                        id="canvas-theme-accent"
+                        type="color"
+                        value={settings.themeTokens.accentColor}
+                        onChange={handleThemeTokenChange('accentColor')}
+                        disabled={settingsState.isLoading || isSavingSettings}
+                      />
+                    </div>
+                    <div className="canvas-workspace__field">
+                      <label htmlFor="canvas-theme-background">Surface background</label>
+                      <input
+                        id="canvas-theme-background"
+                        type="text"
+                        value={settings.themeTokens.background}
+                        onChange={handleThemeTokenChange('background')}
+                        disabled={settingsState.isLoading || isSavingSettings}
+                        placeholder="soft-gradient"
+                      />
+                    </div>
+                    <div className="canvas-workspace__field">
+                      <label htmlFor="canvas-workspace-header-style">Header style</label>
+                      <select
+                        id="canvas-workspace-header-style"
+                        value={settings.workspace.headerStyle}
+                        onChange={handleWorkspacePreferenceChange('headerStyle')}
+                        disabled={settingsState.isLoading || isSavingSettings}
+                      >
+                        <option value="centered-logo">Centered logo</option>
+                        <option value="split-navigation">Split navigation</option>
+                        <option value="minimal">Minimal</option>
+                      </select>
+                    </div>
+                    <div className="canvas-workspace__field canvas-workspace__field--toggle">
+                      <label htmlFor="canvas-workspace-announcement">Announcement banner</label>
+                      <input
+                        id="canvas-workspace-announcement"
+                        type="checkbox"
+                        checked={settings.workspace.showAnnouncement}
+                        onChange={handleWorkspaceToggle('showAnnouncement')}
+                        disabled={settingsState.isLoading || isSavingSettings}
+                      />
+                    </div>
+                  </div>
+                  {settingsError ? (
+                    <p className="canvas-workspace__form-error" role="alert">
+                      {settingsError}
+                    </p>
+                  ) : null}
+                  {isSavingSettings ? (
+                    <p className="canvas-workspace__publish-note" aria-live="polite">
+                      Saving workspace settings...
+                    </p>
+                  ) : null}
+                </section>
+              ) : null}
+              {isNavigatorOpen || isThemePanelOpen ? (
+                <div className="canvas-workspace__panel-spacer" aria-hidden="true" />
+              ) : null}
             </div>
 
-            {isCreateScreenOpen ? (
-              <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
-                <div className="canvas-workspace__field">
-                  <label htmlFor="new-screen-name">Screen name</label>
-                  <input
-                    id="new-screen-name"
-                    name="name"
-                    type="text"
-                    value={newScreenForm.name}
-                    onChange={handleCreateScreenFieldChange('name')}
-                    placeholder="eg. Checkout"
-                  />
-                </div>
-                <div className="canvas-workspace__field">
-                  <label htmlFor="new-screen-device">Device</label>
-                  <select
-                    id="new-screen-device"
-                    name="device"
-                    value={newScreenForm.device}
-                    onChange={handleCreateScreenFieldChange('device')}
-                  >
-                    <option>Desktop</option>
-                    <option>Tablet</option>
-                    <option>Mobile</option>
-                    <option>TV</option>
-                  </select>
-                </div>
-                <div className="canvas-workspace__field canvas-workspace__field--wide">
-                  <label htmlFor="new-screen-description">Description</label>
-                  <input
-                    id="new-screen-description"
-                    name="description"
-                    type="text"
-                    value={newScreenForm.description}
-                    onChange={handleCreateScreenFieldChange('description')}
-                    placeholder="Optional description to help the team"
-                  />
-                </div>
-                {createScreenError ? (
-                  <p className="canvas-workspace__form-error" role="alert">
-                    {createScreenError}
-                  </p>
-                ) : null}
-                <div className="canvas-workspace__form-actions">
-                  <button
-                    type="submit"
-                    className="canvas-workspace__header-button"
-                    disabled={isCreatingScreen}
-                  >
-                    {isCreatingScreen ? 'Creating…' : 'Create screen'}
-                  </button>
-                  <button type="button" className="canvas-workspace__link-button" onClick={handleToggleCreateScreen}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            ) : null}
+            <div className={`canvas-workspace__create-screen-layer${isCreateScreenOpen ? ' is-open' : ''}`}>
+              {isCreateScreenOpen ? (
+                <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
+                  <div className="canvas-workspace__field">
+                    <label htmlFor="new-screen-name">Screen name</label>
+                    <input
+                      id="new-screen-name"
+                      name="name"
+                      type="text"
+                      value={newScreenForm.name}
+                      onChange={handleCreateScreenFieldChange('name')}
+                      placeholder="eg. Checkout"
+                    />
+                  </div>
+                  <div className="canvas-workspace__field">
+                    <label htmlFor="new-screen-device">Device</label>
+                    <select
+                      id="new-screen-device"
+                      name="device"
+                      value={newScreenForm.device}
+                      onChange={handleCreateScreenFieldChange('device')}
+                    >
+                      <option>Desktop</option>
+                      <option>Tablet</option>
+                      <option>Mobile</option>
+                      <option>TV</option>
+                    </select>
+                  </div>
+                  <div className="canvas-workspace__field canvas-workspace__field--wide">
+                    <label htmlFor="new-screen-description">Description</label>
+                    <input
+                      id="new-screen-description"
+                      name="description"
+                      type="text"
+                      value={newScreenForm.description}
+                      onChange={handleCreateScreenFieldChange('description')}
+                      placeholder="Optional description to help the team"
+                    />
+                  </div>
+                  {createScreenError ? (
+                    <p className="canvas-workspace__form-error" role="alert">
+                      {createScreenError}
+                    </p>
+                  ) : null}
+                  <div className="canvas-workspace__form-actions">
+                    <button
+                      type="submit"
+                      className="canvas-workspace__header-button"
+                      disabled={isCreatingScreen}
+                    >
+                      {isCreatingScreen ? 'Creating…' : 'Create screen'}
+                    </button>
+                    <button type="button" className="canvas-workspace__link-button" onClick={handleToggleCreateScreen}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
 
             <CanvasScreenSelector
               screens={screens}
@@ -1307,6 +1353,7 @@ export default function CanvasWorkspace() {
             onPageStyleChange={handlePageStyleChange}
             component={activeComponent}
             onComponentChange={handleComponentChange}
+            className="canvas-workspace__properties-panel"
           />
         </div>
       </div>
