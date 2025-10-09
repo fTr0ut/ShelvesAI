@@ -132,6 +132,15 @@ const buildScreenPayload = (candidate) => {
     payload.previewImage = candidate.previewImage
   }
 
+  if (Object.prototype.hasOwnProperty.call(candidate, 'nodes')) {
+    if (candidate.nodes !== null && candidate.nodes !== undefined && !Array.isArray(candidate.nodes)) {
+      throw Object.assign(new Error('Screen nodes must be provided as an array when included.'), {
+        status: 400,
+      })
+    }
+    payload.nodes = candidate.nodes
+  }
+
   return payload
 }
 

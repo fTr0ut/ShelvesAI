@@ -37,11 +37,25 @@ describe('uiEditor canvas routes', () => {
     const created = await request(app)
       .post('/api/ui-editor/canvas/screens')
       .set('If-Match', String(initialList.body.version))
-      .send({ screen: { name: 'Home', device: 'Desktop' } })
+      .send({
+        screen: {
+          name: 'Home',
+          device: 'Desktop',
+          nodes: [
+            {
+              id: 'root',
+              type: 'frame',
+              children: [{ id: 'hero', type: 'component', componentId: 'hero' }],
+            },
+          ],
+        },
+      })
       .expect(201)
 
     expect(created.body.version).toBe(1)
     expect(created.body.screen.name).toBe('Home')
+    expect(created.body.screen.nodes).toHaveLength(1)
+    expect(created.body.screen.nodes[0].children[0].componentId).toBe('hero')
 
     const conflict = await request(app)
       .post('/api/ui-editor/canvas/screens')
@@ -58,6 +72,60 @@ describe('uiEditor canvas routes', () => {
 
     expect(removal.body.version).toBe(2)
     expect(removal.body.screens).toHaveLength(0)
+  })
+
+  it('validates node payloads on create and update', async () => {
+    await request(app)
+      .post('/api/ui-editor/canvas/screens')
+      .set('If-Match', '0')
+      .send({ screen: { name: 'Invalid', nodes: { bad: true } } })
+      .expect(400)
+
+    const created = await request(app)
+      .post('/api/ui-editor/canvas/screens')
+      .set('If-Match', '0')
+      .send({ screen: { name: 'Valid', device: 'Desktop' } })
+      .expect(201)
+
+    const updateConflict = await request(app)
+      .put(`/api/ui-editor/canvas/screens/${created.body.screen.id}`)
+      .set('If-Match', '0')
+      .send({ screen: { nodes: [{ id: 'a', type: 'box' }] } })
+      .expect(409)
+    expect(updateConflict.body.actualVersion).toBe(created.body.version)
+
+    await request(app)
+      .put(`/api/ui-editor/canvas/screens/${created.body.screen.id}`)
+      .set('If-Match', String(created.body.version))
+      .send({
+        screen: {
+          nodes: [
+            { id: 'a', type: 'box' },
+            { id: 'a', type: 'box' },
+          ],
+        },
+      })
+      .expect(400)
+
+    const updated = await request(app)
+      .put(`/api/ui-editor/canvas/screens/${created.body.screen.id}`)
+      .set('If-Match', String(created.body.version))
+      .send({
+        screen: {
+          nodes: [
+            {
+              id: 'root',
+              type: 'frame',
+              slots: {
+                main: [{ id: 'hero', type: 'component', componentId: 'hero', props: { title: 'Hi' } }],
+              },
+            },
+          ],
+        },
+      })
+      .expect(200)
+
+    expect(updated.body.screen.nodes[0].slots.main[0].props).toEqual({ title: 'Hi' })
   })
 
   it('persists settings changes and protects against stale updates', async () => {
