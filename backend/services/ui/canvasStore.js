@@ -71,7 +71,206 @@ const coerceNumber = (value, fallback = 0) => {
   return fallback
 }
 
+const coerceOptionalNumber = (value) => {
+  if (value === undefined || value === null) return null
+  const parsed = coerceNumber(value, Number.NaN)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 const cloneDeep = (value) => JSON.parse(JSON.stringify(value))
+
+const createNodeValidationError = (message, path) => {
+  const details = path ? `${message} (at ${path})` : message
+  const error = new Error(details)
+  error.code = 'CANVAS_INVALID_SCREEN'
+  error.status = 400
+  return error
+}
+
+const normaliseNodeTree = (nodes, { strict = false } = {}) => {
+  const seenIds = new Set()
+
+  const parseList = (list, path) => {
+    if (list === undefined || list === null) {
+      return []
+    }
+    if (!Array.isArray(list)) {
+      if (strict) {
+        throw createNodeValidationError('Node collections must be provided as arrays.', path)
+      }
+      return []
+    }
+
+    const result = []
+    list.forEach((candidate, index) => {
+      const parsed = parseNode(candidate, `${path}[${index}]`)
+      if (parsed) {
+        result.push(parsed)
+      }
+    })
+    return result
+  }
+
+  const parseNode = (candidate, path) => {
+    const hadChildrenProp = Boolean(candidate) && Object.prototype.hasOwnProperty.call(candidate, 'children')
+    const hadSlotsProp = Boolean(candidate) && Object.prototype.hasOwnProperty.call(candidate, 'slots')
+
+    if (!isObjectLike(candidate)) {
+      if (strict) {
+        throw createNodeValidationError('Each node must be an object.', path)
+      }
+      return null
+    }
+
+    let safeNode
+    try {
+      safeNode = cloneDeep(candidate)
+    } catch (error) {
+      if (strict) {
+        throw createNodeValidationError('Nodes must be JSON serializable.', path)
+      }
+      return null
+    }
+
+    if (!isObjectLike(safeNode)) {
+      if (strict) {
+        throw createNodeValidationError('Each node must be an object.', path)
+      }
+      return null
+    }
+
+    const id = coerceString(safeNode.id)
+    if (!id) {
+      if (strict) {
+        throw createNodeValidationError('Each node must include a non-empty string id.', path)
+      }
+      return null
+    }
+    if (seenIds.has(id)) {
+      if (strict) {
+        throw createNodeValidationError(`Duplicate node id "${id}" encountered.`, path)
+      }
+      return null
+    }
+    seenIds.add(id)
+    safeNode.id = id
+
+    const type = coerceString(safeNode.type)
+    if (!type) {
+      if (strict) {
+        throw createNodeValidationError('Each node must include a non-empty string type.', path)
+      }
+      return null
+    }
+    safeNode.type = type
+
+    if (Object.prototype.hasOwnProperty.call(safeNode, 'slot')) {
+      const slot = coerceOptionalString(safeNode.slot)
+      if (slot) {
+        safeNode.slot = slot
+      } else {
+        delete safeNode.slot
+      }
+    }
+
+    const stringFields = ['componentId', 'component', 'variant', 'label', 'as', 'key', 'role']
+    stringFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(safeNode, field)) {
+        const value = coerceOptionalString(safeNode[field])
+        if (value) {
+          safeNode[field] = value
+        } else {
+          delete safeNode[field]
+        }
+      }
+    })
+
+    if (Object.prototype.hasOwnProperty.call(safeNode, 'order')) {
+      const order = coerceOptionalNumber(safeNode.order)
+      if (order === null && safeNode.order !== null && safeNode.order !== undefined) {
+        if (strict) {
+          throw createNodeValidationError('Node order must be a finite number when provided.', path)
+        }
+        delete safeNode.order
+      } else if (order !== null) {
+        safeNode.order = order
+      } else {
+        delete safeNode.order
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeNode, 'visible')) {
+      safeNode.visible = Boolean(safeNode.visible)
+    }
+
+    const objectFields = [
+      'props',
+      'layout',
+      'bindings',
+      'metadata',
+      'style',
+      'data',
+      'state',
+      'transitions',
+    ]
+    objectFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(safeNode, field)) {
+        const value = safeNode[field]
+        if (value === null) {
+          safeNode[field] = {}
+        } else if (!isObjectLike(value)) {
+          if (strict) {
+            throw createNodeValidationError(`Node ${field} must be an object when provided.`, path)
+          }
+          delete safeNode[field]
+        }
+      }
+    })
+
+    const children = parseList(safeNode.children, `${path}.children`)
+    if (children.length || hadChildrenProp) {
+      safeNode.children = children
+    } else {
+      delete safeNode.children
+    }
+
+    if (Object.prototype.hasOwnProperty.call(safeNode, 'slots') || hadSlotsProp) {
+      if (!isObjectLike(safeNode.slots)) {
+        if (strict && safeNode.slots !== undefined && safeNode.slots !== null) {
+          throw createNodeValidationError(
+            'Node slots must be an object mapping slot names to arrays of nodes.',
+            `${path}.slots`,
+          )
+        }
+        if (hadSlotsProp) {
+          safeNode.slots = {}
+        } else {
+          delete safeNode.slots
+        }
+      } else {
+        const normalisedSlots = {}
+        Object.keys(safeNode.slots).forEach((slotName) => {
+          const slotKey = coerceString(slotName)
+          if (!slotKey) {
+            if (strict) {
+              throw createNodeValidationError('Slot names must be non-empty strings.', `${path}.slots`)
+            }
+            return
+          }
+          const slotChildren = parseList(safeNode.slots[slotName], `${path}.slots.${slotKey}`)
+          if (slotChildren.length || strict) {
+            normalisedSlots[slotKey] = slotChildren
+          }
+        })
+        safeNode.slots = Object.keys(normalisedSlots).length ? normalisedSlots : {}
+      }
+    }
+
+    return safeNode
+  }
+
+  return parseList(nodes, 'nodes')
+}
 
 const ensureStoreDirectory = async () => {
   await fs.mkdir(path.dirname(storePath), { recursive: true })
@@ -215,6 +414,7 @@ const normaliseScreen = (rawScreen = {}) => {
   const previewImage = coerceOptionalString(rawScreen.previewImage)
   const createdAt = coerceString(rawScreen.createdAt) || null
   const updatedAt = coerceString(rawScreen.updatedAt) || createdAt
+  const nodes = normaliseNodeTree(rawScreen.nodes, { strict: false })
 
   return {
     id,
@@ -226,6 +426,7 @@ const normaliseScreen = (rawScreen = {}) => {
     previewImage,
     createdAt,
     updatedAt,
+    nodes,
   }
 }
 
@@ -263,7 +464,7 @@ const loadState = async () => {
 
 const persistState = async (state) => {
   const payload = {
-    screens: state.screens.map((screen) => ({ ...screen })),
+    screens: state.screens.map((screen) => cloneDeep(screen)),
     screensMeta: { ...state.screensMeta },
     settings: cloneDeep(state.settings),
     settingsMeta: { ...state.settingsMeta },
@@ -314,7 +515,7 @@ const assertExpectedVersion = (actual, expected, resource) => {
 const getScreens = async () => {
   const state = await loadState()
   return {
-    screens: state.screens.map((screen) => ({ ...screen })),
+    screens: state.screens.map((screen) => cloneDeep(screen)),
     version: state.screensMeta.version,
     updatedAt: state.screensMeta.updatedAt,
   }
@@ -342,6 +543,7 @@ const createScreen = async (input = {}, expectedVersion) => {
       : []
     const status = input.status === 'published' ? 'published' : 'draft'
     const previewImage = coerceOptionalString(input.previewImage)
+    const nodes = normaliseNodeTree(input.nodes, { strict: true })
 
     const existingIds = new Set(state.screens.map((screen) => screen.id))
     const id = coerceString(input.id) || generateScreenId(name, device, existingIds)
@@ -363,6 +565,7 @@ const createScreen = async (input = {}, expectedVersion) => {
       previewImage,
       createdAt: timestamp,
       updatedAt: timestamp,
+      nodes,
     }
 
     const nextState = {
@@ -377,8 +580,8 @@ const createScreen = async (input = {}, expectedVersion) => {
     await persistState(nextState)
 
     return {
-      screen: { ...screen },
-      screens: nextState.screens.map((entry) => ({ ...entry })),
+      screen: cloneDeep(screen),
+      screens: nextState.screens.map((entry) => cloneDeep(entry)),
       version: nextState.screensMeta.version,
       updatedAt: nextState.screensMeta.updatedAt,
     }
@@ -447,6 +650,10 @@ const updateScreen = async (screenId, patch = {}, expectedVersion) => {
       next.previewImage = coerceOptionalString(patch.previewImage)
     }
 
+    if (Object.prototype.hasOwnProperty.call(patch, 'nodes')) {
+      next.nodes = normaliseNodeTree(patch.nodes, { strict: true })
+    }
+
     const timestamp = new Date().toISOString()
     next.updatedAt = timestamp
 
@@ -462,8 +669,8 @@ const updateScreen = async (screenId, patch = {}, expectedVersion) => {
     await persistState(nextState)
 
     return {
-      screen: { ...next },
-      screens: nextState.screens.map((entry) => ({ ...entry })),
+      screen: cloneDeep(next),
+      screens: nextState.screens.map((entry) => cloneDeep(entry)),
       version: nextState.screensMeta.version,
       updatedAt: nextState.screensMeta.updatedAt,
     }
@@ -498,7 +705,7 @@ const deleteScreen = async (screenId, expectedVersion) => {
     await persistState(nextState)
 
     return {
-      screens: nextScreens.map((entry) => ({ ...entry })),
+      screens: nextScreens.map((entry) => cloneDeep(entry)),
       version: nextState.screensMeta.version,
       updatedAt: nextState.screensMeta.updatedAt,
     }
