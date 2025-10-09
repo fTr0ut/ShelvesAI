@@ -265,6 +265,51 @@
   outline-offset: 3px;
 }
 
+.canvas-workspace__publish-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.canvas-workspace__publish-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 200px;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.canvas-workspace__publish-label-text {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.canvas-workspace__publish-input {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: rgba(15, 23, 42, 0.65);
+  color: inherit;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  min-height: 2.75rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.canvas-workspace__publish-input:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.65);
+  outline-offset: 3px;
+}
+
+.canvas-workspace__publish-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .canvas-workspace__header-button {
   border-radius: 999px;
   border: none;
@@ -287,6 +332,16 @@
 .canvas-workspace__header-button:focus-visible {
   outline: 2px solid rgba(191, 219, 254, 0.8);
   outline-offset: 3px;
+}
+
+.canvas-workspace__header-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.2);
+}
+
+.canvas-workspace__header-button:disabled:hover {
+  transform: none;
 }
 
 .canvas-workspace__link-button {
@@ -424,6 +479,131 @@
   width: var(--properties-panel-width, min(360px, 32vw));
   background: rgba(15, 23, 42, 0.68);
   z-index: 6;
+}
+
+.canvas-workspace__publish-status {
+  margin-top: 1.25rem;
+  padding: 1.4rem 1.6rem;
+  border-radius: 1.25rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.58);
+  color: rgba(226, 232, 240, 0.95);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
+}
+
+.canvas-workspace__publish-status--idle {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.canvas-workspace__publish-status--pending {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(37, 99, 235, 0.28);
+}
+
+.canvas-workspace__publish-status--success {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(22, 101, 52, 0.26);
+}
+
+.canvas-workspace__publish-status--warning {
+  border-color: rgba(250, 204, 21, 0.45);
+  background: rgba(202, 138, 4, 0.25);
+}
+
+.canvas-workspace__publish-status--error {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(185, 28, 28, 0.28);
+}
+
+.canvas-workspace__publish-status-message {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.canvas-workspace__publish-status-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.canvas-workspace__publish-status-block > strong {
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.canvas-workspace__publish-status-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.9);
+  word-break: break-word;
+}
+
+.canvas-workspace__publish-status-list li {
+  list-style: disc;
+}
+
+.canvas-workspace__publish-failure-path {
+  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.canvas-workspace__publish-failure-message {
+  color: rgba(248, 250, 252, 0.9);
+}
+
+.canvas-workspace__publish-meta {
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.canvas-workspace__publish-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.canvas-workspace__publish-meta dt {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.65);
+}
+
+.canvas-workspace__publish-meta dd {
+  margin: 0;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.canvas-workspace__publish-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.85);
+  word-break: break-word;
+}
+
+.canvas-workspace__publish-note--pre {
+  margin: 0;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 .site-settings {
