@@ -120,6 +120,14 @@ export default function CanvasWorkspace() {
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
+  const [isNavigatorOpen, setNavigatorOpen] = useState(false)
+  const [navigatorSearch, setNavigatorSearch] = useState('')
+  const [openNavigatorSections, setOpenNavigatorSections] = useState({
+    currentScreens: true,
+    pages: true,
+    components: true,
+    arenas: true,
+  })
   const workspaceRef = useRef(null)
   const publishTargetInputId = 'ui-editor-publish-target'
   const isPublishing = publishState.status === 'pending'
@@ -399,6 +407,21 @@ export default function CanvasWorkspace() {
     }
   }
 
+  const toggleNavigator = () => {
+    setNavigatorOpen((previous) => !previous)
+  }
+
+  const handleNavigatorSearchChange = (event) => {
+    setNavigatorSearch(event.target.value)
+  }
+
+  const handleToggleNavigatorSection = (sectionId) => {
+    setOpenNavigatorSections((previous) => ({
+      ...previous,
+      [sectionId]: !previous[sectionId],
+    }))
+  }
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return undefined
@@ -558,21 +581,33 @@ export default function CanvasWorkspace() {
             </header>
 
             <header className="canvas-workspace__header" data-editor-sticky="true">
-              <div className="canvas-workspace__header-info">
-                <span className="canvas-workspace__header-label">Current screen</span>
-                <div className="canvas-workspace__header-title" aria-live="polite">
-                  {activeScreen ? (
-                    <>
-                      <strong>{activeScreen.name}</strong>
-                      <span className="canvas-workspace__header-device">{activeScreen.device}</span>
-                    </>
-                  ) : (
-                    <strong>No screen selected</strong>
-                  )}
+              <div className="canvas-workspace__header-left">
+                <div className="canvas-workspace__header-info">
+                  <span className="canvas-workspace__header-label">Current screen</span>
+                  <div className="canvas-workspace__header-title" aria-live="polite">
+                    {activeScreen ? (
+                      <>
+                        <strong>{activeScreen.name}</strong>
+                        <span className="canvas-workspace__header-device">{activeScreen.device}</span>
+                      </>
+                    ) : (
+                      <strong>No screen selected</strong>
+                    )}
+                  </div>
+                  {activeScreen?.description ? (
+                    <p className="canvas-workspace__header-description">{activeScreen.description}</p>
+                  ) : null}
                 </div>
-                {activeScreen?.description ? (
-                  <p className="canvas-workspace__header-description">{activeScreen.description}</p>
-                ) : null}
+                <button
+                  type="button"
+                  className="canvas-workspace__navigator-toggle"
+                  onClick={toggleNavigator}
+                  aria-expanded={isNavigatorOpen}
+                  aria-controls="canvas-workspace-navigator-panel"
+                  data-expanded={isNavigatorOpen}
+                >
+                  {isNavigatorOpen ? 'Hide workspace navigator' : 'Show workspace navigator'}
+                </button>
               </div>
               <div className="canvas-workspace__header-controls">
                 <label className="canvas-workspace__header-select">
@@ -618,6 +653,95 @@ export default function CanvasWorkspace() {
                 </form>
               </div>
             </header>
+
+            <div className="canvas-workspace__navigator">
+              {isNavigatorOpen ? (
+                <aside
+                  id="canvas-workspace-navigator-panel"
+                  className="canvas-workspace__navigator-panel"
+                  aria-label="Workspace navigator"
+                >
+                  <div className="canvas-workspace__navigator-header">
+                    <div>
+                      <p className="canvas-workspace__navigator-eyebrow">Pages, Components, Arenas</p>
+                      <h2>Workspace collections</h2>
+                    </div>
+                    <button type="button" className="canvas-workspace__navigator-new">New</button>
+                  </div>
+                  <label className="canvas-workspace__navigator-search" htmlFor="canvas-workspace-navigator-search">
+                    <span className="sr-only">Search navigator</span>
+                    <input
+                      id="canvas-workspace-navigator-search"
+                      type="search"
+                      value={navigatorSearch}
+                      onChange={handleNavigatorSearchChange}
+                      placeholder="Search…"
+                    />
+                  </label>
+                  <div className="canvas-workspace__navigator-sections">
+                    {navigatorSections.map((section) => {
+                      const isOpen = openNavigatorSections[section.id] ?? false
+                      const searchQuery = navigatorSearch.trim().toLowerCase()
+                      const items = searchQuery
+                        ? section.items.filter((item) => {
+                            const haystack = [item.title, item.badge, item.description]
+                              .filter(Boolean)
+                              .join(' ')
+                              .toLowerCase()
+                            return haystack.includes(searchQuery)
+                          })
+                        : section.items
+                      return (
+                        <section key={section.id} className="canvas-workspace__navigator-section">
+                          <button
+                            type="button"
+                            className="canvas-workspace__navigator-section-toggle"
+                            onClick={() => handleToggleNavigatorSection(section.id)}
+                            aria-expanded={isOpen}
+                          >
+                            <span>{section.label}</span>
+                            <span className="canvas-workspace__navigator-count">{section.count}</span>
+                            <span className="canvas-workspace__navigator-icon" aria-hidden="true">
+                              {isOpen ? '−' : '+'}
+                            </span>
+                          </button>
+                          {isOpen ? (
+                            items.length ? (
+                              <ul className="canvas-workspace__navigator-list">
+                                {items.map((item) => {
+                                  const isActionable = typeof item.onSelect === 'function'
+                                  return (
+                                    <li key={item.id}>
+                                      <button
+                                        type="button"
+                                        className="canvas-workspace__navigator-item"
+                                        onClick={isActionable ? item.onSelect : undefined}
+                                        data-active={item.isActive || undefined}
+                                        disabled={!isActionable}
+                                      >
+                                        <span className="canvas-workspace__navigator-item-title">{item.title}</span>
+                                        {item.badge ? (
+                                          <span className="canvas-workspace__navigator-item-badge">{item.badge}</span>
+                                        ) : null}
+                                        {item.description ? (
+                                          <span className="canvas-workspace__navigator-item-description">{item.description}</span>
+                                        ) : null}
+                                      </button>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : (
+                              <p className="canvas-workspace__navigator-empty">No matches found.</p>
+                            )
+                          ) : null}
+                        </section>
+                      )
+                    })}
+                  </div>
+                </aside>
+              ) : null}
+            </div>
 
             {isCreateScreenOpen ? (
               <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
