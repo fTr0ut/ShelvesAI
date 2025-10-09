@@ -112,6 +112,14 @@ export default function CanvasWorkspace() {
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
+  const [isNavigatorOpen, setNavigatorOpen] = useState(false)
+  const [navigatorSearch, setNavigatorSearch] = useState('')
+  const [openNavigatorSections, setOpenNavigatorSections] = useState({
+    currentScreens: true,
+    pages: true,
+    components: true,
+    arenas: true,
+  })
   const workspaceRef = useRef(null)
 
   const handleSelectScreen = (screenId) => {
@@ -186,6 +194,118 @@ export default function CanvasWorkspace() {
       backgroundClass: `${settings.colorScheme === 'dark' ? 'theme-dark' : 'theme-light'} ${settings.background}`,
     }),
     [settings.colorScheme, settings.accentColor, settings.background],
+  )
+
+  const navigatorSections = useMemo(
+    () => [
+      {
+        id: 'currentScreens',
+        label: 'Current Screens',
+        count: screens.length,
+        items: screens.map((screen) => ({
+          id: screen.id,
+          title: screen.name,
+          badge: screen.device,
+          description: screen.description,
+          isActive: screen.id === selectedScreenId,
+          onSelect: () => setSelectedScreenId(screen.id),
+        })),
+      },
+      {
+        id: 'pages',
+        label: 'Pages',
+        count: 3,
+        items: [
+          {
+            id: 'welcome-flow',
+            title: 'Welcome flow',
+            badge: 'Experience',
+            description: 'Entry points for new collectors.',
+          },
+          {
+            id: 'collection-deep-dive',
+            title: 'Collection deep dive',
+            badge: 'Editorial',
+            description: 'Long-form narratives for featured drops.',
+          },
+          {
+            id: 'curator-handbook',
+            title: 'Curator handbook',
+            badge: 'Internal',
+            description: 'Guidelines and tooling references.',
+          },
+        ],
+      },
+      {
+        id: 'components',
+        label: 'Components',
+        count: 5,
+        items: [
+          {
+            id: 'hero-banner',
+            title: 'Hero banner',
+            badge: 'Layout',
+            description: 'Primary attention grabber.',
+          },
+          {
+            id: 'collection-grid',
+            title: 'Collection grid',
+            badge: 'UI kit',
+            description: 'Responsive gallery with filters.',
+          },
+          {
+            id: 'story-card',
+            title: 'Story card',
+            badge: 'Content',
+            description: 'Narrative block for creator stories.',
+          },
+          {
+            id: 'cta-panel',
+            title: 'CTA panel',
+            badge: 'Marketing',
+            description: 'High-conversion call to action layout.',
+          },
+          {
+            id: 'footer-cluster',
+            title: 'Footer cluster',
+            badge: 'System',
+            description: 'Global links and social proof.',
+          },
+        ],
+      },
+      {
+        id: 'arenas',
+        label: 'Arenas',
+        count: 4,
+        items: [
+          {
+            id: 'spotlight',
+            title: 'Spotlight arena',
+            badge: 'Live',
+            description: 'Realtime showcase for active drops.',
+          },
+          {
+            id: 'archive',
+            title: 'Archive arena',
+            badge: 'Reference',
+            description: 'Back-catalogue exploration space.',
+          },
+          {
+            id: 'community',
+            title: 'Community arena',
+            badge: 'Social',
+            description: 'Collector-to-collector collaborations.',
+          },
+          {
+            id: 'immersive',
+            title: 'Immersive arena',
+            badge: 'Spatial',
+            description: '360° storytelling experiences.',
+          },
+        ],
+      },
+    ],
+    [screens, selectedScreenId],
   )
 
   const handleSettingChange = (name, value) => {
@@ -293,6 +413,21 @@ export default function CanvasWorkspace() {
     if (!isSidebarOpen) {
       setSidebarOpen(true)
     }
+  }
+
+  const toggleNavigator = () => {
+    setNavigatorOpen((previous) => !previous)
+  }
+
+  const handleNavigatorSearchChange = (event) => {
+    setNavigatorSearch(event.target.value)
+  }
+
+  const handleToggleNavigatorSection = (sectionId) => {
+    setOpenNavigatorSections((previous) => ({
+      ...previous,
+      [sectionId]: !previous[sectionId],
+    }))
   }
 
   useEffect(() => {
@@ -454,21 +589,33 @@ export default function CanvasWorkspace() {
             </header>
 
             <header className="canvas-workspace__header" data-editor-sticky="true">
-              <div className="canvas-workspace__header-info">
-                <span className="canvas-workspace__header-label">Current screen</span>
-                <div className="canvas-workspace__header-title" aria-live="polite">
-                  {activeScreen ? (
-                    <>
-                      <strong>{activeScreen.name}</strong>
-                      <span className="canvas-workspace__header-device">{activeScreen.device}</span>
-                    </>
-                  ) : (
-                    <strong>No screen selected</strong>
-                  )}
+              <div className="canvas-workspace__header-left">
+                <div className="canvas-workspace__header-info">
+                  <span className="canvas-workspace__header-label">Current screen</span>
+                  <div className="canvas-workspace__header-title" aria-live="polite">
+                    {activeScreen ? (
+                      <>
+                        <strong>{activeScreen.name}</strong>
+                        <span className="canvas-workspace__header-device">{activeScreen.device}</span>
+                      </>
+                    ) : (
+                      <strong>No screen selected</strong>
+                    )}
+                  </div>
+                  {activeScreen?.description ? (
+                    <p className="canvas-workspace__header-description">{activeScreen.description}</p>
+                  ) : null}
                 </div>
-                {activeScreen?.description ? (
-                  <p className="canvas-workspace__header-description">{activeScreen.description}</p>
-                ) : null}
+                <button
+                  type="button"
+                  className="canvas-workspace__navigator-toggle"
+                  onClick={toggleNavigator}
+                  aria-expanded={isNavigatorOpen}
+                  aria-controls="canvas-workspace-navigator-panel"
+                  data-expanded={isNavigatorOpen}
+                >
+                  {isNavigatorOpen ? 'Hide workspace navigator' : 'Show workspace navigator'}
+                </button>
               </div>
               <div className="canvas-workspace__header-controls">
                 <label className="canvas-workspace__header-select">
@@ -491,6 +638,95 @@ export default function CanvasWorkspace() {
                 </button>
               </div>
             </header>
+
+            <div className="canvas-workspace__navigator">
+              {isNavigatorOpen ? (
+                <aside
+                  id="canvas-workspace-navigator-panel"
+                  className="canvas-workspace__navigator-panel"
+                  aria-label="Workspace navigator"
+                >
+                  <div className="canvas-workspace__navigator-header">
+                    <div>
+                      <p className="canvas-workspace__navigator-eyebrow">Pages, Components, Arenas</p>
+                      <h2>Workspace collections</h2>
+                    </div>
+                    <button type="button" className="canvas-workspace__navigator-new">New</button>
+                  </div>
+                  <label className="canvas-workspace__navigator-search" htmlFor="canvas-workspace-navigator-search">
+                    <span className="sr-only">Search navigator</span>
+                    <input
+                      id="canvas-workspace-navigator-search"
+                      type="search"
+                      value={navigatorSearch}
+                      onChange={handleNavigatorSearchChange}
+                      placeholder="Search…"
+                    />
+                  </label>
+                  <div className="canvas-workspace__navigator-sections">
+                    {navigatorSections.map((section) => {
+                      const isOpen = openNavigatorSections[section.id] ?? false
+                      const searchQuery = navigatorSearch.trim().toLowerCase()
+                      const items = searchQuery
+                        ? section.items.filter((item) => {
+                            const haystack = [item.title, item.badge, item.description]
+                              .filter(Boolean)
+                              .join(' ')
+                              .toLowerCase()
+                            return haystack.includes(searchQuery)
+                          })
+                        : section.items
+                      return (
+                        <section key={section.id} className="canvas-workspace__navigator-section">
+                          <button
+                            type="button"
+                            className="canvas-workspace__navigator-section-toggle"
+                            onClick={() => handleToggleNavigatorSection(section.id)}
+                            aria-expanded={isOpen}
+                          >
+                            <span>{section.label}</span>
+                            <span className="canvas-workspace__navigator-count">{section.count}</span>
+                            <span className="canvas-workspace__navigator-icon" aria-hidden="true">
+                              {isOpen ? '−' : '+'}
+                            </span>
+                          </button>
+                          {isOpen ? (
+                            items.length ? (
+                              <ul className="canvas-workspace__navigator-list">
+                                {items.map((item) => {
+                                  const isActionable = typeof item.onSelect === 'function'
+                                  return (
+                                    <li key={item.id}>
+                                      <button
+                                        type="button"
+                                        className="canvas-workspace__navigator-item"
+                                        onClick={isActionable ? item.onSelect : undefined}
+                                        data-active={item.isActive || undefined}
+                                        disabled={!isActionable}
+                                      >
+                                        <span className="canvas-workspace__navigator-item-title">{item.title}</span>
+                                        {item.badge ? (
+                                          <span className="canvas-workspace__navigator-item-badge">{item.badge}</span>
+                                        ) : null}
+                                        {item.description ? (
+                                          <span className="canvas-workspace__navigator-item-description">{item.description}</span>
+                                        ) : null}
+                                      </button>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            ) : (
+                              <p className="canvas-workspace__navigator-empty">No matches found.</p>
+                            )
+                          ) : null}
+                        </section>
+                      )
+                    })}
+                  </div>
+                </aside>
+              ) : null}
+            </div>
 
             {isCreateScreenOpen ? (
               <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
