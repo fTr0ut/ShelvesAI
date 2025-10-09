@@ -19,3 +19,9 @@ export const saveRouteConfiguration = (routes = []) => {
   })
 }
 
+export const publishUiBundle = ({ target }) =>
+  fetchJson('/api/ui-editor/publish', {
+    method: 'POST',
+    body: JSON.stringify({ target }),
+  })
+
