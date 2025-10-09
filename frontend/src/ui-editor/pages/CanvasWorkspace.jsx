@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
-import SiteSettingsPanel from '../components/SiteSettingsPanel'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
@@ -13,20 +12,10 @@ const defaultStatus = {
   meta: null,
 }
 
-const DEFAULT_SETTINGS = {
-  colorScheme: 'light',
-  accentColor: '#60a5fa',
-  background: 'soft-gradient',
-  headerStyle: 'centered-logo',
-  footerStyle: 'minimal',
-  showAnnouncement: true,
-}
-
 export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
   const projectSettingsVersion = projectSettings?.version
   const [status, setStatus] = useState(defaultStatus)
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [screens, setScreens] = useState(() => [
     {
       id: 'home-desktop',
@@ -177,22 +166,6 @@ export default function CanvasWorkspace() {
     setIsCreateScreenOpen(false)
     setNewScreenForm({ name: '', device: 'Desktop', description: '' })
     setCreateScreenError('')
-  }
-
-  const theme = useMemo(
-    () => ({
-      isDark: settings.colorScheme === 'dark',
-      accentColor: settings.accentColor,
-      backgroundClass: `${settings.colorScheme === 'dark' ? 'theme-dark' : 'theme-light'} ${settings.background}`,
-    }),
-    [settings.colorScheme, settings.accentColor, settings.background],
-  )
-
-  const handleSettingChange = (name, value) => {
-    setSettings((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
   }
 
   const handlePageStyleChange = (nextStyles) => {
@@ -553,10 +526,6 @@ export default function CanvasWorkspace() {
             />
 
           </div>
-
-          <section className="site-settings">
-            <SiteSettingsPanel settings={settings} onChange={handleSettingChange} />
-          </section>
 
           <section
             className={`ui-editor__status editor-home__status-panel ui-editor__status--${status.phase === 'idle' ? 'loading' : status.phase}`}
