@@ -1,16 +1,3 @@
-const DEVICE_OPTIONS = [
-  {
-    label: 'Desktop',
-    value: 'desktop',
-    description: 'Widescreen layout with generous spacing and ambient background layers.',
-  },
-  {
-    label: 'Mobile',
-    value: 'mobile',
-    description: 'Compact single-column view optimised for small screens.',
-  },
-]
-
 const COLOR_SCHEMES = [
   { label: 'Light', value: 'light' },
   { label: 'Dark', value: 'dark' },
@@ -61,28 +48,6 @@ const FOOTER_OPTIONS = [
 export default function SiteSettingsPanel({ settings, onChange }) {
   return (
     <aside className="site-settings__panel" aria-label="Site configuration controls">
-      <section className="site-settings__section">
-        <header className="site-settings__section-header">
-          <h2>Device baseline</h2>
-          <p>Select the canvas that downstream modules inherit spacing and typography from.</p>
-        </header>
-        <div className="site-settings__option-grid">
-          {DEVICE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`site-settings__option-card ${
-                settings.device === option.value ? 'site-settings__option-card--active' : ''
-              }`}
-              onClick={() => onChange('device', option.value)}
-            >
-              <span className="site-settings__option-title">{option.label}</span>
-              <span className="site-settings__option-copy">{option.description}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
       <section className="site-settings__section">
         <header className="site-settings__section-header">
           <h2>Color system</h2>

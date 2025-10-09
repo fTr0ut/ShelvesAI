@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import SiteSettingsPanel from '../components/SiteSettingsPanel'
-import ExperiencePreview from '../components/ExperiencePreview'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
@@ -15,7 +14,6 @@ const defaultStatus = {
 }
 
 const DEFAULT_SETTINGS = {
-  device: 'desktop',
   colorScheme: 'light',
   accentColor: '#60a5fa',
   background: 'soft-gradient',
@@ -558,23 +556,6 @@ export default function CanvasWorkspace() {
 
           <section className="site-settings">
             <SiteSettingsPanel settings={settings} onChange={handleSettingChange} />
-            <ExperiencePreview settings={settings} theme={theme} />
-          </section>
-
-          <section className="editor-home__roadmap">
-            <h2>Next steps for the builder</h2>
-            <ul>
-              <li>Persist these global settings to the Collector API once endpoint contracts are finalised.</li>
-              <li>Introduce canvas tooling that maps shelves and collectables onto responsive breakpoints.</li>
-              <li>Wire preview panes to live content sources and expose publishing workflows.</li>
-              <li>
-                Point the editor at staging or local services by updating <strong>Project settings</strong> with your API base
-                and endpoint catalogue.
-              </li>
-              <li>Introduce authenticated flows to persist editor layouts via the Collector API.</li>
-              <li>Layer in canvas tooling for arranging shelves, collectables, and new UI primitives.</li>
-              <li>Connect live preview panes to backend content using the shared data contracts.</li>
-            </ul>
           </section>
 
           <section
