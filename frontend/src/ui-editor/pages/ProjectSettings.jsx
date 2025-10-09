@@ -7,49 +7,12 @@ import {
 } from '../lib/projectSettings'
 import { useProjectSettings } from '../lib/useProjectSettings'
 import { getApiOrigin, getDefaultApiOrigin } from '../api/client'
+import {
+  buildDebugUrl,
+  stringifyDocument,
+  validateTargetInput,
+} from './projectSettingsHelpers'
 import './ProjectSettings.css'
-
-const stripTrailingSlash = (value) => value.replace(/\/+$/, '')
-
-const buildDebugUrl = (candidate) => {
-  if (!candidate) {
-    return `${getApiOrigin()}/__debug`
-  }
-  const base = stripTrailingSlash(candidate)
-  return `${base}/__debug`
-}
-
-const stringifyDocument = (document) => {
-  if (!document) return ''
-  try {
-    return JSON.stringify(document, null, 2)
-  } catch (error) {
-    console.warn('Unable to stringify endpoint document', error)
-    return ''
-  }
-}
-
-const validateTargetInput = (value) => {
-  const trimmed = (value || '').trim()
-  if (!trimmed) return ''
-  if (/\s/.test(trimmed)) {
-    return 'Targets cannot contain spaces. Use dashes or underscores instead.'
-  }
-  try {
-    const parsed = new URL(trimmed)
-    if (!/^https?:$/i.test(parsed.protocol)) {
-      return 'Only HTTP(S) URLs are supported for remote targets.'
-    }
-    return ''
-  } catch (error) {
-    const pathPattern = /^(\.{1,2}\/|\/)?[\w.-]+([\/\\][\w.@-]+)*$/
-    const windowsDrivePattern = /^[a-zA-Z]:\\/
-    if (pathPattern.test(trimmed) || windowsDrivePattern.test(trimmed)) {
-      return ''
-    }
-    return 'Enter a full URL (https://…) or a relative directory path such as ./build.'
-  }
-}
 
 const looksLikeProjectSettingsExport = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -87,7 +50,6 @@ export default function ProjectSettings() {
     setPreviewTarget(settings.previewTarget)
     setProductionTarget(settings.productionTarget)
     setParseError('')
-    setSaveStatus({ phase: 'idle', message: '' })
     setTargetErrors({
       preview: validateTargetInput(settings.previewTarget),
       production: validateTargetInput(settings.productionTarget),
@@ -184,7 +146,7 @@ export default function ProjectSettings() {
     }
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
     setSaveStatus({ phase: 'loading', message: 'Saving project settings…' })
     setParseError('')
@@ -206,19 +168,34 @@ export default function ProjectSettings() {
       return
     }
 
-    updateProjectSettings({
-      apiBase: (apiBase || '').trim(),
-      endpointDocument: document,
-      authMethod,
-      authToken: authMethod === AUTH_METHODS.API_TOKEN ? authToken.trim() : '',
-      previewTarget: (previewTarget || '').trim(),
-      productionTarget: (productionTarget || '').trim(),
-    })
-    setSaveStatus({ phase: 'success', message: 'Settings saved locally for this browser.' })
+    try {
+      await updateProjectSettings({
+        apiBase: (apiBase || '').trim(),
+        endpointDocument: document,
+        authMethod,
+        authToken: authMethod === AUTH_METHODS.API_TOKEN ? authToken.trim() : '',
+        previewTarget: (previewTarget || '').trim(),
+        productionTarget: (productionTarget || '').trim(),
+      })
+      setSaveStatus({ phase: 'success', message: 'Project settings saved.' })
+    } catch (error) {
+      setSaveStatus({
+        phase: 'error',
+        message: error.message || 'Unable to save project settings. Fix any issues and try again.',
+      })
+    }
   }
 
-  const handleReset = () => {
-    resetProjectSettings()
+  const handleReset = async () => {
+    const previous = {
+      apiBase,
+      endpointJson,
+      authMethod,
+      authToken,
+      previewTarget,
+      productionTarget,
+    }
+    setSaveStatus({ phase: 'loading', message: 'Resetting project settings…' })
     setApiBase('')
     setEndpointJson('')
     setAuthMethod(AUTH_METHODS.BROWSER_SESSION)
@@ -226,8 +203,23 @@ export default function ProjectSettings() {
     setPreviewTarget('')
     setProductionTarget('')
     setParseError('')
-    setSaveStatus({ phase: 'success', message: 'Settings reset to defaults.' })
     setTargetErrors({ preview: '', production: '' })
+    try {
+      await resetProjectSettings()
+      setSaveStatus({ phase: 'success', message: 'Settings reset to defaults.' })
+    } catch (error) {
+      console.error('Unable to reset project settings', error)
+      setSaveStatus({
+        phase: 'error',
+        message: error.message || 'Unable to reset project settings. Try again later.',
+      })
+      setApiBase(previous.apiBase)
+      setEndpointJson(previous.endpointJson)
+      setAuthMethod(previous.authMethod)
+      setAuthToken(previous.authToken)
+      setPreviewTarget(previous.previewTarget)
+      setProductionTarget(previous.productionTarget)
+    }
   }
 
   const handleExport = () => {
@@ -248,7 +240,7 @@ export default function ProjectSettings() {
     setTestStatus({ phase: 'loading', message: 'Checking backend availability…' })
     try {
       const candidate = (apiBase || '').trim()
-      const url = buildDebugUrl(candidate)
+      const url = buildDebugUrl(candidate, getApiOrigin)
       const headers = {}
       if (authMethod === AUTH_METHODS.API_TOKEN) {
         const token = authToken.trim()
@@ -274,10 +266,22 @@ export default function ProjectSettings() {
       <header className="project-settings__header">
         <h1>Project settings</h1>
         <p>
-          Configure how the UI editor talks to Collector services. Settings are stored locally so you can connect to staging
-          environments or load API contracts from OpenAPI/JSON files while iterating on generated React code.
+          Configure how the UI editor talks to Collector services. Settings persist for the project so you can share API
+          contracts, authentication, and publish targets while iterating on generated React code.
         </p>
       </header>
+
+      {(settings.isHydrating || settings.hydrationError) && (
+        <div
+          className={`project-settings__status project-settings__status--${
+            settings.isHydrating ? 'loading' : 'error'
+          }`}
+        >
+          {settings.isHydrating
+            ? 'Loading saved project settings…'
+            : `Unable to load saved settings: ${settings.hydrationError}`}
+        </div>
+      )}
 
       <form className="project-settings__form" onSubmit={handleSubmit}>
         <section>
@@ -454,10 +458,23 @@ export default function ProjectSettings() {
         </section>
 
         <footer className="project-settings__footer">
-          <button type="submit" className="project-settings__primary" disabled={!hasChanges || saveStatus.phase === 'loading'}>
-            {saveStatus.phase === 'loading' ? 'Saving…' : hasChanges ? 'Save settings' : 'No changes'}
+          <button
+            type="submit"
+            className="project-settings__primary"
+            disabled={!hasChanges || saveStatus.phase === 'loading' || settings.isSaving}
+          >
+            {saveStatus.phase === 'loading' || settings.isSaving
+              ? 'Saving…'
+              : hasChanges
+                ? 'Save settings'
+                : 'No changes'}
           </button>
-          <button type="button" onClick={handleReset} className="project-settings__ghost">
+          <button
+            type="button"
+            onClick={handleReset}
+            className="project-settings__ghost"
+            disabled={saveStatus.phase === 'loading' || settings.isSaving}
+          >
             Reset to defaults
           </button>
           {saveStatus.message && (
