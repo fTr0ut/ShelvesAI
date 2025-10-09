@@ -29,15 +29,54 @@ const stringifyDocument = (document) => {
   }
 }
 
+const validateTargetInput = (value) => {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return ''
+  if (/\s/.test(trimmed)) {
+    return 'Targets cannot contain spaces. Use dashes or underscores instead.'
+  }
+  try {
+    const parsed = new URL(trimmed)
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return 'Only HTTP(S) URLs are supported for remote targets.'
+    }
+    return ''
+  } catch (error) {
+    const pathPattern = /^(\.{1,2}\/|\/)?[\w.-]+([\/\\][\w.@-]+)*$/
+    const windowsDrivePattern = /^[a-zA-Z]:\\/
+    if (pathPattern.test(trimmed) || windowsDrivePattern.test(trimmed)) {
+      return ''
+    }
+    return 'Enter a full URL (https://…) or a relative directory path such as ./build.'
+  }
+}
+
+const looksLikeProjectSettingsExport = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const recognisedKeys = [
+    'apiBase',
+    'endpointDocument',
+    'authMethod',
+    'authToken',
+    'previewTarget',
+    'productionTarget',
+    'updatedAt',
+  ]
+  return recognisedKeys.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+}
+
 export default function ProjectSettings() {
   const settings = useProjectSettings()
   const [apiBase, setApiBase] = useState(settings.apiBase)
   const [endpointJson, setEndpointJson] = useState(stringifyDocument(settings.endpointDocument))
   const [authMethod, setAuthMethod] = useState(settings.authMethod)
   const [authToken, setAuthToken] = useState(settings.authToken)
+  const [previewTarget, setPreviewTarget] = useState(settings.previewTarget)
+  const [productionTarget, setProductionTarget] = useState(settings.productionTarget)
   const [parseError, setParseError] = useState('')
   const [saveStatus, setSaveStatus] = useState({ phase: 'idle', message: '' })
   const [testStatus, setTestStatus] = useState({ phase: 'idle', message: '' })
+  const [targetErrors, setTargetErrors] = useState({ preview: '', production: '' })
   const defaultOrigin = useMemo(() => getDefaultApiOrigin(), [])
 
   useEffect(() => {
@@ -45,9 +84,23 @@ export default function ProjectSettings() {
     setEndpointJson(stringifyDocument(settings.endpointDocument))
     setAuthMethod(settings.authMethod)
     setAuthToken(settings.authToken)
+    setPreviewTarget(settings.previewTarget)
+    setProductionTarget(settings.productionTarget)
     setParseError('')
     setSaveStatus({ phase: 'idle', message: '' })
-  }, [settings.apiBase, settings.authMethod, settings.authToken, settings.endpointDocument, settings.version])
+    setTargetErrors({
+      preview: validateTargetInput(settings.previewTarget),
+      production: validateTargetInput(settings.productionTarget),
+    })
+  }, [
+    settings.apiBase,
+    settings.authMethod,
+    settings.authToken,
+    settings.endpointDocument,
+    settings.previewTarget,
+    settings.productionTarget,
+    settings.version,
+  ])
 
   const normalisedEndpoints = settings.endpointMeta?.endpoints ?? []
 
@@ -61,16 +114,57 @@ export default function ProjectSettings() {
     const storedToken =
       settings.authMethod === AUTH_METHODS.API_TOKEN ? (settings.authToken || '').trim() : ''
     if (trimmedToken !== storedToken) return true
+    if ((previewTarget || '').trim() !== (settings.previewTarget || '').trim()) return true
+    if ((productionTarget || '').trim() !== (settings.productionTarget || '').trim()) return true
     return false
-  }, [apiBase, endpointJson, authMethod, authToken, settings.apiBase, settings.authMethod, settings.authToken, settings.endpointDocument])
+  }, [
+    apiBase,
+    endpointJson,
+    authMethod,
+    authToken,
+    previewTarget,
+    productionTarget,
+    settings.apiBase,
+    settings.authMethod,
+    settings.authToken,
+    settings.endpointDocument,
+    settings.previewTarget,
+    settings.productionTarget,
+  ])
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
     try {
       const text = await file.text()
-      setEndpointJson(text)
-      setParseError('')
+      try {
+        const parsed = JSON.parse(text)
+        if (looksLikeProjectSettingsExport(parsed)) {
+          const nextAuthMethod =
+            parsed.authMethod === AUTH_METHODS.API_TOKEN ? AUTH_METHODS.API_TOKEN : AUTH_METHODS.BROWSER_SESSION
+          setApiBase(parsed.apiBase ?? '')
+          setEndpointJson(stringifyDocument(parsed.endpointDocument))
+          setAuthMethod(nextAuthMethod)
+          setAuthToken(nextAuthMethod === AUTH_METHODS.API_TOKEN ? parsed.authToken ?? '' : '')
+          setPreviewTarget(parsed.previewTarget ?? '')
+          setProductionTarget(parsed.productionTarget ?? '')
+          setTargetErrors({
+            preview: validateTargetInput(parsed.previewTarget),
+            production: validateTargetInput(parsed.productionTarget),
+          })
+          setParseError('')
+          setSaveStatus({
+            phase: 'success',
+            message: 'Imported project settings from file. Review values and save to apply.',
+          })
+          return
+        }
+        setEndpointJson(JSON.stringify(parsed, null, 2))
+        setParseError('')
+      } catch (error) {
+        setEndpointJson(text)
+        setParseError('')
+      }
     } catch (error) {
       console.error('Unable to read file', error)
       setParseError('Unable to read selected file. Please try again.')
@@ -101,11 +195,24 @@ export default function ProjectSettings() {
       return
     }
 
+    const previewError = validateTargetInput(previewTarget)
+    const productionError = validateTargetInput(productionTarget)
+    setTargetErrors({ preview: previewError, production: productionError })
+    if (previewError || productionError) {
+      setSaveStatus({
+        phase: 'error',
+        message: 'Review the front-end targets before saving.',
+      })
+      return
+    }
+
     updateProjectSettings({
       apiBase: (apiBase || '').trim(),
       endpointDocument: document,
       authMethod,
       authToken: authMethod === AUTH_METHODS.API_TOKEN ? authToken.trim() : '',
+      previewTarget: (previewTarget || '').trim(),
+      productionTarget: (productionTarget || '').trim(),
     })
     setSaveStatus({ phase: 'success', message: 'Settings saved locally for this browser.' })
   }
@@ -116,8 +223,11 @@ export default function ProjectSettings() {
     setEndpointJson('')
     setAuthMethod(AUTH_METHODS.BROWSER_SESSION)
     setAuthToken('')
+    setPreviewTarget('')
+    setProductionTarget('')
     setParseError('')
     setSaveStatus({ phase: 'success', message: 'Settings reset to defaults.' })
+    setTargetErrors({ preview: '', production: '' })
   }
 
   const handleExport = () => {
@@ -198,6 +308,12 @@ export default function ProjectSettings() {
           <div className="project-settings__active">
             Active origin: <code>{getApiOrigin()}</code>
           </div>
+          <div className="project-settings__active">
+            Preview target: <code>{settings.previewTarget || 'Not configured'}</code>
+          </div>
+          <div className="project-settings__active">
+            Production target: <code>{settings.productionTarget || 'Not configured'}</code>
+          </div>
         </section>
 
         <section>
@@ -264,6 +380,49 @@ export default function ProjectSettings() {
                 builder talks to the API.
               </p>
             </>
+          )}
+        </section>
+
+        <section>
+          <h2>Front-end publish targets</h2>
+          <p className="project-settings__hint">
+            Choose where generated assets should be deployed. Enter a directory path for local exports (for example{' '}
+            <code>./build</code>) or an HTTPS host for remote targets.
+          </p>
+          <label className="project-settings__label" htmlFor="preview-target-input">
+            Preview / staging destination
+          </label>
+          <input
+            id="preview-target-input"
+            type="text"
+            placeholder="./dist/preview or https://preview.example.com"
+            value={previewTarget}
+            onChange={(event) => {
+              const value = event.target.value
+              setPreviewTarget(value)
+              setTargetErrors((current) => ({ ...current, preview: validateTargetInput(value) }))
+            }}
+          />
+          {targetErrors.preview && (
+            <span className="project-settings__status project-settings__status--error">{targetErrors.preview}</span>
+          )}
+
+          <label className="project-settings__label" htmlFor="production-target-input">
+            Production destination
+          </label>
+          <input
+            id="production-target-input"
+            type="text"
+            placeholder="./dist/live or https://app.example.com"
+            value={productionTarget}
+            onChange={(event) => {
+              const value = event.target.value
+              setProductionTarget(value)
+              setTargetErrors((current) => ({ ...current, production: validateTargetInput(value) }))
+            }}
+          />
+          {targetErrors.production && (
+            <span className="project-settings__status project-settings__status--error">{targetErrors.production}</span>
           )}
         </section>
 

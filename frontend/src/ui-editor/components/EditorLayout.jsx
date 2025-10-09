@@ -14,6 +14,8 @@ const navItems = [
 export default function EditorLayout() {
   const settings = useProjectSettings()
   const apiOrigin = settings?.apiBase ? settings.apiBase : getApiOrigin()
+  const previewTarget = settings?.previewTarget ? settings.previewTarget : 'Not configured'
+  const productionTarget = settings?.productionTarget ? settings.productionTarget : 'Not configured'
 
   return (
     <div className="ui-editor">
@@ -28,8 +30,19 @@ export default function EditorLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="ui-editor__nav" style={{ fontSize: '0.8rem', opacity: 0.85 }}>
-          API: {apiOrigin}
+        <div className="ui-editor__targets" aria-label="Publish targets summary">
+          <div>
+            <span className="ui-editor__target-label">API</span>
+            <code title={apiOrigin}>{apiOrigin}</code>
+          </div>
+          <div>
+            <span className="ui-editor__target-label">Preview</span>
+            <code title={previewTarget}>{previewTarget}</code>
+          </div>
+          <div>
+            <span className="ui-editor__target-label">Production</span>
+            <code title={productionTarget}>{productionTarget}</code>
+          </div>
         </div>
       </header>
       <div className="ui-editor__content">
