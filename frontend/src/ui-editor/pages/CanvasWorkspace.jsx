@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import { publishUiBundle } from '../api/routes'
+import {
+  createCanvasScreen,
+  deleteCanvasScreen,
+  fetchCanvasScreens,
+  fetchCanvasSettings,
+  updateCanvasSettings,
+} from '../api/canvas'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
@@ -19,13 +26,108 @@ const defaultPublishState = {
   detail: null,
 }
 
-const DEFAULT_SETTINGS = {
+const createDefaultThemeTokens = () => ({
   colorScheme: 'light',
   accentColor: '#60a5fa',
   background: 'soft-gradient',
+  surfaceColor: '#0b1120',
+  textColor: '#e2e8f0',
+})
+
+const createDefaultWorkspacePreferences = () => ({
   headerStyle: 'centered-logo',
   footerStyle: 'minimal',
   showAnnouncement: true,
+})
+
+const createDefaultPageStyles = () => ({
+  backgroundColor: '#0b1120',
+  textColor: '#e2e8f0',
+  fontFamily: 'Inter',
+  fontSize: 16,
+  layout: 'fixed',
+  maxWidth: '1200px',
+  gridColumns: 12,
+  gap: '24px',
+  sectionPadding: '80px',
+  blockSpacing: '48px',
+  borderRadius: '16px',
+  elevation: 'soft',
+})
+
+const createDefaultWorkspaceSettings = () => ({
+  themeTokens: createDefaultThemeTokens(),
+  workspace: createDefaultWorkspacePreferences(),
+  pageStyles: createDefaultPageStyles(),
+})
+
+const coerceWorkspaceSettings = (raw) => {
+  if (!raw || typeof raw !== 'object') {
+    return createDefaultWorkspaceSettings()
+  }
+
+  const defaults = createDefaultWorkspaceSettings()
+  const themeTokens = {
+    ...defaults.themeTokens,
+    ...(raw.themeTokens && typeof raw.themeTokens === 'object' ? raw.themeTokens : {}),
+  }
+  const workspace = {
+    ...defaults.workspace,
+    ...(raw.workspace && typeof raw.workspace === 'object' ? raw.workspace : {}),
+  }
+  const pageStyles = {
+    ...defaults.pageStyles,
+    ...(raw.pageStyles && typeof raw.pageStyles === 'object' ? raw.pageStyles : {}),
+  }
+
+  const parsedFontSize = Number.parseFloat(pageStyles.fontSize)
+  if (Number.isFinite(parsedFontSize)) {
+    pageStyles.fontSize = parsedFontSize
+  } else {
+    pageStyles.fontSize = defaults.pageStyles.fontSize
+  }
+
+  return {
+    themeTokens,
+    workspace: {
+      ...workspace,
+      showAnnouncement: Boolean(workspace.showAnnouncement),
+    },
+    pageStyles,
+  }
+}
+
+const mergeWorkspaceSettings = (base, patch = {}) => {
+  const startingPoint = coerceWorkspaceSettings(base)
+  if (!patch || typeof patch !== 'object') {
+    return startingPoint
+  }
+
+  const next = {
+    themeTokens: { ...startingPoint.themeTokens },
+    workspace: { ...startingPoint.workspace },
+    pageStyles: { ...startingPoint.pageStyles },
+  }
+
+  if (patch.themeTokens && typeof patch.themeTokens === 'object') {
+    next.themeTokens = coerceWorkspaceSettings({ themeTokens: patch.themeTokens }).themeTokens
+  }
+
+  if (patch.workspace && typeof patch.workspace === 'object') {
+    next.workspace = {
+      ...next.workspace,
+      ...patch.workspace,
+      showAnnouncement: patch.workspace.showAnnouncement !== undefined
+        ? Boolean(patch.workspace.showAnnouncement)
+        : next.workspace.showAnnouncement,
+    }
+  }
+
+  if (patch.pageStyles && typeof patch.pageStyles === 'object') {
+    next.pageStyles = coerceWorkspaceSettings({ pageStyles: patch.pageStyles }).pageStyles
+  }
+
+  return next
 }
 
 export default function CanvasWorkspace() {
@@ -34,40 +136,24 @@ export default function CanvasWorkspace() {
   const [status, setStatus] = useState(defaultStatus)
   const [publishState, setPublishState] = useState(defaultPublishState)
   const [publishTarget, setPublishTarget] = useState('staging')
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
-  const [screens, setScreens] = useState(() => [
-    {
-      id: 'home-desktop',
-      name: 'Homepage',
-      device: 'Desktop',
-      description: '1440px wide, marketing hero focus',
-    },
-    {
-      id: 'home-tablet',
-      name: 'Homepage',
-      device: 'Tablet',
-      description: '768px breakpoint with stacked hero',
-    },
-    {
-      id: 'home-mobile',
-      name: 'Homepage',
-      device: 'Mobile',
-      description: 'Small screens and foldables',
-    },
-    {
-      id: 'collection-desktop',
-      name: 'Collection layout',
-      device: 'Desktop',
-      description: 'Grid forward browse experience',
-    },
-    {
-      id: 'collection-mobile',
-      name: 'Collection layout',
-      device: 'Mobile',
-      description: 'Vertical scroll list with filters',
-    },
-  ])
-  const [selectedScreenId, setSelectedScreenId] = useState(() => screens[0]?.id ?? '')
+  const [screensState, setScreensState] = useState({
+    items: [],
+    version: null,
+    updatedAt: null,
+    isLoading: true,
+    error: '',
+  })
+  const [settingsState, setSettingsState] = useState({
+    value: createDefaultWorkspaceSettings(),
+    version: null,
+    updatedAt: null,
+    isLoading: true,
+    error: '',
+  })
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
+  const screens = screensState.items
+  const settings = settingsState.value || createDefaultWorkspaceSettings()
+  const [selectedScreenId, setSelectedScreenId] = useState('')
   const activeScreen = useMemo(
     () => screens.find((option) => option.id === selectedScreenId) ?? screens[0],
     [screens, selectedScreenId],
@@ -79,20 +165,10 @@ export default function CanvasWorkspace() {
     description: '',
   })
   const [createScreenError, setCreateScreenError] = useState('')
-  const [pageStyles, setPageStyles] = useState({
-    backgroundColor: '#0b1120',
-    textColor: '#e2e8f0',
-    fontFamily: 'Inter',
-    fontSize: 16,
-    layout: 'fixed',
-    maxWidth: '1200px',
-    gridColumns: 12,
-    gap: '24px',
-    sectionPadding: '80px',
-    blockSpacing: '48px',
-    borderRadius: '16px',
-    elevation: 'soft',
-  })
+  const [isCreatingScreen, setIsCreatingScreen] = useState(false)
+  const [isDeletingScreen, setIsDeletingScreen] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+  const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
   const [activeComponent, setActiveComponent] = useState({
     id: 'hero-heading',
     label: 'Hero heading',
@@ -132,6 +208,104 @@ export default function CanvasWorkspace() {
   const publishTargetInputId = 'ui-editor-publish-target'
   const isPublishing = publishState.status === 'pending'
 
+  const loadScreens = useCallback(async () => {
+    setScreensState((previous) => ({ ...previous, isLoading: true, error: '' }))
+    try {
+      const response = await fetchCanvasScreens()
+      const items = Array.isArray(response?.screens) ? response.screens : []
+      setScreensState({
+        items,
+        version: response?.version ?? 0,
+        updatedAt: response?.updatedAt ?? null,
+        isLoading: false,
+        error: '',
+      })
+      setSelectedScreenId((previousSelected) => {
+        if (previousSelected && items.some((screen) => screen.id === previousSelected)) {
+          return previousSelected
+        }
+        return items[0]?.id ?? ''
+      })
+      setCreateScreenError('')
+    } catch (error) {
+      const message = error?.message || 'Unable to load canvas screens.'
+      setScreensState((previous) => ({ ...previous, isLoading: false, error: message }))
+      setCreateScreenError(message)
+    }
+  }, [])
+
+  const loadSettings = useCallback(async () => {
+    setSettingsState((previous) => ({ ...previous, isLoading: true, error: '' }))
+    try {
+      const response = await fetchCanvasSettings()
+      const value = coerceWorkspaceSettings(response?.settings)
+      setSettingsState({
+        value,
+        version: response?.version ?? 0,
+        updatedAt: response?.updatedAt ?? null,
+        isLoading: false,
+        error: '',
+      })
+      setPageStyles(value.pageStyles)
+      setSettingsError('')
+      setIsSavingSettings(false)
+    } catch (error) {
+      const message = error?.message || 'Unable to load canvas settings.'
+      setSettingsState((previous) => ({ ...previous, isLoading: false, error: message }))
+      setSettingsError(message)
+      setIsSavingSettings(false)
+    }
+  }, [])
+
+  const applySettingsPatch = useCallback(
+    async (patch) => {
+      setSettingsError('')
+      if (settingsState.version === null) {
+        setSettingsError('Settings are still loading. Please try again once available.')
+        return
+      }
+
+      setIsSavingSettings(true)
+      const optimistic = mergeWorkspaceSettings(settingsState.value, patch)
+      setSettingsState((previous) => ({
+        ...previous,
+        value: optimistic,
+      }))
+
+      if (patch?.pageStyles) {
+        setPageStyles(optimistic.pageStyles)
+      }
+
+      try {
+        const response = await updateCanvasSettings(patch, settingsState.version)
+        const nextValue = coerceWorkspaceSettings(response?.settings)
+        setSettingsState({
+          value: nextValue,
+          version: response?.version ?? settingsState.version + 1,
+          updatedAt: response?.updatedAt ?? null,
+          isLoading: false,
+          error: '',
+        })
+        setPageStyles(nextValue.pageStyles)
+      } catch (error) {
+        if (error?.status === 409) {
+          setSettingsError('Settings changed in another session. Reloading latest values…')
+          await loadSettings()
+        } else {
+          setSettingsError(error?.message || 'Unable to update settings.')
+        }
+      } finally {
+        setIsSavingSettings(false)
+      }
+    },
+    [settingsState.version, settingsState.value, loadSettings],
+  )
+
+  useEffect(() => {
+    loadScreens()
+    loadSettings()
+  }, [loadScreens, loadSettings])
+
   const formatPublishTimestamp = (value) => {
     if (!value) return '—'
     const date = new Date(value)
@@ -139,6 +313,18 @@ export default function CanvasWorkspace() {
       return value
     }
     return date.toLocaleString()
+  }
+
+  const handleThemeTokenChange = (field) => (event) => {
+    applySettingsPatch({ themeTokens: { [field]: event.target.value } })
+  }
+
+  const handleWorkspacePreferenceChange = (field) => (event) => {
+    applySettingsPatch({ workspace: { [field]: event.target.value } })
+  }
+
+  const handleWorkspaceToggle = (field) => (event) => {
+    applySettingsPatch({ workspace: { [field]: event.target.checked } })
   }
 
   const handlePublishTargetChange = (event) => {
@@ -265,7 +451,7 @@ export default function CanvasWorkspace() {
     }))
   }
 
-  const handleCreateScreen = (event) => {
+  const handleCreateScreen = async (event) => {
     event.preventDefault()
     const trimmedName = newScreenForm.name.trim()
     if (!trimmedName) {
@@ -273,47 +459,162 @@ export default function CanvasWorkspace() {
       return
     }
 
-    const normalisedDevice = newScreenForm.device || 'Desktop'
-    const normalise = (value) =>
-      value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-
-    const baseSlug = normalise(trimmedName) || 'screen'
-    const deviceSlug = normalise(normalisedDevice) || 'device'
-    const baseId = `${baseSlug}-${deviceSlug}`
-    let candidateId = baseId
-    let attempt = 1
-    const existingIds = new Set(screens.map((screen) => screen.id))
-    while (existingIds.has(candidateId)) {
-      attempt += 1
-      candidateId = `${baseId}-${attempt}`
+    if (screensState.version === null) {
+      setCreateScreenError('Screen metadata is still loading. Please try again shortly.')
+      return
     }
 
-    const description = newScreenForm.description.trim() || `${normalisedDevice} layout`
+    const device = (newScreenForm.device || 'Desktop').trim() || 'Desktop'
+    const description = newScreenForm.description.trim() || `${device} layout`
 
-    const nextScreen = {
-      id: candidateId,
-      name: trimmedName,
-      device: normalisedDevice,
-      description,
-    }
-
-    setScreens((previous) => [...previous, nextScreen])
-    setSelectedScreenId(candidateId)
-    setIsCreateScreenOpen(false)
-    setNewScreenForm({ name: '', device: 'Desktop', description: '' })
+    setIsCreatingScreen(true)
     setCreateScreenError('')
+
+    try {
+      const response = await createCanvasScreen(
+        { name: trimmedName, device, description },
+        screensState.version,
+      )
+      const nextScreens = Array.isArray(response?.screens) ? response.screens : []
+      setScreensState({
+        items: nextScreens,
+        version: response?.version ?? screensState.version + 1,
+        updatedAt: response?.updatedAt ?? null,
+        isLoading: false,
+        error: '',
+      })
+      const createdScreenId =
+        response?.screen?.id || nextScreens[nextScreens.length - 1]?.id || nextScreens[0]?.id || ''
+      setSelectedScreenId(createdScreenId)
+      setIsCreateScreenOpen(false)
+      setNewScreenForm({ name: '', device: 'Desktop', description: '' })
+    } catch (error) {
+      if (error?.status === 409) {
+        setCreateScreenError('Another editor updated the screen list. Reloading the latest data…')
+        await loadScreens()
+      } else {
+        setCreateScreenError(error?.message || 'Unable to create screen.')
+      }
+    } finally {
+      setIsCreatingScreen(false)
+    }
   }
 
+  const handleDeleteScreen = async () => {
+    if (!selectedScreenId) return
+    if (screensState.version === null) {
+      setCreateScreenError('Screen metadata is still loading. Please try again shortly.')
+      return
+    }
+
+    setIsDeletingScreen(true)
+    setCreateScreenError('')
+
+    try {
+      const response = await deleteCanvasScreen(selectedScreenId, screensState.version)
+      const nextScreens = Array.isArray(response?.screens) ? response.screens : []
+      setScreensState({
+        items: nextScreens,
+        version: response?.version ?? screensState.version + 1,
+        updatedAt: response?.updatedAt ?? null,
+        isLoading: false,
+        error: '',
+      })
+      setSelectedScreenId((previousSelected) => {
+        if (nextScreens.some((screen) => screen.id === previousSelected)) {
+          return previousSelected
+        }
+        return nextScreens[0]?.id ?? ''
+      })
+    } catch (error) {
+      if (error?.status === 409) {
+        setCreateScreenError('Another editor updated the screen list. Reloading the latest data…')
+        await loadScreens()
+      } else if (error?.status === 404) {
+        setCreateScreenError('The selected screen no longer exists. Reloading the latest data…')
+        await loadScreens()
+      } else {
+        setCreateScreenError(error?.message || 'Unable to delete screen.')
+      }
+    } finally {
+      setIsDeletingScreen(false)
+    }
+  }
+
+  const pageStylesSaveRef = useRef(null)
+
   const handlePageStyleChange = (nextStyles) => {
-    setPageStyles(nextStyles)
+    const merged = { ...pageStyles, ...nextStyles }
+    setPageStyles(merged)
+    if (pageStylesSaveRef.current) {
+      clearTimeout(pageStylesSaveRef.current)
+    }
+    pageStylesSaveRef.current = setTimeout(() => {
+      applySettingsPatch({ pageStyles: merged })
+      pageStylesSaveRef.current = null
+    }, 400)
   }
 
   const handleComponentChange = (nextComponent) => {
     setActiveComponent(nextComponent)
   }
+
+  useEffect(() => {
+    return () => {
+      if (pageStylesSaveRef.current) {
+        clearTimeout(pageStylesSaveRef.current)
+      }
+    }
+  }, [])
+
+  const navigatorSections = useMemo(() => {
+    const screenItems = screens.map((screen) => ({
+      id: screen.id,
+      title: screen.name,
+      badge: screen.device,
+      description: screen.description,
+      isActive: screen.id === selectedScreenId,
+      onSelect: () => handleSelectScreen(screen.id),
+    }))
+
+    return [
+      {
+        id: 'currentScreens',
+        label: 'Current screens',
+        count: screenItems.length,
+        items: screenItems,
+      },
+      {
+        id: 'pages',
+        label: 'Pages',
+        count: 3,
+        items: [
+          { id: 'pages-home', title: 'Homepage', description: 'Entry point for collectors', onSelect: undefined },
+          { id: 'pages-account', title: 'Account', description: 'Authenticated layout system', onSelect: undefined },
+          { id: 'pages-collection', title: 'Collection', description: 'Gallery exploration canvas', onSelect: undefined },
+        ],
+      },
+      {
+        id: 'components',
+        label: 'Components',
+        count: 3,
+        items: [
+          { id: 'components-hero', title: 'Hero block', description: 'Headline, copy and CTA bundle', onSelect: undefined },
+          { id: 'components-grid', title: 'Collection grid', description: 'Responsive grid with filters', onSelect: undefined },
+          { id: 'components-footer', title: 'Footer set', description: 'Metadata, legal links and socials', onSelect: undefined },
+        ],
+      },
+      {
+        id: 'arenas',
+        label: 'Arenas',
+        count: 2,
+        items: [
+          { id: 'arenas-preview', title: 'Preview arena', description: 'Staging cluster for live QA', onSelect: undefined },
+          { id: 'arenas-production', title: 'Production arena', description: 'Live configuration snapshot', onSelect: undefined },
+        ],
+      },
+    ]
+  }, [screens, selectedScreenId, handleSelectScreen])
 
   useEffect(() => {
     let active = true
@@ -580,6 +881,81 @@ export default function CanvasWorkspace() {
               </p>
             </header>
 
+            <section className="canvas-workspace__theme-settings">
+              <h2>Workspace theme</h2>
+              <p className="canvas-workspace__theme-description">
+                Tune primary tokens that flow through every screen. Changes are saved automatically for all editors.
+              </p>
+              <div className="canvas-workspace__theme-grid">
+                <div className="canvas-workspace__field">
+                  <label htmlFor="canvas-theme-color-scheme">Color scheme</label>
+                  <select
+                    id="canvas-theme-color-scheme"
+                    value={settings.themeTokens.colorScheme}
+                    onChange={handleThemeTokenChange('colorScheme')}
+                    disabled={settingsState.isLoading || isSavingSettings}
+                  >
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+                <div className="canvas-workspace__field">
+                  <label htmlFor="canvas-theme-accent">Accent color</label>
+                  <input
+                    id="canvas-theme-accent"
+                    type="color"
+                    value={settings.themeTokens.accentColor}
+                    onChange={handleThemeTokenChange('accentColor')}
+                    disabled={settingsState.isLoading || isSavingSettings}
+                  />
+                </div>
+                <div className="canvas-workspace__field">
+                  <label htmlFor="canvas-theme-background">Surface background</label>
+                  <input
+                    id="canvas-theme-background"
+                    type="text"
+                    value={settings.themeTokens.background}
+                    onChange={handleThemeTokenChange('background')}
+                    disabled={settingsState.isLoading || isSavingSettings}
+                    placeholder="soft-gradient"
+                  />
+                </div>
+                <div className="canvas-workspace__field">
+                  <label htmlFor="canvas-workspace-header-style">Header style</label>
+                  <select
+                    id="canvas-workspace-header-style"
+                    value={settings.workspace.headerStyle}
+                    onChange={handleWorkspacePreferenceChange('headerStyle')}
+                    disabled={settingsState.isLoading || isSavingSettings}
+                  >
+                    <option value="centered-logo">Centered logo</option>
+                    <option value="split-navigation">Split navigation</option>
+                    <option value="minimal">Minimal</option>
+                  </select>
+                </div>
+                <div className="canvas-workspace__field canvas-workspace__field--toggle">
+                  <label htmlFor="canvas-workspace-announcement">Announcement banner</label>
+                  <input
+                    id="canvas-workspace-announcement"
+                    type="checkbox"
+                    checked={settings.workspace.showAnnouncement}
+                    onChange={handleWorkspaceToggle('showAnnouncement')}
+                    disabled={settingsState.isLoading || isSavingSettings}
+                  />
+                </div>
+              </div>
+              {settingsError ? (
+                <p className="canvas-workspace__form-error" role="alert">
+                  {settingsError}
+                </p>
+              ) : null}
+              {isSavingSettings ? (
+                <p className="canvas-workspace__publish-note" aria-live="polite">
+                  Saving workspace settings…
+                </p>
+              ) : null}
+            </section>
+
             <header className="canvas-workspace__header" data-editor-sticky="true">
               <div className="canvas-workspace__header-left">
                 <div className="canvas-workspace__header-info">
@@ -612,12 +988,20 @@ export default function CanvasWorkspace() {
               <div className="canvas-workspace__header-controls">
                 <label className="canvas-workspace__header-select">
                   <span className="canvas-workspace__header-select-label">Switch screen</span>
-                  <select value={selectedScreenId} onChange={(event) => handleSelectScreen(event.target.value)}>
-                    {screens.map((screen) => (
-                      <option key={screen.id} value={screen.id}>
-                        {screen.name} · {screen.device}
-                      </option>
-                    ))}
+                  <select
+                    value={selectedScreenId}
+                    onChange={(event) => handleSelectScreen(event.target.value)}
+                    disabled={screensState.isLoading || screens.length === 0}
+                  >
+                    {screens.length ? (
+                      screens.map((screen) => (
+                        <option key={screen.id} value={screen.id}>
+                          {screen.name} · {screen.device}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No screens available</option>
+                    )}
                   </select>
                 </label>
                 <button
@@ -627,6 +1011,14 @@ export default function CanvasWorkspace() {
                   aria-expanded={isCreateScreenOpen}
                 >
                   {isCreateScreenOpen ? 'Close' : 'New screen'}
+                </button>
+                <button
+                  type="button"
+                  className="canvas-workspace__link-button"
+                  onClick={handleDeleteScreen}
+                  disabled={!selectedScreenId || isDeletingScreen || screens.length === 0}
+                >
+                  {isDeletingScreen ? 'Deleting…' : 'Delete screen'}
                 </button>
                 <form className="canvas-workspace__publish-form" onSubmit={handlePublish}>
                   <label className="canvas-workspace__publish-label" htmlFor={publishTargetInputId}>
@@ -653,6 +1045,12 @@ export default function CanvasWorkspace() {
                 </form>
               </div>
             </header>
+
+            {screensState.error && !isCreateScreenOpen ? (
+              <p className="canvas-workspace__form-error" role="alert">
+                {screensState.error}
+              </p>
+            ) : null}
 
             <div className="canvas-workspace__navigator">
               {isNavigatorOpen ? (
@@ -787,8 +1185,12 @@ export default function CanvasWorkspace() {
                   </p>
                 ) : null}
                 <div className="canvas-workspace__form-actions">
-                  <button type="submit" className="canvas-workspace__header-button">
-                    Create screen
+                  <button
+                    type="submit"
+                    className="canvas-workspace__header-button"
+                    disabled={isCreatingScreen}
+                  >
+                    {isCreatingScreen ? 'Creating…' : 'Create screen'}
                   </button>
                   <button type="button" className="canvas-workspace__link-button" onClick={handleToggleCreateScreen}>
                     Cancel
