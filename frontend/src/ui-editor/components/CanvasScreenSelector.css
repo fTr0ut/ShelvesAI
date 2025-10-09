@@ -1,0 +1,89 @@
+.canvas-screen-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem 1.75rem;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 1.5rem;
+  box-shadow: 0 18px 40px -24px rgba(15, 23, 42, 0.85);
+}
+
+.canvas-screen-selector__intro h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0.02em;
+}
+
+.canvas-screen-selector__intro p {
+  margin: 0.45rem 0 0;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.95rem;
+}
+
+.canvas-screen-selector__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.canvas-screen-selector__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.canvas-screen-selector__group-label {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.canvas-screen-selector__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.canvas-screen-selector__item {
+  background: rgba(30, 41, 59, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 1rem;
+  padding: 0.95rem 1.1rem;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 180ms ease, transform 200ms ease, box-shadow 200ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.canvas-screen-selector__item:hover {
+  border-color: rgba(96, 165, 250, 0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 35px -20px rgba(30, 64, 175, 0.45);
+}
+
+.canvas-screen-selector__item--active {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(37, 99, 235, 0.28);
+  box-shadow: 0 18px 40px -24px rgba(37, 99, 235, 0.65);
+}
+
+.canvas-screen-selector__item-name {
+  font-weight: 600;
+  font-size: 0.98rem;
+}
+
+.canvas-screen-selector__item-meta {
+  font-size: 0.82rem;
+  color: rgba(203, 213, 225, 0.78);
+}
+
+@media (max-width: 960px) {
+  .canvas-screen-selector {
+    padding: 1.25rem 1.35rem;
+  }
+}
