@@ -176,6 +176,8 @@
   flex-direction: column;
   gap: 2.5rem;
   color: #f8fafc;
+  position: relative;
+  padding-right: clamp(18rem, 28vw, 24rem);
 }
 
 .editor-home__masthead {
@@ -219,6 +221,27 @@
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: clamp(1.5rem, 2.5vw, 3rem);
+}
+
+.editor-home__roadmap {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 1280px) {
+  .editor-home {
+    padding-right: clamp(4rem, 26vw, 18rem);
+  }
+}
+
+@media (max-width: 960px) {
+  .editor-home {
+    padding-right: 0;
+  }
+
+  .site-settings {
+    grid-template-columns: 1fr;
+  }
 }
 
 .site-settings__panel {
