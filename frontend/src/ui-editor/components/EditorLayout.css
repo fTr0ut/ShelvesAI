@@ -52,6 +52,44 @@
   box-shadow: 0 12px 30px -16px rgba(15, 23, 42, 0.6);
 }
 
+.ui-editor__targets {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.ui-editor__targets > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.ui-editor__target-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.ui-editor__targets code {
+  display: block;
+  font-family: 'SFMono-Regular', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: rgba(226, 232, 240, 0.92);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ui-editor__content {
   padding: 2rem clamp(1.5rem, 3vw, 3rem);
   max-width: min(1440px, 100%);
