@@ -1,9 +1,9 @@
 .properties-panel {
   position: fixed;
   top: 7.5rem;
-  right: clamp(1rem, 3vw, 2.75rem);
+  right: var(--properties-panel-gap, clamp(1rem, 3vw, 2.75rem));
   bottom: clamp(1rem, 4vh, 2.5rem);
-  width: min(360px, 32vw);
+  width: var(--properties-panel-width, min(360px, 32vw));
   background: rgba(9, 13, 31, 0.92);
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 1.5rem;

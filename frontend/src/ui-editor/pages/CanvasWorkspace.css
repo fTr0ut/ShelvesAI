@@ -3,6 +3,9 @@
   --sidebar-expanded-width: 360px;
   --sidebar-offset-top: 0px;
   --sidebar-available-height: max(360px, calc(100vh - var(--sidebar-offset-top)));
+  --properties-panel-width: min(320px, 28vw);
+  --properties-panel-gap: clamp(0.75rem, 1.5vw, 1.5rem);
+  --workspace-gutter: clamp(0.5rem, 1vw, 1rem);
   position: relative;
   display: flex;
   width: 100%;
@@ -177,7 +180,9 @@
   gap: 2.5rem;
   color: #f8fafc;
   position: relative;
-  padding-right: clamp(18rem, 28vw, 24rem);
+  padding-right: calc(
+    var(--properties-panel-width) + var(--properties-panel-gap) + var(--workspace-gutter)
+  );
 }
 
 .editor-home__masthead {
@@ -229,8 +234,9 @@
 }
 
 @media (max-width: 1280px) {
-  .editor-home {
-    padding-right: clamp(4rem, 26vw, 18rem);
+  .canvas-workspace {
+    --properties-panel-width: min(300px, 34vw);
+    --workspace-gutter: clamp(0.5rem, 1vw, 0.85rem);
   }
 }
 
