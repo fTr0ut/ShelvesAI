@@ -210,16 +210,13 @@
   font-size: 1.05rem;
 }
 
-.editor-home__status {
-  margin-top: 0;
-  align-self: flex-start;
-  min-width: min(320px, 100%);
-  max-width: 380px;
+.editor-home__status-panel {
+  position: fixed;
+  top: clamp(2.5rem, 8vh, 4rem);
+  right: var(--properties-panel-gap, clamp(1rem, 3vw, 2.75rem));
+  width: var(--properties-panel-width, min(360px, 32vw));
   background: rgba(15, 23, 42, 0.68);
-}
-
-.editor-home__status .ui-editor__meta {
-  margin-top: 0.75rem;
+  z-index: 6;
 }
 
 .site-settings {
@@ -243,6 +240,12 @@
 @media (max-width: 960px) {
   .editor-home {
     padding-right: 0;
+  }
+
+  .editor-home__status-panel {
+    position: static;
+    width: 100%;
+    margin-top: 1rem;
   }
 
   .site-settings {
