@@ -48,6 +48,7 @@
 }
 
 .project-settings__form input[type='url'],
+.project-settings__form input[type='text'],
 .project-settings__form input[type='password'],
 .project-settings__form textarea {
   width: 100%;
