@@ -9,6 +9,7 @@ import {
   insertCanvasNode,
   reparentCanvasNode,
   selectCanvasNode,
+  serialiseCanvasStateToNodes,
   updateCanvasNode,
 } from '../canvasState.js'
 
@@ -144,5 +145,42 @@ describe('canvasState graph', () => {
     expect(getCanvasNodeDisplayName(child)).toBe('Welcome')
     expect(getCanvasNodeMeta(child)).toContain('hero-block')
     expect(getCanvasNodeChildren(state, 'root')).toHaveLength(1)
+  })
+
+  it('serialises state back into a node tree preserving structure', () => {
+    const state = createCanvasStateFromNodes([
+      {
+        id: 'root',
+        type: 'frame',
+        label: 'Root frame',
+        children: [
+          {
+            id: 'hero',
+            type: 'component',
+            componentId: 'hero-block',
+            props: { title: 'Welcome' },
+            styles: { fontSize: '48px' },
+          },
+        ],
+        slots: {
+          sidebar: [
+            {
+              id: 'rail',
+              type: 'component',
+              componentId: 'rail-block',
+              bindings: { mode: 'live' },
+            },
+          ],
+        },
+      },
+    ])
+
+    const serialised = serialiseCanvasStateToNodes(state)
+    expect(serialised).toHaveLength(1)
+    expect(serialised[0].id).toBe('root')
+    expect(serialised[0].children).toHaveLength(1)
+    expect(serialised[0].children[0]).toMatchObject({ id: 'hero', componentId: 'hero-block' })
+    expect(serialised[0].slots.sidebar).toHaveLength(1)
+    expect(serialised[0].slots.sidebar[0]).toMatchObject({ id: 'rail', bindings: { mode: 'live' } })
   })
 })

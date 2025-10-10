@@ -14,6 +14,13 @@ const cloneForState = (value) => {
   return value
 }
 
+const isEmptyObject = (value) => {
+  if (!isPlainObject(value)) {
+    return true
+  }
+  return Object.keys(value).length === 0
+}
+
 const normaliseString = (value, { fallback = '' } = {}) => {
   if (typeof value !== 'string') {
     return fallback
@@ -218,6 +225,102 @@ export const createCanvasStateFromNodes = (nodes = []) => {
   traverse(Array.isArray(nodes) ? nodes : [], null, null)
   state.selectionId = deriveInitialSelectionId(state)
   return state
+}
+
+const cloneNodeAttributesForSerialisation = (node) => {
+  const serialised = {
+    id: node.id,
+    type: node.type,
+  }
+
+  const stringFields = [
+    'label',
+    'componentId',
+    'component',
+    'variant',
+    'as',
+    'key',
+    'role',
+  ]
+  stringFields.forEach((field) => {
+    if (node[field]) {
+      serialised[field] = node[field]
+    }
+  })
+
+  if (node.order !== undefined && node.order !== null) {
+    serialised.order = node.order
+  }
+
+  if (node.visible === false) {
+    serialised.visible = false
+  }
+
+  const objectFields = ['props', 'bindings', 'metadata', 'layout', 'data', 'state', 'transitions']
+  objectFields.forEach((field) => {
+    if (!isEmptyObject(node[field])) {
+      serialised[field] = cloneForState(node[field])
+    }
+  })
+
+  if (!isEmptyObject(node.styles)) {
+    serialised.styles = cloneForState(node.styles)
+  }
+  if (!isEmptyObject(node.style) && serialised.styles === undefined) {
+    serialised.style = cloneForState(node.style)
+  }
+
+  if (node.slot) {
+    serialised.slot = node.slot
+  }
+
+  return serialised
+}
+
+const serialiseNode = (state, nodeId) => {
+  const node = state.nodes[nodeId]
+  if (!node) {
+    return null
+  }
+
+  const serialised = cloneNodeAttributesForSerialisation(node)
+
+  if (node.childIds.length) {
+    const children = node.childIds
+      .map((childId) => serialiseNode(state, childId))
+      .filter(Boolean)
+    if (children.length) {
+      serialised.children = children
+    }
+  }
+
+  const slotEntries = Object.entries(node.slotChildIds || {})
+    .map(([slotName, childIds]) => {
+      const cleanedName = normaliseString(slotName)
+      if (!cleanedName) {
+        return null
+      }
+      const slotChildren = childIds.map((childId) => serialiseNode(state, childId)).filter(Boolean)
+      if (!slotChildren.length) {
+        return null
+      }
+      return [cleanedName, slotChildren]
+    })
+    .filter(Boolean)
+
+  if (slotEntries.length) {
+    serialised.slots = Object.fromEntries(slotEntries)
+  }
+
+  return serialised
+}
+
+export const serialiseCanvasStateToNodes = (state) => {
+  if (!state || !Array.isArray(state.rootIds)) {
+    return []
+  }
+  const roots = state.rootIds.map((nodeId) => serialiseNode(state, nodeId)).filter(Boolean)
+  return roots
 }
 
 export const selectCanvasNode = (state, nodeId) => {

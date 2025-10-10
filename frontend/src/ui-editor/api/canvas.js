@@ -29,6 +29,15 @@ export const updateCanvasScreen = async (screenId, patch, version) => {
   })
 }
 
+export const updateCanvasScreenNodes = async (screenId, nodes, version) => {
+  const headers = buildVersionHeaders(version)
+  return fetchJson(`/api/ui-editor/canvas/screens/${encodeURIComponent(screenId)}/nodes`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ nodes }),
+  })
+}
+
 export const deleteCanvasScreen = async (screenId, version) => {
   const headers = buildVersionHeaders(version)
   return fetchJson(`/api/ui-editor/canvas/screens/${encodeURIComponent(screenId)}`, {

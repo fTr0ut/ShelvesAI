@@ -19,6 +19,7 @@ jest.mock('../api/canvas', () => {
     createCanvasScreen: jest.fn(),
     deleteCanvasScreen: jest.fn(),
     updateCanvasSettings: jest.fn(),
+    updateCanvasScreenNodes: jest.fn(),
   }
 })
 
@@ -32,7 +33,11 @@ jest.mock('../api/client', () => ({
 
 jest.mock('../components/ComponentLibraryPanel', () => () => null)
 jest.mock('../components/CanvasScreenSelector', () => () => null)
-jest.mock('../components/PropertiesPanel', () => () => null)
+const mockPropertiesPanel = jest.fn((props) => {
+  mockPropertiesPanel.latestProps = props
+  return null
+})
+jest.mock('../components/PropertiesPanel', () => mockPropertiesPanel)
 jest.mock('../lib/useProjectSettings', () => ({
   useProjectSettings: () => ({ version: 1, apiBase: '' }),
 }))
@@ -91,6 +96,7 @@ const renderCanvasWorkspace = async () => {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockPropertiesPanel.latestProps = null
   document.body.innerHTML = ''
 })
 
@@ -273,5 +279,306 @@ describe('CanvasWorkspace React flows', () => {
     expect(canvasApi.updateCanvasSettings).toHaveBeenCalledTimes(1)
     expect(canvasApi.updateCanvasSettings.mock.calls[0][0]).toEqual({ themeTokens: { colorScheme: 'dark' } })
     expect(canvasApi.updateCanvasSettings.mock.calls[0][1]).toBe(7)
+  })
+
+  it('autosaves canvas node changes with optimistic concurrency', async () => {
+    jest.useFakeTimers()
+    try {
+      canvasApi.fetchCanvasScreens.mockResolvedValue({
+        screens: [
+          {
+            id: 'home-desktop',
+            name: 'Homepage',
+            device: 'Desktop',
+            description: 'Hero',
+            nodes: [
+              {
+                id: 'root',
+                type: 'frame',
+                children: [
+                  {
+                    id: 'hero',
+                    type: 'component',
+                    componentId: 'hero-block',
+                    label: 'Hero headline',
+                  },
+                ],
+              },
+            ],
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        ],
+        version: 7,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      })
+      canvasApi.fetchCanvasSettings.mockResolvedValue({ settings: {}, version: 3 })
+      canvasApi.updateCanvasSettings.mockResolvedValue({ settings: {}, version: 4 })
+      canvasApi.updateCanvasScreenNodes.mockResolvedValue({
+        screen: {
+          id: 'home-desktop',
+          nodes: [
+            {
+              id: 'root',
+              type: 'frame',
+              children: [
+                {
+                  id: 'hero',
+                  type: 'component',
+                  componentId: 'hero-block',
+                  label: 'Updated headline',
+                },
+              ],
+            },
+          ],
+        },
+        screens: [
+          {
+            id: 'home-desktop',
+            name: 'Homepage',
+            device: 'Desktop',
+            description: 'Hero',
+            nodes: [
+              {
+                id: 'root',
+                type: 'frame',
+                children: [
+                  {
+                    id: 'hero',
+                    type: 'component',
+                    componentId: 'hero-block',
+                    label: 'Updated headline',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        version: 8,
+        updatedAt: '2024-01-01T00:01:00.000Z',
+      })
+
+      await renderCanvasWorkspace()
+      await act(async () => {
+        jest.advanceTimersByTime(0)
+        await flushPromises()
+      })
+
+      const props = mockPropertiesPanel.latestProps
+      expect(props).toBeTruthy()
+
+      act(() => {
+        props.onComponentChange({
+          id: 'hero',
+          label: 'Updated headline',
+          styles: { fontSize: '40px' },
+        })
+      })
+
+      await act(async () => {
+        jest.advanceTimersByTime(600)
+        await flushPromises()
+      })
+
+      expect(canvasApi.updateCanvasScreenNodes).toHaveBeenCalledTimes(1)
+      const [screenId, nodesPayload, version] = canvasApi.updateCanvasScreenNodes.mock.calls[0]
+      expect(screenId).toBe('home-desktop')
+      expect(version).toBe(7)
+      expect(Array.isArray(nodesPayload)).toBe(true)
+      expect(nodesPayload[0]).toMatchObject({
+        id: 'root',
+        children: [expect.objectContaining({ id: 'hero', label: 'Updated headline' })],
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('queues autosave requests until the previous save completes', async () => {
+    jest.useFakeTimers()
+    try {
+      canvasApi.fetchCanvasScreens.mockResolvedValue({
+        screens: [
+          {
+            id: 'home-desktop',
+            name: 'Homepage',
+            device: 'Desktop',
+            description: 'Hero',
+            nodes: [
+              {
+                id: 'root',
+                type: 'frame',
+                children: [
+                  {
+                    id: 'hero',
+                    type: 'component',
+                    componentId: 'hero-block',
+                    label: 'Hero headline',
+                  },
+                ],
+              },
+            ],
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        ],
+        version: 7,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      })
+      canvasApi.fetchCanvasSettings.mockResolvedValue({ settings: {}, version: 3 })
+      canvasApi.updateCanvasSettings.mockResolvedValue({ settings: {}, version: 4 })
+
+      let resolveFirstSave
+      const firstSaveResponse = {
+        screen: {
+          id: 'home-desktop',
+          nodes: [
+            {
+              id: 'root',
+              type: 'frame',
+              children: [
+                {
+                  id: 'hero',
+                  type: 'component',
+                  componentId: 'hero-block',
+                  label: 'Updated headline',
+                },
+              ],
+            },
+          ],
+        },
+        screens: [
+          {
+            id: 'home-desktop',
+            name: 'Homepage',
+            device: 'Desktop',
+            description: 'Hero',
+            nodes: [
+              {
+                id: 'root',
+                type: 'frame',
+                children: [
+                  {
+                    id: 'hero',
+                    type: 'component',
+                    componentId: 'hero-block',
+                    label: 'Updated headline',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        version: 8,
+        updatedAt: '2024-01-01T00:01:00.000Z',
+      }
+      const secondSaveResponse = {
+        screen: {
+          id: 'home-desktop',
+          nodes: [
+            {
+              id: 'root',
+              type: 'frame',
+              children: [
+                {
+                  id: 'hero',
+                  type: 'component',
+                  componentId: 'hero-block',
+                  label: 'Updated headline again',
+                },
+              ],
+            },
+          ],
+        },
+        screens: [
+          {
+            id: 'home-desktop',
+            name: 'Homepage',
+            device: 'Desktop',
+            description: 'Hero',
+            nodes: [
+              {
+                id: 'root',
+                type: 'frame',
+                children: [
+                  {
+                    id: 'hero',
+                    type: 'component',
+                    componentId: 'hero-block',
+                    label: 'Updated headline again',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        version: 9,
+        updatedAt: '2024-01-01T00:02:00.000Z',
+      }
+
+      canvasApi.updateCanvasScreenNodes.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstSave = resolve
+          }),
+      )
+      canvasApi.updateCanvasScreenNodes.mockResolvedValueOnce(secondSaveResponse)
+
+      await renderCanvasWorkspace()
+      await act(async () => {
+        jest.advanceTimersByTime(0)
+        await flushPromises()
+      })
+
+      const props = mockPropertiesPanel.latestProps
+      expect(props).toBeTruthy()
+
+      act(() => {
+        props.onComponentChange({
+          id: 'hero',
+          label: 'Updated headline',
+          styles: { fontSize: '40px' },
+        })
+      })
+
+      await act(async () => {
+        jest.advanceTimersByTime(600)
+        await flushPromises()
+      })
+
+      expect(typeof resolveFirstSave).toBe('function')
+      expect(canvasApi.updateCanvasScreenNodes).toHaveBeenCalledTimes(1)
+
+      act(() => {
+        props.onComponentChange({
+          id: 'hero',
+          label: 'Updated headline again',
+          styles: { fontSize: '42px' },
+        })
+      })
+
+      await act(async () => {
+        jest.advanceTimersByTime(600)
+        await flushPromises()
+      })
+
+      expect(canvasApi.updateCanvasScreenNodes).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        resolveFirstSave(firstSaveResponse)
+        await flushPromises()
+      })
+
+      await act(async () => {
+        jest.advanceTimersByTime(200)
+        await flushPromises()
+      })
+
+      expect(canvasApi.updateCanvasScreenNodes).toHaveBeenCalledTimes(2)
+      const [, , nextVersion] = canvasApi.updateCanvasScreenNodes.mock.calls[1]
+      expect(nextVersion).toBe(8)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

@@ -14,6 +14,7 @@ const {
   getScreens: getCanvasScreens,
   createScreen: createCanvasScreen,
   updateScreen: updateCanvasScreen,
+  updateScreenNodes: updateCanvasScreenNodes,
   deleteScreen: deleteCanvasScreen,
   getSettings: getCanvasSettings,
   updateSettings: updateCanvasSettings,
@@ -202,6 +203,20 @@ const buildSettingsPayload = (candidate) => {
   return payload
 }
 
+const buildNodeCollectionPayload = (candidate) => {
+  const nodes = candidate?.nodes ?? candidate
+  if (nodes === undefined) {
+    throw Object.assign(new Error('Request body must include a nodes array.'), { status: 400 })
+  }
+  if (nodes === null) {
+    return []
+  }
+  if (!Array.isArray(nodes)) {
+    throw Object.assign(new Error('Canvas nodes must be provided as an array.'), { status: 400 })
+  }
+  return nodes
+}
+
 router.get('/canvas/screens', async (_req, res) => {
   try {
     const { screens, version, updatedAt } = await getCanvasScreens()
@@ -281,6 +296,39 @@ router.put('/canvas/screens/:screenId', async (req, res) => {
     }
     console.error('[ui-editor] Failed to update canvas screen:', error)
     res.status(500).json({ error: 'Unable to update canvas screen.' })
+  }
+})
+
+router.put('/canvas/screens/:screenId/nodes', async (req, res) => {
+  let expectedVersion
+  try {
+    expectedVersion = parseVersionHeader(req)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid If-Match header.' })
+  }
+
+  let nodesPayload
+  try {
+    nodesPayload = buildNodeCollectionPayload(req.body)
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Invalid canvas nodes payload.' })
+  }
+
+  try {
+    const result = await updateCanvasScreenNodes(req.params.screenId, nodesPayload, expectedVersion)
+    res.json(result)
+  } catch (error) {
+    if (error?.code === 'CANVAS_VERSION_CONFLICT') {
+      return res.status(409).json({ error: error.message, actualVersion: error.actual })
+    }
+    if (error?.code === 'CANVAS_SCREEN_NOT_FOUND') {
+      return res.status(404).json({ error: error.message })
+    }
+    if (error?.status === 400 || error?.code === 'CANVAS_INVALID_SCREEN') {
+      return res.status(400).json({ error: error.message })
+    }
+    console.error('[ui-editor] Failed to update canvas nodes:', error)
+    res.status(500).json({ error: 'Unable to update canvas nodes.' })
   }
 })
 
