@@ -22,6 +22,7 @@ import {
   updateCanvasNode,
 } from '../lib/canvasState'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
+import CanvasArtboard from '../components/CanvasArtboard'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
@@ -2101,7 +2102,12 @@ export default function CanvasWorkspace() {
                     <p className="canvas-surface-region__status">{canvasStatusMessage.text}</p>
                   )
                 ) : null}
-                <CanvasDragSurface canvasState={canvasState} onInsert={handleInsertNode} onSelect={handleSelectNode} />
+                <CanvasArtboard
+                  canvasState={canvasState}
+                  onInsertNode={handleInsertNode}
+                  onSelectNode={handleSelectNode}
+                  selectionId={canvasState.selectionId}
+                />
               </div>
               <aside className="canvas-workspace__primitive-drawer" aria-label="Layout primitives">
                 <h3>Layout primitives</h3>
