@@ -114,22 +114,6 @@ export function useDrag(specOrFactory) {
 
   const ref = useRef(null)
 
-  useEffect(() => {
-    const node = ref.current
-    if (!node) {
-      return undefined
-    }
-
-    node.setAttribute('draggable', 'true')
-    node.addEventListener('dragstart', handleDragStart)
-    node.addEventListener('dragend', handleDragEnd)
-
-    return () => {
-      node.removeEventListener('dragstart', handleDragStart)
-      node.removeEventListener('dragend', handleDragEnd)
-    }
-  }, [handleDragEnd, handleDragStart])
-
   const assignRef = useCallback((node) => {
     if (ref.current === node) {
       return
@@ -259,25 +243,6 @@ export function useDrop(specOrFactory) {
   )
 
   const ref = useRef(null)
-
-  useEffect(() => {
-    const node = ref.current
-    if (!node) {
-      return undefined
-    }
-
-    node.addEventListener('dragenter', handleDragEnter)
-    node.addEventListener('dragover', handleDragOver)
-    node.addEventListener('dragleave', handleDragLeave)
-    node.addEventListener('drop', handleDrop)
-
-    return () => {
-      node.removeEventListener('dragenter', handleDragEnter)
-      node.removeEventListener('dragover', handleDragOver)
-      node.removeEventListener('dragleave', handleDragLeave)
-      node.removeEventListener('drop', handleDrop)
-    }
-  }, [handleDragEnter, handleDragLeave, handleDragOver, handleDrop])
 
   const assignRef = useCallback((node) => {
     if (ref.current === node) {
