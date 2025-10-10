@@ -149,9 +149,10 @@ describe('CanvasWorkspace React flows', () => {
       await flushPromises()
     })
 
-    const header = document.querySelector('.canvas-workspace__header-title strong')
-    expect(header).toBeTruthy()
-    expect(header.textContent).toBe('Homepage')
+    const artboard = document.querySelector('.canvas-workspace__surface')
+    expect(artboard).toBeTruthy()
+    const rootInsertion = artboard.querySelector('[aria-label="Insert at start of canvas"]')
+    expect(rootInsertion).toBeTruthy()
     expect(canvasApi.fetchCanvasScreens).toHaveBeenCalledTimes(1)
     expect(canvasApi.fetchCanvasSettings).toHaveBeenCalledTimes(1)
   })
@@ -208,6 +209,10 @@ describe('CanvasWorkspace React flows', () => {
 
     const header = document.querySelector('.canvas-workspace__header-title strong')
     expect(header.textContent).toBe('Checkout')
+
+    const emptyInsertion = document.querySelector('.canvas-workspace__insertion--empty')
+    expect(emptyInsertion).toBeTruthy()
+    expect(emptyInsertion.textContent).toMatch(/Drop component here/i)
   })
 
   it('surfaces concurrency conflicts when creating screens', async () => {
@@ -389,6 +394,10 @@ describe('CanvasWorkspace React flows', () => {
         id: 'root',
         children: [expect.objectContaining({ id: 'hero', label: 'Updated headline' })],
       })
+
+      const heroNode = document.querySelector('[data-node-id="hero"]')
+      expect(heroNode).toBeTruthy()
+      expect(heroNode.textContent).toMatch(/Updated headline/i)
     } finally {
       jest.useRealTimers()
     }
