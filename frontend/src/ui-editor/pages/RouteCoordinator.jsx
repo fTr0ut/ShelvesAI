@@ -8,6 +8,26 @@ const createEmptyRoute = () => ({
   screenId: '',
 })
 
+const formatScreenOptionLabel = (screen) => {
+  if (!screen) return ''
+  const tokens = []
+  if (screen.source === 'canvas') {
+    tokens.push('Canvas')
+    if (screen.status && screen.status !== 'published') {
+      tokens.push(screen.status.charAt(0).toUpperCase() + screen.status.slice(1))
+    }
+  } else if (screen.projectName) {
+    tokens.push(screen.projectName)
+  } else if (screen.source === 'plasmic') {
+    tokens.push('Plasmic')
+  }
+
+  const meta = tokens.length ? ` [${tokens.join(' • ')}]` : ''
+  const path = screen.path ? ` (${screen.path})` : ''
+
+  return `${screen.name || 'Untitled screen'}${path}${meta}`
+}
+
 const formatUpdatedAt = (value) => {
   if (!value) return null
   try {
@@ -28,6 +48,7 @@ export default function RouteCoordinator() {
   const [routes, setRoutes] = useState([])
   const [savedRoutes, setSavedRoutes] = useState([])
   const [screens, setScreens] = useState([])
+  const [canvasScreens, setCanvasScreens] = useState([])
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(null)
@@ -46,6 +67,7 @@ export default function RouteCoordinator() {
         setRoutes(nextRoutes)
         setSavedRoutes(nextRoutes)
         setScreens(data?.availableScreens || [])
+        setCanvasScreens(data?.canvasScreens || [])
         setUpdatedAt(data?.updatedAt || null)
       } catch (err) {
         if (!mounted) return
@@ -142,6 +164,7 @@ export default function RouteCoordinator() {
       setRoutes(nextRoutes)
       setSavedRoutes(nextRoutes)
       setScreens(response?.availableScreens || [])
+      setCanvasScreens(response?.canvasScreens || [])
       setUpdatedAt(response?.updatedAt || null)
       setSuccess('Route mapping saved successfully.')
     } catch (err) {
@@ -299,8 +322,7 @@ export default function RouteCoordinator() {
                       <option value="">Select a screen…</option>
                       {screenOptions.map((screen) => (
                         <option key={screen.id} value={screen.id}>
-                          {screen.name}
-                          {screen.path ? ` (${screen.path})` : ''}
+                          {formatScreenOptionLabel(screen)}
                         </option>
                       ))}
                     </select>
@@ -326,8 +348,15 @@ export default function RouteCoordinator() {
       <section className="route-coordinator__catalog">
         <h2>Available screens</h2>
         <p className="route-coordinator__catalog-description">
-          Screens sync automatically from <code>plasmic.json</code>. Assign them to routes to expose the correct experiences in the
-          Collector shell.
+          Screens sync automatically from <code>plasmic.json</code> and the Canvas workspace. Assign them to routes to expose the
+          correct experiences in the Collector shell.
+          {canvasScreens.length > 0 && (
+            <>
+              {' '}
+              Currently tracking {canvasScreens.length} Canvas screen
+              {canvasScreens.length === 1 ? '' : 's'}.
+            </>
+          )}
         </p>
         <div className="route-coordinator__screen-grid">
           {screens.length === 0 ? (
@@ -338,6 +367,16 @@ export default function RouteCoordinator() {
                 <header>
                   <h3>{screen.name}</h3>
                   {screen.projectName && <span className="route-coordinator__tag">{screen.projectName}</span>}
+                  {screen.source === 'canvas' && (
+                    <span className="route-coordinator__tag route-coordinator__tag--info">Canvas</span>
+                  )}
+                  {screen.source === 'canvas' && screen.status && (
+                    <span className="route-coordinator__tag route-coordinator__tag--muted">
+                      {screen.status === 'published'
+                        ? 'Published'
+                        : screen.status.charAt(0).toUpperCase() + screen.status.slice(1)}
+                    </span>
+                  )}
                 </header>
                 <dl>
                   <div>
@@ -352,6 +391,12 @@ export default function RouteCoordinator() {
                       <dd>
                         <code>{screen.path}</code>
                       </dd>
+                    </div>
+                  )}
+                  {screen.source === 'canvas' && screen.device && (
+                    <div>
+                      <dt>Device</dt>
+                      <dd>{screen.device}</dd>
                     </div>
                   )}
                 </dl>

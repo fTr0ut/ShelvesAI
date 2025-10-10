@@ -57,6 +57,20 @@ describe('uiEditor canvas routes', () => {
     expect(created.body.screen.nodes).toHaveLength(1)
     expect(created.body.screen.nodes[0].children[0].componentId).toBe('hero')
 
+    const routesPayload = await request(app).get('/api/ui-editor/routes').expect(200)
+    expect(Array.isArray(routesPayload.body.availableScreens)).toBe(true)
+    expect(Array.isArray(routesPayload.body.canvasScreens)).toBe(true)
+    expect(routesPayload.body.canvasMeta).toEqual(
+      expect.objectContaining({ version: expect.any(Number), updatedAt: expect.any(String) })
+    )
+    const canvasScreen = routesPayload.body.availableScreens.find((entry) => entry.id === created.body.screen.id)
+    expect(canvasScreen).toBeDefined()
+    expect(canvasScreen.source).toBe('canvas')
+    expect(canvasScreen.status).toBe('draft')
+    const canvasDetail = routesPayload.body.canvasScreens.find((entry) => entry.id === created.body.screen.id)
+    expect(canvasDetail).toBeDefined()
+    expect(canvasDetail.nodes).toHaveLength(1)
+
     const conflict = await request(app)
       .post('/api/ui-editor/canvas/screens')
       .set('If-Match', '0')

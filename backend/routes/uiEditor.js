@@ -25,8 +25,8 @@ const router = express.Router()
 
 router.get('/screens', async (_req, res) => {
   try {
-    const screens = await getAvailableScreens()
-    res.json({ screens })
+    const { screens, canvasScreens, canvasMeta } = await getAvailableScreens()
+    res.json({ screens, canvasScreens, canvasMeta })
   } catch (error) {
     console.error('[ui-editor] Failed to load screens:', error)
     res.status(500).json({ error: 'Unable to load available screens.' })
@@ -35,8 +35,8 @@ router.get('/screens', async (_req, res) => {
 
 router.get('/routes', async (_req, res) => {
   try {
-    const { routes, updatedAt, screens } = await getRoutesConfig()
-    res.json({ routes, updatedAt, availableScreens: screens })
+    const { routes, updatedAt, screens, canvasScreens, canvasMeta } = await getRoutesConfig()
+    res.json({ routes, updatedAt, availableScreens: screens, canvasScreens, canvasMeta })
   } catch (error) {
     console.error('[ui-editor] Failed to load route config:', error)
     res.status(500).json({ error: 'Unable to load route configuration.' })
@@ -50,8 +50,8 @@ router.put('/routes', async (req, res) => {
   }
 
   try {
-    const { routes, updatedAt, screens } = await saveRoutesConfig(submitted)
-    res.json({ routes, updatedAt, availableScreens: screens })
+    const { routes, updatedAt, screens, canvasScreens, canvasMeta } = await saveRoutesConfig(submitted)
+    res.json({ routes, updatedAt, availableScreens: screens, canvasScreens, canvasMeta })
   } catch (error) {
     console.error('[ui-editor] Failed to persist route config:', error)
     res.status(500).json({ error: 'Unable to persist route configuration.' })
