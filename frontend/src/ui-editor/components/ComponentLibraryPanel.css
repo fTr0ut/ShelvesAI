@@ -263,6 +263,24 @@
   font-weight: 600;
 }
 
+.component-library__row--draggable {
+  cursor: grab;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.component-library__row--draggable:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.6);
+  outline-offset: -2px;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.18);
+}
+
+.component-library__row--draggable.is-dragging {
+  cursor: grabbing;
+  background: rgba(15, 118, 110, 0.12);
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.18);
+  transform: translateY(-2px);
+}
+
 .component-library__code {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.95rem;

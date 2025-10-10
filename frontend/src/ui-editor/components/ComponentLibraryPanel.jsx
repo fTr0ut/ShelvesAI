@@ -124,6 +124,49 @@ function PrimitiveTile({ primitive, isSelected, onSelect }) {
   )
 }
 
+function CatalogueRow({ component }) {
+  const [{ isDragging }, dragRef] = useDrag(() => ({
+    type: DND_ITEM_TYPES.LIBRARY_ENTRY,
+    item: { entryType: LIBRARY_ENTRY_KINDS.COMPONENT, component },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  }))
+
+  const classes = [
+    'component-library__row',
+    'component-library__row--draggable',
+    isDragging ? 'is-dragging' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const ariaLabelParts = [component.method, component.path, capabilityLabels[component.capability] || component.capability]
+  const ariaLabel = `Drag ${ariaLabelParts.filter(Boolean).join(' ')} component`
+
+  return (
+    <div
+      ref={dragRef}
+      role="row"
+      className={classes}
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-grabbed={isDragging}
+    >
+      <div role="cell">
+        <span className={`component-library__badge component-library__badge--${component.capability}`}>
+          {component.method}
+        </span>
+      </div>
+      <div role="cell" className="component-library__code">
+        {component.path}
+      </div>
+      <div role="cell">{capabilityLabels[component.capability] || component.capability}</div>
+      <div role="cell">{component.summary || component.description || '—'}</div>
+    </div>
+  )
+}
+
 export default function ComponentLibraryPanel() {
   const library = useComponentLibrary()
   const binding = useComponentBinding(DEMO_TARGET)
@@ -298,18 +341,7 @@ export default function ComponentLibraryPanel() {
               <div role="columnheader">Summary</div>
             </div>
             {library.components.map((component) => (
-              <div className="component-library__row" role="row" key={component.id}>
-                <div role="cell">
-                  <span className={`component-library__badge component-library__badge--${component.capability}`}>
-                    {component.method}
-                  </span>
-                </div>
-                <div role="cell" className="component-library__code">
-                  {component.path}
-                </div>
-                <div role="cell">{capabilityLabels[component.capability] || component.capability}</div>
-                <div role="cell">{component.summary || component.description || '—'}</div>
-              </div>
+              <CatalogueRow key={component.id} component={component} />
             ))}
           </div>
         ) : (
