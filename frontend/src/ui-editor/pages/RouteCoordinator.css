@@ -305,6 +305,16 @@
   font-weight: 600;
 }
 
+.route-coordinator__tag--info {
+  background: rgba(45, 212, 191, 0.25);
+  color: #99f6e4;
+}
+
+.route-coordinator__tag--muted {
+  background: rgba(148, 163, 184, 0.2);
+  color: rgba(226, 232, 240, 0.85);
+}
+
 .route-coordinator__screen-card dl {
   margin: 0;
   display: grid;

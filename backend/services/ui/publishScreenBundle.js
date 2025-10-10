@@ -152,13 +152,15 @@ function loadPublishConfig() {
 }
 
 async function buildScreenBundle() {
-  const { routes, updatedAt, screens } = await getRoutesConfig()
+  const { routes, updatedAt, screens, canvasScreens, canvasMeta } = await getRoutesConfig()
   const generatedAt = new Date().toISOString()
   return {
     generatedAt,
     routesUpdatedAt: updatedAt || null,
     routes,
     screens,
+    canvasScreens: Array.isArray(canvasScreens) ? canvasScreens : [],
+    canvasMeta: canvasMeta || { version: 0, updatedAt: null },
   }
 }
 
@@ -204,6 +206,7 @@ async function publishScreenBundle(target) {
     routesUpdatedAt: bundle.routesUpdatedAt,
     routeCount: Array.isArray(bundle.routes) ? bundle.routes.length : 0,
     screenCount: Array.isArray(bundle.screens) ? bundle.screens.length : 0,
+    canvasScreenCount: Array.isArray(bundle.canvasScreens) ? bundle.canvasScreens.length : 0,
   }
   const payload = `${JSON.stringify(bundle, null, 2)}\n`
 

@@ -5,6 +5,8 @@ const repoRoot = path.join(__dirname, '..', '..', '..')
 const plasmicConfigPath = path.join(repoRoot, 'plasmic.json')
 const storePath = path.join(repoRoot, 'backend', 'cache', 'ui-routes.json')
 
+const { getScreens: getCanvasScreens } = require('./canvasStore')
+
 function coerceString(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -82,12 +84,17 @@ function normalizeRoutesList(inputRoutes = [], screens = []) {
 }
 
 async function getAvailableScreens() {
-  const config = await readJsonFile(plasmicConfigPath)
-  if (!config) return []
+  const [config, canvasSnapshot] = await Promise.all([
+    readJsonFile(plasmicConfigPath),
+    getCanvasScreens().catch((error) => {
+      console.warn('[ui.routesStore] Failed to load canvas screens:', error?.message || error)
+      return { screens: [], version: 0, updatedAt: null }
+    }),
+  ])
 
-  const projects = Array.isArray(config.projects) ? config.projects : []
+  const projects = Array.isArray(config?.projects) ? config.projects : []
 
-  const screens = []
+  const plasmicScreens = []
   for (const project of projects) {
     const projectId = project.projectId || project.id || null
     const projectName = project.projectName || project.name || null
@@ -96,17 +103,49 @@ async function getAvailableScreens() {
     for (const component of components) {
       if (component?.componentType !== 'page') continue
 
-      screens.push({
+      plasmicScreens.push({
         id: component.id,
         name: component.name,
         path: component.path || null,
         projectId,
         projectName,
+        status: 'published',
+        source: 'plasmic',
+        sourceLabel: projectName ? `Plasmic • ${projectName}` : 'Plasmic',
+        nodes: null,
       })
     }
   }
 
-  return screens
+  const rawCanvasScreens = Array.isArray(canvasSnapshot?.screens) ? canvasSnapshot.screens : []
+  const canvasScreens = rawCanvasScreens
+    .filter((screen) => screen && (screen.status === 'draft' || screen.status === 'published'))
+    .map((screen) => ({
+      id: screen.id,
+      name: screen.name,
+      path: screen.path || null,
+      projectId: null,
+      projectName: null,
+      status: screen.status,
+      source: 'canvas',
+      sourceLabel: screen.status === 'published' ? 'Canvas • Published' : 'Canvas • Draft',
+      device: screen.device || null,
+      previewImage: screen.previewImage || null,
+      description: screen.description || null,
+      nodes: Array.isArray(screen.nodes) ? screen.nodes : [],
+    }))
+
+  return {
+    screens: [...plasmicScreens, ...canvasScreens],
+    canvasScreens: rawCanvasScreens.map((screen) => ({
+      ...screen,
+      nodes: Array.isArray(screen.nodes) ? screen.nodes : [],
+    })),
+    canvasMeta: {
+      version: canvasSnapshot?.version ?? 0,
+      updatedAt: canvasSnapshot?.updatedAt || null,
+    },
+  }
 }
 
 async function loadStoredRoutes() {
@@ -121,7 +160,7 @@ async function loadStoredRoutes() {
 }
 
 async function getRoutesConfig() {
-  const screens = await getAvailableScreens()
+  const { screens, canvasScreens, canvasMeta } = await getAvailableScreens()
   const stored = await loadStoredRoutes()
   const normalizedRoutes = normalizeRoutesList(stored.routes, screens)
 
@@ -131,11 +170,13 @@ async function getRoutesConfig() {
     routes,
     updatedAt: stored.updatedAt || null,
     screens,
+    canvasScreens,
+    canvasMeta,
   }
 }
 
 async function saveRoutesConfig(inputRoutes = []) {
-  const screens = await getAvailableScreens()
+  const { screens, canvasScreens, canvasMeta } = await getAvailableScreens()
   const routes = normalizeRoutesList(inputRoutes, screens)
   const payload = {
     updatedAt: new Date().toISOString(),
@@ -149,6 +190,8 @@ async function saveRoutesConfig(inputRoutes = []) {
     routes,
     updatedAt: payload.updatedAt,
     screens,
+    canvasScreens,
+    canvasMeta,
   }
 }
 
