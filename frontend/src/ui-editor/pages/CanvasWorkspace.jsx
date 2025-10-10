@@ -491,7 +491,6 @@ export default function CanvasWorkspace() {
   const [isDeletingScreen, setIsDeletingScreen] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
-  const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
   const [canvasSaveState, setCanvasSaveState] = useState({
     status: 'idle',
