@@ -10,7 +10,6 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@plasmicapp/loader-react": "^1.0.399",
     "@react-native-async-storage/async-storage": "^1.22.0",
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.9.26",

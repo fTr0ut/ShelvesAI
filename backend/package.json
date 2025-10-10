@@ -23,7 +23,6 @@
         "dotenv": "^17.2.1",
         "express": "^5.1.0",
         "express-oauth2-jwt-bearer": "^1.7.1",
-        "http-proxy-middleware": "file:libs/http-proxy-middleware",
         "jsonwebtoken": "^9.0.2",
         "mongoose": "^8.17.1",
         "node-fetch": "^2.7.0",

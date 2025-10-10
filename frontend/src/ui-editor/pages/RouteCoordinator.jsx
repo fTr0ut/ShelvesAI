@@ -18,8 +18,8 @@ const formatScreenOptionLabel = (screen) => {
     }
   } else if (screen.projectName) {
     tokens.push(screen.projectName)
-  } else if (screen.source === 'plasmic') {
-    tokens.push('Plasmic')
+  } else if (screen.source === 'external') {
+    tokens.push('External')
   }
 
   const meta = tokens.length ? ` [${tokens.join(' • ')}]` : ''
@@ -195,7 +195,7 @@ export default function RouteCoordinator() {
         <div>
           <h1>Route &amp; Screen Coordinator</h1>
           <p>
-            Map Collector routes to Plasmic screens so editors and previewers share a consistent navigation plan. Use this tool
+            Map Collector routes to Canvas screens so editors and previewers share a consistent navigation plan. Use this tool
             to assign the correct screen for each path exposed in the app shell.
           </p>
         </div>
@@ -348,7 +348,7 @@ export default function RouteCoordinator() {
       <section className="route-coordinator__catalog">
         <h2>Available screens</h2>
         <p className="route-coordinator__catalog-description">
-          Screens sync automatically from <code>plasmic.json</code> and the Canvas workspace. Assign them to routes to expose the
+            Screens sync automatically from the Canvas workspace. Assign them to routes to expose the
           correct experiences in the Collector shell.
           {canvasScreens.length > 0 && (
             <>
@@ -360,7 +360,7 @@ export default function RouteCoordinator() {
         </p>
         <div className="route-coordinator__screen-grid">
           {screens.length === 0 ? (
-            <div className="route-coordinator__empty">No screens detected. Pull the latest Plasmic configuration to continue.</div>
+            <div className="route-coordinator__empty">No screens detected. Sync the Canvas workspace to continue.</div>
           ) : (
             screens.map((screen) => (
               <article className="route-coordinator__screen-card" key={screen.id}>

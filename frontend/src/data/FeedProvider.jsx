@@ -1,5 +1,4 @@
 /* eslint-disable react-refresh/only-export-components */
-import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
@@ -176,22 +175,7 @@ export function FeedProvider({
 
   return (
     <FeedContext.Provider value={value}>
-      <DataProvider name="feedEntries" data={entries}>
-        <DataProvider name="feedLoading" data={loading}>
-          <DataProvider name="feedError" data={error}>
-            <DataProvider name="feedScope" data={effectiveScope}>
-              <DataProvider
-                name="feedFilters"
-                data={{ type: effectiveType, ownerId: effectiveOwner, since: effectiveSince }}
-              >
-                <DataProvider name="feedPaging" data={{ ...pagingState, limit: effectiveLimit, skip: effectiveSkip }}>
-                  {typeof children === 'function' ? children(value) : children}
-                </DataProvider>
-              </DataProvider>
-            </DataProvider>
-          </DataProvider>
-        </DataProvider>
-      </DataProvider>
+      {typeof children === 'function' ? children(value) : children}
     </FeedContext.Provider>
   )
 }

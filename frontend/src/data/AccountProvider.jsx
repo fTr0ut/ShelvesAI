@@ -1,5 +1,4 @@
 /* eslint-disable react-refresh/only-export-components */
-import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
@@ -59,13 +58,7 @@ export function AccountProvider({ apiBase = '', token: tokenProp, children }) {
 
   return (
     <AccountContext.Provider value={value}>
-      <DataProvider name="account" data={account}>
-        <DataProvider name="accountLoading" data={loading}>
-          <DataProvider name="accountError" data={error}>
-            {typeof children === 'function' ? children(value) : children}
-          </DataProvider>
-        </DataProvider>
-      </DataProvider>
+      {typeof children === 'function' ? children(value) : children}
     </AccountContext.Provider>
   )
 }

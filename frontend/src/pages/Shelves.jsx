@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero, ShelfListItem } from '../components'
 import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
-import { ShelvesProvider, useShelves } from '../plasmic/data/ShelvesProvider'
+import { ShelvesProvider, useShelves } from '../data/ShelvesProvider'
 
 const VISIBILITY_LABELS = { private: 'Private', friends: 'Friends', public: 'Public' }
 const VISIBILITY_OPTIONS = ['private', 'friends', 'public']

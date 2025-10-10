@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Hero } from '../components'
 import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
-import { FeedProvider, useFeed } from '../plasmic/data/FeedProvider'
+import { FeedProvider, useFeed } from '../data/FeedProvider'
 
 const SCOPES = [
   { value: 'friends', label: 'Friends' },

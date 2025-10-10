@@ -21,8 +21,6 @@ Option A — Web Service (recommended)
   - `JWT_SECRET` = a long random string
   - `TMDB_API_KEY` = API key for The Movie Database cataloging
   - Optional `AUTH0_DOMAIN`, `AUTH0_AUDIENCE` if you use Auth0
-  - Optional `PLASMIC_HOST_ORIGIN` = origin of your running Plasmic host (e.g., your local Next.js dev server exposed via ngrok).
-    When set, `/plasmic-host` requests are proxied to this origin so Plasmic Studio can reach a live host over the tunnel.
   - Optional `FRONTEND_DIST` if serving a built frontend (see Option B)
 - Instance type: free tier
 

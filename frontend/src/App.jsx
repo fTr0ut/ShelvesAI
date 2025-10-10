@@ -6,7 +6,6 @@ import { AppLayout, Button, Card, Grid, Hero } from './components'
 import Shelves from './pages/Shelves.jsx'
 import ShelfDetail from './pages/ShelfDetail.jsx'
 import LegacyFeed from './pages/Feed.jsx'
-import PlasmicRuntime from './pages/PlasmicRuntime.jsx'
 import { LEGACY_BASE_PATH, legacyPath } from './legacy/constants.js'
 import CollectableDetail from './pages/CollectableDetail.jsx'
 import Account from './pages/Account.jsx'
@@ -271,8 +270,7 @@ function Protected({ apiBase = '' }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/plasmic-host/*" element={<PlasmicHostRedirect />} />
-      <Route path="/plasmic/*" element={<PlasmicRuntime routePrefix="/plasmic" />} />
+      <Route path="/" element={<Navigate to={LEGACY_BASE_PATH} replace />} />
       <Route path={`${LEGACY_BASE_PATH}/*`} element={<LegacyLayout />}>
         <Route index element={<Home />} />
         <Route path="feed" element={<LegacyFeed />} />
@@ -284,7 +282,7 @@ export default function App() {
         <Route path="*" element={<Navigate to={LEGACY_BASE_PATH} replace />} />
       </Route>
       <Route path={`${UI_EDITOR_BASE_PATH}/*`} element={<UIEditorApp />} />
-      <Route path="*" element={<PlasmicRuntime />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   )
 }
@@ -310,15 +308,20 @@ function LegacyLayout() {
   )
 }
 
-function PlasmicHostRedirect() {
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const { pathname, search, hash } = window.location
-      window.location.replace(`${pathname}${search}${hash}`)
-    }
-  }, [])
-
-  return null
+function NotFound() {
+  return (
+    <AppLayout>
+      <Hero title="Page not found" description="We couldn't find the requested page." />
+      <div className="row" style={{ gap: 12 }}>
+        <Button as={Link} to={legacyPath()}>
+          Go to Home
+        </Button>
+        <Button as={Link} to={UI_EDITOR_BASE_PATH} variant="ghost">
+          Open UI Editor
+        </Button>
+      </div>
+    </AppLayout>
+  )
 }
 
 

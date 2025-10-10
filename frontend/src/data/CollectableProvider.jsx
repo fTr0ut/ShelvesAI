@@ -1,5 +1,4 @@
 /* eslint-disable react-refresh/only-export-components */
-import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
@@ -43,13 +42,7 @@ export function CollectableProvider({ collectableId, apiBase = '', token: tokenP
 
   return (
     <CollectableContext.Provider value={value}>
-      <DataProvider name="collectable" data={collectable}>
-        <DataProvider name="collectableLoading" data={loading}>
-          <DataProvider name="collectableError" data={error}>
-            {typeof children === 'function' ? children(value) : children}
-          </DataProvider>
-        </DataProvider>
-      </DataProvider>
+      {typeof children === 'function' ? children(value) : children}
     </CollectableContext.Provider>
   )
 }

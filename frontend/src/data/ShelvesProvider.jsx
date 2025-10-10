@@ -1,5 +1,4 @@
 /* eslint-disable react-refresh/only-export-components */
-import { DataProvider } from '@plasmicapp/loader-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiFetch, getBrowserToken, resolveApiBase } from './api'
 
@@ -95,15 +94,7 @@ export function ShelvesProvider({
 
   return (
     <ShelvesContext.Provider value={value}>
-      <DataProvider name="shelves" data={shelves}>
-        <DataProvider name="shelvesPagination" data={pagination}>
-          <DataProvider name="shelvesLoading" data={loading}>
-            <DataProvider name="shelvesError" data={error}>
-              {typeof children === 'function' ? children(value) : children}
-            </DataProvider>
-          </DataProvider>
-        </DataProvider>
-      </DataProvider>
+      {typeof children === 'function' ? children(value) : children}
     </ShelvesContext.Provider>
   )
 }

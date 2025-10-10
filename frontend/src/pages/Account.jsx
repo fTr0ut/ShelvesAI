@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero } from '../components'
 import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
-import { AccountProvider, useAccount } from '../plasmic/data/AccountProvider'
+import { AccountProvider, useAccount } from '../data/AccountProvider'
 
 function AccountContent() {
   const { account, loading, error, updateAccount } = useAccount()

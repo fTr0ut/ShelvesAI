@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AppLayout, Button, Card, Hero } from '../components'
 import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
-import { CollectableProvider, useCollectable } from '../plasmic/data/CollectableProvider'
+import { CollectableProvider, useCollectable } from '../data/CollectableProvider'
 
 function CollectableContent() {
   const { collectable, loading, error } = useCollectable()

@@ -6,7 +6,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as WebBrowser from 'expo-web-browser'
 import Constants from 'expo-constants'
 import LoginScreen from './screens/LoginScreen'
-import PlasmicHomeScreen from './screens/PlasmicHomeScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
 import FeedDetailScreen from './screens/FeedDetailScreen'
 import ShelvesScreen from './screens/ShelvesScreen'
@@ -18,8 +17,6 @@ import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
-import { getPlasmicDefaults } from './plasmic/plasmic-init'
-
 WebBrowser.maybeCompleteAuthSession()
 
 export const AuthContext = createContext({
@@ -29,16 +26,11 @@ export const AuthContext = createContext({
   auth0: null,
   needsOnboarding: false,
   setNeedsOnboarding: () => {},
-  plasmicOptIn: false,
-  setPlasmicOptIn: () => {},
-  plasmicConfig: { component: 'CollectorMobileAppLayout', pagePath: '', host: '', webViewUrl: '' },
 })
 
 const Stack = createNativeStackNavigator()
 
 const TOKEN_STORAGE_KEY = 'token'
-const PLASMIC_OPT_IN_KEY = 'plasmic_opt_in'
-
 function getExtraConfig() {
   const fromExpoConfig = Constants?.expoConfig?.extra
   if (fromExpoConfig) return fromExpoConfig
@@ -65,10 +57,8 @@ export default function App() {
   const [token, setToken] = useState('')
   const [ready, setReady] = useState(false)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
-  const [plasmicOptIn, setPlasmicOptInState] = useState(false)
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
-  const plasmicConfig = useMemo(() => getPlasmicDefaults(), [])
   const scheme = useMemo(() => extra?.auth0?.scheme || Constants?.expoConfig?.scheme || 'shelvesai', [extra])
   const auth0 = useMemo(() => {
     const conf = extra?.auth0 || {}
@@ -90,15 +80,9 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [storedToken, storedOptIn] = await Promise.all([
-          AsyncStorage.getItem(TOKEN_STORAGE_KEY),
-          AsyncStorage.getItem(PLASMIC_OPT_IN_KEY),
-        ])
+        const storedToken = await AsyncStorage.getItem(TOKEN_STORAGE_KEY)
         if (storedToken) {
           setToken(storedToken)
-        }
-        if (storedOptIn !== null) {
-          setPlasmicOptInState(storedOptIn === 'true')
         }
       } finally {
         setReady(true)
@@ -138,13 +122,6 @@ export default function App() {
     }
   }, [apiBase, token])
 
-  const setPlasmicOptIn = useCallback((value) => {
-    setPlasmicOptInState(value)
-    AsyncStorage.setItem(PLASMIC_OPT_IN_KEY, value ? 'true' : 'false').catch((err) => {
-      console.warn('Failed to persist Plasmic opt-in flag', err)
-    })
-  }, [])
-
   const authValue = useMemo(() => ({
     token,
     setToken,
@@ -152,10 +129,7 @@ export default function App() {
     auth0,
     needsOnboarding,
     setNeedsOnboarding,
-    plasmicOptIn,
-    setPlasmicOptIn,
-    plasmicConfig,
-  }), [token, apiBase, auth0, needsOnboarding, plasmicOptIn, setPlasmicOptIn, plasmicConfig])
+  }), [token, apiBase, auth0, needsOnboarding])
 
   if (!ready) return null
 
@@ -174,14 +148,7 @@ export default function App() {
             </>
           ) : (
             <>
-              {plasmicOptIn ? (
-                <>
-                  <Stack.Screen name="PlasmicApp" component={PlasmicHomeScreen} options={{ headerShown: false }} />
-                  <Stack.Screen name="Feed" component={SocialFeedScreen} options={{ title: 'Feed' }} />
-                </>
-              ) : (
-                <Stack.Screen name="Feed" component={SocialFeedScreen} options={{ title: 'Feed' }} />
-              )}
+              <Stack.Screen name="Feed" component={SocialFeedScreen} options={{ title: 'Feed' }} />
               <Stack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Feed Details' })} />
               <Stack.Screen name="FriendSearch" component={FriendSearchScreen} options={{ title: 'Find Friends' }} />
               <Stack.Screen name="Shelves" component={ShelvesScreen} options={{ title: 'Shelves' }} />

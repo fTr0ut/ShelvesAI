@@ -15,13 +15,9 @@ const allowOrigin = (origin?: string | undefined) => {
     // Allow local dev (any port)
     if (host === "localhost" || host === "127.0.0.1") return true;
 
-    // Allow your ngrok / vercel preview / plasmic host domains
+    // Allow your ngrok / vercel preview domains
     if (host.endsWith(".ngrok-free.dev")) return true;
     if (host.endsWith(".vercel.app")) return true;
-
-    // (Optional) if you ever render directly from Plasmic hosting or Studio previews:
-    if (host.endsWith("plasmic.app")) return true;       // studio.plasmic.app
-    if (host.endsWith("plasmic.run")) return true;       // Plasmic-hosted previews
 
     return false;
   } catch {

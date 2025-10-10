@@ -53,10 +53,6 @@
         "description": "Steam account linking and bulk import flows."
       },
       {
-        "name": "Plasmic",
-        "description": "Plasmic host configuration helpers."
-      },
-      {
         "name": "Misc",
         "description": "Miscellaneous helper endpoints."
       }
@@ -1909,45 +1905,6 @@
             "dryRun"
           ]
         },
-        "PlasmicProject": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "token": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "token"
-          ]
-        },
-        "PlasmicLoaderResponse": {
-          "type": "object",
-          "properties": {
-            "projects": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/PlasmicProject"
-              }
-            },
-            "hostUrl": {
-              "type": "string",
-              "format": "uri",
-              "nullable": true
-            },
-            "apiBaseUrl": {
-              "type": "string",
-              "format": "uri",
-              "nullable": true
-            }
-          },
-          "required": [
-            "projects"
-          ]
-        },
         "DebugResponse": {
           "type": "object",
           "properties": {
@@ -3779,37 +3736,6 @@
             },
             "400": {
               "description": "Missing or invalid client_return_to parameter",
-              "content": {
-                "application/json": {
-                  "schema": {
-                    "$ref": "#/components/schemas/ErrorResponse"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "/plasmic-loader.json": {
-        "get": {
-          "tags": [
-            "Plasmic"
-          ],
-          "summary": "Provide Plasmic project metadata for the host",
-          "security": [],
-          "responses": {
-            "200": {
-              "description": "Plasmic loader configuration",
-              "content": {
-                "application/json": {
-                  "schema": {
-                    "$ref": "#/components/schemas/PlasmicLoaderResponse"
-                  }
-                }
-              }
-            },
-            "500": {
-              "description": "No Plasmic projects configured",
               "content": {
                 "application/json": {
                   "schema": {
