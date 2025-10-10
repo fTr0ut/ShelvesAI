@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AppLayout, Button, Card, Grid, Hero } from '../components'
 import { LEGACY_BASE_PATH, legacyPath } from '../legacy/constants.js'
-import { ShelfDetailProvider, useShelfDetail } from '../plasmic/data/ShelfDetailProvider'
+import { ShelfDetailProvider, useShelfDetail } from '../data/ShelfDetailProvider'
 
 const VISIBILITY_OPTIONS = [
   { value: 'private', label: 'Private (only me)' },

@@ -2,7 +2,6 @@ const fs = require('fs/promises')
 const path = require('path')
 
 const repoRoot = path.join(__dirname, '..', '..', '..')
-const plasmicConfigPath = path.join(repoRoot, 'plasmic.json')
 const storePath = path.join(repoRoot, 'backend', 'cache', 'ui-routes.json')
 
 const { getScreens: getCanvasScreens } = require('./canvasStore')
@@ -84,38 +83,10 @@ function normalizeRoutesList(inputRoutes = [], screens = []) {
 }
 
 async function getAvailableScreens() {
-  const [config, canvasSnapshot] = await Promise.all([
-    readJsonFile(plasmicConfigPath),
-    getCanvasScreens().catch((error) => {
-      console.warn('[ui.routesStore] Failed to load canvas screens:', error?.message || error)
-      return { screens: [], version: 0, updatedAt: null }
-    }),
-  ])
-
-  const projects = Array.isArray(config?.projects) ? config.projects : []
-
-  const plasmicScreens = []
-  for (const project of projects) {
-    const projectId = project.projectId || project.id || null
-    const projectName = project.projectName || project.name || null
-    const components = Array.isArray(project.components) ? project.components : []
-
-    for (const component of components) {
-      if (component?.componentType !== 'page') continue
-
-      plasmicScreens.push({
-        id: component.id,
-        name: component.name,
-        path: component.path || null,
-        projectId,
-        projectName,
-        status: 'published',
-        source: 'plasmic',
-        sourceLabel: projectName ? `Plasmic • ${projectName}` : 'Plasmic',
-        nodes: null,
-      })
-    }
-  }
+  const canvasSnapshot = await getCanvasScreens().catch((error) => {
+    console.warn('[ui.routesStore] Failed to load canvas screens:', error?.message || error)
+    return { screens: [], version: 0, updatedAt: null }
+  })
 
   const rawCanvasScreens = Array.isArray(canvasSnapshot?.screens) ? canvasSnapshot.screens : []
   const canvasScreens = rawCanvasScreens
@@ -136,7 +107,7 @@ async function getAvailableScreens() {
     }))
 
   return {
-    screens: [...plasmicScreens, ...canvasScreens],
+    screens: [...canvasScreens],
     canvasScreens: rawCanvasScreens.map((screen) => ({
       ...screen,
       nodes: Array.isArray(screen.nodes) ? screen.nodes : [],

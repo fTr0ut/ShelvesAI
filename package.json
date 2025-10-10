@@ -11,10 +11,6 @@
     "start": "cd backend && cross-env NODE_ENV=production node server.js"
   },
   "dependencies": {
-    "@plasmicapp/loader-react": "^1.0.399",
-    "@plasmicapp/react-web": "^0.2.404",
-    "@plasmicpkgs/antd5": "^0.0.306",
-    "@plasmicpkgs/react-aria": "^0.0.153",
     "axios": "^1.11.0",
     "concurrently": "^9.0.0",
     "expo": "^54.0.8",
@@ -25,7 +21,6 @@
     "supertest": "^7.1.4"
   },
   "devDependencies": {
-    "@plasmicapp/cli": "^0.1.345",
     "cross-env": "^10.0.0"
   }
 }

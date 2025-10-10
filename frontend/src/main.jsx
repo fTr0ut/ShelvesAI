@@ -3,12 +3,7 @@ import { StrictMode } from 'react'
 import { BrowserRouter } from 'react-router-dom'
 import { Auth0Provider } from '@auth0/auth0-react'
 import { createRoot } from 'react-dom/client'
-import { PlasmicRootProvider } from '@plasmicapp/react-web'
-import GlobalContextsProvider from './plasmic-codegen/antd_5_hostless/PlasmicGlobalContextsProvider'
-import { PLASMIC } from './plasmic-init'
 import './index.css'
-import '@plasmicapp/react-web/lib/plasmic.css'
-import './components/plasmic/plasmicStyles.module.css'
 import App from './App.jsx'
 
 const domain = import.meta.env.VITE_AUTH0_DOMAIN
@@ -21,38 +16,32 @@ if (!domain || !clientId) {
 
 console.log('main.jsx running')
 
-const routedApp = (
+const app = (
   <BrowserRouter>
     <App />
   </BrowserRouter>
 )
 
-const plasmicApp = (
-  <PlasmicRootProvider loader={PLASMIC}>
-    <GlobalContextsProvider>
-      {routedApp}
-    </GlobalContextsProvider>
-  </PlasmicRootProvider>
+const maybeWrappedApp = domain && clientId ? (
+  <Auth0Provider
+    domain={domain}
+    clientId={clientId}
+    authorizationParams={{
+      redirect_uri: window.location.origin,
+      audience,
+      scope: 'openid profile email',
+    }}
+    cacheLocation="localstorage"
+    useRefreshTokens
+  >
+    {app}
+  </Auth0Provider>
+) : (
+  app
 )
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {domain && clientId ? (
-      <Auth0Provider
-        domain={domain}
-        clientId={clientId}
-        authorizationParams={{
-          redirect_uri: window.location.origin,
-          audience,
-          scope: 'openid profile email',
-        }}
-        cacheLocation="localstorage"
-        useRefreshTokens
-      >
-        {plasmicApp}
-      </Auth0Provider>
-    ) : (
-      plasmicApp
-    )}
+    {maybeWrappedApp}
   </StrictMode>,
 )
