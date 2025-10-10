@@ -489,6 +489,7 @@ export default function CanvasWorkspace() {
   const [isDeletingScreen, setIsDeletingScreen] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
+  const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
   const activeComponent = useMemo(() => {
     if (!canvasState.selectionId) {
@@ -520,13 +521,9 @@ export default function CanvasWorkspace() {
     setCanvasState(createCanvasStateFromNodes(activeScreen.nodes || []))
   }, [activeScreen])
 
-  // const activeComponent = useMemo(() => {
-  //   if (!canvasState.selectionId) {
-  //     return null
-  //   }
-  //   return canvasState.nodes[canvasState.selectionId] || null
-  // }, [canvasState])
-
+  const activeComponent = canvasState.selectionId
+    ? canvasState.nodes[canvasState.selectionId] || null
+    : null
   const activeComponentLabel = activeComponent
     ? getCanvasNodeDisplayName(activeComponent)
     : 'No component selected'
