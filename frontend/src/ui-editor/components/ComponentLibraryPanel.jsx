@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useDrag } from '../lib/simpleDnd'
 import {
   assignComponentBinding,
   clearComponentBinding,
@@ -10,6 +11,7 @@ import {
 } from '../lib/componentLoader'
 import { useComponentBinding } from '../lib/useComponentBinding'
 import { useComponentLibrary } from '../lib/useComponentLibrary'
+import { DND_ITEM_TYPES, LIBRARY_ENTRY_KINDS } from '../lib/dnd'
 import './ComponentLibraryPanel.css'
 
 const DEMO_TARGET = Object.freeze({ surfaceId: 'button', slotId: 'action', nodeId: 'demo-button' })
@@ -88,6 +90,40 @@ const primitiveComponents = [
   },
 ]
 
+function PrimitiveTile({ primitive, isSelected, onSelect }) {
+  const [{ isDragging }, dragRef] = useDrag(() => ({
+    type: DND_ITEM_TYPES.LIBRARY_ENTRY,
+    item: { entryType: LIBRARY_ENTRY_KINDS.PRIMITIVE, primitive },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  }))
+
+  const classes = [
+    'component-library__primitive-tile',
+    isSelected ? 'is-selected' : '',
+    isDragging ? 'is-dragging' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <button
+      ref={dragRef}
+      type="button"
+      className={classes}
+      onClick={onSelect}
+      aria-pressed={isSelected}
+    >
+      <span className="component-library__primitive-icon" aria-hidden="true">
+        {primitive.icon}
+      </span>
+      <span className="component-library__primitive-label">{primitive.label}</span>
+      <span className="component-library__primitive-description">{primitive.description}</span>
+    </button>
+  )
+}
+
 export default function ComponentLibraryPanel() {
   const library = useComponentLibrary()
   const binding = useComponentBinding(DEMO_TARGET)
@@ -163,18 +199,11 @@ export default function ComponentLibraryPanel() {
             const isSelected = primitive.id === selectedPrimitiveId
             return (
               <div key={primitive.id} role="listitem" className="component-library__primitive-grid-item">
-                <button
-                  type="button"
-                  className={`component-library__primitive-tile ${isSelected ? 'is-selected' : ''}`}
-                  onClick={() => setSelectedPrimitiveId(primitive.id)}
-                  aria-pressed={isSelected}
-                >
-                  <span className="component-library__primitive-icon" aria-hidden="true">
-                    {primitive.icon}
-                  </span>
-                  <span className="component-library__primitive-label">{primitive.label}</span>
-                  <span className="component-library__primitive-description">{primitive.description}</span>
-                </button>
+                <PrimitiveTile
+                  primitive={primitive}
+                  isSelected={isSelected}
+                  onSelect={() => setSelectedPrimitiveId(primitive.id)}
+                />
               </div>
             )
           })}

@@ -82,6 +82,12 @@
   box-shadow: 0 12px 30px rgba(15, 118, 110, 0.18);
 }
 
+.component-library__primitive-tile.is-dragging {
+  opacity: 0.75;
+  transform: translateY(-4px);
+  box-shadow: 0 16px 32px rgba(15, 118, 110, 0.28);
+}
+
 .component-library__primitive-icon {
   font-size: 1.75rem;
   line-height: 1;
