@@ -290,6 +290,7 @@ export default function CanvasWorkspace() {
   })
   const workspaceRef = useRef(null)
   const canvasAutosaveRef = useRef(null)
+  const canvasSaveInFlightRef = useRef(false)
   const pendingCanvasNodesRef = useRef(null)
   const lastCommittedSnapshotRef = useRef('')
   const screensStateRef = useRef(screensState)
@@ -841,6 +842,11 @@ export default function CanvasWorkspace() {
         return
       }
 
+      if (canvasSaveInFlightRef.current) {
+        pendingCanvasNodesRef.current = { nodes: nodesPayload, snapshot: snapshotString }
+        return
+      }
+
       if (currentScreensState.version === null || currentScreensState.version === undefined) {
         setCanvasSaveState((previous) => ({
           status: 'dirty',
@@ -859,6 +865,11 @@ export default function CanvasWorkspace() {
           }, 300)
         }
         return
+      }
+
+      canvasSaveInFlightRef.current = true
+      if (pendingCanvasNodesRef.current?.snapshot === snapshotString) {
+        pendingCanvasNodesRef.current = null
       }
 
       setCanvasSaveState({
@@ -895,7 +906,6 @@ export default function CanvasWorkspace() {
 
         const savedSnapshot = JSON.stringify(response?.screen?.nodes ?? nodesPayload)
         lastCommittedSnapshotRef.current = savedSnapshot
-        pendingCanvasNodesRef.current = null
 
         if (response?.screen?.id === currentScreenId) {
           setCanvasState((previous) => {
@@ -908,7 +918,6 @@ export default function CanvasWorkspace() {
           })
         }
       } catch (error) {
-        pendingCanvasNodesRef.current = null
         if (error?.status === 409) {
           setCanvasSaveState({
             status: 'error',
@@ -924,6 +933,24 @@ export default function CanvasWorkspace() {
             version: previous.version ?? currentScreensState.version ?? null,
             error: error?.message || 'Unable to save canvas.',
           }))
+        }
+      } finally {
+        canvasSaveInFlightRef.current = false
+        const pending = pendingCanvasNodesRef.current
+        if (pending && pending.snapshot !== lastCommittedSnapshotRef.current) {
+          if (canvasAutosaveRef.current) {
+            clearTimeout(canvasAutosaveRef.current)
+          }
+          canvasAutosaveRef.current = setTimeout(() => {
+            canvasAutosaveRef.current = null
+            if (!pendingCanvasNodesRef.current) {
+              return
+            }
+            persistCanvasNodes(
+              pendingCanvasNodesRef.current.nodes,
+              pendingCanvasNodesRef.current.snapshot,
+            )
+          }, 200)
         }
       }
     },
@@ -967,6 +994,10 @@ export default function CanvasWorkspace() {
           error: '',
         }
       })
+
+      if (canvasSaveInFlightRef.current) {
+        return
+      }
 
       if (canvasAutosaveRef.current) {
         clearTimeout(canvasAutosaveRef.current)
