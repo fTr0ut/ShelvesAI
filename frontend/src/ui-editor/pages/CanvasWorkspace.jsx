@@ -8,6 +8,7 @@ import {
   fetchCanvasScreens,
   fetchCanvasSettings,
   updateCanvasSettings,
+  updateCanvasScreenNodes,
 } from '../api/canvas'
 import {
   createCanvasStateFromNodes,
@@ -15,6 +16,7 @@ import {
   getCanvasNodeChildren,
   getCanvasNodeDisplayName,
   getCanvasNodeMeta,
+  serialiseCanvasStateToNodes,
   selectCanvasNode,
   updateCanvasNode,
 } from '../lib/canvasState'
@@ -267,32 +269,14 @@ export default function CanvasWorkspace() {
   const [isDeletingScreen, setIsDeletingScreen] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
-  const [activeComponent, setActiveComponent] = useState({
-    id: 'hero-heading',
-    label: 'Hero heading',
-    type: 'text',
-    styles: {
-      fontFamily: 'Bungee',
-      fontSize: '44px',
-      fontWeight: '600',
-      lineHeight: '1.25',
-      letterSpacing: '0',
-      textAlign: 'left',
-      color: '#ffffff',
-      backgroundColor: '#1f2937',
-      opacity: 1,
-      width: 'auto',
-      height: 'auto',
-      display: 'block',
-      margin: '0 0 24px',
-      padding: '0',
-      borderRadius: '12px',
-      border: 'none',
-      boxShadow: 'none',
-    },
-  })
   const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
+  const [canvasSaveState, setCanvasSaveState] = useState({
+    status: 'idle',
+    updatedAt: null,
+    version: null,
+    error: '',
+  })
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
@@ -302,27 +286,67 @@ export default function CanvasWorkspace() {
   const [navigatorSearch, setNavigatorSearch] = useState('')
   const [openNavigatorSections, setOpenNavigatorSections] = useState({
     currentScreens: true,
-    pages: true,
-    components: true,
-    arenas: true,
+    liveLayout: true,
   })
   const workspaceRef = useRef(null)
+  const canvasAutosaveRef = useRef(null)
+  const pendingCanvasNodesRef = useRef(null)
+  const lastCommittedSnapshotRef = useRef('')
+  const screensStateRef = useRef(screensState)
+  const selectedScreenIdRef = useRef(selectedScreenId)
   const publishTargetInputId = 'ui-editor-publish-target'
   const isPublishing = publishState.status === 'pending'
   useEffect(() => {
+    screensStateRef.current = screensState
+  }, [screensState])
+  useEffect(() => {
+    selectedScreenIdRef.current = selectedScreenId
+  }, [selectedScreenId])
+  useEffect(() => {
+    if (canvasAutosaveRef.current) {
+      clearTimeout(canvasAutosaveRef.current)
+      canvasAutosaveRef.current = null
+    }
+    pendingCanvasNodesRef.current = null
+
     if (!activeScreen) {
-      setCanvasState(createEmptyCanvasState())
+      setCanvasState(() => createEmptyCanvasState())
+      lastCommittedSnapshotRef.current = JSON.stringify([])
+      setCanvasSaveState((previous) => ({
+        ...previous,
+        status: 'idle',
+        error: '',
+        updatedAt: null,
+        version: screensState.version,
+      }))
       return
     }
-    setCanvasState(createCanvasStateFromNodes(activeScreen.nodes || []))
-  }, [activeScreen])
 
-  // const activeComponent = useMemo(() => {
-  //   if (!canvasState.selectionId) {
-  //     return null
-  //   }
-  //   return canvasState.nodes[canvasState.selectionId] || null
-  // }, [canvasState])
+    setCanvasState((previous) => {
+      const nextState = createCanvasStateFromNodes(activeScreen.nodes || [])
+      const previousSelection = previous?.selectionId || null
+      if (previousSelection && nextState.nodes[previousSelection]) {
+        nextState.selectionId = previousSelection
+      }
+      return nextState
+    })
+
+    lastCommittedSnapshotRef.current = JSON.stringify(activeScreen.nodes || [])
+    setCanvasSaveState((previous) => ({
+      ...previous,
+      status: 'idle',
+      error: '',
+      updatedAt: activeScreen.updatedAt || screensState.updatedAt || null,
+      version: screensState.version,
+    }))
+  }, [activeScreen, screensState.version, screensState.updatedAt])
+
+  const activeComponent = useMemo(() => {
+    if (!canvasState.selectionId) {
+      return null
+    }
+    return canvasState.nodes[canvasState.selectionId] || null
+  }, [canvasState])
 
   const activeComponentLabel = activeComponent
     ? getCanvasNodeDisplayName(activeComponent)
@@ -345,6 +369,25 @@ export default function CanvasWorkspace() {
     })
     return nextStyle
   }, [activeComponent])
+
+  const canvasStatusMessage = useMemo(() => {
+    if (canvasSaveState.error) {
+      return { variant: 'error', text: canvasSaveState.error, live: true }
+    }
+    if (canvasSaveState.status === 'saving') {
+      return { variant: 'note', text: 'Saving canvas changes…', live: true }
+    }
+    if (canvasSaveState.status === 'dirty') {
+      return { variant: 'note', text: 'Unsaved changes', live: false }
+    }
+    if (canvasSaveState.status === 'saved') {
+      const formatted = canvasSaveState.updatedAt
+        ? formatPublishTimestamp(canvasSaveState.updatedAt)
+        : 'just now'
+      return { variant: 'note', text: `Saved ${formatted}`, live: false }
+    }
+    return null
+  }, [canvasSaveState])
 
   const stageArtboardStyle = useMemo(() => {
     const layoutWidth = pageStyles.layout === 'fluid' ? '100%' : pageStyles.maxWidth || '1200px'
@@ -777,12 +820,184 @@ export default function CanvasWorkspace() {
     }, 400)
   }
 
-  const handleComponentChange = useCallback((nextComponent) => {
-    if (!nextComponent?.id) {
-      return
-    }
-    setCanvasState((previous) => updateCanvasNode(previous, nextComponent))
-  }, [])
+  const persistCanvasNodes = useCallback(
+    async (nodesPayload, snapshotString) => {
+      const currentScreenId = selectedScreenIdRef.current
+      const currentScreensState = screensStateRef.current
+
+      if (!currentScreenId) {
+        pendingCanvasNodesRef.current = null
+        setCanvasSaveState((previous) => ({
+          status: 'error',
+          updatedAt: previous.updatedAt,
+          version: previous.version,
+          error: 'Select a screen to save its canvas.',
+        }))
+        return
+      }
+
+      if (!Array.isArray(nodesPayload)) {
+        pendingCanvasNodesRef.current = null
+        return
+      }
+
+      if (currentScreensState.version === null || currentScreensState.version === undefined) {
+        setCanvasSaveState((previous) => ({
+          status: 'dirty',
+          updatedAt: previous.updatedAt,
+          version: previous.version,
+          error: '',
+        }))
+        pendingCanvasNodesRef.current = { nodes: nodesPayload, snapshot: snapshotString }
+        if (!canvasAutosaveRef.current) {
+          canvasAutosaveRef.current = setTimeout(() => {
+            canvasAutosaveRef.current = null
+            const payload = pendingCanvasNodesRef.current
+            if (payload) {
+              persistCanvasNodes(payload.nodes, payload.snapshot)
+            }
+          }, 300)
+        }
+        return
+      }
+
+      setCanvasSaveState({
+        status: 'saving',
+        updatedAt: currentScreensState.updatedAt ?? null,
+        version: currentScreensState.version,
+        error: '',
+      })
+
+      try {
+        const response = await updateCanvasScreenNodes(
+          currentScreenId,
+          nodesPayload,
+          currentScreensState.version,
+        )
+        const nextVersion =
+          typeof response?.version === 'number' ? response.version : currentScreensState.version
+        const nextUpdatedAt = response?.updatedAt ?? new Date().toISOString()
+
+        setScreensState((previous) => ({
+          items: Array.isArray(response?.screens) ? response.screens : previous.items,
+          version: nextVersion,
+          updatedAt: nextUpdatedAt,
+          isLoading: false,
+          error: '',
+        }))
+
+        setCanvasSaveState({
+          status: 'saved',
+          updatedAt: nextUpdatedAt,
+          version: nextVersion,
+          error: '',
+        })
+
+        const savedSnapshot = JSON.stringify(response?.screen?.nodes ?? nodesPayload)
+        lastCommittedSnapshotRef.current = savedSnapshot
+        pendingCanvasNodesRef.current = null
+
+        if (response?.screen?.id === currentScreenId) {
+          setCanvasState((previous) => {
+            const nextState = createCanvasStateFromNodes(response.screen.nodes || [])
+            const previousSelection = previous?.selectionId || null
+            if (previousSelection && nextState.nodes[previousSelection]) {
+              nextState.selectionId = previousSelection
+            }
+            return nextState
+          })
+        }
+      } catch (error) {
+        pendingCanvasNodesRef.current = null
+        if (error?.status === 409) {
+          setCanvasSaveState({
+            status: 'error',
+            updatedAt: null,
+            version: currentScreensState.version,
+            error: 'Canvas changed in another session. Reloading latest layout…',
+          })
+          await loadScreens()
+        } else {
+          setCanvasSaveState((previous) => ({
+            status: 'error',
+            updatedAt: previous.updatedAt,
+            version: previous.version ?? currentScreensState.version ?? null,
+            error: error?.message || 'Unable to save canvas.',
+          }))
+        }
+      }
+    },
+    [loadScreens],
+  )
+
+  const scheduleCanvasAutosave = useCallback(
+    (nextState) => {
+      if (!nextState) {
+        return
+      }
+
+      const currentScreenId = selectedScreenIdRef.current
+      if (!currentScreenId) {
+        setCanvasSaveState((previous) => ({
+          status: 'error',
+          updatedAt: previous.updatedAt,
+          version: previous.version,
+          error: 'Select a screen to edit the canvas.',
+        }))
+        return
+      }
+
+      const serialisedNodes = serialiseCanvasStateToNodes(nextState)
+      const snapshotString = JSON.stringify(serialisedNodes)
+
+      if (snapshotString === lastCommittedSnapshotRef.current) {
+        return
+      }
+
+      pendingCanvasNodesRef.current = { nodes: serialisedNodes, snapshot: snapshotString }
+
+      setCanvasSaveState((previous) => {
+        if (previous.status === 'saving') {
+          return previous
+        }
+        return {
+          status: 'dirty',
+          updatedAt: previous.updatedAt,
+          version: previous.version,
+          error: '',
+        }
+      })
+
+      if (canvasAutosaveRef.current) {
+        clearTimeout(canvasAutosaveRef.current)
+      }
+      canvasAutosaveRef.current = setTimeout(() => {
+        canvasAutosaveRef.current = null
+        const payload = pendingCanvasNodesRef.current
+        if (!payload) {
+          return
+        }
+        persistCanvasNodes(payload.nodes, payload.snapshot)
+      }, 600)
+    },
+    [persistCanvasNodes],
+  )
+
+  const handleComponentChange = useCallback(
+    (nextComponent) => {
+      if (!nextComponent?.id) {
+        return
+      }
+      setCanvasState((previous) => {
+        const nextState = updateCanvasNode(previous, nextComponent)
+        if (nextState !== previous) {
+          scheduleCanvasAutosave(nextState)
+        }
+        return nextState
+      })
+    },
+    [scheduleCanvasAutosave],
+  )
 
   const handleSelectNode = useCallback((nodeId) => {
     if (!nodeId) {
@@ -855,6 +1070,14 @@ export default function CanvasWorkspace() {
     }
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (canvasAutosaveRef.current) {
+        clearTimeout(canvasAutosaveRef.current)
+      }
+    }
+  }, [])
+
   const navigatorSections = useMemo(() => {
     const screenItems = screens.map((screen) => ({
       id: screen.id,
@@ -865,6 +1088,44 @@ export default function CanvasWorkspace() {
       onSelect: () => handleSelectScreen(screen.id),
     }))
 
+    const layoutItems = []
+    const visitNode = (nodeId, depth = 0, slotName = null) => {
+      const node = canvasState.nodes[nodeId]
+      if (!node) {
+        return
+      }
+      const title = getCanvasNodeDisplayName(node)
+      const meta = getCanvasNodeMeta(node)
+      const descriptionParts = []
+      if (slotName) {
+        descriptionParts.push(`Slot: ${slotName}`)
+      }
+      if (meta) {
+        descriptionParts.push(meta)
+      }
+      const description = descriptionParts.length
+        ? descriptionParts.join(' • ')
+        : depth
+        ? 'Nested node'
+        : 'Root node'
+
+      layoutItems.push({
+        id: node.id,
+        title,
+        badge: slotName ? 'Slot content' : node.type,
+        description,
+        isActive: canvasState.selectionId === node.id,
+        onSelect: () => handleSelectNode(node.id),
+      })
+
+      const children = getCanvasNodeChildren(canvasState, nodeId)
+      children.forEach(({ node: childNode, slot }) => {
+        visitNode(childNode.id, depth + 1, slot)
+      })
+    }
+
+    canvasState.rootIds.forEach((nodeId) => visitNode(nodeId, 0, null))
+
     return [
       {
         id: 'currentScreens',
@@ -873,36 +1134,13 @@ export default function CanvasWorkspace() {
         items: screenItems,
       },
       {
-        id: 'pages',
-        label: 'Pages',
-        count: 3,
-        items: [
-          { id: 'pages-home', title: 'Homepage', description: 'Entry point for collectors', onSelect: undefined },
-          { id: 'pages-account', title: 'Account', description: 'Authenticated layout system', onSelect: undefined },
-          { id: 'pages-collection', title: 'Collection', description: 'Gallery exploration canvas', onSelect: undefined },
-        ],
-      },
-      {
-        id: 'components',
-        label: 'Components',
-        count: 3,
-        items: [
-          { id: 'components-hero', title: 'Hero block', description: 'Headline, copy and CTA bundle', onSelect: undefined },
-          { id: 'components-grid', title: 'Collection grid', description: 'Responsive grid with filters', onSelect: undefined },
-          { id: 'components-footer', title: 'Footer set', description: 'Metadata, legal links and socials', onSelect: undefined },
-        ],
-      },
-      {
-        id: 'arenas',
-        label: 'Arenas',
-        count: 2,
-        items: [
-          { id: 'arenas-preview', title: 'Preview arena', description: 'Staging cluster for live QA', onSelect: undefined },
-          { id: 'arenas-production', title: 'Production arena', description: 'Live configuration snapshot', onSelect: undefined },
-        ],
+        id: 'liveLayout',
+        label: 'Live layout',
+        count: layoutItems.length,
+        items: layoutItems,
       },
     ]
-  }, [screens, selectedScreenId, handleSelectScreen])
+  }, [screens, selectedScreenId, canvasState, handleSelectScreen, handleSelectNode])
 
   useEffect(() => {
     let active = true
@@ -1335,8 +1573,8 @@ export default function CanvasWorkspace() {
                 >
                   <div className="canvas-workspace__navigator-header">
                     <div>
-                      <p className="canvas-workspace__navigator-eyebrow">Pages, Components, Arenas</p>
-                      <h2>Workspace collections</h2>
+                      <p className="canvas-workspace__navigator-eyebrow">Screens &amp; layout</p>
+                      <h2>Workspace navigator</h2>
                     </div>
                     <div className="canvas-workspace__navigator-actions">
                       <button type="button" className="canvas-workspace__navigator-new">New</button>
@@ -1537,6 +1775,20 @@ export default function CanvasWorkspace() {
                   <span className="canvas-workspace__component-chip">{activeComponentChip}</span>
                   <strong className="canvas-workspace__component-card-title">{activeComponentLabel}</strong>
                   <p className="canvas-workspace__component-card-description">{activeComponentDescription}</p>
+                </div>
+                <div
+                  className="canvas-workspace__canvas-status"
+                  aria-live={canvasStatusMessage?.live ? 'polite' : undefined}
+                >
+                  {canvasStatusMessage ? (
+                    canvasStatusMessage.variant === 'error' ? (
+                      <p className="canvas-workspace__form-error" role="alert">
+                        {canvasStatusMessage.text}
+                      </p>
+                    ) : (
+                      <p className="canvas-workspace__publish-note">{canvasStatusMessage.text}</p>
+                    )
+                  ) : null}
                 </div>
               </div>
 

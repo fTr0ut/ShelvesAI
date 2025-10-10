@@ -748,6 +748,10 @@ const updateSettings = async (patch = {}, expectedVersion) => {
   })
 }
 
+const updateScreenNodes = async (screenId, nodes = [], expectedVersion) => {
+  return updateScreen(screenId, { nodes }, expectedVersion)
+}
+
 const resetStoreForTests = async () => {
   await withWriteLock(async () => {
     await persistState(cloneDeep(defaultState))
@@ -762,6 +766,7 @@ module.exports = {
   getScreens,
   createScreen,
   updateScreen,
+  updateScreenNodes,
   deleteScreen,
   getSettings,
   updateSettings,
