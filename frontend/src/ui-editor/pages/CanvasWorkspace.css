@@ -1874,3 +1874,206 @@
 
 
 
+
+.canvas-surface-region {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  gap: clamp(1.5rem, 2.6vw, 2.8rem);
+  margin-top: clamp(1rem, 2vh, 1.5rem);
+}
+
+.canvas-surface-region__surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.25rem, 2vw, 1.75rem);
+  padding: clamp(1.6rem, 2.8vw, 2.4rem);
+  border-radius: 1.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.75));
+  box-shadow: 0 30px 60px rgba(2, 6, 23, 0.55);
+  overflow: hidden;
+}
+
+.canvas-surface-region__surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top right, rgba(96, 165, 250, 0.2), transparent 55%),
+    radial-gradient(circle at bottom left, rgba(56, 189, 248, 0.15), transparent 60%);
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.canvas-surface-region__surface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.canvas-surface-region__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: clamp(1rem, 2vw, 2.25rem);
+}
+
+.canvas-surface-region__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  flex: 1 1 320px;
+  min-width: 240px;
+}
+
+.canvas-surface-region__eyebrow {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.canvas-surface-region__title {
+  margin: 0;
+  font-size: clamp(1.6rem, 2.6vw, 2.1rem);
+  letter-spacing: 0.01em;
+}
+
+.canvas-surface-region__subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.canvas-surface-region__status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.86);
+}
+
+.canvas-surface-region__status--error {
+  color: rgba(252, 165, 165, 0.92);
+}
+
+.canvas-workspace__surface {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.85rem, 1.4vw, 1.3rem);
+  padding: clamp(1.5rem, 3vw, 2.4rem);
+  border-radius: clamp(1.2rem, 2vw, 1.6rem);
+  border: 1px dashed rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.62);
+  min-height: clamp(14rem, 40vh, 24rem);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.canvas-surface__empty {
+  text-align: center;
+  padding: clamp(2rem, 4vw, 3rem);
+  border-radius: clamp(1rem, 2vw, 1.5rem);
+  border: 1px dashed rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.45);
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.canvas-surface__insertion {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  border: 1px dashed rgba(148, 163, 184, 0.32);
+  color: rgba(148, 163, 184, 0.72);
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.canvas-surface__insertion.is-active {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(96, 165, 250, 0.16);
+  color: #e0f2fe;
+}
+
+.canvas-surface__insertion.is-blocked {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: rgba(248, 113, 113, 0.78);
+}
+
+.canvas-surface__insertion-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.canvas-surface__node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: clamp(1.1rem, 2vw, 1.5rem);
+  border-radius: clamp(1rem, 1.8vw, 1.4rem);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.canvas-surface__node:hover {
+  border-color: rgba(96, 165, 250, 0.4);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.35);
+  transform: translateY(-2px);
+}
+
+.canvas-surface__node.is-selected {
+  border-color: #60a5fa;
+  box-shadow: 0 22px 44px rgba(37, 99, 235, 0.45);
+}
+
+.canvas-surface__node.is-dragging {
+  opacity: 0.55;
+}
+
+.canvas-surface__node-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.canvas-surface__node-badge {
+  font-size: 0.68rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.canvas-surface__node-meta {
+  font-size: 0.78rem;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.canvas-surface__node-title {
+  font-size: clamp(1rem, 1.9vw, 1.25rem);
+  font-weight: 600;
+}
+
+.canvas-surface__node-summary {
+  font-size: 0.86rem;
+  color: rgba(226, 232, 240, 0.76);
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .canvas-workspace__component-card {
+    width: 100%;
+  }
+
+  .canvas-workspace__primitive {
+    flex: 1 1 100%;
+  }
+}
