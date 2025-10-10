@@ -12,14 +12,15 @@ import {
 import {
   createCanvasStateFromNodes,
   createEmptyCanvasState,
-  getCanvasNodeChildren,
   getCanvasNodeDisplayName,
   getCanvasNodeMeta,
+  insertCanvasNode,
+  reparentCanvasNode,
   selectCanvasNode,
   updateCanvasNode,
 } from '../lib/canvasState'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
-import CanvasDropzone from '../components/CanvasDropzone'
+import CanvasArtboard from '../components/CanvasArtboard'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
@@ -142,41 +143,6 @@ const mergeWorkspaceSettings = (base, patch = {}) => {
   return next
 }
 
-const canvasDropzoneBlueprints = [
-  {
-    id: 'hero-surface',
-    title: 'Hero surface',
-    description: 'Introduce the screen with hero copy, media, and a clear call to action.',
-    actionLabel: 'Configure hero',
-    placeholder: 'Drop hero blocks or layout primitives to form the top of the page.',
-    highlightActiveComponent: true,
-  },
-  {
-    id: 'main-content-surface',
-    title: 'Main content',
-    description: 'Structure the primary narrative with sections, grids, and feature content.',
-    actionLabel: 'Add section',
-    placeholder: 'Drag components here to build out the core experience.',
-    highlightActiveComponent: false,
-  },
-  {
-    id: 'sidebar-rail',
-    title: 'Sidebar rail',
-    description: 'Reserve space for filters, automation, or other supporting context.',
-    actionLabel: 'Configure rail',
-    placeholder: 'Populate the sidebar with supplementary blocks.',
-    highlightActiveComponent: false,
-  },
-  {
-    id: 'footer-surface',
-    title: 'Footer surface',
-    description: 'Wrap up the screen with navigation, calls to action, or contact details.',
-    actionLabel: 'Edit footer',
-    placeholder: 'Drop footer primitives or reusable components here.',
-    highlightActiveComponent: false,
-  },
-]
-
 const layoutPrimitives = [
   {
     id: 'primitive-stack',
@@ -204,26 +170,282 @@ const layoutPrimitives = [
   },
 ]
 
-const previewStyleAllowlist = [
-  'fontFamily',
-  'fontSize',
-  'fontWeight',
-  'lineHeight',
-  'letterSpacing',
-  'textAlign',
-  'color',
-  'backgroundColor',
-  'opacity',
-  'padding',
-  'borderRadius',
-  'boxShadow',
-]
+const primitiveStyleBase = Object.freeze({
+  backgroundColor: 'rgba(15, 23, 42, 0.62)',
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  borderRadius: '18px',
+  padding: '28px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '18px',
+  position: 'relative',
+  boxShadow: '0 28px 48px rgba(15, 23, 42, 0.28)',
+})
 
-const createInitialCanvasNodes = () =>
-  canvasDropzoneBlueprints.reduce((accumulator, blueprint) => {
-    accumulator[blueprint.id] = []
-    return accumulator
-  }, {})
+const createPrimitiveNode = (primitive) => {
+  if (!primitive) {
+    return null
+  }
+  const id = createCanvasNodeId(primitive.id || 'primitive')
+  const metadata = {
+    primitiveId: primitive.id || 'primitive',
+    source: LIBRARY_ENTRY_KINDS.PRIMITIVE,
+    description: primitive.description || '',
+  }
+
+  const baseStyles = { ...primitiveStyleBase }
+
+  switch (primitive.id) {
+    case 'form':
+      return {
+        id,
+        type: 'form',
+        label: primitive.label || 'Form',
+        metadata,
+        props: {
+          heading: 'Lead capture form',
+          description: 'Collect structured input with validation and automation handoff.',
+          fieldLabel: 'Email address',
+          fieldPlaceholder: 'name@example.com',
+          submitLabel: 'Submit',
+        },
+        styles: { ...baseStyles, display: 'grid', gap: '18px' },
+      }
+    case 'columns':
+      return {
+        id,
+        type: 'layout',
+        label: primitive.label || 'Columns',
+        metadata,
+        props: {
+          columnOneHeading: 'Primary column',
+          columnTwoHeading: 'Secondary column',
+        },
+        styles: {
+          ...baseStyles,
+          display: 'grid',
+          gap: '24px',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        },
+      }
+    case 'responsive-columns':
+      return {
+        id,
+        type: 'layout',
+        label: primitive.label || 'Responsive columns',
+        metadata,
+        props: {
+          columnOneHeading: 'Left column',
+          columnTwoHeading: 'Right column',
+        },
+        styles: {
+          ...baseStyles,
+          display: 'grid',
+          gap: '20px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        },
+      }
+    case 'grid':
+      return {
+        id,
+        type: 'grid',
+        label: primitive.label || 'Grid',
+        metadata,
+        props: {},
+        styles: {
+          ...baseStyles,
+          display: 'grid',
+          gap: '20px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        },
+      }
+    case 'horizontal-stack':
+      return {
+        id,
+        type: 'stack',
+        label: primitive.label || 'Horizontal stack',
+        metadata,
+        props: {},
+        styles: {
+          ...baseStyles,
+          flexDirection: 'row',
+          alignItems: 'stretch',
+          gap: '20px',
+        },
+      }
+    case 'vertical-stack':
+      return {
+        id,
+        type: 'stack',
+        label: primitive.label || 'Vertical stack',
+        metadata,
+        props: {},
+        styles: { ...baseStyles, flexDirection: 'column' },
+      }
+    case 'page-section':
+      return {
+        id,
+        type: 'section',
+        as: 'section',
+        label: primitive.label || 'Page section',
+        metadata,
+        props: {
+          eyebrow: 'Featured',
+          heading: 'Compose a compelling section headline',
+          description: 'Use nested components to expand this story and guide the visitor toward action.',
+          ctaLabel: 'Explore more',
+        },
+        styles: { ...baseStyles },
+      }
+    case 'button':
+      return {
+        id,
+        type: 'button',
+        as: 'button',
+        label: primitive.label || 'Button',
+        metadata,
+        props: {
+          label: primitive.label || 'Primary action',
+        },
+        styles: {
+          backgroundColor: '#2563eb',
+          color: '#f8fafc',
+          border: 'none',
+          borderRadius: '999px',
+          padding: '14px 28px',
+          fontWeight: '600',
+          fontSize: '1rem',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '0.5rem',
+          boxShadow: '0 20px 44px rgba(37, 99, 235, 0.35)',
+          cursor: 'pointer',
+        },
+      }
+    case 'text-field':
+      return {
+        id,
+        type: 'input',
+        label: primitive.label || 'Text field',
+        metadata,
+        props: {
+          label: 'Input label',
+          placeholder: 'Describe the expected value',
+        },
+        styles: { ...baseStyles },
+      }
+    case 'link-container':
+      return {
+        id,
+        type: 'link-container',
+        label: primitive.label || 'Link container',
+        metadata,
+        props: {
+          heading: 'Link wrapper',
+          description: 'Turn the contents of this block into a unified navigation target.',
+        },
+        styles: { ...baseStyles, borderStyle: 'dashed', borderColor: 'rgba(96, 165, 250, 0.45)' },
+      }
+    case 'free-box':
+      return {
+        id,
+        type: 'free-box',
+        label: primitive.label || 'Free box',
+        metadata,
+        props: {
+          description: 'Layer content with absolute positioning to stage immersive hero compositions.',
+        },
+        styles: {
+          ...baseStyles,
+          minHeight: '240px',
+          borderStyle: 'dashed',
+          borderColor: 'rgba(96, 165, 250, 0.45)',
+        },
+      }
+    default:
+      return {
+        id,
+        type: 'primitive',
+        label: primitive.label || 'Primitive block',
+        metadata,
+        props: {
+          description: primitive.description || 'Drop components into this primitive to begin composing the experience.',
+        },
+        styles: { ...baseStyles },
+      }
+  }
+}
+
+const createComponentNode = (component) => {
+  if (!component || typeof component !== 'object') {
+    return null
+  }
+  const id = createCanvasNodeId(component.id || 'component')
+  return {
+    id,
+    type: 'component',
+    label: component.label || component.id || 'Component',
+    componentId: component.id || null,
+    metadata: {
+      source: component.source || 'library-component',
+      capability: component.capability || '',
+    },
+    props: {
+      summary: component.summary || '',
+      description: component.description || '',
+    },
+    styles: {
+      ...primitiveStyleBase,
+      borderColor: 'rgba(59, 130, 246, 0.55)',
+      boxShadow: '0 32px 60px rgba(37, 99, 235, 0.25)',
+    },
+  }
+}
+
+const nodeContainsTarget = (state, nodeId, candidateId) => {
+  if (!nodeId || !candidateId || !state.nodes[nodeId]) {
+    return false
+  }
+  if (nodeId === candidateId) {
+    return true
+  }
+  const visited = new Set()
+  const queue = [nodeId]
+  while (queue.length) {
+    const currentId = queue.shift()
+    if (visited.has(currentId)) {
+      continue
+    }
+    visited.add(currentId)
+    if (currentId === candidateId) {
+      return true
+    }
+    const current = state.nodes[currentId]
+    if (!current) {
+      continue
+    }
+    if (Array.isArray(current.childIds)) {
+      current.childIds.forEach((childId) => {
+        if (!visited.has(childId)) {
+          queue.push(childId)
+        }
+      })
+    }
+    if (current.slotChildIds && typeof current.slotChildIds === 'object') {
+      Object.values(current.slotChildIds).forEach((childIds) => {
+        if (Array.isArray(childIds)) {
+          childIds.forEach((childId) => {
+            if (!visited.has(childId)) {
+              queue.push(childId)
+            }
+          })
+        }
+      })
+    }
+  }
+  return false
+}
 
 const createCanvasNodeId = (prefix) =>
   `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`
@@ -267,32 +489,13 @@ export default function CanvasWorkspace() {
   const [isDeletingScreen, setIsDeletingScreen] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
-  const [activeComponent, setActiveComponent] = useState({
-    id: 'hero-heading',
-    label: 'Hero heading',
-    type: 'text',
-    styles: {
-      fontFamily: 'Bungee',
-      fontSize: '44px',
-      fontWeight: '600',
-      lineHeight: '1.25',
-      letterSpacing: '0',
-      textAlign: 'left',
-      color: '#ffffff',
-      backgroundColor: '#1f2937',
-      opacity: 1,
-      width: 'auto',
-      height: 'auto',
-      display: 'block',
-      margin: '0 0 24px',
-      padding: '0',
-      borderRadius: '12px',
-      border: 'none',
-      boxShadow: 'none',
-    },
-  })
-  const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
+  const activeComponent = useMemo(() => {
+    if (!canvasState.selectionId) {
+      return null
+    }
+    return canvasState.nodes[canvasState.selectionId] || null
+  }, [canvasState.nodes, canvasState.selectionId])
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
@@ -332,20 +535,6 @@ export default function CanvasWorkspace() {
   const activeComponentDescription = activeComponent
     ? activeComponentMeta || 'Component ready to edit.'
     : 'Select a node in the canvas to inspect its properties.'
-  const componentPreviewStyle = useMemo(() => {
-    if (!activeComponent?.styles || typeof activeComponent.styles !== 'object') {
-      return {}
-    }
-
-    const nextStyle = {}
-    previewStyleAllowlist.forEach((property) => {
-      if (activeComponent.styles[property] !== undefined) {
-        nextStyle[property] = activeComponent.styles[property]
-      }
-    })
-    return nextStyle
-  }, [activeComponent])
-
   const stageArtboardStyle = useMemo(() => {
     const layoutWidth = pageStyles.layout === 'fluid' ? '100%' : pageStyles.maxWidth || '1200px'
     const resolvedFontSize =
@@ -375,60 +564,6 @@ export default function CanvasWorkspace() {
     }
     return 'Fixed width'
   }, [pageStyles.layout, pageStyles.maxWidth])
-
-  const handleCanvasDrop = useCallback((zoneId, item) => {
-    setCanvasNodes((previous) => {
-      if (!zoneId) {
-        return previous
-      }
-
-      if (item?.entryType === LIBRARY_ENTRY_KINDS.PRIMITIVE && item.primitive) {
-        const next = { ...previous }
-        const nextZoneNodes = [...(next[zoneId] || [])]
-        nextZoneNodes.push({
-          id: createCanvasNodeId(item.primitive.id),
-          label: item.primitive.label,
-          meta: item.primitive.description,
-          icon: item.primitive.icon,
-          badge: 'Primitive',
-          source: LIBRARY_ENTRY_KINDS.PRIMITIVE,
-          primitiveId: item.primitive.id,
-        })
-        next[zoneId] = nextZoneNodes
-        return next
-      }
-
-      if (item?.nodeId) {
-        const originZoneId = item.originZoneId
-        if (!originZoneId || !previous[originZoneId]) {
-          return previous
-        }
-
-        const sourceNodes = [...previous[originZoneId]]
-        const nodeIndex = sourceNodes.findIndex((candidate) => candidate.id === item.nodeId)
-        if (nodeIndex === -1) {
-          return previous
-        }
-
-        const [movedNode] = sourceNodes.splice(nodeIndex, 1)
-        const next = { ...previous }
-
-        if (originZoneId === zoneId) {
-          sourceNodes.push(movedNode)
-          next[zoneId] = sourceNodes
-        } else {
-          const destinationNodes = [...(previous[zoneId] || [])]
-          destinationNodes.push(movedNode)
-          next[originZoneId] = sourceNodes
-          next[zoneId] = destinationNodes
-        }
-
-        return next
-      }
-
-      return previous
-    })
-  }, [])
 
   const loadScreens = useCallback(async () => {
     setScreensState((previous) => ({ ...previous, isLoading: true, error: '' }))
@@ -791,61 +926,57 @@ export default function CanvasWorkspace() {
     setCanvasState((previous) => selectCanvasNode(previous, nodeId))
   }, [])
 
-  const handleDropzoneKeyDown = useCallback(
-    (nodeId, event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        handleSelectNode(nodeId)
-      }
-    },
-    [handleSelectNode],
-  )
-
-  const renderNodeTree = (nodeId) => {
-    const node = canvasState.nodes[nodeId]
-    if (!node) {
-      return null
+  const handleInsertNode = useCallback((target, item) => {
+    if (!target) {
+      return
     }
-    const isActiveNode = canvasState.selectionId === nodeId
-    const nodeMeta = getCanvasNodeMeta(node)
-    const childEntries = getCanvasNodeChildren(canvasState, nodeId)
+    setCanvasState((previous) => {
+      if (!item) {
+        return previous
+      }
 
-    return (
-      <li key={nodeId} className="canvas-workspace__node-outline-item">
-        <button
-          type="button"
-          className="canvas-workspace__node-outline-button"
-          onClick={() => handleSelectNode(nodeId)}
-          data-active={isActiveNode || undefined}
-        >
-          <span className="canvas-workspace__node-outline-label">
-            {getCanvasNodeDisplayName(node)}
-          </span>
-          {nodeMeta ? (
-            <span className="canvas-workspace__node-outline-meta">{nodeMeta}</span>
-          ) : null}
-          {node.slot ? (
-            <span className="canvas-workspace__node-outline-slot">Slot: {node.slot}</span>
-          ) : null}
-        </button>
-        {isActiveNode ? (
-          <div className="canvas-workspace__component-preview" style={componentPreviewStyle}>
-            <span className="canvas-workspace__component-preview-label">
-              {getCanvasNodeDisplayName(node)}
-            </span>
-            <span className="canvas-workspace__component-preview-meta">
-              {nodeMeta || 'Active node'}
-            </span>
-          </div>
-        ) : null}
-        {childEntries.length ? (
-          <ul className="canvas-workspace__node-outline-children">
-            {childEntries.map(({ node: child }) => renderNodeTree(child.id))}
-          </ul>
-        ) : null}
-      </li>
-    )
-  }
+      if (item.entryType === LIBRARY_ENTRY_KINDS.PRIMITIVE && item.primitive) {
+        const nextNode = createPrimitiveNode(item.primitive)
+        if (!nextNode) {
+          return previous
+        }
+        return insertCanvasNode(previous, nextNode, {
+          parentId: target.parentId || null,
+          slot: target.slot || null,
+          index: target.index,
+          select: true,
+        })
+      }
+
+      if (item.entryType === LIBRARY_ENTRY_KINDS.COMPONENT && item.component) {
+        const nextNode = createComponentNode(item.component)
+        if (!nextNode) {
+          return previous
+        }
+        return insertCanvasNode(previous, nextNode, {
+          parentId: target.parentId || null,
+          slot: target.slot || null,
+          index: target.index,
+          select: true,
+        })
+      }
+
+      if (item.nodeId && previous.nodes[item.nodeId]) {
+        const targetParentId = target.parentId || null
+        if (targetParentId && nodeContainsTarget(previous, item.nodeId, targetParentId)) {
+          return previous
+        }
+        return reparentCanvasNode(previous, item.nodeId, {
+          parentId: targetParentId,
+          slot: target.slot || null,
+          index: target.index,
+          select: true,
+        })
+      }
+
+      return previous
+    })
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -1529,8 +1660,7 @@ export default function CanvasWorkspace() {
                     {activeScreen ? `${activeScreen.name} preview` : 'Design canvas'}
                   </h2>
                   <p className="canvas-workspace__canvas-subtitle">
-                    Drag components and layout primitives from the library into the drop zones to assemble this
-                    screen.
+                    Drag components and layout primitives from the library into the live canvas to assemble this screen.
                   </p>
                 </div>
                 <div className="canvas-workspace__component-card" aria-live="polite">
@@ -1555,96 +1685,12 @@ export default function CanvasWorkspace() {
                           <strong>{stageLayoutLabel}</strong>
                         </div>
                       </header>
-                      <div className="canvas-workspace__dropzones">
-                        {canvasDropzoneBlueprints.map((blueprint) => (
-                          <CanvasDropzone
-                            key={blueprint.id}
-                            blueprint={blueprint}
-                            allNodes={canvasNodes}
-                            nodes={canvasNodes[blueprint.id] || []}
-                            onDropItem={handleCanvasDrop}
-                            placeholder={blueprint.placeholder}
-                            activeComponent={
-                              blueprint.highlightActiveComponent ? activeComponent : null
-                            }
-                            activeComponentStyle={componentPreviewStyle}
-                          />
-                        ))}
-                        {canvasState.rootIds.length ? (
-                          canvasState.rootIds.map((nodeId) => {
-                            const node = canvasState.nodes[nodeId]
-                            if (!node) {
-                              return null
-                            }
-                            const nodeMeta = getCanvasNodeMeta(node) || 'Root node ready for composition.'
-                            const childEntries = getCanvasNodeChildren(canvasState, node.id)
-                            const childCount = childEntries.length
-                            const isActive = canvasState.selectionId === node.id
-                            const nodeTree = renderNodeTree(node.id)
-
-                            return (
-                              <section
-                                key={node.id}
-                                className="canvas-workspace__dropzone"
-                                aria-label={`${getCanvasNodeDisplayName(node)} drop zone`}
-                              >
-                                <div className="canvas-workspace__dropzone-header">
-                                  <div>
-                                    <h3>{getCanvasNodeDisplayName(node)}</h3>
-                                    <p>{nodeMeta}</p>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className="canvas-workspace__dropzone-action"
-                                    onClick={() => handleSelectNode(node.id)}
-                                  >
-                                    Inspect node
-                                  </button>
-                                </div>
-                                <div
-                                  className="canvas-workspace__dropzone-target"
-                                  role="button"
-                                  tabIndex={0}
-                                  data-active={isActive || undefined}
-                                  aria-label={`Select ${getCanvasNodeDisplayName(node)}`}
-                                  onClick={() => handleSelectNode(node.id)}
-                                  onKeyDown={(event) => handleDropzoneKeyDown(node.id, event)}
-                                >
-                                  <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
-                                    {isActive ? '●' : '+'}
-                                  </span>
-                                  <span className="canvas-workspace__dropzone-hint">
-                                    {childCount
-                                      ? `${childCount} direct ${childCount === 1 ? 'child' : 'children'}`
-                                      : 'No children yet'}
-                                  </span>
-                                </div>
-                                <div className="canvas-workspace__dropzone-preview">
-                                  <ul className="canvas-workspace__node-outline">{nodeTree}</ul>
-                                </div>
-                              </section>
-                            )
-                          })
-                        ) : (
-                          <section className="canvas-workspace__dropzone" aria-label="Empty canvas drop zone">
-                            <div className="canvas-workspace__dropzone-header">
-                              <div>
-                                <h3>No nodes yet</h3>
-                                <p>Drag components or layout primitives into the canvas to begin.</p>
-                              </div>
-                            </div>
-                            <div className="canvas-workspace__dropzone-target" role="button" tabIndex={0}>
-                              <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
-                                +
-                              </span>
-                              <span className="canvas-workspace__dropzone-hint">Drop component to begin</span>
-                            </div>
-                            <p className="canvas-workspace__dropzone-placeholder">
-                              Use the component library to populate this screen.
-                            </p>
-                          </section>
-                        )}
-                      </div>
+                      <CanvasArtboard
+                        canvasState={canvasState}
+                        onInsertNode={handleInsertNode}
+                        onSelectNode={handleSelectNode}
+                        selectionId={canvasState.selectionId}
+                      />
                     </div>
                   </div>
                 </div>
