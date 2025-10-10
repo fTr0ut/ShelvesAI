@@ -33,7 +33,7 @@ export default function PropertiesPanel({
   )
 
   const handleComponentStyleChange = (field, value) => {
-    if (!onComponentChange) return
+    if (!onComponentChange || !component) return
     onComponentChange({
       ...component,
       styles: {
@@ -44,7 +44,7 @@ export default function PropertiesPanel({
   }
 
   const handleComponentMetaChange = (field, value) => {
-    if (!onComponentChange) return
+    if (!onComponentChange || !component) return
     onComponentChange({
       ...component,
       [field]: value,
