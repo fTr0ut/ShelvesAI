@@ -267,30 +267,6 @@ export default function CanvasWorkspace() {
   const [isDeletingScreen, setIsDeletingScreen] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [pageStyles, setPageStyles] = useState(() => createDefaultPageStyles())
-  const [activeComponent, setActiveComponent] = useState({
-    id: 'hero-heading',
-    label: 'Hero heading',
-    type: 'text',
-    styles: {
-      fontFamily: 'Bungee',
-      fontSize: '44px',
-      fontWeight: '600',
-      lineHeight: '1.25',
-      letterSpacing: '0',
-      textAlign: 'left',
-      color: '#ffffff',
-      backgroundColor: '#1f2937',
-      opacity: 1,
-      width: 'auto',
-      height: 'auto',
-      display: 'block',
-      margin: '0 0 24px',
-      padding: '0',
-      borderRadius: '12px',
-      border: 'none',
-      boxShadow: 'none',
-    },
-  })
   const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
   const [isSidebarOpen, setSidebarOpen] = useState(false)
@@ -317,13 +293,9 @@ export default function CanvasWorkspace() {
     setCanvasState(createCanvasStateFromNodes(activeScreen.nodes || []))
   }, [activeScreen])
 
-  // const activeComponent = useMemo(() => {
-  //   if (!canvasState.selectionId) {
-  //     return null
-  //   }
-  //   return canvasState.nodes[canvasState.selectionId] || null
-  // }, [canvasState])
-
+  const activeComponent = canvasState.selectionId
+    ? canvasState.nodes[canvasState.selectionId] || null
+    : null
   const activeComponentLabel = activeComponent
     ? getCanvasNodeDisplayName(activeComponent)
     : 'No component selected'
