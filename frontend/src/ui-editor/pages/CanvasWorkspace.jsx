@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DndProvider, HTML5Backend } from '../lib/simpleDnd'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import { publishUiBundle } from '../api/routes'
 import {
@@ -9,9 +10,11 @@ import {
   updateCanvasSettings,
 } from '../api/canvas'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
+import CanvasDropzone from '../components/CanvasDropzone'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
+import { LIBRARY_ENTRY_KINDS } from '../lib/dnd'
 import './CanvasWorkspace.css'
 
 const defaultStatus = {
@@ -197,6 +200,15 @@ const previewStyleAllowlist = [
   'boxShadow',
 ]
 
+const createInitialCanvasNodes = () =>
+  canvasDropzoneBlueprints.reduce((accumulator, blueprint) => {
+    accumulator[blueprint.id] = []
+    return accumulator
+  }, {})
+
+const createCanvasNodeId = (prefix) =>
+  `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`
+
 export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
   const projectSettingsVersion = projectSettings?.version
@@ -260,6 +272,7 @@ export default function CanvasWorkspace() {
       boxShadow: 'none',
     },
   })
+  const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
@@ -319,6 +332,60 @@ export default function CanvasWorkspace() {
     }
     return 'Fixed width'
   }, [pageStyles.layout, pageStyles.maxWidth])
+
+  const handleCanvasDrop = useCallback((zoneId, item) => {
+    setCanvasNodes((previous) => {
+      if (!zoneId) {
+        return previous
+      }
+
+      if (item?.entryType === LIBRARY_ENTRY_KINDS.PRIMITIVE && item.primitive) {
+        const next = { ...previous }
+        const nextZoneNodes = [...(next[zoneId] || [])]
+        nextZoneNodes.push({
+          id: createCanvasNodeId(item.primitive.id),
+          label: item.primitive.label,
+          meta: item.primitive.description,
+          icon: item.primitive.icon,
+          badge: 'Primitive',
+          source: LIBRARY_ENTRY_KINDS.PRIMITIVE,
+          primitiveId: item.primitive.id,
+        })
+        next[zoneId] = nextZoneNodes
+        return next
+      }
+
+      if (item?.nodeId) {
+        const originZoneId = item.originZoneId
+        if (!originZoneId || !previous[originZoneId]) {
+          return previous
+        }
+
+        const sourceNodes = [...previous[originZoneId]]
+        const nodeIndex = sourceNodes.findIndex((candidate) => candidate.id === item.nodeId)
+        if (nodeIndex === -1) {
+          return previous
+        }
+
+        const [movedNode] = sourceNodes.splice(nodeIndex, 1)
+        const next = { ...previous }
+
+        if (originZoneId === zoneId) {
+          sourceNodes.push(movedNode)
+          next[zoneId] = sourceNodes
+        } else {
+          const destinationNodes = [...(previous[zoneId] || [])]
+          destinationNodes.push(movedNode)
+          next[originZoneId] = sourceNodes
+          next[zoneId] = destinationNodes
+        }
+
+        return next
+      }
+
+      return previous
+    })
+  }, [])
 
   const loadScreens = useCallback(async () => {
     setScreensState((previous) => ({ ...previous, isLoading: true, error: '' }))
@@ -943,11 +1010,12 @@ export default function CanvasWorkspace() {
   }, [])
 
   return (
-    <div
-      ref={workspaceRef}
-      className={`canvas-workspace ${isSidebarOpen ? 'canvas-workspace--sidebar-open' : ''}`}
-      style={{ '--sidebar-offset-top': `${sidebarOffsetTop}px` }}
-    >
+    <DndProvider backend={HTML5Backend}>
+      <div
+        ref={workspaceRef}
+        className={`canvas-workspace ${isSidebarOpen ? 'canvas-workspace--sidebar-open' : ''}`}
+        style={{ '--sidebar-offset-top': `${sidebarOffsetTop}px` }}
+      >
       <aside
         className={`canvas-workspace__sidebar ${isSidebarOpen ? 'is-open' : ''}`}
         aria-label="Editor tool panel"
@@ -1379,52 +1447,20 @@ export default function CanvasWorkspace() {
                         </div>
                       </header>
                       <div className="canvas-workspace__dropzones">
-                        {canvasDropzoneBlueprints.map((blueprint) => {
-                          const shouldShowComponent = blueprint.highlightActiveComponent && activeComponent
-
-                          return (
-                            <section
-                              key={blueprint.id}
-                              className="canvas-workspace__dropzone"
-                              aria-label={`${blueprint.title} drop zone`}
-                            >
-                              <div className="canvas-workspace__dropzone-header">
-                                <div>
-                                  <h3>{blueprint.title}</h3>
-                                  <p>{blueprint.description}</p>
-                                </div>
-                                <button type="button" className="canvas-workspace__dropzone-action">
-                                  {blueprint.actionLabel}
-                                </button>
-                              </div>
-                              <div
-                                className="canvas-workspace__dropzone-target"
-                                role="button"
-                                tabIndex={0}
-                                aria-label={`Drop a component to ${blueprint.actionLabel.toLowerCase()}`}
-                              >
-                                <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
-                                  +
-                                </span>
-                                <span className="canvas-workspace__dropzone-hint">Drop component here</span>
-                              </div>
-                              {shouldShowComponent ? (
-                                <div className="canvas-workspace__dropzone-preview">
-                                  <div className="canvas-workspace__component-preview" style={componentPreviewStyle}>
-                                    <span className="canvas-workspace__component-preview-label">
-                                      {activeComponent.label}
-                                    </span>
-                                    <span className="canvas-workspace__component-preview-meta">
-                                      {activeComponent.type} • Active
-                                    </span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="canvas-workspace__dropzone-placeholder">{blueprint.placeholder}</p>
-                              )}
-                            </section>
-                          )
-                        })}
+                        {canvasDropzoneBlueprints.map((blueprint) => (
+                          <CanvasDropzone
+                            key={blueprint.id}
+                            blueprint={blueprint}
+                            allNodes={canvasNodes}
+                            nodes={canvasNodes[blueprint.id] || []}
+                            onDropItem={handleCanvasDrop}
+                            placeholder={blueprint.placeholder}
+                            activeComponent={
+                              blueprint.highlightActiveComponent ? activeComponent : null
+                            }
+                            activeComponentStyle={componentPreviewStyle}
+                          />
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -1620,6 +1656,7 @@ export default function CanvasWorkspace() {
         </div>
       </div>
     </div>
-  </div>
+      </div>
+    </DndProvider>
   )
 }
