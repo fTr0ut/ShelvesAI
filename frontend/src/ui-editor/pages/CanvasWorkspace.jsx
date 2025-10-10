@@ -142,6 +142,41 @@ const mergeWorkspaceSettings = (base, patch = {}) => {
   return next
 }
 
+const canvasDropzoneBlueprints = [
+  {
+    id: 'hero-surface',
+    title: 'Hero surface',
+    description: 'Introduce the screen with hero copy, media, and a clear call to action.',
+    actionLabel: 'Configure hero',
+    placeholder: 'Drop hero blocks or layout primitives to form the top of the page.',
+    highlightActiveComponent: true,
+  },
+  {
+    id: 'main-content-surface',
+    title: 'Main content',
+    description: 'Structure the primary narrative with sections, grids, and feature content.',
+    actionLabel: 'Add section',
+    placeholder: 'Drag components here to build out the core experience.',
+    highlightActiveComponent: false,
+  },
+  {
+    id: 'sidebar-rail',
+    title: 'Sidebar rail',
+    description: 'Reserve space for filters, automation, or other supporting context.',
+    actionLabel: 'Configure rail',
+    placeholder: 'Populate the sidebar with supplementary blocks.',
+    highlightActiveComponent: false,
+  },
+  {
+    id: 'footer-surface',
+    title: 'Footer surface',
+    description: 'Wrap up the screen with navigation, calls to action, or contact details.',
+    actionLabel: 'Edit footer',
+    placeholder: 'Drop footer primitives or reusable components here.',
+    highlightActiveComponent: false,
+  },
+]
+
 const layoutPrimitives = [
   {
     id: 'primitive-stack',
@@ -282,12 +317,12 @@ export default function CanvasWorkspace() {
     setCanvasState(createCanvasStateFromNodes(activeScreen.nodes || []))
   }, [activeScreen])
 
-  const activeComponent = useMemo(() => {
-    if (!canvasState.selectionId) {
-      return null
-    }
-    return canvasState.nodes[canvasState.selectionId] || null
-  }, [canvasState])
+  // const activeComponent = useMemo(() => {
+  //   if (!canvasState.selectionId) {
+  //     return null
+  //   }
+  //   return canvasState.nodes[canvasState.selectionId] || null
+  // }, [canvasState])
 
   const activeComponentLabel = activeComponent
     ? getCanvasNodeDisplayName(activeComponent)

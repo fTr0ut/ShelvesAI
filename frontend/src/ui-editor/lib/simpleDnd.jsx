@@ -33,7 +33,7 @@ export function DndProvider({ children }) {
 
   const value = useMemo(() => ({ dragState, beginDrag, endDrag }), [dragState, beginDrag, endDrag])
 
-  return <DragDropContext.Provider value={value}>{children}</DragDropContext.Provider>
+  return <DragDropContext.Provider value={value}>{children}</DragDropContext.Provider> 
 }
 
 const normaliseSpec = (specOrFactory) => {
