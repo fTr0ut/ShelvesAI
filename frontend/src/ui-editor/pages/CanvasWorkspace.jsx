@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DndProvider, HTML5Backend } from '../lib/simpleDnd'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { DndProvider, HTML5Backend, useDrag, useDrop } from '../lib/simpleDnd'
 import { fetchJson, getApiOrigin, getDefaultApiOrigin, resolveApiUrl } from '../api/client'
 import { publishUiBundle } from '../api/routes'
 import {
@@ -22,11 +22,10 @@ import {
   updateCanvasNode,
 } from '../lib/canvasState'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
-import CanvasArtboard from '../components/CanvasArtboard'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
-import { LIBRARY_ENTRY_KINDS } from '../lib/dnd'
+import { DND_ITEM_TYPES, LIBRARY_ENTRY_KINDS } from '../lib/dnd'
 import './CanvasWorkspace.css'
 
 const defaultStatus = {
@@ -451,6 +450,128 @@ const nodeContainsTarget = (state, nodeId, candidateId) => {
 
 const createCanvasNodeId = (prefix) =>
   `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`
+
+const surfaceDropTypes = [DND_ITEM_TYPES.LIBRARY_ENTRY, DND_ITEM_TYPES.CANVAS_NODE]
+
+function CanvasSurfaceInsertionZone({ index, onInsert }) {
+  const [{ isOver, canDrop }, dropRef] = useDrop(
+    () => ({
+      accept: surfaceDropTypes,
+      drop: (item) => {
+        onInsert({ parentId: null, slot: null, index }, item)
+        return { index }
+      },
+      collect: (monitor) => ({
+        isOver: monitor.isOver(),
+        canDrop: monitor.canDrop(),
+      }),
+    }),
+    [index, onInsert],
+  )
+
+  const classes = [
+    'canvas-surface__insertion',
+    isOver && canDrop ? 'is-active' : '',
+    isOver && !canDrop ? 'is-blocked' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const label = !canDrop ? 'Cannot drop here' : isOver ? 'Release to drop' : 'Drop component here'
+
+  return (
+    <div ref={dropRef} className={classes} role="presentation">
+      <span className="canvas-surface__insertion-label">{label}</span>
+    </div>
+  )
+}
+
+function CanvasSurfaceNode({ node, onSelect, isSelected }) {
+  const displayName = getCanvasNodeDisplayName(node)
+  const meta = getCanvasNodeMeta(node)
+  const [{ isDragging }, dragRef] = useDrag(
+    () => ({
+      type: DND_ITEM_TYPES.CANVAS_NODE,
+      item: { nodeId: node.id },
+      collect: (monitor) => ({
+        isDragging: monitor.isDragging(),
+      }),
+    }),
+    [node.id],
+  )
+
+  const classes = [
+    'canvas-surface__node',
+    isSelected ? 'is-selected' : '',
+    isDragging ? 'is-dragging' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const description =
+    typeof node?.metadata === 'object' && node?.metadata
+      ? node.metadata.description || node.metadata.summary || ''
+      : ''
+
+  return (
+    <button
+      type="button"
+      ref={dragRef}
+      className={classes}
+      onClick={() => onSelect(node.id)}
+    >
+      <div className="canvas-surface__node-header">
+        <span className="canvas-surface__node-badge">{node.type || 'Node'}</span>
+        {meta ? <span className="canvas-surface__node-meta">{meta}</span> : null}
+      </div>
+      <strong className="canvas-surface__node-title">{displayName || 'Untitled node'}</strong>
+      {description ? <p className="canvas-surface__node-summary">{description}</p> : null}
+    </button>
+  )
+}
+
+function CanvasDragSurface({ canvasState, onInsert, onSelect }) {
+  const nodes = useMemo(
+    () => canvasState.rootIds.map((nodeId) => canvasState.nodes[nodeId]).filter(Boolean),
+    [canvasState],
+  )
+
+  const handleInsert = useCallback(
+    (target, item) => {
+      onInsert(target, item)
+    },
+    [onInsert],
+  )
+
+  if (!nodes.length) {
+    return (
+      <div className="canvas-workspace__surface">
+        <CanvasSurfaceInsertionZone index={0} onInsert={handleInsert} />
+        <div className="canvas-surface__empty">
+          <h3>Surface ready</h3>
+          <p>Drag components or layout primitives into this surface to start composing your screen.</p>
+        </div>
+        <CanvasSurfaceInsertionZone index={1} onInsert={handleInsert} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="canvas-workspace__surface">
+      {nodes.map((node, index) => (
+        <Fragment key={node.id}>
+          <CanvasSurfaceInsertionZone index={index} onInsert={handleInsert} />
+          <CanvasSurfaceNode
+            node={node}
+            onSelect={onSelect}
+            isSelected={canvasState.selectionId === node.id}
+          />
+        </Fragment>
+      ))}
+      <CanvasSurfaceInsertionZone index={nodes.length} onInsert={handleInsert} />
+    </div>
+  )
+}
 
 export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
@@ -1953,79 +2074,51 @@ export default function CanvasWorkspace() {
               ) : null}
             </div>
 
-            <section className="canvas-workspace__canvas" aria-label="Live screen canvas">
-              <div className="canvas-workspace__canvas-header">
-                <div className="canvas-workspace__canvas-heading">
-                  <p className="canvas-workspace__canvas-eyebrow">Live preview</p>
-                  <h2 className="canvas-workspace__canvas-title">
-                    {activeScreen ? `${activeScreen.name} preview` : 'Design canvas'}
-                  </h2>
-                  <p className="canvas-workspace__canvas-subtitle">
-                    Drag components and layout primitives from the library into the live canvas to assemble this screen.
-                  </p>
-                </div>
-                <div className="canvas-workspace__component-card" aria-live="polite">
-                  <span className="canvas-workspace__component-chip">{activeComponentChip}</span>
-                  <strong className="canvas-workspace__component-card-title">{activeComponentLabel}</strong>
-                  <p className="canvas-workspace__component-card-description">{activeComponentDescription}</p>
-                </div>
-                <div
-                  className="canvas-workspace__canvas-status"
-                  aria-live={canvasStatusMessage?.live ? 'polite' : undefined}
-                >
-                  {canvasStatusMessage ? (
-                    canvasStatusMessage.variant === 'error' ? (
-                      <p className="canvas-workspace__form-error" role="alert">
-                        {canvasStatusMessage.text}
-                      </p>
-                    ) : (
-                      <p className="canvas-workspace__publish-note">{canvasStatusMessage.text}</p>
-                    )
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="canvas-workspace__canvas-body">
-                <div className="canvas-workspace__stage" role="presentation">
-                  <div className="canvas-workspace__stage-frame">
-                    <div className="canvas-workspace__stage-guides" aria-hidden="true" />
-                    <div className="canvas-workspace__stage-artboard" style={stageArtboardStyle}>
-                      <header className="canvas-workspace__stage-header">
-                        <div>
-                          <span className="canvas-workspace__stage-eyebrow">Screen device</span>
-                          <strong>{activeScreen?.device ?? 'Canvas device'}</strong>
-                        </div>
-                        <div>
-                          <span className="canvas-workspace__stage-eyebrow">Layout</span>
-                          <strong>{stageLayoutLabel}</strong>
-                        </div>
-                      </header>
-                      <CanvasArtboard
-                        canvasState={canvasState}
-                        onInsertNode={handleInsertNode}
-                        onSelectNode={handleSelectNode}
-                        selectionId={canvasState.selectionId}
-                      />
-                    </div>
+            <div className="canvas-surface-region" aria-label="Canvas composition surface">
+              <div className="canvas-surface-region__surface">
+                <header className="canvas-surface-region__header">
+                  <div className="canvas-surface-region__heading">
+                    <p className="canvas-surface-region__eyebrow">Live surface</p>
+                    <h2 className="canvas-surface-region__title">
+                      {activeScreen ? `${activeScreen.name} surface` : 'Drag & drop surface'}
+                    </h2>
+                    <p className="canvas-surface-region__subtitle">
+                      Drag components or layout primitives onto the surface to compose this screen.
+                    </p>
                   </div>
-                </div>
-                <aside className="canvas-workspace__primitive-drawer" aria-label="Layout primitives">
-                  <h3>Layout primitives</h3>
-                  <p>Use these structures to stage components before publishing.</p>
-                  <ul className="canvas-workspace__primitive-list">
-                    {layoutPrimitives.map((primitive) => (
-                      <li key={primitive.id} className="canvas-workspace__primitive">
-                        <span className="canvas-workspace__primitive-badge">{primitive.badge}</span>
-                        <div>
-                          <strong>{primitive.label}</strong>
-                          <p>{primitive.description}</p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </aside>
+                  <div className="canvas-workspace__component-card" aria-live="polite">
+                    <span className="canvas-workspace__component-chip">{activeComponentChip}</span>
+                    <strong className="canvas-workspace__component-card-title">{activeComponentLabel}</strong>
+                    <p className="canvas-workspace__component-card-description">{activeComponentDescription}</p>
+                  </div>
+                </header>
+                {canvasStatusMessage ? (
+                  canvasStatusMessage.variant === 'error' ? (
+                    <p className="canvas-surface-region__status canvas-surface-region__status--error" role="alert">
+                      {canvasStatusMessage.text}
+                    </p>
+                  ) : (
+                    <p className="canvas-surface-region__status">{canvasStatusMessage.text}</p>
+                  )
+                ) : null}
+                <CanvasDragSurface canvasState={canvasState} onInsert={handleInsertNode} onSelect={handleSelectNode} />
               </div>
-            </section>
+              <aside className="canvas-workspace__primitive-drawer" aria-label="Layout primitives">
+                <h3>Layout primitives</h3>
+                <p>Use these structures to stage components before publishing.</p>
+                <ul className="canvas-workspace__primitive-list">
+                  {layoutPrimitives.map((primitive) => (
+                    <li key={primitive.id} className="canvas-workspace__primitive">
+                      <span className="canvas-workspace__primitive-badge">{primitive.badge}</span>
+                      <div>
+                        <strong>{primitive.label}</strong>
+                        <p>{primitive.description}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            </div>
 
             <div className={`canvas-workspace__create-screen-layer${isCreateScreenOpen ? ' is-open' : ''}`}>
               {isCreateScreenOpen ? (
@@ -2204,3 +2297,6 @@ export default function CanvasWorkspace() {
     </DndProvider>
   )
 }
+
+
+
