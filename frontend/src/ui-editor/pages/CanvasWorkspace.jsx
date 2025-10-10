@@ -9,6 +9,15 @@ import {
   fetchCanvasSettings,
   updateCanvasSettings,
 } from '../api/canvas'
+import {
+  createCanvasStateFromNodes,
+  createEmptyCanvasState,
+  getCanvasNodeChildren,
+  getCanvasNodeDisplayName,
+  getCanvasNodeMeta,
+  selectCanvasNode,
+  updateCanvasNode,
+} from '../lib/canvasState'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import CanvasDropzone from '../components/CanvasDropzone'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
@@ -133,31 +142,6 @@ const mergeWorkspaceSettings = (base, patch = {}) => {
   return next
 }
 
-const canvasDropzoneBlueprints = [
-  {
-    id: 'hero',
-    title: 'Hero spotlight',
-    description: 'Anchor the top of the screen with a hero, announcement or onboarding block.',
-    actionLabel: 'Add hero section',
-    highlightActiveComponent: true,
-    placeholder: 'Drag the highlighted component into this region to set the tone of the screen.',
-  },
-  {
-    id: 'content',
-    title: 'Content stack',
-    description: 'Compose feature grids, text blocks and media rails to tell the collection story.',
-    actionLabel: 'Add content block',
-    placeholder: 'Drop layout primitives to scaffold the story, then layer components inside each cell.',
-  },
-  {
-    id: 'support',
-    title: 'Support rail',
-    description: 'Keep automation hooks, metadata or secondary CTAs pinned to the edge of the layout.',
-    actionLabel: 'Add support element',
-    placeholder: 'Perfect for sticky CTAs, inline forms or cross-navigation anchors.',
-  },
-]
-
 const layoutPrimitives = [
   {
     id: 'primitive-stack',
@@ -273,6 +257,7 @@ export default function CanvasWorkspace() {
     },
   })
   const [canvasNodes, setCanvasNodes] = useState(() => createInitialCanvasNodes())
+  const [canvasState, setCanvasState] = useState(() => createEmptyCanvasState())
   const [isSidebarOpen, setSidebarOpen] = useState(false)
   const [activeSidebarTool, setActiveSidebarTool] = useState('component-loader')
   const [sidebarOffsetTop, setSidebarOffsetTop] = useState(0)
@@ -289,6 +274,29 @@ export default function CanvasWorkspace() {
   const workspaceRef = useRef(null)
   const publishTargetInputId = 'ui-editor-publish-target'
   const isPublishing = publishState.status === 'pending'
+  useEffect(() => {
+    if (!activeScreen) {
+      setCanvasState(createEmptyCanvasState())
+      return
+    }
+    setCanvasState(createCanvasStateFromNodes(activeScreen.nodes || []))
+  }, [activeScreen])
+
+  const activeComponent = useMemo(() => {
+    if (!canvasState.selectionId) {
+      return null
+    }
+    return canvasState.nodes[canvasState.selectionId] || null
+  }, [canvasState])
+
+  const activeComponentLabel = activeComponent
+    ? getCanvasNodeDisplayName(activeComponent)
+    : 'No component selected'
+  const activeComponentMeta = activeComponent ? getCanvasNodeMeta(activeComponent) : ''
+  const activeComponentChip = activeComponent?.type || 'Node'
+  const activeComponentDescription = activeComponent
+    ? activeComponentMeta || 'Component ready to edit.'
+    : 'Select a node in the canvas to inspect its properties.'
   const componentPreviewStyle = useMemo(() => {
     if (!activeComponent?.styles || typeof activeComponent.styles !== 'object') {
       return {}
@@ -734,8 +742,74 @@ export default function CanvasWorkspace() {
     }, 400)
   }
 
-  const handleComponentChange = (nextComponent) => {
-    setActiveComponent(nextComponent)
+  const handleComponentChange = useCallback((nextComponent) => {
+    if (!nextComponent?.id) {
+      return
+    }
+    setCanvasState((previous) => updateCanvasNode(previous, nextComponent))
+  }, [])
+
+  const handleSelectNode = useCallback((nodeId) => {
+    if (!nodeId) {
+      return
+    }
+    setCanvasState((previous) => selectCanvasNode(previous, nodeId))
+  }, [])
+
+  const handleDropzoneKeyDown = useCallback(
+    (nodeId, event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        handleSelectNode(nodeId)
+      }
+    },
+    [handleSelectNode],
+  )
+
+  const renderNodeTree = (nodeId) => {
+    const node = canvasState.nodes[nodeId]
+    if (!node) {
+      return null
+    }
+    const isActiveNode = canvasState.selectionId === nodeId
+    const nodeMeta = getCanvasNodeMeta(node)
+    const childEntries = getCanvasNodeChildren(canvasState, nodeId)
+
+    return (
+      <li key={nodeId} className="canvas-workspace__node-outline-item">
+        <button
+          type="button"
+          className="canvas-workspace__node-outline-button"
+          onClick={() => handleSelectNode(nodeId)}
+          data-active={isActiveNode || undefined}
+        >
+          <span className="canvas-workspace__node-outline-label">
+            {getCanvasNodeDisplayName(node)}
+          </span>
+          {nodeMeta ? (
+            <span className="canvas-workspace__node-outline-meta">{nodeMeta}</span>
+          ) : null}
+          {node.slot ? (
+            <span className="canvas-workspace__node-outline-slot">Slot: {node.slot}</span>
+          ) : null}
+        </button>
+        {isActiveNode ? (
+          <div className="canvas-workspace__component-preview" style={componentPreviewStyle}>
+            <span className="canvas-workspace__component-preview-label">
+              {getCanvasNodeDisplayName(node)}
+            </span>
+            <span className="canvas-workspace__component-preview-meta">
+              {nodeMeta || 'Active node'}
+            </span>
+          </div>
+        ) : null}
+        {childEntries.length ? (
+          <ul className="canvas-workspace__node-outline-children">
+            {childEntries.map(({ node: child }) => renderNodeTree(child.id))}
+          </ul>
+        ) : null}
+      </li>
+    )
   }
 
   useEffect(() => {
@@ -1425,9 +1499,9 @@ export default function CanvasWorkspace() {
                   </p>
                 </div>
                 <div className="canvas-workspace__component-card" aria-live="polite">
-                  <span className="canvas-workspace__component-chip">{activeComponent.type}</span>
-                  <strong className="canvas-workspace__component-card-title">{activeComponent.label}</strong>
-                  <p className="canvas-workspace__component-card-description">Active component ready to place</p>
+                  <span className="canvas-workspace__component-chip">{activeComponentChip}</span>
+                  <strong className="canvas-workspace__component-card-title">{activeComponentLabel}</strong>
+                  <p className="canvas-workspace__component-card-description">{activeComponentDescription}</p>
                 </div>
               </div>
 
@@ -1461,6 +1535,80 @@ export default function CanvasWorkspace() {
                             activeComponentStyle={componentPreviewStyle}
                           />
                         ))}
+                        {canvasState.rootIds.length ? (
+                          canvasState.rootIds.map((nodeId) => {
+                            const node = canvasState.nodes[nodeId]
+                            if (!node) {
+                              return null
+                            }
+                            const nodeMeta = getCanvasNodeMeta(node) || 'Root node ready for composition.'
+                            const childEntries = getCanvasNodeChildren(canvasState, node.id)
+                            const childCount = childEntries.length
+                            const isActive = canvasState.selectionId === node.id
+                            const nodeTree = renderNodeTree(node.id)
+
+                            return (
+                              <section
+                                key={node.id}
+                                className="canvas-workspace__dropzone"
+                                aria-label={`${getCanvasNodeDisplayName(node)} drop zone`}
+                              >
+                                <div className="canvas-workspace__dropzone-header">
+                                  <div>
+                                    <h3>{getCanvasNodeDisplayName(node)}</h3>
+                                    <p>{nodeMeta}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="canvas-workspace__dropzone-action"
+                                    onClick={() => handleSelectNode(node.id)}
+                                  >
+                                    Inspect node
+                                  </button>
+                                </div>
+                                <div
+                                  className="canvas-workspace__dropzone-target"
+                                  role="button"
+                                  tabIndex={0}
+                                  data-active={isActive || undefined}
+                                  aria-label={`Select ${getCanvasNodeDisplayName(node)}`}
+                                  onClick={() => handleSelectNode(node.id)}
+                                  onKeyDown={(event) => handleDropzoneKeyDown(node.id, event)}
+                                >
+                                  <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
+                                    {isActive ? '●' : '+'}
+                                  </span>
+                                  <span className="canvas-workspace__dropzone-hint">
+                                    {childCount
+                                      ? `${childCount} direct ${childCount === 1 ? 'child' : 'children'}`
+                                      : 'No children yet'}
+                                  </span>
+                                </div>
+                                <div className="canvas-workspace__dropzone-preview">
+                                  <ul className="canvas-workspace__node-outline">{nodeTree}</ul>
+                                </div>
+                              </section>
+                            )
+                          })
+                        ) : (
+                          <section className="canvas-workspace__dropzone" aria-label="Empty canvas drop zone">
+                            <div className="canvas-workspace__dropzone-header">
+                              <div>
+                                <h3>No nodes yet</h3>
+                                <p>Drag components or layout primitives into the canvas to begin.</p>
+                              </div>
+                            </div>
+                            <div className="canvas-workspace__dropzone-target" role="button" tabIndex={0}>
+                              <span className="canvas-workspace__dropzone-icon" aria-hidden="true">
+                                +
+                              </span>
+                              <span className="canvas-workspace__dropzone-hint">Drop component to begin</span>
+                            </div>
+                            <p className="canvas-workspace__dropzone-placeholder">
+                              Use the component library to populate this screen.
+                            </p>
+                          </section>
+                        )}
                       </div>
                     </div>
                   </div>
