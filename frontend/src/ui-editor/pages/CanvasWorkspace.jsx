@@ -21,7 +21,6 @@ import {
   selectCanvasNode,
   updateCanvasNode,
 } from '../lib/canvasState'
-import CanvasArtboard from '../components/CanvasArtboard'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
@@ -144,33 +143,6 @@ const mergeWorkspaceSettings = (base, patch = {}) => {
 
   return next
 }
-
-const layoutPrimitives = [
-  {
-    id: 'primitive-stack',
-    label: 'Stack',
-    description: 'Vertical spacing system for hero copy or onboarding journeys.',
-    badge: 'Layout',
-  },
-  {
-    id: 'primitive-grid',
-    label: 'Responsive grid',
-    description: 'Multi-column scaffold mapped to the workspace grid tokens.',
-    badge: `${createDefaultPageStyles().gridColumns}-col`,
-  },
-  {
-    id: 'primitive-rail',
-    label: 'Right rail',
-    description: 'Secondary column for automation, filters or key actions.',
-    badge: 'Add-on',
-  },
-  {
-    id: 'primitive-zone',
-    label: 'Freeform zone',
-    description: 'Absolute positioning surface for immersive hero compositions.',
-    badge: 'Canvas',
-  },
-]
 
 const primitiveStyleBase = Object.freeze({
   backgroundColor: 'rgba(15, 23, 42, 0.62)',
@@ -699,20 +671,6 @@ export default function CanvasWorkspace() {
   const activeComponentDescription = activeComponent
     ? activeComponentMeta || 'Component ready to edit.'
     : 'Select a node in the canvas to inspect its properties.'
-  const componentPreviewStyle = useMemo(() => {
-    if (!activeComponent?.styles || typeof activeComponent.styles !== 'object') {
-      return {}
-    }
-
-    const nextStyle = {}
-    previewStyleAllowlist.forEach((property) => {
-      if (activeComponent.styles[property] !== undefined) {
-        nextStyle[property] = activeComponent.styles[property]
-      }
-    })
-    return nextStyle
-  }, [activeComponent])
-
   const canvasStatusMessage = useMemo(() => {
     if (canvasSaveState.error) {
       return { variant: 'error', text: canvasSaveState.error, live: true }
@@ -731,26 +689,6 @@ export default function CanvasWorkspace() {
     }
     return null
   }, [canvasSaveState])
-
-  const stageArtboardStyle = useMemo(() => {
-    const layoutWidth = pageStyles.layout === 'fluid' ? '100%' : pageStyles.maxWidth || '1200px'
-    const resolvedFontSize =
-      typeof pageStyles.fontSize === 'number' ? `${pageStyles.fontSize}px` : pageStyles.fontSize || '16px'
-
-    return {
-      maxWidth: layoutWidth,
-      backgroundColor: pageStyles.backgroundColor,
-      color: pageStyles.textColor,
-      fontFamily: pageStyles.fontFamily,
-      fontSize: resolvedFontSize,
-      gap: pageStyles.blockSpacing,
-      borderRadius: pageStyles.borderRadius,
-      boxShadow:
-        pageStyles.elevation === 'soft'
-          ? '0 32px 64px rgba(15, 23, 42, 0.32)'
-          : '0 40px 100px rgba(15, 23, 42, 0.45)',
-    }
-  }, [pageStyles])
 
   const stageLayoutLabel = useMemo(() => {
     if (pageStyles.layout === 'fluid') {
@@ -2101,30 +2039,13 @@ export default function CanvasWorkspace() {
                     <p className="canvas-surface-region__status">{canvasStatusMessage.text}</p>
                   )
                 ) : null}
-                <CanvasArtboard
+                <CanvasDragSurface
                   canvasState={canvasState}
-                  onInsertNode={handleInsertNode}
-                  onSelectNode={handleSelectNode}
-                  selectionId={canvasState.selectionId}
+                  onInsert={handleInsertNode}
+                  onSelect={handleSelectNode}
                 />
               </div>
-              <aside className="canvas-workspace__primitive-drawer" aria-label="Layout primitives">
-                <h3>Layout primitives</h3>
-                <p>Use these structures to stage components before publishing.</p>
-                <ul className="canvas-workspace__primitive-list">
-                  {layoutPrimitives.map((primitive) => (
-                    <li key={primitive.id} className="canvas-workspace__primitive">
-                      <span className="canvas-workspace__primitive-badge">{primitive.badge}</span>
-                      <div>
-                        <strong>{primitive.label}</strong>
-                        <p>{primitive.description}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </aside>
             </div>
-
             <div className={`canvas-workspace__create-screen-layer${isCreateScreenOpen ? ' is-open' : ''}`}>
               {isCreateScreenOpen ? (
                 <form className="canvas-workspace__create-screen" onSubmit={handleCreateScreen}>
@@ -2302,11 +2223,3 @@ export default function CanvasWorkspace() {
     </DndProvider>
   )
 }
-
-
-
-
-
-
-
-
