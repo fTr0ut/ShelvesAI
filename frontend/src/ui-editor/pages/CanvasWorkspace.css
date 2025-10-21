@@ -174,7 +174,7 @@
   margin-left: var(--sidebar-expanded-width);
 }
 
-.canvas-workspace__surface {
+/* .canvas-workspace__surface {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -187,7 +187,7 @@
   background: rgba(15, 23, 42, 0.58);
   box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12), 0 28px 44px rgba(2, 6, 23, 0.5);
   overflow: hidden;
-}
+} */
 
 .canvas-workspace__surface::before {
   content: '';
@@ -1295,8 +1295,7 @@
   color: #f8fafc;
   position: relative;
   padding-right: calc(
-    var(--properties-panel-width) + var(--properties-panel-gap) + var(--workspace-gutter) +
-      (var(--floating-panel-width) + var(--floating-panel-gap)) * 3
+    var(--properties-panel-width) + var(--properties-panel-gap) + var(--workspace-gutter)
   );
 }
 
@@ -1408,18 +1407,19 @@
 
 
 .canvas-surface-region__surface {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: min(100%, 1200px);
-  margin: 0 auto;
+  display: flex;               /* <— key: child is also a flex column */
+  flex: 1 1 auto;              /* <— fill the region’s height */
+  min-height: 0;               /* <— allow it to shrink when needed */
+  width: 100%;
+  max-width: none;
+  margin: 0;
   gap: clamp(1.25rem, 2vw, 1.75rem);
   padding: clamp(1.6rem, 2.8vw, 2.4rem);
   border-radius: 1.75rem;
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: linear-gradient(160deg, rgba(15, 23, 42, 0.82), rgba(30, 41, 59, 0.75));
   box-shadow: 0 30px 60px rgba(2, 6, 23, 0.55);
-  overflow: hidden;
+  overflow: hidden;            /* header stays fixed above the scrolling canvas */
 }
 
 .canvas-surface-region__surface::before {
@@ -1809,14 +1809,18 @@
   align-items: stretch;
   gap: clamp(1.5rem, 2.6vw, 2.8rem);
   margin-top: clamp(1rem, 2vh, 1.5rem);
+  min-height: 100vh;
 }
 
 .canvas-surface-region__surface {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(100%, 1200px);
-  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  min-height:100%;
+  max-width: none;
+  margin: 0;
   gap: clamp(1.25rem, 2vw, 1.75rem);
   padding: clamp(1.6rem, 2.8vw, 2.4rem);
   border-radius: 1.75rem;
@@ -1840,7 +1844,34 @@
   position: relative;
   z-index: 1;
 }
+/* Make the canvas region fill the entire center between the two sidebars */
+.canvas-surface-region {
+  position: fixed;                       /* detach from document flow */
+  top: var(--sidebar-offset-top);        /* clears any sticky header(s) */
+  left: var(--sidebar-collapsed-width);  /* snap to the left tools rail (collapsed) */
+  right: calc(                           /* snap to the right properties rail */
+    var(--properties-panel-width)
+    + var(--properties-panel-gap)
+    + var(--workspace-gutter)
+  );
+  bottom: 0;                             /* full height to bottom of viewport */
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  gap: clamp(1.5rem, 2.6vw, 2.8rem);
+  overflow: hidden;            /* keep scrolling inside the inner canvas */
+  z-index: 1;
+}
 
+/* When the left tools rail is expanded, shift the canvas over */
+.canvas-workspace--sidebar-open .canvas-surface-region {
+  left: var(--sidebar-expanded-width);
+}
+
+/* Ensure the inner “surface” stretches to fill the region’s height */
+.canvas-surface-region__surface {
+  min-height: 100%;
+}
 .canvas-surface-region__header {
   display: flex;
   flex-wrap: wrap;
@@ -1891,13 +1922,15 @@
 
 .canvas-workspace__surface {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: clamp(0.85rem, 1.4vw, 1.3rem);
   padding: clamp(1.5rem, 3vw, 2.4rem);
   border-radius: clamp(1.2rem, 2vw, 1.6rem);
   border: 1px dashed rgba(148, 163, 184, 0.24);
   background: rgba(15, 23, 42, 0.62);
-  min-height: clamp(14rem, 40vh, 24rem);
+  min-height: 0;
+  overflow: auto;
   transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
@@ -1908,6 +1941,9 @@
   border: 1px dashed rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.45);
   color: rgba(226, 232, 240, 0.78);
+  width: 100%;
+  flex: 1 1 auto;
+  align-self: stretch;
 }
 
 .canvas-surface__insertion {
@@ -1919,6 +1955,7 @@
   border: 1px dashed rgba(148, 163, 184, 0.32);
   color: rgba(148, 163, 184, 0.72);
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  width: 100%;
 }
 
 .canvas-surface__insertion.is-active {
@@ -1951,7 +1988,11 @@
   text-align: left;
   cursor: pointer;
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  width: 100%;
+  align-self: stretch;
 }
+
+
 
 .canvas-surface__node:hover {
   border-color: rgba(96, 165, 250, 0.4);

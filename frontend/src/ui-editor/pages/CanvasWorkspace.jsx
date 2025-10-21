@@ -15,6 +15,7 @@ import {
   createEmptyCanvasState,
   getCanvasNodeDisplayName,
   getCanvasNodeMeta,
+  getCanvasNodeChildren,
   serialiseCanvasStateToNodes,
   insertCanvasNode,
   reparentCanvasNode,
