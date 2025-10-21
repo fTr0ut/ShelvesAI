@@ -1975,6 +1975,75 @@
   color: rgba(252, 165, 165, 0.92);
 }
 
+.canvas-live-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(18rem, 32vh, 24rem);
+  padding: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.canvas-live-boundary__card {
+  width: min(100%, 520px);
+  display: grid;
+  gap: 0.9rem;
+  padding: clamp(1.5rem, 3vw, 2.3rem);
+  border-radius: clamp(1rem, 1.8vw, 1.4rem);
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.88));
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 32px 52px rgba(15, 23, 42, 0.28);
+  color: #e2e8f0;
+}
+
+.canvas-live-boundary__title {
+  margin: 0;
+  font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+  font-weight: 600;
+}
+
+.canvas-live-boundary__message {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.82);
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.canvas-live-boundary__hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.82);
+}
+
+.canvas-live-boundary__action-button {
+  justify-self: start;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(30, 64, 175, 0.35);
+  color: #f8fafc;
+  border-radius: 999px;
+  padding: 0.65rem 1.4rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.canvas-live-boundary__action-button:hover,
+.canvas-live-boundary__action-button:focus-visible {
+  background: rgba(59, 130, 246, 0.45);
+  border-color: rgba(191, 219, 254, 0.6);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
+}
+
+.canvas-live-boundary__action-button:focus-visible {
+  outline: 2px solid rgba(191, 219, 254, 0.8);
+  outline-offset: 3px;
+}
+
+.canvas-live-boundary__action-button:active {
+  transform: translateY(0);
+}
+
 .canvas-workspace__surface {
   display: flex;
   flex: 1 1 auto;
