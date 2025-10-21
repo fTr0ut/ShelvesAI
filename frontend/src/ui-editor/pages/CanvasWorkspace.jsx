@@ -28,6 +28,7 @@ import PropertiesPanel from '../components/PropertiesPanel'
 import { useProjectSettings } from '../lib/useProjectSettings'
 import { LIBRARY_ENTRY_KINDS } from '../lib/dnd'
 import LiveCanvas from '../live-canvas/LiveCanvas'
+import LiveCanvasBoundary from '../live-canvas/LiveCanvasBoundary'
 import './CanvasWorkspace.css'
 
 const defaultStatus = {
@@ -426,6 +427,44 @@ const nodeContainsTarget = (state, nodeId, candidateId) => {
 const createCanvasNodeId = (prefix) =>
   `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`
 
+const summariseLiveCanvasError = (error, fallback = 'Unable to render live canvas.') => {
+  if (!error) {
+    return fallback
+  }
+
+  if (typeof error === 'string') {
+    const trimmed = error.trim()
+    if (trimmed) {
+      return trimmed.split('\n')[0]
+    }
+  }
+
+  const message = typeof error?.message === 'string' ? error.message : ''
+  const trimmedMessage = message.trim()
+
+  if (trimmedMessage) {
+    return trimmedMessage.split('\n')[0]
+  }
+
+  return fallback
+}
+
+const truncateMessage = (message, maxLength = 160) => {
+  if (typeof message !== 'string') {
+    return ''
+  }
+
+  if (!Number.isFinite(maxLength) || maxLength <= 1) {
+    return message
+  }
+
+  if (message.length <= maxLength) {
+    return message
+  }
+
+  return `${message.slice(0, maxLength - 1)}…`
+}
+
 export default function CanvasWorkspace() {
   const projectSettings = useProjectSettings()
   const projectSettingsVersion = projectSettings?.version
@@ -570,6 +609,72 @@ export default function CanvasWorkspace() {
     }
     return null
   }, [canvasSaveState])
+
+  const handleLiveCanvasError = useCallback(
+    (error, info) => {
+      const summary = summariseLiveCanvasError(error)
+      const truncated = truncateMessage(summary)
+
+      setStatus({
+        phase: 'error',
+        message: `Live canvas preview unavailable: ${truncated || 'See details below.'}`,
+        meta: {
+          source: 'live-canvas',
+          error: {
+            message: typeof error?.message === 'string' ? error.message : summary,
+            stack: typeof error?.stack === 'string' ? error.stack : '',
+            componentStack: typeof info?.componentStack === 'string' ? info.componentStack : '',
+          },
+        },
+      })
+
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('Live canvas render failed', error, info)
+      }
+    },
+    [setStatus],
+  )
+
+  const handleLiveCanvasReset = useCallback(() => {
+    setStatus((previous) => {
+      if (previous?.meta?.source === 'live-canvas') {
+        return {
+          phase: 'idle',
+          message: 'Live canvas ready.',
+          meta: null,
+        }
+      }
+      return previous
+    })
+  }, [setStatus])
+
+  const renderLiveCanvasFallback = useCallback(
+    ({ error, resetErrorBoundary }) => {
+      const summary = summariseLiveCanvasError(error)
+      const truncated = truncateMessage(summary)
+
+      return (
+        <div className="canvas-live-boundary" role="alert" aria-live="assertive">
+          <div className="canvas-live-boundary__card">
+            <h3 className="canvas-live-boundary__title">Live canvas unavailable</h3>
+            <p className="canvas-live-boundary__message">{truncated || 'An unexpected error occurred.'}</p>
+            <p className="canvas-live-boundary__hint">Check the status panel for diagnostics.</p>
+            {typeof resetErrorBoundary === 'function' ? (
+              <button
+                type="button"
+                className="canvas-live-boundary__action-button"
+                onClick={resetErrorBoundary}
+              >
+                Try again
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )
+    },
+    [],
+  )
 
   const stageLayoutLabel = useMemo(() => {
     if (pageStyles.layout === 'fluid') {
@@ -1920,11 +2025,18 @@ export default function CanvasWorkspace() {
                     <p className="canvas-surface-region__status">{canvasStatusMessage.text}</p>
                   )
                 ) : null}
-                <LiveCanvas
-                  canvasState={canvasState}
-                  onInsert={handleInsertNode}
-                  onSelect={handleSelectNode}
-                />
+                <LiveCanvasBoundary
+                  fallback={renderLiveCanvasFallback}
+                  onError={handleLiveCanvasError}
+                  onReset={handleLiveCanvasReset}
+                  resetKeys={[canvasState, activeScreen?.id ?? '']}
+                >
+                  <LiveCanvas
+                    canvasState={canvasState}
+                    onInsert={handleInsertNode}
+                    onSelect={handleSelectNode}
+                  />
+                </LiveCanvasBoundary>
               </div>
             </div>
             <div className={`canvas-workspace__create-screen-layer${isCreateScreenOpen ? ' is-open' : ''}`}>
