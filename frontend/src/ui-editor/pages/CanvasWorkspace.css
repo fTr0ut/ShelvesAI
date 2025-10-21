@@ -332,6 +332,7 @@
   border: 1px dashed rgba(148, 163, 184, 0.35);
   background: rgba(241, 245, 249, 0.85);
   padding: clamp(0.9rem, 1.5vw, 1.25rem);
+  width: 100%;
 }
 
 .canvas-workspace__slot-label {
@@ -346,6 +347,45 @@
   display: flex;
   flex-direction: column;
   gap: clamp(0.75rem, 1.4vw, 1.25rem);
+}
+
+.canvas-workspace__tree-item {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.75rem, 1.3vw, 1.2rem);
+  width: 100%;
+}
+
+.canvas-workspace__tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.65rem, 1.2vw, 1rem);
+  padding-left: clamp(0.9rem, 1.6vw, 1.35rem);
+  border-left: 1px dashed rgba(148, 163, 184, 0.28);
+}
+
+.canvas-workspace__tree-children.is-empty {
+  border-left-color: rgba(148, 163, 184, 0.16);
+  padding-left: clamp(0.65rem, 1.2vw, 1rem);
+}
+
+.canvas-workspace__child-group {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.6rem, 1.1vw, 0.95rem);
+  width: 100%;
+}
+
+.canvas-workspace__child-group.is-empty {
+  gap: clamp(0.5rem, 1vw, 0.75rem);
+  opacity: 0.85;
+}
+
+.canvas-workspace__child-body {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.6rem, 1.1vw, 0.95rem);
+  width: 100%;
 }
 
 .canvas-workspace__element {

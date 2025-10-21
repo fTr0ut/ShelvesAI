@@ -504,6 +504,178 @@ function CanvasSurfaceNode({ node, onSelect, isSelected }) {
   )
 }
 
+function CanvasNodeInsertionZone({
+  canvasState,
+  parentId,
+  slot = null,
+  index,
+  label,
+  onInsert,
+  showLabel = false,
+}) {
+  const finalLabel = label || (slot ? `Drop into ${slot} slot` : 'Drop inside')
+  const [{ isOver, canDrop }, dropRef] = useDrop(
+    () => ({
+      accept: surfaceDropTypes,
+      canDrop: (item) => {
+        if (!item || !item.nodeId || !parentId) {
+          return true
+        }
+        if (!canvasState || !canvasState.nodes?.[item.nodeId]) {
+          return true
+        }
+        return !nodeContainsTarget(canvasState, item.nodeId, parentId)
+      },
+      drop: (item) => {
+        onInsert({ parentId, slot, index }, item)
+        return { parentId, slot, index }
+      },
+      collect: (monitor) => ({
+        isOver: monitor.isOver(),
+        canDrop: monitor.canDrop(),
+      }),
+    }),
+    [canvasState, parentId, slot, index, onInsert],
+  )
+
+  const classes = ['canvas-workspace__insertion']
+  const dataActive = isOver && canDrop ? 'true' : 'false'
+  const dataBlocked = isOver && !canDrop ? 'true' : 'false'
+
+  return (
+    <div
+      ref={dropRef}
+      role="presentation"
+      className={classes.join(' ')}
+      data-active={dataActive}
+      data-blocked={dataBlocked}
+    >
+      <div className="canvas-workspace__insertion-line" />
+      {(showLabel || isOver || !canDrop) && (
+        <span className="canvas-workspace__insertion-label">{finalLabel}</span>
+      )}
+    </div>
+  )
+}
+
+function CanvasNodeChildrenGroup({
+  canvasState,
+  parentId,
+  slot = null,
+  nodes,
+  onInsert,
+  onSelect,
+}) {
+  const label = slot ? `Drop into ${slot} slot` : 'Drop inside'
+  const isEmpty = nodes.length === 0
+  const containerClasses = [
+    slot ? 'canvas-workspace__slot' : 'canvas-workspace__child-group',
+    isEmpty ? 'is-empty' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const bodyClass = slot ? 'canvas-workspace__slot-body' : 'canvas-workspace__child-body'
+
+  return (
+    <div className={containerClasses} data-slot={slot || undefined}>
+      {slot ? <div className="canvas-workspace__slot-label">{`Slot: ${slot}`}</div> : null}
+      <div className={bodyClass}>
+        {nodes.map((childNode, index) => (
+          <Fragment key={childNode.id}>
+            <CanvasNodeInsertionZone
+              canvasState={canvasState}
+              parentId={parentId}
+              slot={slot}
+              index={index}
+              label={label}
+              onInsert={onInsert}
+            />
+            <CanvasNodeTree
+              canvasState={canvasState}
+              node={childNode}
+              onInsert={onInsert}
+              onSelect={onSelect}
+            />
+          </Fragment>
+        ))}
+        <CanvasNodeInsertionZone
+          key={`${slot || 'default'}-terminal`}
+          canvasState={canvasState}
+          parentId={parentId}
+          slot={slot}
+          index={nodes.length}
+          label={label}
+          onInsert={onInsert}
+          showLabel={isEmpty}
+        />
+      </div>
+    </div>
+  )
+}
+
+function CanvasNodeTree({ canvasState, node, onInsert, onSelect }) {
+  const selectionId = canvasState.selectionId
+  const defaultChildren = useMemo(() => {
+    if (!Array.isArray(node.childIds)) {
+      return []
+    }
+    return node.childIds
+      .map((childId) => canvasState.nodes[childId])
+      .filter(Boolean)
+  }, [canvasState, node.childIds])
+
+  const slotChildren = useMemo(() => {
+    if (!node.slotChildIds || typeof node.slotChildIds !== 'object') {
+      return []
+    }
+    return Object.entries(node.slotChildIds).map(([slotName, childIds]) => ({
+      slotName,
+      nodes: Array.isArray(childIds)
+        ? childIds.map((childId) => canvasState.nodes[childId]).filter(Boolean)
+        : [],
+    }))
+  }, [canvasState, node.slotChildIds])
+
+  const hasSlotChildren = slotChildren.some(({ nodes }) => nodes.length > 0)
+  const hasAnyChildren = defaultChildren.length > 0 || hasSlotChildren
+  const treeChildrenClasses = [
+    'canvas-workspace__tree-children',
+    hasAnyChildren ? '' : 'is-empty',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div className="canvas-workspace__tree-item">
+      <CanvasSurfaceNode
+        node={node}
+        onSelect={onSelect}
+        isSelected={selectionId === node.id}
+      />
+      <div className={treeChildrenClasses}>
+        <CanvasNodeChildrenGroup
+          canvasState={canvasState}
+          parentId={node.id}
+          nodes={defaultChildren}
+          onInsert={onInsert}
+          onSelect={onSelect}
+        />
+        {slotChildren.map(({ slotName, nodes: children }) => (
+          <CanvasNodeChildrenGroup
+            key={slotName}
+            canvasState={canvasState}
+            parentId={node.id}
+            slot={slotName}
+            nodes={children}
+            onInsert={onInsert}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function CanvasDragSurface({ canvasState, onInsert, onSelect }) {
   const nodes = useMemo(
     () => canvasState.rootIds.map((nodeId) => canvasState.nodes[nodeId]).filter(Boolean),
@@ -535,10 +707,11 @@ function CanvasDragSurface({ canvasState, onInsert, onSelect }) {
       {nodes.map((node, index) => (
         <Fragment key={node.id}>
           <CanvasSurfaceInsertionZone index={index} onInsert={handleInsert} />
-          <CanvasSurfaceNode
+          <CanvasNodeTree
+            canvasState={canvasState}
             node={node}
+            onInsert={handleInsert}
             onSelect={onSelect}
-            isSelected={canvasState.selectionId === node.id}
           />
         </Fragment>
       ))}
