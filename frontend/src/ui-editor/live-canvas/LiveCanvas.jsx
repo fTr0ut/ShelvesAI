@@ -74,7 +74,7 @@ const mergeNodeStyles = (node) => {
 
 const getNodeTextContent = (node) => {
   if (!node) return ''
-  const props = isPlainObject(node.props) ? node.props : {}
+  const props = isPlainObject(node?.props) ? node.props : {}
   const candidates = [
     props.text,
     props.heading,
@@ -385,11 +385,14 @@ function CanvasNode({
   nodeId,
   canvasState,
   onInsert,
-  onSelectNode,
+  onSelect,
   canDropItem,
   selectionId,
 }) {
   const node = canvasState.nodes[nodeId]
+  if (!node) {
+    return null
+  }
   const displayName = getCanvasNodeDisplayName(node)
   const [{ isDragging }, dragRef] = useDrag(() => ({
     type: DND_ITEM_TYPES.CANVAS_NODE,
@@ -427,7 +430,7 @@ function CanvasNode({
             nodeId={childId}
             canvasState={canvasState}
             onInsert={onInsert}
-            onSelectNode={onSelectNode}
+            onSelect={onSelect}
             canDropItem={canDropItem}
             selectionId={selectionId}
           />,
@@ -446,7 +449,7 @@ function CanvasNode({
       })
       return elements
     },
-    [canvasState, canDropItem, displayName, nodeId, onInsert, onSelectNode, selectionId],
+    [canvasState, canDropItem, displayName, nodeId, onInsert, onSelect, selectionId],
   )
 
   const childContent = useMemo(() => {
@@ -483,9 +486,9 @@ function CanvasNode({
   const handleClick = useCallback(
     (event) => {
       event.stopPropagation()
-      onSelectNode(nodeId)
+      onSelect(nodeId)
     },
-    [nodeId, onSelectNode],
+    [nodeId, onSelect],
   )
 
   const elementTag = guessElementTag(node)
@@ -524,10 +527,21 @@ function CanvasNode({
   )
 }
 
-export default function CanvasArtboard({ canvasState, onInsertNode, onSelectNode, selectionId }) {
+export default function LiveCanvas({ canvasState, onInsert, onSelect }) {
+  const safeState = useMemo(() => {
+    if (!canvasState || typeof canvasState !== 'object') {
+      return { rootIds: [], nodes: {}, selectionId: null }
+    }
+    return {
+      rootIds: Array.isArray(canvasState.rootIds) ? canvasState.rootIds : [],
+      nodes: canvasState.nodes || {},
+      selectionId: canvasState.selectionId || null,
+    }
+  }, [canvasState])
+
   const canDropItem = useCallback(
-    (item, target) => canDropOnTarget(canvasState, item, target),
-    [canvasState],
+    (item, target) => canDropOnTarget(safeState, item, target),
+    [safeState],
   )
 
   const rootInsertion = (
@@ -536,9 +550,9 @@ export default function CanvasArtboard({ canvasState, onInsertNode, onSelectNode
       parentId={null}
       slot={null}
       index={0}
-      onInsert={onInsertNode}
+      onInsert={onInsert}
       canDropItem={canDropItem}
-      isEmpty={canvasState.rootIds.length === 0}
+      isEmpty={safeState.rootIds.length === 0}
       label="Insert at start of canvas"
     />
   )
@@ -546,21 +560,21 @@ export default function CanvasArtboard({ canvasState, onInsertNode, onSelectNode
   return (
     <div className="canvas-workspace__surface" role="presentation">
       {rootInsertion}
-      {canvasState.rootIds.map((nodeId, index) => (
+      {safeState.rootIds.map((nodeId, index) => (
         <Fragment key={nodeId}>
           <CanvasNode
             nodeId={nodeId}
-            canvasState={canvasState}
-            onInsert={onInsertNode}
-            onSelectNode={onSelectNode}
+            canvasState={safeState}
+            onInsert={onInsert}
+            onSelect={onSelect}
             canDropItem={canDropItem}
-            selectionId={selectionId}
+            selectionId={safeState.selectionId}
           />
           <CanvasInsertionZone
             parentId={null}
             slot={null}
             index={index + 1}
-            onInsert={onInsertNode}
+            onInsert={onInsert}
             canDropItem={canDropItem}
             label="Insert on canvas"
           />
@@ -569,4 +583,3 @@ export default function CanvasArtboard({ canvasState, onInsertNode, onSelectNode
     </div>
   )
 }
-
