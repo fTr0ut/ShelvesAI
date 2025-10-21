@@ -1,4 +1,5 @@
 import { Component } from 'react'
+import PropTypes from 'prop-types'
 
 const arrayShallowEqual = (a, b) => {
   if (a === b) {
@@ -41,7 +42,7 @@ class LiveCanvasBoundary extends Component {
 
   componentDidUpdate(prevProps) {
     const { hasError } = this.state
-    const { resetKeys = [] } = this.props
+    const { resetKeys } = this.props
 
     if (hasError && !arrayShallowEqual(resetKeys, prevProps.resetKeys)) {
       this.resetErrorBoundary()
@@ -59,7 +60,7 @@ class LiveCanvasBoundary extends Component {
 
   render() {
     const { hasError, error } = this.state
-    const { children, fallback = null } = this.props
+    const { children, fallback } = this.props
 
     if (hasError) {
       if (typeof fallback === 'function') {
@@ -70,6 +71,21 @@ class LiveCanvasBoundary extends Component {
 
     return children
   }
+}
+
+LiveCanvasBoundary.propTypes = {
+  children: PropTypes.node.isRequired,
+  fallback: PropTypes.oneOfType([PropTypes.func, PropTypes.node]),
+  onError: PropTypes.func,
+  onReset: PropTypes.func,
+  resetKeys: PropTypes.arrayOf(PropTypes.any),
+}
+
+LiveCanvasBoundary.defaultProps = {
+  fallback: null,
+  onError: undefined,
+  onReset: undefined,
+  resetKeys: [],
 }
 
 export default LiveCanvasBoundary
