@@ -54,21 +54,21 @@ export default function EditorOverview() {
           <h3>Canvas</h3>
           <p>Design canvases, tune visual tokens, and preview experiences with the new dedicated workspace.</p>
           <Link className="editor-overview__link" to={uiEditorPath('canvas')}>
-            Jump to Canvas ->
+            Jump to Canvas &rarr;
           </Link>
         </article>
         <article>
           <h3>Routes</h3>
           <p>Define navigation, stitch shelves together, and sync editor flows with backend route definitions.</p>
           <Link className="editor-overview__link" to={uiEditorPath('routes')}>
-            Coordinate Routes ->
+            Coordinate Routes &rarr;
           </Link>
         </article>
         <article>
           <h3>Project settings</h3>
           <p>Configure API hosts, authentication, and endpoint catalogues for downstream tooling.</p>
           <Link className="editor-overview__link" to={uiEditorPath('settings')}>
-            Configure Settings ->
+            Configure Settings &rarr;
           </Link>
         </article>
       </section>
@@ -84,3 +84,4 @@ export default function EditorOverview() {
     </div>
   )
 }
+

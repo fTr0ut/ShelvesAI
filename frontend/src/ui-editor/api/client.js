@@ -1,4 +1,4 @@
-import { AUTH_METHODS, getProjectSettings } from '../lib/projectSettings'
+import { AUTH_METHODS, getProjectSettings, registerFetchJsonImplementation } from '../lib/projectSettings'
 
 const stripTrailingSlash = (value) => value.replace(/\/+$/, '')
 
@@ -73,6 +73,8 @@ export const fetchJson = async (path, options = {}) => {
   if (response.status === 204) return null
   return response.json()
 }
+
+registerFetchJsonImplementation(fetchJson)
 
 export const getConfiguredEndpoints = () => getProjectSettings()?.endpointMeta?.endpoints || []
 

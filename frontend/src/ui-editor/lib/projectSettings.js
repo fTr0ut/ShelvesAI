@@ -80,6 +80,10 @@ let currentSettings = buildState()
 let hydrationPromise = null
 let fetchJsonImpl = null
 
+export const registerFetchJsonImplementation = (fn) => {
+  fetchJsonImpl = typeof fn === 'function' ? fn : null
+}
+
 function buildState() {
   const documentCopy = cloneJson(storedSettings.endpointDocument)
   const endpointMeta = normaliseEndpointSpec(documentCopy)
@@ -123,10 +127,10 @@ function updateState({ settings, meta, bumpVersion = true } = {}) {
   return currentSettings
 }
 
-const ensureFetchJson = async () => {
-  if (fetchJsonImpl) return fetchJsonImpl
-  const module = await import('../api/client')
-  fetchJsonImpl = module.fetchJson
+const ensureFetchJson = () => {
+  if (!fetchJsonImpl) {
+    throw new Error('[projectSettings] fetchJson implementation not registered. Call registerFetchJsonImplementation before using project settings networking.')
+  }
   return fetchJsonImpl
 }
 
@@ -289,7 +293,7 @@ export const hasCustomApiBase = () => {
 }
 
 export const __setFetchJsonImplementation = (fn) => {
-  fetchJsonImpl = fn
+  registerFetchJsonImplementation(fn)
 }
 
 export const __resetProjectSettingsForTests = () => {
@@ -298,4 +302,8 @@ export const __resetProjectSettingsForTests = () => {
   version = 0
   currentSettings = buildState()
   hydrationPromise = null
+  registerFetchJsonImplementation(null)
 }
+
+
+

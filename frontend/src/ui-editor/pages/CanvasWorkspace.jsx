@@ -21,6 +21,7 @@ import {
   selectCanvasNode,
   updateCanvasNode,
 } from '../lib/canvasState'
+import CanvasArtboard from '../components/CanvasArtboard'
 import ComponentLibraryPanel from '../components/ComponentLibraryPanel'
 import CanvasScreenSelector from '../components/CanvasScreenSelector'
 import PropertiesPanel from '../components/PropertiesPanel'
@@ -2301,6 +2302,7 @@ export default function CanvasWorkspace() {
     </DndProvider>
   )
 }
+
 
 
 
