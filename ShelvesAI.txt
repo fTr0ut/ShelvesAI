@@ -2,7 +2,7 @@ Shelfy - Product & Architecture Sheet
 
 Synopsis
 
-Shelfy is a mobile-first and web companion experience for showcasing physical collections. Users create "shelves" that group items such as books, movies, vinyl, watches, wine, memorabilia, or any collectible. Shelves and their items can be kept private, shared with friends, or published to a public feed. A camera workflow sends shelf photos to OpenAI Vision to auto-identify titles and metadata, dramatically reducing manual cataloging. Monetization paths include transaction fees on trades/sales and targeted promotions.
+ShelvesAI is a standalone mobile companion experience for showcasing and tracking physical collections. Users create "shelves" that group items such as books, movies, vinyl, watches, wine, memorabilia, or any collectible. Shelves and their items can be kept private, shared with friends, or published to a public feed. A camera workflow sends shelf photos to OpenAI Vision to auto-identify titles and metadata, dramatically reducing manual cataloging. Monetization paths include transaction fees on trades/sales and targeted promotions.
 
 Technology Overview
 
