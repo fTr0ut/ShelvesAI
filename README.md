@@ -1,38 +1,46 @@
-# Collector Monorepo
+# ShelvesAI
 
-This repository contains the Collector Express API, the Vite-powered web client,
-and an Expo mobile shell. The sections below outline local development commands.
+Mobile-first app for cataloging and sharing physical collections.
 
-## Vite frontend (React)
+## Architecture
 
-The Vite app lives in `frontend/`. Common commands:
+- **Mobile**: Expo/React Native app (`/mobile`)
+- **API**: Node.js/Express backend (`/api`)
+- **Database**: MongoDB (migrating to PostgreSQL)
 
-```bash
-cd frontend
-npm install
-npm run dev     # starts Vite on http://localhost:5173
-npm run build   # creates production bundle in dist/
-```
+## Quick Start
 
-## Express backend
+### Prerequisites
+- Node.js 18+
+- Docker (for PostgreSQL - Phase 1)
+- Expo CLI
 
-The backend lives in `backend/` and defaults to port `5001` during development.
-
-```bash
-cd backend
-npm install
-npm run dev     # or use `npm run server` from the repo root
-```
-
-## Combined workflow
-
-From the repository root you can run the backend and web client together:
+### Development
 
 ```bash
-# Install dependencies once
-npm install
+# Start API
+cd api && npm install && npm run dev
 
-# In separate terminals
-npm run server                # backend on http://localhost:5001
-cd frontend && npm run dev    # Vite frontend on http://localhost:5173
+# Start mobile (in separate terminal)
+cd mobile && npm install && npx expo start
 ```
+
+## Project Structure
+
+```
+ShelvesAI/
+├── api/                 # Express backend
+│   ├── controllers/
+│   ├── models/
+│   ├── routes/
+│   ├── services/
+│   └── server.js
+├── mobile/              # Expo app
+│   └── src/
+├── storyboards/         # Implementation plans
+└── README.md
+```
+
+## Implementation Phases
+
+See `/storyboards/readme.md` for the full implementation roadmap.

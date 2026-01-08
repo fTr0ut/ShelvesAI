@@ -15,7 +15,6 @@ const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
 const steamRoutes = require('./routes/steam');
 const steamOpenIdRoutes = require('./routes/steamOpenId');
-const uiEditorRoutes = require('./routes/uiEditor');
 
 const app = express();
 // Minimal request log (dev only)
@@ -147,7 +146,6 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
-app.use('/api/ui-editor', uiEditorRoutes);
 app.use('/steam', steamOpenIdRoutes);
 app.use('/api/steam', steamRoutes);
 // Optional: Auth0-protected example route when configured
@@ -203,51 +201,6 @@ try {
   // Module not installed; skip silently
 }
 
-// Serve frontend build with optional env override
-const distPath = process.env.FRONTEND_DIST || path.join(__dirname, '..', 'frontend', 'dist');
-const indexPath = path.join(distPath, 'index.html');
-
-if (fs.existsSync(distPath)) {
-  console.log(`Serving frontend from: ${distPath}`);
-  console.log(`Index at: ${indexPath} (exists: ${fs.existsSync(indexPath)})`);
-  // Serve root explicitly
-  app.get('/', (req, res) => {
-    res.sendFile(indexPath);
-  });
-  // Also handle /index.html explicitly
-  app.get('/index.html', (req, res) => {
-    res.sendFile(indexPath);
-  });
-  // Serve static assets
-  app.use(express.static(distPath));
-  // SPA fallback: send index.html for non-API routes
-  app.use((req, res, next) => {
-    if (req.method !== 'GET') return next();
-    if (req.path.startsWith('/api') || req.path.startsWith('/steam')) {
-      return next();
-    }
-    res.sendFile(indexPath);
-  });
-} else {
-  console.warn(`Frontend build not found at ${distPath}. Run "npm run build" in /frontend to generate it.`);
-}
-
-// Debug route to verify resolved paths
-const emitFrontendDiagnostics = (req, res) => {
-  const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
-  const indexPath = path.join(frontendPath, 'index.html');
-  res.json({
-    frontendPath,
-    frontendExists: fs.existsSync(frontendPath),
-    indexPath,
-    indexExists: fs.existsSync(indexPath),
-    cwd: process.cwd(),
-    dirname: __dirname,
-  });
-};
-
-app.get('/__debug', emitFrontendDiagnostics);
-app.get('/api/__debug', emitFrontendDiagnostics);
 module.exports = app;
 
 
