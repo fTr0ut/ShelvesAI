@@ -13,8 +13,9 @@ const accountRoutes = require('./routes/account');
 const collectablesRoutes = require('./routes/collectables');
 const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
-const steamRoutes = require('./routes/steam');
-const steamOpenIdRoutes = require('./routes/steamOpenId');
+// Steam routes temporarily disabled - need PostgreSQL migration
+// const steamRoutes = require('./routes/steam');
+// const steamOpenIdRoutes = require('./routes/steamOpenId');
 
 const app = express();
 // Minimal request log (dev only)
@@ -127,15 +128,7 @@ try {
   console.warn('Failed to initialize media cache directory:', err.message);
 }
 
-// DB connection
-// if (process.env.MONGO_URI) {
-//   mongoose
-//     .connect(process.env.MONGO_URI)
-//     .then(() => console.log('MongoDB connected'))
-//     .catch((err) => console.error('MongoDB connection error:', err));
-// } else {
-//   console.warn('MONGO_URI not set. Skipping DB connection.');
-// }
+// Database connection handled in index.js via pg.js
 
 
 
@@ -146,62 +139,13 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
-app.use('/steam', steamOpenIdRoutes);
-app.use('/api/steam', steamRoutes);
+// app.use('/steam', steamOpenIdRoutes);
+// app.use('/api/steam', steamRoutes);
 // Optional: Auth0-protected example route when configured
-try {
-  const { auth: auth0Jwt } = require('express-oauth2-jwt-bearer');
-  const rawDomain = (process.env.AUTH0_DOMAIN || '').trim();
-  const audience = (process.env.AUTH0_AUDIENCE || '').trim();
-  // Normalize issuer: accept either bare domain (your-tenant.us.auth0.com) or full https URL
-  const issuerBaseURL = rawDomain
-    ? (rawDomain.startsWith('http') ? rawDomain.replace(/\/+$/, '') : `https://${rawDomain}`)
-    : '';
-  if (issuerBaseURL && audience) {
-    console.log(`Auth0 config → issuer: ${issuerBaseURL} audience: ${audience}`);
-    const checkJwt = auth0Jwt({
-      audience,
-      issuerBaseURL,
-      tokenSigningAlg: 'RS256',
-    });
-    app.get('/api/auth0/me', checkJwt, (req, res) => {
-      // When valid, req.auth contains token claims
-      res.json({ auth0: req.auth });
-    });
-    // consumeAuth0 -> issues local JWT
-    try {
-      const { consumeAuth0 } = require('./controllers/authController');
-      app.post('/api/auth0/consume', checkJwt, consumeAuth0);
-    } catch {}
-    // Optional: sync minimal Auth0 profile into Mongo
-    try {
-      const Auth0Profile = require('./models/Auth0Profile');
-      app.post('/api/auth0/sync', checkJwt, async (req, res) => {
-        const claims = req.auth?.payload || {};
-        if (!claims.sub) return res.status(400).json({ error: 'Missing sub in token' });
-        const update = {
-          email: claims.email,
-          name: claims.name || claims.nickname,
-          picture: claims.picture,
-        };
-        const doc = await Auth0Profile.findOneAndUpdate(
-          { sub: claims.sub },
-          { sub: claims.sub, ...update },
-          { upsert: true, new: true }
-        );
-        res.json({ synced: true, profile: { id: doc._id, sub: doc.sub, email: doc.email, name: doc.name } });
-      });
-      console.log('Auth0 routes enabled at /api/auth0/me and /api/auth0/sync');
-    } catch {}
-    console.log('Auth0 route enabled at /api/auth0/me');
-  } else {
-    console.log('Auth0 not configured (set AUTH0_DOMAIN and AUTH0_AUDIENCE).');
-  }
-} catch (e) {
-  // Module not installed; skip silently
-}
+
 
 module.exports = app;
+
 
 
 

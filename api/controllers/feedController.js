@@ -1,234 +1,279 @@
-const { Types } = require('mongoose');
-const Shelf = require('../models/Shelf');
-const User = require('../models/User');
-const UserCollection = require('../models/UserCollection');
-const Friendship = require('../models/Friendship');
+const feedQueries = require('../database/queries/feed');
+const shelvesQueries = require('../database/queries/shelves');
+const friendshipQueries = require('../database/queries/friendships');
+const { query } = require('../database/pg');
+const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
-async function fetchFriendIds(userId) {
-  const friendships = await Friendship.find({
-    status: 'accepted',
-    $or: [
-      { requester: userId },
-      { addressee: userId },
-    ],
-  }).select('requester addressee');
-  const ids = new Set();
-  const me = String(userId);
-  friendships.forEach((doc) => {
-    const req = String(doc.requester);
-    const add = String(doc.addressee);
-    if (req === me) ids.add(add);
-    else ids.add(req);
-  });
-  return ids;
-}
+async function summarizeItems(shelfIds) {
+  if (!shelfIds.length) return new Map();
 
-function toObjectId(value) {
-  try { return new Types.ObjectId(value); } catch (err) { return null }
-}
+  const result = await query(
+    `SELECT uc.shelf_id,
+            uc.id, uc.collectable_id, uc.manual_id, uc.position, uc.notes, uc.rating,
+            c.title as collectable_title, c.primary_creator, c.cover_url, c.kind,
+            um.name as manual_name, um.author as manual_author
+     FROM user_collections uc
+     LEFT JOIN collectables c ON c.id = uc.collectable_id
+     LEFT JOIN user_manuals um ON um.id = uc.manual_id
+     WHERE uc.shelf_id = ANY($1)
+     ORDER BY uc.created_at DESC`,
+    [shelfIds]
+  );
 
-function toObjectIds(values) {
-  return values.map(toObjectId).filter(Boolean);
-}
-
-function summarizeItems(entries) {
   const map = new Map();
-  entries.forEach((entry) => {
-    const key = String(entry.shelf);
+  for (const row of result.rows) {
+    const key = String(row.shelf_id);
     if (!map.has(key)) map.set(key, []);
     const arr = map.get(key);
     if (arr.length < 5) {
       arr.push({
-        id: entry._id,
-        collectable: entry.collectable || null,
-        manual: entry.manual || null,
-        position: entry.position || null,
-        notes: entry.notes || null,
-        rating: entry.rating ?? null,
+        id: row.id,
+        collectable: row.collectable_id ? {
+          id: row.collectable_id,
+          title: row.collectable_title,
+          primaryCreator: row.primary_creator,
+          coverUrl: row.cover_url,
+          kind: row.kind,
+        } : null,
+        manual: row.manual_id ? {
+          id: row.manual_id,
+          name: row.manual_name,
+          author: row.manual_author,
+        } : null,
+        position: row.position,
+        notes: row.notes,
+        rating: row.rating,
       });
     }
-  });
+  }
   return map;
 }
 
+async function getShelfCounts(shelfIds) {
+  if (!shelfIds.length) return new Map();
+
+  const result = await query(
+    `SELECT shelf_id, COUNT(*) as total
+     FROM user_collections
+     WHERE shelf_id = ANY($1)
+     GROUP BY shelf_id`,
+    [shelfIds]
+  );
+
+  return new Map(result.rows.map(r => [String(r.shelf_id), parseInt(r.total)]));
+}
+
 async function getFeed(req, res) {
-  const scope = String(req.query.scope || 'global').toLowerCase();
-  const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
-  const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
-  const typeFilter = req.query.type ? String(req.query.type).trim() : '';
-  const ownerOverride = req.query.ownerId ? String(req.query.ownerId).trim() : '';
-  const since = req.query.since ? new Date(req.query.since) : null;
+  try {
+    const scope = String(req.query.scope || 'global').toLowerCase();
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 50 });
+    const typeFilter = req.query.type ? String(req.query.type).trim() : null;
+    const ownerOverride = req.query.ownerId ? String(req.query.ownerId).trim() : null;
 
-  const viewer = await User.findById(req.user.id).select('city state country');
-  if (!viewer) return res.status(404).json({ error: 'User not found' });
-  const viewerId = String(viewer._id);
+    const viewerId = req.user.id;
+    const friendIds = await friendshipQueries.getAcceptedFriendIds(viewerId);
 
-  const friendIds = await fetchFriendIds(viewer._id);
-  const match = {};
-  const filters = { type: typeFilter || null, ownerId: ownerOverride || null };
+    let shelves = [];
 
-  if (typeFilter) match.type = typeFilter;
-  if (since && !Number.isNaN(since.valueOf())) match.updatedAt = { $gte: since };
+    if (ownerOverride) {
+      // Specific user's shelves
+      const isOwner = ownerOverride === viewerId;
+      const isFriend = friendIds.includes(ownerOverride);
 
-  let allowedVisibility = ['public'];
-  let ownerFilter;
+      let visibilityFilter = ['public'];
+      if (isOwner) visibilityFilter = ['public', 'friends', 'private'];
+      else if (isFriend) visibilityFilter = ['public', 'friends'];
 
-  if (ownerOverride) {
-    const overrideId = toObjectId(ownerOverride);
-    if (!overrideId) return res.status(400).json({ error: 'Invalid ownerId' });
-    ownerFilter = overrideId;
-    if (ownerOverride === viewerId) allowedVisibility = ['public', 'friends', 'private'];
-  } else if (scope === 'friends') {
-    if (!friendIds.size) return res.json({ scope, filters, paging: { limit, skip }, entries: [] });
-    ownerFilter = { $in: toObjectIds(Array.from(friendIds)) };
-    allowedVisibility = ['public', 'friends'];
-  } else if (scope === 'nearby') {
-    allowedVisibility = ['public'];
-    const locationQuery = {};
-    if (viewer.city) locationQuery.city = viewer.city;
-    if (viewer.state) locationQuery.state = viewer.state;
-    if (viewer.country) locationQuery.country = viewer.country;
-    if (!Object.keys(locationQuery).length) {
-      return res.json({ scope, filters, paging: { limit, skip }, entries: [] });
+      const result = await query(
+        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
+         FROM shelves s
+         JOIN users u ON u.id = s.owner_id
+         WHERE s.owner_id = $1
+         AND s.visibility = ANY($2)
+         ${typeFilter ? 'AND s.type = $3' : ''}
+         ORDER BY s.updated_at DESC
+         LIMIT $${typeFilter ? 4 : 3} OFFSET $${typeFilter ? 5 : 4}`,
+        typeFilter
+          ? [ownerOverride, visibilityFilter, typeFilter, limit, offset]
+          : [ownerOverride, visibilityFilter, limit, offset]
+      );
+      shelves = result.rows;
+
+    } else if (scope === 'friends') {
+      if (!friendIds.length) {
+        return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries: [] });
+      }
+
+      const result = await query(
+        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
+         FROM shelves s
+         JOIN users u ON u.id = s.owner_id
+         WHERE s.owner_id = ANY($1)
+         AND s.visibility IN ('public', 'friends')
+         ${typeFilter ? 'AND s.type = $2' : ''}
+         ORDER BY s.updated_at DESC
+         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
+        typeFilter
+          ? [friendIds, typeFilter, limit, offset]
+          : [friendIds, limit, offset]
+      );
+      shelves = result.rows;
+
+    } else if (scope === 'mine') {
+      const result = await query(
+        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
+         FROM shelves s
+         JOIN users u ON u.id = s.owner_id
+         WHERE s.owner_id = $1
+         ${typeFilter ? 'AND s.type = $2' : ''}
+         ORDER BY s.updated_at DESC
+         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
+        typeFilter
+          ? [viewerId, typeFilter, limit, offset]
+          : [viewerId, limit, offset]
+      );
+      shelves = result.rows;
+
+    } else {
+      // Global feed - public shelves only
+      const result = await query(
+        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
+         FROM shelves s
+         JOIN users u ON u.id = s.owner_id
+         WHERE s.visibility = 'public'
+         AND s.owner_id != $1
+         ${typeFilter ? 'AND s.type = $2' : ''}
+         ORDER BY s.updated_at DESC
+         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
+        typeFilter
+          ? [viewerId, typeFilter, limit, offset]
+          : [viewerId, limit, offset]
+      );
+      shelves = result.rows;
     }
-    const nearbyUsers = await User.find(locationQuery).select('_id');
-    const nearbyIds = new Set(nearbyUsers.map((u) => String(u._id)));
-    nearbyIds.add(viewerId);
-    ownerFilter = { $in: toObjectIds(Array.from(nearbyIds)) };
-  } else if (scope === 'mine') {
-    allowedVisibility = ['public', 'friends', 'private'];
-    ownerFilter = viewer._id;
-  }
 
-  match.visibility = { $in: allowedVisibility };
-  if (ownerFilter) match.owner = ownerFilter;
-  if (!ownerFilter && scope === 'global') {
-    match.owner = { $ne: viewer._id };
-  }
+    if (!shelves.length) {
+      return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries: [] });
+    }
 
-  const shelves = await Shelf.find(match)
-    .populate('owner', 'username name firstName lastName picture city state country')
-    .sort({ updatedAt: -1 })
-    .skip(skip)
-    .limit(limit);
+    const shelfIds = shelves.map(s => s.id);
+    const [itemMap, countMap] = await Promise.all([
+      summarizeItems(shelfIds),
+      getShelfCounts(shelfIds),
+    ]);
 
-  const validShelves = shelves.filter((s) => s.owner);
-  if (!validShelves.length) {
-    return res.json({ scope, filters, paging: { limit, skip }, entries: [] });
-  }
-
-  const shelfIds = validShelves.map((s) => s._id);
-  const items = await UserCollection.find({ shelf: { $in: shelfIds } })
-    .populate('collectable')
-    .populate('manual')
-    .sort({ createdAt: -1 });
-
-  const itemMap = summarizeItems(items);
-  const counts = await UserCollection.aggregate([
-    { $match: { shelf: { $in: shelfIds } } },
-    { $group: { _id: '$shelf', total: { $sum: 1 } } },
-  ]);
-  const countMap = new Map(counts.map((doc) => [String(doc._id), doc.total]));
-
-  const entries = validShelves.map((shelfDoc) => {
-    const shelfId = String(shelfDoc._id);
-    const owner = shelfDoc.owner;
-    return {
+    const entries = shelves.map(s => ({
       shelf: {
-        id: shelfId,
-        name: shelfDoc.name,
-        type: shelfDoc.type,
-        description: shelfDoc.description,
-        visibility: shelfDoc.visibility,
-        createdAt: shelfDoc.createdAt,
-        updatedAt: shelfDoc.updatedAt,
-        itemCount: countMap.get(shelfId) || 0,
+        id: s.id,
+        name: s.name,
+        type: s.type,
+        description: s.description,
+        visibility: s.visibility,
+        createdAt: s.created_at,
+        updatedAt: s.updated_at,
+        itemCount: countMap.get(String(s.id)) || 0,
       },
       owner: {
-        id: String(owner._id),
+        id: s.owner_id,
+        username: s.username,
+        name: [s.first_name, s.last_name].filter(Boolean).join(' ').trim() || undefined,
+        city: s.city,
+        state: s.state,
+        country: s.country,
+        picture: s.owner_picture,
+      },
+      items: itemMap.get(String(s.id)) || [],
+    }));
+
+    res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
+  } catch (err) {
+    console.error('getFeed error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getFeedEntryDetails(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const viewerId = req.user.id;
+    const shelf = await shelvesQueries.getForViewing(shelfId, viewerId);
+
+    if (!shelf) return res.status(404).json({ error: 'Feed entry not found' });
+
+    // Get owner info
+    const ownerResult = await query(
+      `SELECT id, username, first_name, last_name, picture, city, state, country 
+       FROM users WHERE id = $1`,
+      [shelf.ownerId]
+    );
+    const owner = ownerResult.rows[0];
+
+    // Get all items
+    const itemsResult = await query(
+      `SELECT uc.*, 
+              c.title as collectable_title, c.primary_creator, c.cover_url, c.kind,
+              c.description as collectable_description, c.year, c.tags,
+              um.name as manual_name, um.author as manual_author, um.description as manual_description
+       FROM user_collections uc
+       LEFT JOIN collectables c ON c.id = uc.collectable_id
+       LEFT JOIN user_manuals um ON um.id = uc.manual_id
+       WHERE uc.shelf_id = $1
+       ORDER BY uc.created_at DESC`,
+      [shelfId]
+    );
+
+    const entry = {
+      shelf: {
+        id: shelf.id,
+        name: shelf.name,
+        type: shelf.type,
+        description: shelf.description,
+        visibility: shelf.visibility,
+        createdAt: shelf.createdAt,
+        updatedAt: shelf.updatedAt,
+        itemCount: itemsResult.rows.length,
+      },
+      owner: {
+        id: owner.id,
         username: owner.username,
-        name: owner.name || [owner.firstName, owner.lastName].filter(Boolean).join(' ').trim() || undefined,
+        name: [owner.first_name, owner.last_name].filter(Boolean).join(' ').trim() || undefined,
         city: owner.city,
         state: owner.state,
         country: owner.country,
         picture: owner.picture,
       },
-      items: itemMap.get(shelfId) || [],
+      items: itemsResult.rows.map(row => ({
+        id: row.id,
+        collectable: row.collectable_id ? {
+          id: row.collectable_id,
+          title: row.collectable_title,
+          primaryCreator: row.primary_creator,
+          coverUrl: row.cover_url,
+          kind: row.kind,
+          description: row.collectable_description,
+          year: row.year,
+          tags: row.tags,
+        } : null,
+        manual: row.manual_id ? {
+          id: row.manual_id,
+          name: row.manual_name,
+          author: row.manual_author,
+          description: row.manual_description,
+        } : null,
+        position: row.position,
+        notes: row.notes,
+        rating: row.rating,
+        createdAt: row.created_at,
+      })),
     };
-  });
 
-  res.json({ scope, filters, paging: { limit, skip }, entries });
-}
-
-async function getFeedEntryDetails(req, res) {
-  const shelfId = String(req.params.shelfId || '').trim();
-  const objectId = toObjectId(shelfId);
-  if (!objectId) return res.status(400).json({ error: 'Invalid shelf id' });
-
-  const viewer = await User.findById(req.user.id).select('city state country');
-  if (!viewer) return res.status(404).json({ error: 'User not found' });
-
-  const shelfDoc = await Shelf.findById(objectId)
-    .populate('owner', 'username name firstName lastName picture city state country visibility');
-  if (!shelfDoc || !shelfDoc.owner) return res.status(404).json({ error: 'Feed entry not found' });
-
-  const viewerId = String(viewer._id);
-  const ownerId = String(shelfDoc.owner._id);
-
-  let allowed = false;
-  if (ownerId === viewerId) {
-    allowed = true;
-  } else if (shelfDoc.visibility === 'public') {
-    allowed = true;
-  } else if (shelfDoc.visibility === 'friends') {
-    const friendIds = await fetchFriendIds(viewer._id);
-    allowed = friendIds.has(ownerId);
+    res.json({ entry });
+  } catch (err) {
+    console.error('getFeedEntryDetails error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  if (!allowed) return res.status(403).json({ error: 'You do not have access to this feed entry' });
-
-  const items = await UserCollection.find({ shelf: shelfDoc._id })
-    .populate('collectable')
-    .populate('manual')
-    .sort({ createdAt: -1 });
-
-  const entry = {
-    shelf: {
-      id: String(shelfDoc._id),
-      name: shelfDoc.name,
-      type: shelfDoc.type,
-      description: shelfDoc.description,
-      visibility: shelfDoc.visibility,
-      createdAt: shelfDoc.createdAt,
-      updatedAt: shelfDoc.updatedAt,
-      itemCount: items.length,
-    },
-    owner: {
-      id: ownerId,
-      username: shelfDoc.owner.username,
-      name:
-        shelfDoc.owner.name ||
-        [shelfDoc.owner.firstName, shelfDoc.owner.lastName].filter(Boolean).join(' ').trim() ||
-        undefined,
-      city: shelfDoc.owner.city,
-      state: shelfDoc.owner.state,
-      country: shelfDoc.owner.country,
-      picture: shelfDoc.owner.picture,
-    },
-    items: items.map((entryDoc) => ({
-      id: String(entryDoc._id),
-      collectable: entryDoc.collectable || null,
-      manual: entryDoc.manual || null,
-      position: entryDoc.position || null,
-      notes: entryDoc.notes || null,
-      rating: entryDoc.rating ?? null,
-      createdAt: entryDoc.createdAt,
-      updatedAt: entryDoc.updatedAt,
-    })),
-  };
-
-  res.json({ entry });
 }
 
 module.exports = { getFeed, getFeedEntryDetails };
-

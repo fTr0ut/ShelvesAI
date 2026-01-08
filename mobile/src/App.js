@@ -3,7 +3,6 @@ import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { Appearance, Platform } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as WebBrowser from 'expo-web-browser'
 import Constants from 'expo-constants'
 import LoginScreen from './screens/LoginScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
@@ -17,15 +16,17 @@ import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
-WebBrowser.maybeCompleteAuthSession()
+
 
 export const AuthContext = createContext({
   token: '',
-  setToken: () => {},
+  setToken: () => { },
   apiBase: '',
-  auth0: null,
+
   needsOnboarding: false,
-  setNeedsOnboarding: () => {},
+  setNeedsOnboarding: () => { },
+  user: null,
+  setUser: () => { },
 })
 
 const Stack = createNativeStackNavigator()
@@ -57,25 +58,9 @@ export default function App() {
   const [token, setToken] = useState('')
   const [ready, setReady] = useState(false)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
+  const [user, setUser] = useState(null)
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
-  const scheme = useMemo(() => extra?.auth0?.scheme || Constants?.expoConfig?.scheme || 'shelvesai', [extra])
-  const auth0 = useMemo(() => {
-    const conf = extra?.auth0 || {}
-    const rawDomain = `${conf.domain || ''}`.trim()
-    const clientId = `${conf.clientId || ''}`.trim()
-    if (!rawDomain || !clientId) return null
-    const normalizedDomain = rawDomain.startsWith('http')
-      ? rawDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '')
-      : rawDomain.replace(/\/+$/, '')
-    return {
-      domain: normalizedDomain,
-      clientId,
-      audience: conf.audience || '',
-      scheme,
-      useProxy: conf.useProxy ?? true,
-    }
-  }, [extra, scheme])
 
   useEffect(() => {
     (async () => {
@@ -109,6 +94,7 @@ export default function App() {
         if (!cancelled) {
           const missing = !data?.user?.username
           setNeedsOnboarding(missing)
+          setUser(data.user || null)
         }
       } catch (err) {
         // ignore errors and keep existing onboarding state
@@ -126,10 +112,9 @@ export default function App() {
     token,
     setToken,
     apiBase,
-    auth0,
-    needsOnboarding,
-    setNeedsOnboarding,
-  }), [token, apiBase, auth0, needsOnboarding])
+    user,
+    setUser,
+  }), [token, apiBase, needsOnboarding, user])
 
   if (!ready) return null
 

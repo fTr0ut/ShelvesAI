@@ -105,10 +105,10 @@ function transformSteamGameToCollectable(game) {
 
   const playtime = Number(
     game.playtimeForever ??
-      game.playtime_forever ??
-      game.playtime ??
-      game.totalPlaytimeMinutes ??
-      0
+    game.playtime_forever ??
+    game.playtime ??
+    game.totalPlaytimeMinutes ??
+    0
   );
 
   const lastPlayedRaw =
@@ -155,7 +155,11 @@ function transformSteamGameToCollectable(game) {
 import { AuthContext } from "../App";
 
 import { apiRequest } from "../services/api";
+import { AuthContext } from "../App";
+
+import { apiRequest } from "../services/api";
 import { ShelfDetailSyncProvider } from "../hooks/useShelfDetailSync";
+import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 
 
 const ITEM_SORT_OPTIONS = [
@@ -175,7 +179,7 @@ const ITEM_SORT_OPTIONS = [
 export default function ShelfDetailScreen({ route, navigation }) {
   const { id } = route.params;
 
-  const { token, apiBase } = useContext(AuthContext);
+  const { token, apiBase, user } = useContext(AuthContext);
 
   const [shelf, setShelf] = useState(null);
 
@@ -200,6 +204,15 @@ export default function ShelfDetailScreen({ route, navigation }) {
   const [analysis, setAnalysis] = useState(null);
 
   const [visionMetadata, setVisionMetadata] = useState(null);
+
+  const [scanMode, setScanMode] = useState('quick'); // 'quick' | 'cloud'
+
+  // Force quick mode if not premium
+  useEffect(() => {
+    if (user && !user.isPremium && scanMode === 'cloud') {
+      setScanMode('quick');
+    }
+  }, [user, scanMode]);
 
   const [ediItem, setEditItem] = useState(null);
   const [needsReviewIds, setNeedsReviewIds] = useState([]);
@@ -666,11 +679,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       const summaryInfo = data?.summary
         ? {
-            ...data.summary,
-            totalGames: data?.totalGames ?? null,
-            processed: data?.processed ?? transformed.length,
-            dryRun: true,
-          }
+          ...data.summary,
+          totalGames: data?.totalGames ?? null,
+          processed: data?.processed ?? transformed.length,
+          dryRun: true,
+        }
         : null;
 
       setSteamPreview(transformed);
@@ -718,11 +731,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
       const summaryInfo = data?.summary
         ? {
-            ...data.summary,
-            totalGames: data?.totalGames ?? null,
-            processed: data?.processed ?? null,
-            dryRun: false,
-          }
+          ...data.summary,
+          totalGames: data?.totalGames ?? null,
+          processed: data?.processed ?? null,
+          dryRun: false,
+        }
         : null;
 
       setSteamSummary(summaryInfo);
@@ -776,9 +789,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }
 
     const message = steamPreviewCount
-      ? `Import ${steamPreviewCount} previewed game${
-          steamPreviewCount === 1 ? "" : "s"
-        } from Steam?`
+      ? `Import ${steamPreviewCount} previewed game${steamPreviewCount === 1 ? "" : "s"
+      } from Steam?`
       : "Import your Steam library into this shelf? This may take a moment.";
 
     Alert.alert("Import from Steam", message, [
@@ -927,6 +939,57 @@ export default function ShelfDetailScreen({ route, navigation }) {
     });
   };
 
+  const handleQuickScan = async (imageUri) => {
+    setVisionLoading(true);
+    setVisionMessage("Scanning text...");
+    try {
+      const { text } = await extractTextFromImage(imageUri);
+
+      if (!text || text.length < 5) {
+        setVisionMessage("No readable text found.");
+        return;
+      }
+
+      setVisionMessage("Text detected, analyzing...");
+      const items = parseTextToItems(text, shelf.type);
+
+      if (!items.length) {
+        setVisionMessage("Could not identify items from text.");
+        return;
+      }
+
+      // Send to catalog lookup endpoint
+      const data = await apiRequest({
+        apiBase,
+        path: `/api/shelves/${id}/catalog-lookup`,
+        method: 'POST',
+        token,
+        body: { items, autoApply: true },
+      });
+
+      // Update items
+      if (Array.isArray(data?.items)) {
+        setItems(data.items);
+      } else {
+        await refreshItems();
+      }
+
+      const addedCount = (data?.results || []).filter(
+        r => r.status === "created" || r.status === "linked"
+      ).length;
+
+      setVisionMessage(
+        `Scanned ${items.length} lines. Added ${addedCount} items.`
+      );
+
+    } catch (err) {
+      setError(err.message || "Quick scan failed");
+      setVisionMessage("");
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+
   const captureShelf = async () => {
     setError("");
 
@@ -960,19 +1023,19 @@ export default function ShelfDetailScreen({ route, navigation }) {
       const pickerResult =
         selectedSource === "camera"
           ? await ImagePicker.launchCameraAsync({
-              base64: true,
-              quality: 0.5,
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsMultipleSelection: false,
-              exif: false,
-            })
+            base64: true,
+            quality: 0.5,
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsMultipleSelection: false,
+            exif: false,
+          })
           : await ImagePicker.launchImageLibraryAsync({
-              base64: true,
-              quality: 0.5,
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              allowsMultipleSelection: false,
-              exif: false,
-            });
+            base64: true,
+            quality: 0.5,
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsMultipleSelection: false,
+            exif: false,
+          });
 
       if (pickerResult.canceled) return;
 
@@ -981,6 +1044,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
       const processed = await ensureBase64Image(asset);
       if (!processed) {
         setError("Failed to load image");
+        return;
+      }
+
+      if (scanMode === 'quick') {
+        await handleQuickScan(pickerResult.assets[0].uri);
         return;
       }
 
@@ -1031,18 +1099,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
         }
 
 
-       const addedCount = data.results.filter(
-        r => r.status === "created" || r.status === "linked"
-      ).length;
+        const addedCount = data.results.filter(
+          r => r.status === "created" || r.status === "linked"
+        ).length;
 
-      setVisionMessage(
-        `Detected ${data.analysis?.items?.length || 0} items. Added ${addedCount}.`
-      );
-    } else {
-      setVisionMessage(
-        `Detected ${data.analysis?.items?.length || 0} items. Added 0.`
-      );
-    }
+        setVisionMessage(
+          `Detected ${data.analysis?.items?.length || 0} items. Added ${addedCount}.`
+        );
+      } else {
+        setVisionMessage(
+          `Detected ${data.analysis?.items?.length || 0} items. Added 0.`
+        );
+      }
 
 
     } catch (e) {
@@ -1064,186 +1132,186 @@ export default function ShelfDetailScreen({ route, navigation }) {
           style={styles.container}
           contentContainerStyle={styles.content}
         >
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <View style={styles.card}>
-          <View style={styles.shelfHeader}>
-            <Text style={styles.title}>{shelf?.name || "Shelf"}</Text>
-
-            <TouchableOpacity
-              style={[styles.editButton, !shelf && styles.editButtonDisabled]}
-              onPress={openShelfEdit}
-              disabled={!shelf}
-            >
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {isVideoGameShelf ? (
           <View style={styles.card}>
-            <Text style={styles.section}>Steam Library</Text>
+            <View style={styles.shelfHeader}>
+              <Text style={styles.title}>{shelf?.name || "Shelf"}</Text>
 
-            {steamError ? <Text style={styles.error}>{steamError}</Text> : null}
+              <TouchableOpacity
+                style={[styles.editButton, !shelf && styles.editButtonDisabled]}
+                onPress={openShelfEdit}
+                disabled={!shelf}
+              >
+                <Text style={styles.editButtonText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
-            {steamMessage ? (
-              <Text style={styles.success}>{steamMessage}</Text>
-            ) : null}
+          {isVideoGameShelf ? (
+            <View style={styles.card}>
+              <Text style={styles.section}>Steam Library</Text>
 
-            {steamLoading ? (
-              <View style={styles.steamStatusRow}>
-                <ActivityIndicator size="small" color="#9ec1ff" />
-                <Text style={styles.itemMeta}>Checking Steam link…</Text>
-              </View>
-            ) : steamStatus?.steamId ? (
-              <>
-                <Text style={styles.itemMeta} numberOfLines={2}>
-                  Linked as {steamStatus.personaName || `SteamID: ${steamStatus.steamId}`}
-                </Text>
+              {steamError ? <Text style={styles.error}>{steamError}</Text> : null}
 
-                {steamStatus.totalGames ? (
-                  <Text style={styles.itemMeta}>
-                    Library size: {steamStatus.totalGames}
+              {steamMessage ? (
+                <Text style={styles.success}>{steamMessage}</Text>
+              ) : null}
+
+              {steamLoading ? (
+                <View style={styles.steamStatusRow}>
+                  <ActivityIndicator size="small" color="#9ec1ff" />
+                  <Text style={styles.itemMeta}>Checking Steam link…</Text>
+                </View>
+              ) : steamStatus?.steamId ? (
+                <>
+                  <Text style={styles.itemMeta} numberOfLines={2}>
+                    Linked as {steamStatus.personaName || `SteamID: ${steamStatus.steamId}`}
                   </Text>
-                ) : null}
 
-                {steamSummary &&
-                steamSummary.processed !== undefined &&
-                steamSummary.processed !== null ? (
-                  <Text style={styles.itemMeta}>
-                    Last run processed {steamSummary.processed} items
-                    {typeof steamSummary.imported === "number"
-                      ? `, imported ${steamSummary.imported}`
-                      : ""}
-                    .
-                  </Text>
-                ) : null}
+                  {steamStatus.totalGames ? (
+                    <Text style={styles.itemMeta}>
+                      Library size: {steamStatus.totalGames}
+                    </Text>
+                  ) : null}
 
-                {steamPreviewCount ? (
-                  <View style={styles.steamPreviewList}>
-                    {steamPreview.map((preview) => {
-                      const appId =
-                        preview?.identifiers?.steam?.appId?.[0] ||
-                        preview?.extras?.steam?.appId ||
-                        null;
-                      return (
-                        <View key={preview._id} style={styles.steamPreviewItem}>
-                          <Text style={styles.steamPreviewTitle} numberOfLines={1}>
-                            {preview.title}
-                          </Text>
-                          {appId ? (
-                            <Text style={styles.steamPreviewMeta}>AppID {appId}</Text>
-                          ) : null}
-                        </View>
-                      );
-                    })}
+                  {steamSummary &&
+                    steamSummary.processed !== undefined &&
+                    steamSummary.processed !== null ? (
+                    <Text style={styles.itemMeta}>
+                      Last run processed {steamSummary.processed} items
+                      {typeof steamSummary.imported === "number"
+                        ? `, imported ${steamSummary.imported}`
+                        : ""}
+                      .
+                    </Text>
+                  ) : null}
+
+                  {steamPreviewCount ? (
+                    <View style={styles.steamPreviewList}>
+                      {steamPreview.map((preview) => {
+                        const appId =
+                          preview?.identifiers?.steam?.appId?.[0] ||
+                          preview?.extras?.steam?.appId ||
+                          null;
+                        return (
+                          <View key={preview._id} style={styles.steamPreviewItem}>
+                            <Text style={styles.steamPreviewTitle} numberOfLines={1}>
+                              {preview.title}
+                            </Text>
+                            {appId ? (
+                              <Text style={styles.steamPreviewMeta}>AppID {appId}</Text>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+
+                  <View style={styles.steamActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.smallButton,
+                        styles.steamButton,
+                        steamBusy && styles.buttonDisabled,
+                      ]}
+                      onPress={previewSteamLibrary}
+                      disabled={steamBusy}
+                    >
+                      <Text style={[styles.smallButtonText, styles.steamButtonText]}>
+                        {steamBusy ? "Working…" : "Preview import"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.smallButton,
+                        styles.primarySmallButton,
+                        steamBusy && styles.buttonDisabled,
+                      ]}
+                      onPress={handleSteamImport}
+                      disabled={steamBusy}
+                    >
+                      <Text style={styles.smallButtonText}>Import from Steam</Text>
+                    </TouchableOpacity>
                   </View>
-                ) : null}
+                </>
+              ) : (
+                <>
+                  <Text style={styles.itemMeta}>
+                    Link your Steam account from the Account tab to import your library.
+                  </Text>
 
-                <View style={styles.steamActions}>
                   <TouchableOpacity
-                    style={[
-                      styles.smallButton,
-                      styles.steamButton,
-                      steamBusy && styles.buttonDisabled,
-                    ]}
-                    onPress={previewSteamLibrary}
+                    style={[styles.smallButton, styles.steamButton, steamBusy && styles.buttonDisabled]}
+                    onPress={() => navigation.navigate("Account")}
                     disabled={steamBusy}
                   >
-                    <Text style={[styles.smallButtonText, styles.steamButtonText]}>
-                      {steamBusy ? "Working…" : "Preview import"}
+                    <Text style={[styles.smallButtonText, styles.steamButtonText]}>Open Account</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          ) : null}
+
+          <View style={styles.card}>
+            <Text style={styles.section}>Items</Text>
+
+            <View
+              style={[
+                styles.itemSortRow,
+
+                !items.length && styles.itemSortRowDisabled,
+              ]}
+            >
+              {ITEM_SORT_OPTIONS.map((opt) => {
+                const selected = itemSortMode === opt.value;
+
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.itemSortChip,
+
+                      selected && styles.itemSortChipActive,
+
+                      !items.length && styles.itemSortChipDisabled,
+                    ]}
+                    onPress={() => {
+                      if (items.length) setItemSortMode(opt.value);
+                    }}
+                    disabled={!items.length}
+                  >
+                    <Text
+                      style={[
+                        styles.itemSortChipText,
+
+                        selected && styles.itemSortChipTextActive,
+
+                        !items.length && styles.itemSortChipTextDisabled,
+                      ]}
+                    >
+                      {opt.label}
                     </Text>
                   </TouchableOpacity>
+                );
+              })}
+            </View>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.smallButton,
-                      styles.primarySmallButton,
-                      steamBusy && styles.buttonDisabled,
-                    ]}
-                    onPress={handleSteamImport}
-                    disabled={steamBusy}
-                  >
-                    <Text style={styles.smallButtonText}>Import from Steam</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.itemMeta}>
-                  Link your Steam account from the Account tab to import your library.
-                </Text>
+            {items.length ? (
+              <View style={styles.itemGrid}>
+                {sortedItems.map((it) => {
+                  const isCollectable = Boolean(it.collectable);
+                  const collectable = it.collectable || null;
+                  const manualItem = it.manual || null;
+                  const isManual = !isCollectable && !!manualItem;
 
-                <TouchableOpacity
-                  style={[styles.smallButton, styles.steamButton, steamBusy && styles.buttonDisabled]}
-                  onPress={() => navigation.navigate("Account")}
-                  disabled={steamBusy}
-                >
-                  <Text style={[styles.smallButtonText, styles.steamButtonText]}>Open Account</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        ) : null}
+                  const title =
+                    collectable?.title || collectable?.name || manualItem?.name || "Untitled item";
 
-        <View style={styles.card}>
-          <Text style={styles.section}>Items</Text>
-
-          <View
-            style={[
-              styles.itemSortRow,
-
-              !items.length && styles.itemSortRowDisabled,
-            ]}
-          >
-            {ITEM_SORT_OPTIONS.map((opt) => {
-              const selected = itemSortMode === opt.value;
-
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[
-                    styles.itemSortChip,
-
-                    selected && styles.itemSortChipActive,
-
-                    !items.length && styles.itemSortChipDisabled,
-                  ]}
-                  onPress={() => {
-                    if (items.length) setItemSortMode(opt.value);
-                  }}
-                  disabled={!items.length}
-                >
-                  <Text
-                    style={[
-                      styles.itemSortChipText,
-
-                      selected && styles.itemSortChipTextActive,
-
-                      !items.length && styles.itemSortChipTextDisabled,
-                    ]}
-                  >
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {items.length ? (
-            <View style={styles.itemGrid}>
-              {sortedItems.map((it) => {
-                const isCollectable = Boolean(it.collectable);
-                const collectable = it.collectable || null;
-                const manualItem = it.manual || null;
-                const isManual = !isCollectable && !!manualItem;
-
-                const title =
-                  collectable?.title || collectable?.name || manualItem?.name || "Untitled item";
-
-                const detailParts = isCollectable
-                  ? [
-                      collectable?.primaryCreator || collectable?.author ,
+                  const detailParts = isCollectable
+                    ? [
+                      collectable?.primaryCreator || collectable?.author,
 
                       collectable?.format,
 
@@ -1251,61 +1319,61 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
                       collectable?.year,
                     ]
-                  : [manualItem?.type, manualItem?.description];
+                    : [manualItem?.type, manualItem?.description];
 
-                const detail = detailParts.filter(Boolean).join(" | ");
+                  const detail = detailParts.filter(Boolean).join(" | ");
 
-                const userCollection =
-                  it.userCollection || it.user_collection || it.usercollection || null;
+                  const userCollection =
+                    it.userCollection || it.user_collection || it.usercollection || null;
 
-                const rawPosition =
-                  userCollection?.position ||
-                  userCollection?.location ||
-                  it.position ||
-                  it.location ||
-                  collectable?.position ||
-                  manualItem?.position ||
-                  collectable?.location ||
-                  manualItem?.location ||
-                  null;
+                  const rawPosition =
+                    userCollection?.position ||
+                    userCollection?.location ||
+                    it.position ||
+                    it.location ||
+                    collectable?.position ||
+                    manualItem?.position ||
+                    collectable?.location ||
+                    manualItem?.location ||
+                    null;
 
-                let positionLabel = null;
+                  let positionLabel = null;
 
-                if (rawPosition) {
-                  if (Array.isArray(rawPosition)) {
-                    positionLabel = rawPosition.filter(Boolean).join(", ");
-                  } else if (typeof rawPosition === "object") {
-                    const posX =
-                      rawPosition.x ?? rawPosition.col ?? rawPosition.column;
+                  if (rawPosition) {
+                    if (Array.isArray(rawPosition)) {
+                      positionLabel = rawPosition.filter(Boolean).join(", ");
+                    } else if (typeof rawPosition === "object") {
+                      const posX =
+                        rawPosition.x ?? rawPosition.col ?? rawPosition.column;
 
-                    const posY = rawPosition.y ?? rawPosition.row;
+                      const posY = rawPosition.y ?? rawPosition.row;
 
-                    const hasX =
-                      posX !== undefined &&
-                      posX !== null &&
-                      `${posX}`.trim() !== "";
+                      const hasX =
+                        posX !== undefined &&
+                        posX !== null &&
+                        `${posX}`.trim() !== "";
 
-                    const hasY =
-                      posY !== undefined &&
-                      posY !== null &&
-                      `${posY}`.trim() !== "";
+                      const hasY =
+                        posY !== undefined &&
+                        posY !== null &&
+                        `${posY}`.trim() !== "";
 
-                    if (hasX || hasY) {
-                      const displayX = hasX ? posX : "?";
+                      if (hasX || hasY) {
+                        const displayX = hasX ? posX : "?";
 
-                      const displayY = hasY ? posY : "?";
+                        const displayY = hasY ? posY : "?";
 
-                      positionLabel = `(${displayX}, ${displayY})`;
+                        positionLabel = `(${displayX}, ${displayY})`;
+                      }
+                    } else {
+                      positionLabel = String(rawPosition);
                     }
-                  } else {
-                    positionLabel = String(rawPosition);
                   }
-                }
 
-                const typeLabel = isCollectable
-                  ? collectable?.type || shelf?.type || "Collectable"
-                  : manualItem?.type || shelf?.type || "Manual";
-                
+                  const typeLabel = isCollectable
+                    ? collectable?.type || shelf?.type || "Collectable"
+                    : manualItem?.type || shelf?.type || "Manual";
+
                   // Mark as needing review if:
                   // 1) backend just told us it was created from vision as manual, OR
                   // 2) it's a manual item missing common metadata
@@ -1314,119 +1382,148 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     isManual && (!manualItem.primaryCreator || !manualItem.format || !manualItem.publisher || !manualItem.year);
                   const needsReview =
                     isManual && (missingCore || needsReviewIds.includes(it.id));
-                return (
-                  <View key={it.id} style={[styles.itemTile, needsReview && styles.itemTileNeedsReview]}>
-                    
-                    <TouchableOpacity
-                      style={styles.itemTileBody}
-                      activeOpacity={isCollectable ? 0.75 : 1}
-                      onPress={() =>
-                        isCollectable && openCollectable(collectable)
-                      }
-                    >
-                      <View style={styles.itemTileHeader}>
-                        <Text style={styles.itemTileType}>{typeLabel}</Text>
-                        {needsReview ? (
-                         <Text style={styles.needsReviewPill}>Needs review</Text>
-                        ) : null}
+                  return (
+                    <View key={it.id} style={[styles.itemTile, needsReview && styles.itemTileNeedsReview]}>
 
-                        {positionLabel ? (
-                          <Text style={styles.itemTilePosition}>
-                            {positionLabel}
+                      <TouchableOpacity
+                        style={styles.itemTileBody}
+                        activeOpacity={isCollectable ? 0.75 : 1}
+                        onPress={() =>
+                          isCollectable && openCollectable(collectable)
+                        }
+                      >
+                        <View style={styles.itemTileHeader}>
+                          <Text style={styles.itemTileType}>{typeLabel}</Text>
+                          {needsReview ? (
+                            <Text style={styles.needsReviewPill}>Needs review</Text>
+                          ) : null}
+
+                          {positionLabel ? (
+                            <Text style={styles.itemTilePosition}>
+                              {positionLabel}
+                            </Text>
+                          ) : null}
+                        </View>
+
+                        <Text style={styles.itemTileTitle} numberOfLines={2}>
+                          {title}
+                        </Text>
+
+                        {detail ? (
+                          <Text style={styles.itemTileMeta} numberOfLines={3}>
+                            {detail}
                           </Text>
                         ) : null}
-                      </View>
+                      </TouchableOpacity>
 
-                      <Text style={styles.itemTileTitle} numberOfLines={2}>
-                        {title}
-                      </Text>
-
-                      {detail ? (
-                        <Text style={styles.itemTileMeta} numberOfLines={3}>
-                          {detail}
-                        </Text>
-                      ) : null}
-                    </TouchableOpacity>
-                
-                   {isManual && (
-                      <TouchableOpacity
+                      {isManual && (
+                        <TouchableOpacity
                           style={[styles.itemTileEdit]}
                           onPress={() =>
-                          navigation.navigate("ManualEdit", {
+                            navigation.navigate("ManualEdit", {
                               shelfId: id,
                               itemId: it.id,
                               isCollectable: false,
-                            initialData: manualItem,
+                              initialData: manualItem,
                             })
                           }
                           activeOpacity={0.8}
+                        >
+                          <Text style={styles.itemTileEditText}>Edit</Text>
+                        </TouchableOpacity>
+
+                      )}
+                      <TouchableOpacity
+                        style={styles.itemTileRemove}
+                        onPress={() => confirmRemove(it.id, title)}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.itemTileEditText}>Edit</Text>
+                        <Text style={styles.itemTileRemoveText}>Remove</Text>
                       </TouchableOpacity>
-                   
-                   )}
-                    <TouchableOpacity
-                      style={styles.itemTileRemove}
-                      onPress={() => confirmRemove(it.id, title)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.itemTileRemoveText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </View>
-          ) : (
-            <Text style={styles.muted}>No items yet.</Text>
-          )}
-        </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={styles.muted}>No items yet.</Text>
+            )}
+          </View>
 
-        <View style={styles.card}>
-          <Text style={styles.section}>Camera and Vision AI</Text>
+          <View style={styles.card}>
+            <Text style={styles.section}>Camera and Vision AI</Text>
 
-          <TouchableOpacity
-            style={[styles.button, styles.primaryButton]}
-            onPress={captureShelf}
-            disabled={visionLoading}
-          >
-            <Text style={styles.buttonText}>
-              {visionLoading ? "Analyzing photo..." : "Capture shelf photo"}
-            </Text>
-          </TouchableOpacity>
+            <Text style={styles.section}>Camera and Vision AI</Text>
 
-          {visionLoading && visionMetadata?.igdbRateLimited ? (
-            <Text style={styles.rateLimitNotice}>
-              IGDB is rate-limiting us, this may take a bit longer.
-            </Text>
-          ) : null}
-
-          {!!visionMessage && (
-            <Text style={styles.success}>{visionMessage}</Text>
-          )}
-
-          {analysis?.items?.length ? (
-            <View style={styles.analysisBox}>
-              <Text style={styles.sectionSmall}>Most recent detection</Text>
-
-              {analysis.items.slice(0, 6).map((item, idx) => (
-                <Text key={`${item.name}-${idx}`} style={styles.analysisText}>
-                  - {item.name}
-                  {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
-                  {item.format ? ` [${item.format}]` : ""}
-                  {typeof item.confidence === "number"
-                    ? ` (${Math.round(item.confidence * 100)}%)`
-                    : ""}
+            <View style={styles.scanModeContainer}>
+              <Text style={styles.scanModeLabel}>Mode:</Text>
+              <TouchableOpacity
+                onPress={() => setScanMode('quick')}
+                style={[styles.modeButton, scanMode === 'quick' && styles.modeActive]}
+              >
+                <Text style={[styles.modeButtonText, scanMode === 'quick' && styles.modeTextActive]}>Quick Text</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setScanMode('cloud')}
+                style={[
+                  styles.modeButton,
+                  scanMode === 'cloud' && styles.modeActive,
+                  (!user?.isPremium) && styles.modeDisabled
+                ]}
+                disabled={!user?.isPremium}
+              >
+                <Text style={[
+                  styles.modeButtonText,
+                  scanMode === 'cloud' && styles.modeTextActive,
+                  (!user?.isPremium) && styles.modeTextDisabled
+                ]}>
+                  Cloud AI {user?.isPremium ? '' : '🔒'}
                 </Text>
-              ))}
-
-              {analysis.items.length > 6 ? (
-                <Text style={styles.muted}>
-                  + {analysis.items.length - 6} more detected
-                </Text>
-              ) : null}
+              </TouchableOpacity>
             </View>
-          ) : null}
-          {/* {pendingEdits.length > 0 && (
+
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={captureShelf}
+              disabled={visionLoading}
+            >
+              <Text style={styles.buttonText}>
+                {visionLoading ? "Analyzing photo..." : "Capture shelf photo"}
+              </Text>
+            </TouchableOpacity>
+
+            {visionLoading && visionMetadata?.igdbRateLimited ? (
+              <Text style={styles.rateLimitNotice}>
+                IGDB is rate-limiting us, this may take a bit longer.
+              </Text>
+            ) : null}
+
+            {!!visionMessage && (
+              <Text style={styles.success}>{visionMessage}</Text>
+            )}
+
+            {analysis?.items?.length ? (
+              <View style={styles.analysisBox}>
+                <Text style={styles.sectionSmall}>Most recent detection</Text>
+
+                {analysis.items.slice(0, 6).map((item, idx) => (
+                  <Text key={`${item.name}-${idx}`} style={styles.analysisText}>
+                    - {item.name}
+                    {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
+                    {item.format ? ` [${item.format}]` : ""}
+                    {typeof item.confidence === "number"
+                      ? ` (${Math.round(item.confidence * 100)}%)`
+                      : ""}
+                  </Text>
+                ))}
+
+                {analysis.items.length > 6 ? (
+                  <Text style={styles.muted}>
+                    + {analysis.items.length - 6} more detected
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            {/* {pendingEdits.length > 0 && (
             <View style={styles.analysisBox}>
               <Text style={styles.sectionSmall}>Items needing review</Text>
               {pendingEdits.map((it, idx ) => (
@@ -1454,88 +1551,88 @@ export default function ShelfDetailScreen({ route, navigation }) {
               ))}
             </View>
           )} */}
-          <Text style={styles.helper}>
-            Photos stay on device until you confirm a capture. Only the selected
-            image is sent securely for recognition.
-          </Text>
-        </View>
+            <Text style={styles.helper}>
+              Photos stay on device until you confirm a capture. Only the selected
+              image is sent securely for recognition.
+            </Text>
+          </View>
 
-        <View style={styles.card}>
-          <Text style={styles.section}>Manually add entry</Text>
+          <View style={styles.card}>
+            <Text style={styles.section}>Manually add entry</Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Title"
-            placeholderTextColor="#9aa6b2"
-            value={manual.name}
-            onChangeText={(value) => setManual({ ...manual, name: value })}
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Title"
+              placeholderTextColor="#9aa6b2"
+              value={manual.name}
+              onChangeText={(value) => setManual({ ...manual, name: value })}
+            />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Type"
-            placeholderTextColor="#9aa6b2"
-            value={manual.type}
-            onChangeText={(value) => setManual({ ...manual, type: value })}
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Type"
+              placeholderTextColor="#9aa6b2"
+              value={manual.type}
+              onChangeText={(value) => setManual({ ...manual, type: value })}
+            />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Description"
-            placeholderTextColor="#9aa6b2"
-            value={manual.description}
-            onChangeText={(value) =>
-              setManual({ ...manual, description: value })
-            }
-          />
+            <TextInput
+              style={styles.input}
+              placeholder="Description"
+              placeholderTextColor="#9aa6b2"
+              value={manual.description}
+              onChangeText={(value) =>
+                setManual({ ...manual, description: value })
+              }
+            />
 
-          <TouchableOpacity
-            style={[styles.button, styles.primaryButton]}
-            onPress={addManual}
-          >
-            <Text style={styles.buttonText}>Add</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={addManual}
+            >
+              <Text style={styles.buttonText}>Add</Text>
+            </TouchableOpacity>
 
-          <Text style={[styles.section, { marginTop: 12 }]}>
-            Search catalog
-          </Text>
+            <Text style={[styles.section, { marginTop: 12 }]}>
+              Search catalog
+            </Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Search by title"
-            placeholderTextColor="#9aa6b2"
-            value={q}
-            onChangeText={(value) => {
-              setQ(value);
+            <TextInput
+              style={styles.input}
+              placeholder="Search by title"
+              placeholderTextColor="#9aa6b2"
+              value={q}
+              onChangeText={(value) => {
+                setQ(value);
 
-              if (value.trim().length >= 2) search(value);
-              else setResults([]);
-            }}
-          />
+                if (value.trim().length >= 2) search(value);
+                else setResults([]);
+              }}
+            />
 
-          {results.length ? (
-            <View style={styles.searchResults}>
-              {results.map((item) => (
-                <View key={item._id} style={styles.searchRow}>
-                  <Text style={styles.itemMeta} numberOfLines={2}>
-                    {item.title}
+            {results.length ? (
+              <View style={styles.searchResults}>
+                {results.map((item) => (
+                  <View key={item._id} style={styles.searchRow}>
+                    <Text style={styles.itemMeta} numberOfLines={2}>
+                      {item.title}
 
-                    {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
+                      {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
 
-                    {item.format ? ` [${item.format}]` : ""}
-                  </Text>
+                      {item.format ? ` [${item.format}]` : ""}
+                    </Text>
 
-                  <TouchableOpacity
-                    style={styles.smallButton}
-                    onPress={() => addCollectable(item._id)}
-                  >
-                    <Text style={styles.smallButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
+                    <TouchableOpacity
+                      style={styles.smallButton}
+                      onPress={() => addCollectable(item._id)}
+                    >
+                      <Text style={styles.smallButtonText}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </View>
         </ScrollView>
 
         <FooterNav navigation={navigation} active="shelves" />
@@ -1597,6 +1694,44 @@ const styles = StyleSheet.create({
     gap: 0,
 
     marginBottom: 2,
+  },
+
+  scanModeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    backgroundColor: '#121b2d',
+    padding: 4,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  scanModeLabel: {
+    color: '#9aa6b2',
+    marginRight: 8,
+    marginLeft: 8,
+    fontSize: 13,
+  },
+  modeButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  modeActive: {
+    backgroundColor: '#2d3b55',
+  },
+  modeButtonText: {
+    color: '#9aa6b2',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modeTextActive: {
+    color: '#9ec1ff',
+  },
+  modeDisabled: {
+    opacity: 0.5,
+  },
+  modeTextDisabled: {
+    color: '#555',
   },
 
   editButton: {
@@ -1707,31 +1842,31 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   itemTileNeedsReview: {
-   borderColor: "#f6c749",
-   backgroundColor: "#18140a",
+    borderColor: "#f6c749",
+    backgroundColor: "#18140a",
   },
- needsReviewPill: {
-   color: "#f6c749",
-   fontSize: 11,
-   borderWidth: 1,
-   borderColor: "#4a3a12",
-   backgroundColor: "#241d0d",
-   paddingHorizontal: 8,
-   paddingVertical: 2,
-   borderRadius: 999,
- },
- itemTileEdit: {
-   marginTop: 8,
-   alignSelf: "flex-start",
-   paddingVertical: 6,
-   paddingHorizontal: 10,
-   borderRadius: 8,
-   borderWidth: 1,
-   borderColor: "#3b4b6a",
-   backgroundColor: "#0f1a2a",
- },
+  needsReviewPill: {
+    color: "#f6c749",
+    fontSize: 11,
+    borderWidth: 1,
+    borderColor: "#4a3a12",
+    backgroundColor: "#241d0d",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  itemTileEdit: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#3b4b6a",
+    backgroundColor: "#0f1a2a",
+  },
 
- itemTileEditText: { color: "#9ec1ff", fontSize: 12, fontWeight: "600" },
+  itemTileEditText: { color: "#9ec1ff", fontSize: 12, fontWeight: "600" },
   itemTileBody: { gap: 6 },
 
   itemTileHeader: {

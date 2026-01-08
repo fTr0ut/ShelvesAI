@@ -13,14 +13,7 @@
       "backgroundColor": "#0b0f14"
     },
     "extra": {
-      "API_BASE": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev",
-      "auth0": {
-        "domain": "dev-0b3u5la73y4qw1gk.us.auth0.com",
-        "clientId": "WRrmNATBOpAuG6j12TQ1crxyMbqkI2Vo",
-        "audience": "https://dev-0b3u5la73y4qw1gk.us.auth0.com/api/v2/",
-        "scheme": "shelvesai",
-        "useProxy": true
-      }
+      "API_BASE": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev"
     },
     "ios": {
       "supportsTablet": true,
@@ -48,8 +41,7 @@
           "photosPermission": "Allow Shelves.AI to access your collection photos.",
           "cameraPermission": "Allow Shelves.AI to capture your shelves."
         }
-      ],
-      "expo-web-browser"
+      ]
     ]
   }
 }

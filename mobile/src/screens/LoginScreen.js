@@ -1,63 +1,16 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, StatusBar } from 'react-native'
-import { makeRedirectUri, ResponseType, useAuthRequest } from 'expo-auth-session'
 import { AuthContext } from '../App'
-import { apiRequest, saveToken, exchangeAuth0Token } from '../services/api'
+import { apiRequest, saveToken } from '../services/api'
 
-function Auth0LoginButton({ config, loading, onAccessToken, onError }) {
-  const redirectUri = useMemo(() => makeRedirectUri({ scheme: config.scheme || 'shelvesai' }), [config.scheme])
-  const discovery = useMemo(() => {
-    const base = config.domain.startsWith('http') ? config.domain : `https://${config.domain}`
-    return {
-      authorizationEndpoint: `${base}/authorize`,
-      tokenEndpoint: `${base}/oauth/token`,
-      revocationEndpoint: `${base}/oauth/revoke`,
-    }
-  }, [config.domain])
-  const extraParams = useMemo(() => (config.audience ? { audience: config.audience } : undefined), [config.audience])
 
-  const [request, response, promptAsync] = useAuthRequest(
-    {
-      clientId: config.clientId,
-      responseType: ResponseType.Token,
-      redirectUri,
-      scopes: ['openid', 'profile', 'email'],
-      extraParams,
-    },
-    discovery
-  )
-  console.log('Auth redirectUri:', redirectUri)
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const accessToken = response.authentication?.accessToken || response.params?.access_token
-      if (!accessToken) {
-        onError?.('Auth0 returned no access token')
-        return
-      }
-      onAccessToken?.(accessToken)
-    } else if (response?.type === 'error') {
-      onError?.(response.error?.message || 'Auth0 sign-in failed')
-    }
-  }, [response, onAccessToken, onError])
-
-  return (
-    <TouchableOpacity
-      style={[styles.button, styles.auth0Button, (loading || !request) && styles.disabledButton]}
-      onPress={() => promptAsync({ useProxy: config.useProxy })}
-      disabled={loading || !request}
-    >
-      <Text style={styles.auth0Text}>{loading ? 'Connecting...' : 'Continue with Auth0'}</Text>
-    </TouchableOpacity>
-  )
-}
 
 export default function LoginScreen() {
-  const { setToken, apiBase, auth0, setNeedsOnboarding } = useContext(AuthContext)
+  const { setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext)
   const [mode, setMode] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
 
   const submit = async () => {
     try {
@@ -77,25 +30,7 @@ export default function LoginScreen() {
     }
   }
 
-  const handleAuth0Token = async (accessToken) => {
-    try {
-      setAuthLoading(true)
-      setMessage('Signing in with Auth0...')
-      const data = await exchangeAuth0Token({ apiBase, accessToken })
-      await saveToken(data.token)
-      setToken(data.token)
-      setNeedsOnboarding(!!data.needsUsername)
-      if (data.needsUsername) {
-      setMessage('Welcome! Choose a username to finish setup.')
-      } else {
-      setMessage('Logged in with Auth0.')
-      }
-    } catch (e) {
-      setMessage(e.message)
-    } finally {
-      setAuthLoading(false)
-    }
-  }
+
 
   return (
     <View style={styles.container}>
@@ -116,21 +51,7 @@ export default function LoginScreen() {
         <TouchableOpacity style={[styles.button, styles.primary]} onPress={submit}>
           <Text style={styles.buttonText}>{mode === 'login' ? 'Login' : 'Create Account'}</Text>
         </TouchableOpacity>
-        {auth0 && (
-          <>
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-            <Auth0LoginButton
-              config={auth0}
-              loading={authLoading}
-              onAccessToken={handleAuth0Token}
-              onError={(err) => setMessage(err)}
-            />
-          </>
-        )}
+
         {!!message && <Text style={styles.message}>{message}</Text>}
       </View>
     </View>
@@ -149,12 +70,6 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#0b1320', color: '#e6edf3', borderColor: '#223043', borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 },
   button: { paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 4 },
   primary: { backgroundColor: '#5a8efc' },
-  buttonText: { color: '#0b0f14', fontWeight: '700' },
+  buttonText: { color: '#0b1320', fontWeight: '700' },
   message: { color: '#a5e3bf', marginTop: 10, textAlign: 'center' },
-  auth0Button: { backgroundColor: '#ffffff', marginTop: 12 },
-  auth0Text: { color: '#0b0f14', fontWeight: '700' },
-  disabledButton: { opacity: 0.6 },
-  divider: { flexDirection: 'row', alignItems: 'center', marginVertical: 12 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#1e2b3d' },
-  dividerText: { color: '#9aa6b2', marginHorizontal: 8 },
 })

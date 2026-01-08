@@ -5,7 +5,7 @@ async function getAccount(req, res) {
   try {
     const result = await query(
       `SELECT id, username, email, first_name, last_name, phone_number, 
-              picture, country, city, state, is_private, created_at
+              picture, country, city, state, is_private, is_premium, created_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );

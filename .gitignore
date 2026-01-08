@@ -37,6 +37,7 @@ npm-debug.log*
 # Google Cloud credentials (never commit!)
 *-service-account.json
 credentials.json
+api/credentials/*.json
 
 # Data files
 *.jsonl

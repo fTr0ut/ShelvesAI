@@ -1,7 +1,8 @@
 const express = require("express");
-const mongoose = require("mongoose");
 const { auth } = require("../middleware/auth");
-const Collectable = require("../models/Collectable");
+const collectablesQueries = require("../database/queries/collectables");
+const { query } = require("../database/pg");
+const { rowToCamelCase, parsePagination } = require("../database/queries/utils");
 
 const router = express.Router();
 
@@ -33,165 +34,182 @@ function normalizeString(value) {
   return trimmed || undefined;
 }
 
-function parsePaginationParams(query, { defaultLimit = 10, maxLimit = 50 } = {}) {
-  const rawLimit = query?.limit ?? defaultLimit;
-  let limit = parseInt(rawLimit, 10);
-  if (!Number.isFinite(limit) || limit <= 0) limit = defaultLimit;
-  limit = Math.min(Math.max(limit, 1), maxLimit);
-
-  const rawSkip = query?.skip ?? 0;
-  let skip = parseInt(rawSkip, 10);
-  if (!Number.isFinite(skip) || skip < 0) skip = 0;
-
-  const rawCursor = query?.cursor ? String(query.cursor).trim() : null;
-  let cursorId = null;
-  if (rawCursor && mongoose.Types.ObjectId.isValid(rawCursor)) {
-    cursorId = new mongoose.Types.ObjectId(rawCursor);
-  }
-
-  return { limit, skip, cursor: rawCursor && cursorId ? rawCursor : null, cursorId };
-}
-
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
 router.post("/", async (req, res) => {
-  if (String(process.env.ALLOW_CATALOG_WRITE).toLowerCase() !== "true") {
-    return res.status(403).json({ error: "Catalog writes disabled" });
+  try {
+    if (String(process.env.ALLOW_CATALOG_WRITE).toLowerCase() !== "true") {
+      return res.status(403).json({ error: "Catalog writes disabled" });
+    }
+
+    const {
+      title,
+      name,
+      type,
+      description,
+      author,
+      primaryCreator,
+      format,
+      publisher,
+      year,
+      tags,
+    } = req.body ?? {};
+
+    const canonicalTitle = normalizeString(title ?? name);
+    const canonicalType = normalizeString(type);
+
+    if (!canonicalTitle || !canonicalType)
+      return res.status(400).json({ error: "title and type required" });
+
+    const item = await collectablesQueries.upsert({
+      title: canonicalTitle,
+      kind: canonicalType,
+      description: normalizeString(description),
+      primaryCreator: normalizeString(primaryCreator ?? author),
+      publishers: publisher ? [normalizeString(publisher)] : [],
+      year: normalizeString(year),
+      tags: normalizeTags(tags),
+    });
+
+    res.status(201).json({ item });
+  } catch (err) {
+    console.error('POST /collectables error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  const {
-    title,
-    name,
-    type,
-    description,
-    author,
-    primaryCreator,
-    format,
-    publisher,
-    year,
-    tags,
-  } = req.body ?? {};
-
-  const canonicalTitle = normalizeString(title ?? name);
-  const canonicalType = normalizeString(type);
-
-  if (!canonicalTitle || !canonicalType)
-    return res.status(400).json({ error: "title and type required" });
-
-  const item = await Collectable.create({
-    title: canonicalTitle,
-    type: canonicalType,
-    description: normalizeString(description),
-    primaryCreator: normalizeString(primaryCreator ?? author),
-    format: normalizeString(format),
-    publisher: normalizeString(publisher),
-    year: normalizeString(year),
-    tags: normalizeTags(tags),
-  });
-
-  res.status(201).json({ item });
 });
 
 // Search catalog globally
 router.get("/", async (req, res) => {
-  const q = String(req.query.q || "").trim();
-  const type = String(req.query.type || "").trim();
-  const { limit, skip, cursor, cursorId } = parsePaginationParams(req.query);
-  const baseFilter = {};
-  if (type) baseFilter.type = type;
-  if (q) {
-    baseFilter.title = {
-      $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      $options: "i",
-    };
+  try {
+    const q = String(req.query.q || "").trim();
+    const type = String(req.query.type || "").trim();
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+
+    if (!q) {
+      // Return paginated list without search
+      const result = await query(
+        `SELECT * FROM collectables 
+         ${type ? 'WHERE kind = $1' : ''}
+         ORDER BY created_at DESC
+         LIMIT $${type ? 2 : 1} OFFSET $${type ? 3 : 2}`,
+        type ? [type, limit, offset] : [limit, offset]
+      );
+
+      const countResult = await query(
+        `SELECT COUNT(*) as total FROM collectables ${type ? 'WHERE kind = $1' : ''}`,
+        type ? [type] : []
+      );
+      const total = parseInt(countResult.rows[0].total);
+
+      return res.json({
+        results: result.rows.map(rowToCamelCase),
+        pagination: {
+          limit,
+          offset,
+          total,
+          hasMore: offset + result.rows.length < total,
+          count: result.rows.length,
+        },
+      });
+    }
+
+    // Search with trigram similarity
+    const results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
+
+    const countResult = await query(
+      `SELECT COUNT(*) as total FROM collectables 
+       WHERE (title % $1 OR primary_creator % $1)
+       ${type ? 'AND kind = $2' : ''}`,
+      type ? [q, type] : [q]
+    );
+    const total = parseInt(countResult.rows[0].total);
+
+    res.json({
+      results,
+      pagination: {
+        limit,
+        offset,
+        total,
+        hasMore: offset + results.length < total,
+        count: results.length,
+      },
+    });
+  } catch (err) {
+    console.error('GET /collectables error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  const filter = { ...baseFilter };
-
-  let queryBuilder = Collectable.find(filter).sort({ _id: 1 });
-
-  if (cursorId) {
-    queryBuilder = queryBuilder.where({ _id: { $gt: cursorId } });
-  }
-
-  if (skip) {
-    queryBuilder = queryBuilder.skip(skip);
-  }
-
-  const docs = await queryBuilder.limit(limit + 1);
-  const hasMore = docs.length > limit;
-  const results = hasMore ? docs.slice(0, limit) : docs;
-  const nextCursor = hasMore ? String(results[results.length - 1]._id) : null;
-
-  const total = await Collectable.countDocuments(baseFilter);
-
-  res.json({
-    results,
-    pagination: {
-      limit,
-      skip,
-      total,
-      cursor: cursor || null,
-      nextCursor,
-      hasMore,
-      count: results.length,
-    },
-  });
 });
 
 // Retrieve a single collectable by id
 router.get("/:collectableId", async (req, res) => {
-  const collectable = await Collectable.findById(req.params.collectableId);
-  if (!collectable)
-    return res.status(404).json({ error: "Collectable not found" });
-  res.json({ collectable });
+  try {
+    const collectable = await collectablesQueries.findById(parseInt(req.params.collectableId, 10));
+    if (!collectable)
+      return res.status(404).json({ error: "Collectable not found" });
+    res.json({ collectable });
+  } catch (err) {
+    console.error('GET /collectables/:id error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Update a collectable's core metadata
 router.put("/:collectableId", async (req, res) => {
-  const collectable = await Collectable.findById(req.params.collectableId);
-  if (!collectable)
-    return res.status(404).json({ error: "Collectable not found" });
+  try {
+    const collectableId = parseInt(req.params.collectableId, 10);
+    const existingResult = await query('SELECT * FROM collectables WHERE id = $1', [collectableId]);
 
-  const body = req.body ?? {};
-  const updates = {};
+    if (!existingResult.rows.length) {
+      return res.status(404).json({ error: "Collectable not found" });
+    }
 
-  if (body.title !== undefined || body.name !== undefined) {
-    const nextTitle = normalizeString(body.title ?? body.name);
-    if (!nextTitle)
-      return res.status(400).json({ error: "title cannot be empty" });
-    updates.title = nextTitle;
+    const body = req.body ?? {};
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (body.title !== undefined || body.name !== undefined) {
+      const nextTitle = normalizeString(body.title ?? body.name);
+      if (!nextTitle)
+        return res.status(400).json({ error: "title cannot be empty" });
+      updates.push(`title = $${paramIndex++}`);
+      values.push(nextTitle);
+    }
+
+    if (body.primaryCreator !== undefined || body.author !== undefined) {
+      updates.push(`primary_creator = $${paramIndex++}`);
+      values.push(normalizeString(body.primaryCreator ?? body.author));
+    }
+
+    if (body.publisher !== undefined) {
+      updates.push(`publishers = $${paramIndex++}`);
+      values.push(body.publisher ? [normalizeString(body.publisher)] : []);
+    }
+
+    if (body.year !== undefined) {
+      updates.push(`year = $${paramIndex++}`);
+      values.push(normalizeString(body.year));
+    }
+
+    if (body.tags !== undefined) {
+      updates.push(`tags = $${paramIndex++}`);
+      values.push(normalizeTags(body.tags));
+    }
+
+    if (!updates.length) {
+      return res.json({ collectable: rowToCamelCase(existingResult.rows[0]) });
+    }
+
+    values.push(collectableId);
+    const result = await query(
+      `UPDATE collectables SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      values
+    );
+
+    res.json({ collectable: rowToCamelCase(result.rows[0]) });
+  } catch (err) {
+    console.error('PUT /collectables/:id error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  if (body.primaryCreator !== undefined || body.author !== undefined) {
-    updates.primaryCreator = normalizeString(body.primaryCreator ?? body.author);
-  }
-
-  if (body.publisher !== undefined) {
-    updates.publisher = normalizeString(body.publisher);
-  }
-
-  if (body.format !== undefined) {
-    updates.format = normalizeString(body.format);
-  }
-
-  if (body.year !== undefined) {
-    updates.year = normalizeString(body.year);
-  }
-
-  if (body.tags !== undefined) {
-    updates.tags = normalizeTags(body.tags);
-  }
-
-  if (!Object.keys(updates).length) {
-    return res.json({ collectable });
-  }
-
-  for (const [key, value] of Object.entries(updates)) {
-    collectable[key] = value;
-  }
-  await collectable.save();
-
-  res.json({ collectable });
 });
 
 module.exports = router;

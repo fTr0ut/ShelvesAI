@@ -40,7 +40,7 @@ async function register(req, res) {
       return res.status(400).json({ error: 'Username taken' });
     }
     console.error('Register error:', err);
-    return res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error', details: err.message, stack: err.stack });
   }
 }
 

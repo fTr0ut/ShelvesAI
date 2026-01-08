@@ -23,6 +23,7 @@ router.put('/:shelfId/manual/:itemId', ctrl.updateManualEntry);
 
 router.get('/:shelfId/search', ctrl.searchCollectablesForShelf);
 router.post('/:shelfId/vision', requireFields(['imageBase64']), ctrl.processShelfVision);
+router.post('/:shelfId/catalog-lookup', ctrl.processCatalogLookup);
 
 
 module.exports = router;
