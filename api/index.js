@@ -1,37 +1,21 @@
-const mongoose = require('mongoose');
+// Load environment from api/.env
+require('dotenv').config();
+
 const app = require('./server');
+const { pool } = require('./database/pg');
 
 const PORT = process.env.PORT || 5001;
 
-mongoose
-    .connect(process.env.MONGO_URI)
+// Test PostgreSQL connection before starting server
+pool.query('SELECT NOW()')
     .then(() => {
-        console.log('MongoDB connected');
-         const origDeleteMany = mongoose.Model.deleteMany;
-        mongoose.Model.deleteMany = function (...args) {
-         console.warn(`⚠️ deleteMany called on ${this.modelName}`, args[0]);
-        return origDeleteMany.apply(this, args);
-    };
+        console.log('PostgreSQL connected');
 
-        const origRemove = mongoose.Model.remove;
-        mongoose.Model.remove = function (...args) {
-         console.warn(`⚠️ remove called on ${this.modelName}`, args[0]);
-        return origRemove.apply(this, args);
-    };
-
-         const origDrop = mongoose.connection.db.dropDatabase;
-        mongoose.connection.db.dropDatabase = function (...args) {
-         console.error(`🚨 dropDatabase called! Args:`, args);
-        throw new Error("dropDatabase is blocked in this environment");
-    };
-    // -----------------------       
         app.listen(PORT, () => {
             console.log(`API listening on http://localhost:${PORT}`);
         });
     })
     .catch((err) => {
-        console.error('MongoDB connection error:', err);
+        console.error('PostgreSQL connection error:', err);
         process.exit(1);
     });
-
-

@@ -1,44 +1,59 @@
-const User = require('../models/User');
+const { query } = require('../database/pg');
+const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils');
 
 async function getAccount(req, res) {
-  const user = await User.findById(req.user.id).select(
-    '_id username email name picture firstName lastName phoneNumber country city state isPrivate'
-  );
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ user });
+  try {
+    const result = await query(
+      `SELECT id, username, email, first_name, last_name, phone_number, 
+              picture, country, city, state, is_private, created_at
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = rowToCamelCase(result.rows[0]);
+    res.json({ user });
+  } catch (err) {
+    console.error('getAccount error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
 }
 
 async function updateAccount(req, res) {
-  const allowed = ['firstName', 'lastName', 'phoneNumber', 'country', 'city', 'state', 'isPrivate', 'name', 'picture'];
-  const updates = {};
-  for (const key of allowed) {
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
-      updates[key] = req.body[key];
+  try {
+    const allowedFields = [
+      'first_name', 'last_name', 'phone_number',
+      'country', 'city', 'state', 'is_private', 'picture'
+    ];
+
+    const updateQuery = buildUpdateQuery(
+      'users',
+      req.body || {},
+      'id',
+      req.user.id,
+      allowedFields
+    );
+
+    if (!updateQuery) {
+      // No valid updates, just return current user
+      return getAccount(req, res);
     }
+
+    const result = await query(updateQuery.text, updateQuery.values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = rowToCamelCase(result.rows[0]);
+    res.json({ user });
+  } catch (err) {
+    console.error('updateAccount error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
-
-  const user = await User.findById(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  Object.assign(user, updates);
-  await user.save();
-
-  const response = {
-    _id: user._id,
-    username: user.username,
-    email: user.email,
-    name: user.name,
-    picture: user.picture,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    phoneNumber: user.phoneNumber,
-    country: user.country,
-    city: user.city,
-    state: user.state,
-    isPrivate: user.isPrivate,
-  };
-
-  res.json({ user: response });
 }
 
 module.exports = { getAccount, updateAccount };

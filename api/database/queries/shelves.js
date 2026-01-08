@@ -1,0 +1,202 @@
+const { query, transaction } = require('../pg');
+const { rowToCamelCase, parsePagination } = require('./utils');
+
+/**
+ * List all shelves for a user with item counts
+ */
+async function listForUser(userId) {
+    const result = await query(
+        `SELECT s.*, 
+            COUNT(uc.id) as item_count
+     FROM shelves s
+     LEFT JOIN user_collections uc ON uc.shelf_id = s.id
+     WHERE s.owner_id = $1
+     GROUP BY s.id
+     ORDER BY s.created_at DESC`,
+        [userId]
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
+ * Get a shelf by ID (with ownership check)
+ */
+async function getById(shelfId, userId) {
+    const result = await query(
+        `SELECT * FROM shelves WHERE id = $1 AND owner_id = $2`,
+        [shelfId, userId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Get shelf for viewing (respects visibility and friendship)
+ */
+async function getForViewing(shelfId, viewerId) {
+    const result = await query(
+        `SELECT s.* FROM shelves s
+     WHERE s.id = $1
+     AND (
+       s.owner_id = $2
+       OR s.visibility = 'public'
+       OR (s.visibility = 'friends' AND EXISTS (
+         SELECT 1 FROM friendships f
+         WHERE f.status = 'accepted'
+         AND ((f.requester_id = s.owner_id AND f.addressee_id = $2)
+              OR (f.requester_id = $2 AND f.addressee_id = s.owner_id))
+       ))
+     )`,
+        [shelfId, viewerId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Create a new shelf
+ */
+async function create({ userId, name, type, description, visibility = 'private' }) {
+    const result = await query(
+        `INSERT INTO shelves (owner_id, name, type, description, visibility)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+        [userId, name, type, description, visibility]
+    );
+    return rowToCamelCase(result.rows[0]);
+}
+
+/**
+ * Update a shelf
+ */
+async function update(shelfId, userId, updates) {
+    const allowedFields = ['name', 'description', 'visibility'];
+    const fields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+        if (allowedFields.includes(key)) {
+            fields.push(`${key} = $${paramIndex}`);
+            values.push(value);
+            paramIndex++;
+        }
+    }
+
+    if (fields.length === 0) {
+        return getById(shelfId, userId);
+    }
+
+    values.push(shelfId, userId);
+    const result = await query(
+        `UPDATE shelves SET ${fields.join(', ')} 
+     WHERE id = $${paramIndex} AND owner_id = $${paramIndex + 1}
+     RETURNING *`,
+        values
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Delete a shelf
+ */
+async function remove(shelfId, userId) {
+    const result = await query(
+        `DELETE FROM shelves WHERE id = $1 AND owner_id = $2 RETURNING id`,
+        [shelfId, userId]
+    );
+    return result.rowCount > 0;
+}
+
+/**
+ * Get items on a shelf with collectable/manual details
+ */
+async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
+    const result = await query(
+        `SELECT uc.*, 
+            c.title as collectable_title,
+            c.primary_creator as collectable_creator,
+            c.cover_url as collectable_cover,
+            c.kind as collectable_kind,
+            um.name as manual_name,
+            um.author as manual_author
+     FROM user_collections uc
+     LEFT JOIN collectables c ON c.id = uc.collectable_id
+     LEFT JOIN user_manuals um ON um.id = uc.manual_id
+     WHERE uc.shelf_id = $1 AND uc.user_id = $2
+     ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC
+     LIMIT $3 OFFSET $4`,
+        [shelfId, userId, limit, offset]
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
+ * Add a collectable to a shelf
+ */
+async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }) {
+    const result = await query(
+        `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (user_id, shelf_id, collectable_id) DO UPDATE
+     SET format = COALESCE(EXCLUDED.format, user_collections.format),
+         notes = COALESCE(EXCLUDED.notes, user_collections.notes),
+         rating = COALESCE(EXCLUDED.rating, user_collections.rating)
+     RETURNING *`,
+        [userId, shelfId, collectableId, format, notes, rating, position]
+    );
+    return rowToCamelCase(result.rows[0]);
+}
+
+/**
+ * Add a manual entry to a shelf
+ */
+async function addManual({ userId, shelfId, name, type, description, author, publisher, format, year, tags }) {
+    return transaction(async (client) => {
+        // Create manual entry
+        const manualResult = await client.query(
+            `INSERT INTO user_manuals (user_id, shelf_id, name, type, description, author, publisher, format, year, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+            [userId, shelfId, name, type, description, author, publisher, format, year, tags || []]
+        );
+        const manual = manualResult.rows[0];
+
+        // Add to user_collections
+        const collectionResult = await client.query(
+            `INSERT INTO user_collections (user_id, shelf_id, manual_id)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+            [userId, shelfId, manual.id]
+        );
+
+        return {
+            collection: rowToCamelCase(collectionResult.rows[0]),
+            manual: rowToCamelCase(manual),
+        };
+    });
+}
+
+/**
+ * Remove an item from a shelf
+ */
+async function removeItem(itemId, userId, shelfId) {
+    const result = await query(
+        `DELETE FROM user_collections 
+     WHERE id = $1 AND user_id = $2 AND shelf_id = $3
+     RETURNING *`,
+        [itemId, userId, shelfId]
+    );
+    return result.rowCount > 0;
+}
+
+module.exports = {
+    listForUser,
+    getById,
+    getForViewing,
+    create,
+    update,
+    remove,
+    getItems,
+    addCollectable,
+    addManual,
+    removeItem,
+};
