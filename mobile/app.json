@@ -12,9 +12,6 @@
       "resizeMode": "contain",
       "backgroundColor": "#0b0f14"
     },
-    "extra": {
-      "API_BASE": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev"
-    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {

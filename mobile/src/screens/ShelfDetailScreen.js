@@ -68,7 +68,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 onPress: async () => {
                     try {
                         await apiRequest({ apiBase, path: `/api/shelves/${id}/items/${itemId}`, method: 'DELETE', token });
-                        setItems(prev => prev.filter(i => i._id !== itemId));
+                        setItems(prev => prev.filter(i => i.id !== itemId));
                     } catch (e) {
                         Alert.alert('Error', e.message);
                     }
@@ -121,7 +121,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
                     {info.subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
                 </View>
-                <TouchableOpacity onPress={() => handleDeleteItem(item._id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                     <Ionicons name="close" size={18} color={colors.textMuted} />
                 </TouchableOpacity>
             </TouchableOpacity>
@@ -181,7 +181,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
             {/* Items List */}
             <FlatList
                 data={filteredItems}
-                keyExtractor={(item) => item._id}
+                keyExtractor={(item) => String(item.id)}
                 renderItem={renderItem}
                 contentContainerStyle={styles.listContent}
                 refreshControl={

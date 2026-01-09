@@ -42,7 +42,7 @@ export default function ManualEditScreen({ route, navigation }) {
             setSaving(true);
             await apiRequest({
                 apiBase,
-                path: `/api/shelves/${shelfId}/manual/${item?._id}`,
+                path: `/api/shelves/${shelfId}/manual/${item?.id}`,
                 method: 'PUT',
                 token,
                 body: {

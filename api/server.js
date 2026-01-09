@@ -134,6 +134,7 @@ try {
 
 // Routes
 app.use('/api', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/shelves', shelvesRoutes);
 app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);

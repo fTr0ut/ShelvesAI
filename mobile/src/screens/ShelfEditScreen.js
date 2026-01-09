@@ -1,5 +1,6 @@
-import React, { useCallback, useContext, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -10,6 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -23,9 +25,13 @@ const VISIBILITY_OPTIONS = [
 
 export default function ShelfEditScreen({ route, navigation }) {
     const { shelf: initialShelf } = route.params || {};
+    const shelfId = initialShelf?.id || initialShelf?._id || route.params?.shelfId || route.params?.id;
     const { token, apiBase } = useContext(AuthContext);
-    const { colors, spacing, typography, shadows, radius } = useTheme();
+    const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
+    // State
+    const [shelf, setShelf] = useState(initialShelf || null);
+    const [loading, setLoading] = useState(!initialShelf);
     const [name, setName] = useState(initialShelf?.name || '');
     const [description, setDescription] = useState(initialShelf?.description || '');
     const [visibility, setVisibility] = useState(initialShelf?.visibility || 'private');
@@ -33,6 +39,34 @@ export default function ShelfEditScreen({ route, navigation }) {
     const [deleting, setDeleting] = useState(false);
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
+
+    // Load shelf data from API if not passed or to refresh
+    useEffect(() => {
+        if (!shelfId) return;
+
+        const loadShelf = async () => {
+            try {
+                setLoading(true);
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${shelfId}`,
+                    token,
+                });
+                const fetchedShelf = data.shelf || data;
+                setShelf(fetchedShelf);
+                setName(fetchedShelf?.name || '');
+                setDescription(fetchedShelf?.description || '');
+                setVisibility(fetchedShelf?.visibility || 'private');
+            } catch (e) {
+                console.warn('Failed to load shelf:', e);
+                Alert.alert('Error', 'Could not load shelf details');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadShelf();
+    }, [apiBase, shelfId, token]);
 
     const handleSave = useCallback(async () => {
         if (!name.trim()) {
@@ -44,7 +78,7 @@ export default function ShelfEditScreen({ route, navigation }) {
             setSaving(true);
             await apiRequest({
                 apiBase,
-                path: `/api/shelves/${initialShelf?._id}`,
+                path: `/api/shelves/${shelfId}`,
                 method: 'PUT',
                 token,
                 body: { name: name.trim(), description: description.trim(), visibility },
@@ -55,12 +89,12 @@ export default function ShelfEditScreen({ route, navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, initialShelf, name, description, visibility, token, navigation]);
+    }, [apiBase, shelfId, name, description, visibility, token, navigation]);
 
     const handleDelete = useCallback(() => {
         Alert.alert(
             'Delete Shelf',
-            `Are you sure you want to delete "${initialShelf?.name}"? This cannot be undone.`,
+            `Are you sure you want to delete "${shelf?.name || name}"? This cannot be undone.`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -71,7 +105,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                             setDeleting(true);
                             await apiRequest({
                                 apiBase,
-                                path: `/api/shelves/${initialShelf?._id}`,
+                                path: `/api/shelves/${shelfId}`,
                                 method: 'DELETE',
                                 token,
                             });
@@ -84,116 +118,126 @@ export default function ShelfEditScreen({ route, navigation }) {
                 },
             ]
         );
-    }, [apiBase, initialShelf, token, navigation]);
+    }, [apiBase, shelfId, shelf, name, token, navigation]);
+
+    if (loading) {
+        return (
+            <SafeAreaView style={[styles.screen, styles.centerContainer]} edges={['top']}>
+                <ActivityIndicator size="large" color={colors.primary} />
+            </SafeAreaView>
+        );
+    }
 
     return (
-        <KeyboardAvoidingView
-            style={styles.screen}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-                {/* Header */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="close" size={24} color={colors.text} />
+        <SafeAreaView style={styles.screen} edges={['top']}>
+            <KeyboardAvoidingView
+                style={styles.container}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+                <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.content}>
+                    {/* Header */}
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="close" size={24} color={colors.text} />
+                        </TouchableOpacity>
+                        <Text style={styles.headerTitle}>Edit Shelf</Text>
+                        <View style={{ width: 40 }} />
+                    </View>
+
+                    {/* Name */}
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Name</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={name}
+                            onChangeText={setName}
+                            placeholder="Shelf name"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving && !deleting}
+                        />
+                    </View>
+
+                    {/* Description */}
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Description</Text>
+                        <TextInput
+                            style={[styles.input, styles.textArea]}
+                            value={description}
+                            onChangeText={setDescription}
+                            placeholder="Optional description"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving && !deleting}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
+                        />
+                    </View>
+
+                    {/* Visibility */}
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Visibility</Text>
+                        <View style={styles.visibilityRow}>
+                            {VISIBILITY_OPTIONS.map(opt => (
+                                <TouchableOpacity
+                                    key={opt.value}
+                                    style={[styles.visibilityOption, visibility === opt.value && styles.visibilityActive]}
+                                    onPress={() => setVisibility(opt.value)}
+                                    disabled={saving || deleting}
+                                >
+                                    <Ionicons
+                                        name={opt.icon}
+                                        size={20}
+                                        color={visibility === opt.value ? colors.primary : colors.textMuted}
+                                    />
+                                    <Text style={[styles.visibilityText, visibility === opt.value && styles.visibilityTextActive]}>
+                                        {opt.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    {/* Shelf Info */}
+                    <View style={styles.infoCard}>
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>Type</Text>
+                            <Text style={styles.infoValue}>{shelf?.type || 'Collection'}</Text>
+                        </View>
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>Items</Text>
+                            <Text style={styles.infoValue}>{shelf?.itemCount ?? shelf?.items?.length ?? 0}</Text>
+                        </View>
+                        <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
+                            <Text style={styles.infoLabel}>Created</Text>
+                            <Text style={styles.infoValue}>
+                                {shelf?.createdAt ? new Date(shelf.createdAt).toLocaleDateString() : '—'}
+                            </Text>
+                        </View>
+                    </View>
+
+                    {/* Delete */}
+                    <TouchableOpacity
+                        style={styles.deleteButton}
+                        onPress={handleDelete}
+                        disabled={deleting || saving}
+                    >
+                        <Ionicons name="trash-outline" size={18} color={colors.error} />
+                        <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete Shelf'}</Text>
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Edit Shelf</Text>
-                    <View style={{ width: 40 }} />
+                </ScrollView>
+
+                {/* Save Button */}
+                <View style={styles.footer}>
+                    <TouchableOpacity
+                        style={[styles.saveButton, (saving || deleting) && styles.saveButtonDisabled]}
+                        onPress={handleSave}
+                        disabled={saving || deleting}
+                    >
+                        <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
+                    </TouchableOpacity>
                 </View>
-
-                {/* Name */}
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Name</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={name}
-                        onChangeText={setName}
-                        placeholder="Shelf name"
-                        placeholderTextColor={colors.textMuted}
-                        editable={!saving && !deleting}
-                    />
-                </View>
-
-                {/* Description */}
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Description</Text>
-                    <TextInput
-                        style={[styles.input, styles.textArea]}
-                        value={description}
-                        onChangeText={setDescription}
-                        placeholder="Optional description"
-                        placeholderTextColor={colors.textMuted}
-                        editable={!saving && !deleting}
-                        multiline
-                        numberOfLines={3}
-                        textAlignVertical="top"
-                    />
-                </View>
-
-                {/* Visibility */}
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Visibility</Text>
-                    <View style={styles.visibilityRow}>
-                        {VISIBILITY_OPTIONS.map(opt => (
-                            <TouchableOpacity
-                                key={opt.value}
-                                style={[styles.visibilityOption, visibility === opt.value && styles.visibilityActive]}
-                                onPress={() => setVisibility(opt.value)}
-                                disabled={saving || deleting}
-                            >
-                                <Ionicons
-                                    name={opt.icon}
-                                    size={20}
-                                    color={visibility === opt.value ? colors.primary : colors.textMuted}
-                                />
-                                <Text style={[styles.visibilityText, visibility === opt.value && styles.visibilityTextActive]}>
-                                    {opt.label}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-
-                {/* Shelf Info */}
-                <View style={styles.infoCard}>
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>Type</Text>
-                        <Text style={styles.infoValue}>{initialShelf?.type || 'Collection'}</Text>
-                    </View>
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>Items</Text>
-                        <Text style={styles.infoValue}>{initialShelf?.itemCount || 0}</Text>
-                    </View>
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>Created</Text>
-                        <Text style={styles.infoValue}>
-                            {initialShelf?.createdAt ? new Date(initialShelf.createdAt).toLocaleDateString() : '—'}
-                        </Text>
-                    </View>
-                </View>
-
-                {/* Delete */}
-                <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={handleDelete}
-                    disabled={deleting || saving}
-                >
-                    <Ionicons name="trash-outline" size={18} color={colors.error} />
-                    <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete Shelf'}</Text>
-                </TouchableOpacity>
-            </ScrollView>
-
-            {/* Save Button */}
-            <View style={styles.footer}>
-                <TouchableOpacity
-                    style={[styles.saveButton, (saving || deleting) && styles.saveButtonDisabled]}
-                    onPress={handleSave}
-                    disabled={saving || deleting}
-                >
-                    <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
-                </TouchableOpacity>
-            </View>
-        </KeyboardAvoidingView>
+            </KeyboardAvoidingView>
+        </SafeAreaView>
     );
 }
 
@@ -202,7 +246,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         flex: 1,
         backgroundColor: colors.background,
     },
+    centerContainer: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     container: {
+        flex: 1,
+    },
+    scrollContainer: {
         flex: 1,
     },
     content: {
@@ -313,10 +364,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontWeight: '500',
     },
     footer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
         padding: spacing.md,
         backgroundColor: colors.background,
         borderTopWidth: 1,

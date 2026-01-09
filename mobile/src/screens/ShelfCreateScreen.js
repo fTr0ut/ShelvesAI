@@ -60,7 +60,7 @@ export default function ShelfCreateScreen({ navigation }) {
         visibility,
       };
       const data = await apiRequest({ apiBase, path: '/api/shelves', method: 'POST', token, body: payload });
-      navigation.replace('ShelfDetail', { id: data.shelf._id, title: data.shelf.name });
+      navigation.replace('ShelfDetail', { id: data.shelf.id, title: data.shelf.name });
     } catch (e) {
       setError(e.message);
     } finally {

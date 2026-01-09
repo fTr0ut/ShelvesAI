@@ -70,7 +70,7 @@ export default function ShelvesScreen({ navigation }) {
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
     const handleOpenShelf = (shelf) => {
-        navigation.navigate('ShelfDetail', { id: shelf._id, title: shelf.name });
+        navigation.navigate('ShelfDetail', { id: shelf.id, title: shelf.name });
     };
 
     const renderGridItem = ({ item }) => (
@@ -173,7 +173,7 @@ export default function ShelvesScreen({ navigation }) {
             {loading && !refreshing ? renderLoading() : filteredShelves.length === 0 && !searchQuery ? renderEmpty() : (
                 <FlatList
                     data={filteredShelves}
-                    keyExtractor={(item) => item._id}
+                    keyExtractor={(item) => String(item.id)}
                     renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
                     numColumns={viewMode === 'grid' ? 2 : 1}
                     key={viewMode}

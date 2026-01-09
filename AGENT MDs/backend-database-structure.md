@@ -1,0 +1,229 @@
+# Backend Database Structure
+
+This document outlines the PostgreSQL database structure for ShelvesAI.
+
+## Overview
+
+The database uses PostgreSQL with the following extensions:
+- `uuid-ossp`: For UUID generation.
+- `pg_trgm`: For fuzzy text search (trigrams).
+
+## Tables
+
+### 1. **users**
+Stores user account information and profile details.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | UUID | `PK`, `DEFAULT uuid_generate_v4()` | Unique user identifier |
+| username | TEXT | `UNIQUE` | Unique handle |
+| email | TEXT | `UNIQUE`, `NOT NULL` | User email address |
+| password_hash | TEXT | `NOT NULL` | Hashed password |
+| first_name | TEXT | | First name |
+| last_name | TEXT | | Last name |
+| phone_number | TEXT | | Phone number |
+| picture | TEXT | | Profile picture URL |
+| country | TEXT | | Location: Country |
+| state | TEXT | | Location: State |
+| city | TEXT | | Location: City |
+| is_private | BOOLEAN | `DEFAULT FALSE` | Privacy setting |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
+
+**Indexes:** `email`, `username`
+
+---
+
+### 2. **shelves**
+Containers for collections of items.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique shelf ID |
+| owner_id | UUID | `FK -> users(id)` | Owner of the shelf |
+| name | TEXT | `NOT NULL` | Shelf display name |
+| type | TEXT | `NOT NULL` | Type of items (book, movie, game, etc.) |
+| description | TEXT | | Optional description |
+| visibility | TEXT | `DEFAULT 'private'` | 'private', 'friends', 'public' |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
+
+**Indexes:** `owner_id`, `visibility`, `type`
+
+---
+
+### 3. **collectables** (Global Catalog)
+The trusted global catalog of items (movies, games, books, etc.).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique global item ID |
+| fingerprint | TEXT | `UNIQUE` | Unique hash for deduplication |
+| lightweight_fingerprint | TEXT | | Simpler hash for broad matching |
+| kind | TEXT | `NOT NULL` | 'book', 'movie', 'game', 'album' |
+| title | TEXT | `NOT NULL` | Title of the item |
+| subtitle | TEXT | | Subtitle |
+| description | TEXT | | Synopsis or description |
+| primary_creator | TEXT | | Main author/director/developer |
+| creators | TEXT[] | `DEFAULT {}` | List of creators |
+| publishers | TEXT[] | `DEFAULT {}` | List of publishers |
+| year | TEXT | | Release year |
+| tags | TEXT[] | `DEFAULT {}` | Genres/Tags |
+| identifiers | JSONB | `DEFAULT {}` | ISBN, IMDB ID, IGDB ID, etc. |
+| images | JSONB | `DEFAULT []` | Array of image URLs |
+| cover_url | TEXT | | Primary cover image |
+| sources | JSONB | `DEFAULT []` | Provenance metadata |
+| external_id | TEXT | | Primary external ID reference |
+| fuzzy_fingerprints | JSONB | `DEFAULT []` | For OCR matching |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
+
+**Indexes:** `fingerprint`, `lightweight_fingerprint`, `kind`, `title` (trigram), `external_id`
+
+---
+
+### 4. **user_manuals**
+Custom user-created items that don't exist in the global catalog.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique manual item ID |
+| user_id | UUID | `FK -> users(id)` | Creator |
+| shelf_id | INTEGER | `FK -> shelves(id)` | Associated shelf |
+| name | TEXT | `NOT NULL` | Item name |
+| type | TEXT | | Item type |
+| description | TEXT | | Description |
+| author | TEXT | | Author/Creator name |
+| publisher | TEXT | | Publisher name |
+| format | TEXT | | Physical/Digital format |
+| year | TEXT | | Release year |
+| tags | TEXT[] | `DEFAULT {}` | Tags |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+
+**Indexes:** `user_id`, `shelf_id`
+
+---
+
+### 5. **user_collections**
+The join table linking items to shelves (the actual "instances" of items in a user's library).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique collection entry ID |
+| user_id | UUID | `FK -> users(id)` | User who owns the item |
+| shelf_id | INTEGER | `FK -> shelves(id)` | Shelf containing the item |
+| collectable_id | INTEGER | `FK -> collectables(id)` | Link to catalog item (nullable) |
+| manual_id | INTEGER | `FK -> user_manuals(id)` | Link to manual item (nullable) |
+| position | INTEGER | | Sort order |
+| format | TEXT | | Usage format (e.g. hardcover) |
+| notes | TEXT | | User personal notes |
+| rating | DECIMAL | 0.0 - 5.0 | User rating |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Added timestamp |
+
+**Constraints:**
+- Unique (`user_id`, `shelf_id`, `collectable_id`)
+- Check: Must have either `collectable_id` OR `manual_id`, but not both/neither.
+
+**Indexes:** `shelf_id`, `user_id`, `collectable_id`
+
+---
+
+### 6. **friendships**
+Manages social connections between users.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique friendship ID |
+| requester_id | UUID | `FK -> users(id)` | Initiator |
+| addressee_id | UUID | `FK -> users(id)` | Target |
+| status | TEXT | `DEFAULT 'pending'` | 'pending', 'accepted', 'blocked' |
+| message | TEXT | | Request message |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Request timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Status change timestamp |
+
+**Constraints:**
+- Unique (`requester_id`, `addressee_id`)
+- Requester != Addressee
+
+**Indexes:** `requester_id`, `addressee_id`, `status`
+
+---
+
+### 7. **event_logs**
+Activity feed system.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique log ID |
+| user_id | UUID | `FK -> users(id)` | Actor |
+| shelf_id | INTEGER | `FK -> shelves(id)` | Related shelf (optional) |
+| event_type | TEXT | `NOT NULL` | e.g., 'SHELF_CREATED', 'ITEM_ADDED' |
+| payload | JSONB | `DEFAULT {}` | Event metadata |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Event timestamp |
+
+**Indexes:** `user_id`, `shelf_id`, `event_type`, `created_at`
+
+---
+
+## Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    users ||--o{ shelves : owns
+    users ||--o{ user_collections : "has items"
+    users ||--o{ user_manuals : creates
+    users ||--o{ friendships : initiates
+    users ||--o{ friendships : receives
+    users ||--o{ event_logs : generates
+
+    shelves ||--o{ user_collections : contains
+    shelves ||--o{ user_manuals : "contains manual"
+    shelves ||--o{ event_logs : "related to"
+
+    collectables ||--o{ user_collections : "referenced by"
+
+    user_manuals ||--o{ user_collections : "referenced by"
+
+    users {
+        UUID id PK
+        string username
+        string email
+    }
+
+    shelves {
+        int id PK
+        UUID owner_id FK
+        string name
+        string visibility
+    }
+
+    collectables {
+        int id PK
+        string title
+        string kind
+        string fingerprint
+    }
+
+    user_collections {
+        int id PK
+        UUID user_id FK
+        int shelf_id FK
+        int collectable_id FK
+        int manual_id FK
+        decimal rating
+    }
+
+    user_manuals {
+        int id PK
+        UUID user_id FK
+        int shelf_id FK
+        string name
+    }
+
+    friendships {
+        int id PK
+        UUID requester_id FK
+        UUID addressee_id FK
+        string status
+    }
+```

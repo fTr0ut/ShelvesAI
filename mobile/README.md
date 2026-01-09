@@ -23,6 +23,9 @@ Quick Start
 API Base Configuration
 - The app tries to guess the API base using Expo host (LAN IP) and port 5001.
 - You can override it in mobile/app.json under expo.extra.API_BASE.
+- You can also set env vars when running Expo:
+  - `EXPO_PUBLIC_API_BASE` to force a base URL.
+  - `EXPO_PUBLIC_USE_NGROK=true` with `EXPO_PUBLIC_NGROK_URL` to opt into ngrok.
 - If testing on a physical device, use your machine's LAN IP, e.g. http://192.168.1.20:5001.
 
 Screens Implemented

@@ -47,10 +47,27 @@ function getExtraConfig() {
   return {}
 }
 
+const truthyValues = new Set(['1', 'true', 'yes', 'on'])
+
+function isTruthy(value) {
+  return typeof value === 'string' && truthyValues.has(value.toLowerCase())
+}
+
 function guessApiBase() {
+  const envApiBase = process.env.EXPO_PUBLIC_API_BASE
+  if (envApiBase) return envApiBase
+
+  const envUseNgrok = process.env.EXPO_PUBLIC_USE_NGROK
+  const envNgrokUrl = process.env.EXPO_PUBLIC_NGROK_URL
+  if (isTruthy(envUseNgrok) && envNgrokUrl) return envNgrokUrl
+
   const extra = getExtraConfig()
+  const extraUseNgrok = isTruthy(extra?.USE_NGROK)
+  const extraNgrokUrl = extra?.NGROK_URL
+  if (extraUseNgrok && extraNgrokUrl) return extraNgrokUrl
+
   const extraBase = extra?.API_BASE
-  if (extraBase && extraBase !== 'http://localhost:5001') return extraBase
+  if (extraBase) return extraBase
   const hostUri = Constants?.expoConfig?.hostUri || ''
   const host = hostUri.split(':')[0]
   if (host) return `http://${host}:5001`
