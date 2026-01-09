@@ -1,370 +1,342 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useContext, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native'
-import FooterNav from '../components/FooterNav'
-import { AuthContext } from '../context/AuthContext'
-import { apiRequest } from '../services/api'
-import { FriendSearchSyncProvider } from '../hooks/useFriendSearchSync'
-
-const MIN_QUERY_LENGTH = 2
-
-function normalizeFriendshipStatus({ relation, status, direction }) {
-  if (relation === 'friends' || status === 'accepted') return { relation: 'friends', label: 'Friends', actionable: false }
-  if (relation === 'outgoing' || (status === 'pending' && direction === 'outgoing')) {
-    return { relation: 'outgoing', label: 'Requested', actionable: true }
-  }
-  if (relation === 'incoming' || (status === 'pending' && direction === 'incoming')) {
-    return { relation: 'incoming', label: 'Respond', actionable: true }
-  }
-  if (relation === 'blocked' || status === 'blocked') return { relation: 'blocked', label: 'Blocked', actionable: false }
-  return { relation: 'none', label: 'Add Friend', actionable: true }
-}
+    ActivityIndicator,
+    FlatList,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+    StatusBar,
+    Alert,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { apiRequest } from '../services/api';
 
 export default function FriendSearchScreen({ navigation }) {
-  const { token, apiBase } = useContext(AuthContext)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [busyMap, setBusyMap] = useState({})
+    const { token, apiBase } = useContext(AuthContext);
+    const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-  const setBusyForUser = useCallback((id, value) => {
-    setBusyMap((prev) => ({ ...prev, [id]: value }))
-  }, [])
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [searched, setSearched] = useState(false);
+    const [sending, setSending] = useState({});
 
-  useEffect(() => {
-    if (!token) {
-      setResults([])
-      setLoading(false)
-      setError('')
-      return
-    }
+    const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
-    const trimmed = query.trim()
-    if (trimmed.length < MIN_QUERY_LENGTH) {
-      setResults([])
-      setLoading(false)
-      setError('')
-      return
-    }
+    const handleSearch = useCallback(async () => {
+        const q = query.trim();
+        if (!q) return;
 
-    let cancelled = false
-    setLoading(true)
-    setError('')
-
-    const run = async () => {
-      try {
-        const data = await apiRequest({
-          apiBase,
-          path: `/api/friends/search?q=${encodeURIComponent(trimmed)}`,
-          token,
-        })
-        if (!cancelled) {
-          setResults(Array.isArray(data.users) ? data.users : [])
-          setError('')
+        try {
+            setLoading(true);
+            setSearched(true);
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/friends/search?q=${encodeURIComponent(q)}`,
+                token,
+            });
+            setResults(Array.isArray(data.users) ? data.users : []);
+        } catch (e) {
+            Alert.alert('Error', e.message);
+        } finally {
+            setLoading(false);
         }
-      } catch (e) {
-        if (!cancelled) {
-          if (e?.status === 404) {
-            setResults([])
-            setError('')
-          } else {
-            setError(e.message)
-            setResults([])
-          }
+    }, [apiBase, token, query]);
+
+    const handleSendRequest = useCallback(async (userId) => {
+        setSending(prev => ({ ...prev, [userId]: true }));
+        try {
+            await apiRequest({
+                apiBase,
+                path: '/api/friends/request',
+                method: 'POST',
+                token,
+                body: { userId },
+            });
+            // Update result to show pending
+            setResults(prev => prev.map(u => u._id === userId ? { ...u, requestSent: true } : u));
+        } catch (e) {
+            Alert.alert('Error', e.message);
+        } finally {
+            setSending(prev => ({ ...prev, [userId]: false }));
         }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
+    }, [apiBase, token]);
 
-    const handle = setTimeout(run, 250)
-    return () => {
-      cancelled = true
-      clearTimeout(handle)
-    }
-  }, [apiBase, query, token])
+    const renderUser = ({ item }) => {
+        const displayName = item.firstName && item.lastName
+            ? `${item.firstName} ${item.lastName}`
+            : item.name || item.username;
+        const initial = (displayName || '?').charAt(0).toUpperCase();
+        const isSending = sending[item._id];
+        const isPending = item.requestSent || item.isFriend === 'pending';
+        const isFriend = item.isFriend === true;
 
-  const mutateResult = useCallback((userId, updater) => {
-    setResults((prev) => prev.map((item) => (item.id === userId ? updater(item) : item)))
-  }, [])
+        return (
+            <View style={styles.userCard}>
+                <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>{initial}</Text>
+                </View>
+                <View style={styles.userInfo}>
+                    <Text style={styles.userName}>{displayName}</Text>
+                    <Text style={styles.userHandle}>@{item.username}</Text>
+                </View>
+                {isFriend ? (
+                    <View style={styles.friendBadge}>
+                        <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                        <Text style={styles.friendBadgeText}>Friends</Text>
+                    </View>
+                ) : isPending ? (
+                    <View style={styles.pendingBadge}>
+                        <Text style={styles.pendingBadgeText}>Pending</Text>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        style={styles.addButton}
+                        onPress={() => handleSendRequest(item._id)}
+                        disabled={isSending}
+                    >
+                        {isSending ? (
+                            <ActivityIndicator size="small" color={colors.textInverted} />
+                        ) : (
+                            <>
+                                <Ionicons name="person-add" size={16} color={colors.textInverted} />
+                                <Text style={styles.addButtonText}>Add</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                )}
+            </View>
+        );
+    };
 
-  const handleRequestSuccess = useCallback(
-    (userId, data) => {
-      const friendship = data?.friendship
-      const autoAccepted = data?.autoAccepted || data?.alreadyFriends
-      const nextStatus =
-        friendship?.status || (autoAccepted ? 'accepted' : 'pending')
-      const relation = nextStatus === 'accepted' || autoAccepted ? 'friends' : 'outgoing'
+    return (
+        <View style={styles.screen}>
+            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-      mutateResult(userId, (prev) => ({
-        ...prev,
-        relation,
-        status: nextStatus,
-        direction: relation === 'outgoing' ? 'outgoing' : null,
-        friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
-      }))
-      setError('')
-    },
-    [mutateResult, setError],
-  )
-
-  const handleRespondSuccess = useCallback(
-    ({ userId, action, data }) => {
-      if (action === 'accept') {
-        const friendship = data?.friendship
-        mutateResult(userId, (prev) => ({
-          ...prev,
-          relation: 'friends',
-          status: 'accepted',
-          direction: null,
-          friendshipId: friendship ? String(friendship._id || friendship.id || friendship) : prev.friendshipId,
-        }))
-      } else {
-        mutateResult(userId, (prev) => ({
-          ...prev,
-          relation: 'none',
-          status: null,
-          direction: null,
-          friendshipId: null,
-        }))
-      }
-      setError('')
-    },
-    [mutateResult, setError],
-  )
-
-  const handleMutationError = useCallback(
-    (message) => {
-      setError(message || '')
-    },
-    [setError],
-  )
-
-  const handleSendRequest = useCallback(
-    async (user) => {
-      const userId = user.id
-      setBusyForUser(userId, true)
-      try {
-        const data = await apiRequest({
-          apiBase,
-          path: '/api/friends/request',
-          method: 'POST',
-          token,
-          body: { targetUserId: userId },
-        })
-        handleRequestSuccess(userId, data)
-      } catch (e) {
-        handleMutationError(e.message)
-      } finally {
-        setBusyForUser(userId, false)
-      }
-    },
-    [apiBase, handleMutationError, handleRequestSuccess, setBusyForUser, token],
-  )
-
-  const handleRespond = useCallback(
-    async ({ friendshipId, action, userId }) => {
-      if (!friendshipId) return
-      setBusyForUser(userId, true)
-      try {
-        const data = await apiRequest({
-          apiBase,
-          path: '/api/friends/respond',
-          method: 'POST',
-          token,
-          body: { friendshipId, action },
-        })
-        handleRespondSuccess({ userId, action, data })
-      } catch (e) {
-        handleMutationError(e.message)
-      } finally {
-        setBusyForUser(userId, false)
-      }
-    },
-    [apiBase, handleMutationError, handleRespondSuccess, setBusyForUser, token],
-  )
-
-  const renderItem = useCallback(
-    ({ item }) => {
-      const statusInfo = normalizeFriendshipStatus(item)
-      const busy = !!busyMap[item.id]
-      const locationLabel = item.location || ''
-      const usernameLabel = item.username ? `@${item.username}` : ''
-
-      return (
-        <View style={styles.resultCard}>
-          <View style={styles.resultDetails}>
-            <Text style={styles.resultName}>{item.name || item.username || 'Collector'}</Text>
-            {usernameLabel ? <Text style={styles.resultUsername}>{usernameLabel}</Text> : null}
-            {locationLabel ? <Text style={styles.resultLocation}>{locationLabel}</Text> : null}
-          </View>
-          <View style={styles.resultActions}>
-            {statusInfo.relation === 'friends' ? (
-              <Text style={styles.statusBadge}>Friends</Text>
-            ) : statusInfo.relation === 'blocked' ? (
-              <Text style={styles.statusBadge}>Blocked</Text>
-            ) : statusInfo.relation === 'incoming' ? (
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.primaryButton, busy && styles.buttonDisabled]}
-                  onPress={() => handleRespond({ friendshipId: item.friendshipId, action: 'accept', userId: item.id })}
-                  disabled={busy}
-                >
-                  {busy ? <ActivityIndicator color="#0b0f14" size="small" /> : <Text style={styles.actionTextPrimary}>Accept</Text>}
+            {/* Header */}
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.secondaryButton, busy && styles.buttonDisabled]}
-                  onPress={() => handleRespond({ friendshipId: item.friendshipId, action: 'reject', userId: item.id })}
-                  disabled={busy}
-                >
-                  {busy ? <ActivityIndicator color="#7ca6ff" size="small" /> : <Text style={styles.actionTextSecondary}>Dismiss</Text>}
+                <Text style={styles.headerTitle}>Find Friends</Text>
+                <View style={{ width: 40 }} />
+            </View>
+
+            {/* Search */}
+            <View style={styles.searchContainer}>
+                <View style={styles.searchBox}>
+                    <Ionicons name="search" size={18} color={colors.textMuted} />
+                    <TextInput
+                        style={styles.searchInput}
+                        value={query}
+                        onChangeText={setQuery}
+                        placeholder="Search by username..."
+                        placeholderTextColor={colors.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        returnKeyType="search"
+                        onSubmitEditing={handleSearch}
+                    />
+                    {query.length > 0 && (
+                        <TouchableOpacity onPress={() => { setQuery(''); setResults([]); setSearched(false); }}>
+                            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+                <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+                    <Text style={styles.searchButtonText}>Search</Text>
                 </TouchableOpacity>
-              </View>
-            ) : statusInfo.relation === 'outgoing' ? (
-              <View style={styles.actionRow}>
-                <Text style={styles.statusBadge}>Requested</Text>
-                <TouchableOpacity
-                  style={[styles.linkButton, busy && styles.buttonDisabled]}
-                  onPress={() => handleRespond({ friendshipId: item.friendshipId, action: 'cancel', userId: item.id })}
-                  disabled={busy}
-                >
-                  {busy ? <ActivityIndicator color="#7ca6ff" size="small" /> : <Text style={styles.linkButtonText}>Cancel</Text>}
-                </TouchableOpacity>
-              </View>
+            </View>
+
+            {/* Results */}
+            {loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                </View>
             ) : (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.primaryButton, busy && styles.buttonDisabled]}
-                onPress={() => handleSendRequest(item)}
-                disabled={busy}
-              >
-                {busy ? <ActivityIndicator color="#0b0f14" size="small" /> : <Text style={styles.actionTextPrimary}>Add Friend</Text>}
-              </TouchableOpacity>
+                <FlatList
+                    data={results}
+                    keyExtractor={(item) => item._id}
+                    renderItem={renderUser}
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        searched ? (
+                            <View style={styles.emptyState}>
+                                <Ionicons name="people-outline" size={48} color={colors.textMuted} />
+                                <Text style={styles.emptyTitle}>No users found</Text>
+                                <Text style={styles.emptyText}>Try a different username</Text>
+                            </View>
+                        ) : (
+                            <View style={styles.emptyState}>
+                                <Ionicons name="search-outline" size={48} color={colors.textMuted} />
+                                <Text style={styles.emptyTitle}>Search for collectors</Text>
+                                <Text style={styles.emptyText}>Find friends to share your shelves with</Text>
+                            </View>
+                        )
+                    }
+                />
             )}
-          </View>
         </View>
-      )
-    },
-    [busyMap, handleRespond, handleSendRequest],
-  )
-
-  const listEmpty = useMemo(() => {
-    if (query.trim().length < MIN_QUERY_LENGTH) {
-      return <Text style={styles.muted}>Search by username or name to find collectors.</Text>
-    }
-    if (loading) {
-      return (
-        <View style={styles.emptyState}>
-          <ActivityIndicator color="#7ca6ff" size="small" />
-          <Text style={styles.muted}>Searching friends...</Text>
-        </View>
-      )
-    }
-    if (error) {
-      return <Text style={styles.error}>{error}</Text>
-    }
-    return <Text style={styles.muted}>No collectors found. Try a different search.</Text>
-  }, [error, loading, query])
-
-  const friendSyncValue = useMemo(
-    () => ({
-      setBusyForUser,
-      handleRequestSuccess,
-      handleRespondSuccess,
-      handleMutationError,
-    }),
-    [handleMutationError, handleRequestSuccess, handleRespondSuccess, setBusyForUser],
-  )
-
-  return (
-    <FriendSearchSyncProvider value={friendSyncValue}>
-      <View style={styles.screen}>
-        <View style={styles.container}>
-          <Text style={styles.title}>Find Friends</Text>
-          <Text style={styles.subtitle}>Search for collectors to build your network.</Text>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name or username"
-            placeholderTextColor="#55657a"
-            value={query}
-            onChangeText={setQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {error && query.trim().length >= MIN_QUERY_LENGTH ? <Text style={styles.error}>{error}</Text> : null}
-
-          <FlatList
-            data={results}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={results.length ? styles.listContent : styles.listEmpty}
-            ListEmptyComponent={listEmpty}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          />
-        </View>
-        <FooterNav navigation={navigation} active="home" />
-      </View>
-    </FriendSearchSyncProvider>
-  )
+    );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0b0f14' },
-  container: { flex: 1, padding: 16, gap: 12 },
-  title: { color: '#e6edf3', fontSize: 24, fontWeight: '700' },
-  subtitle: { color: '#9aa6b2', marginBottom: 4 },
-  searchInput: {
-    backgroundColor: '#0e1522',
-    color: '#e6edf3',
-    borderColor: '#223043',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  error: { color: '#ff9aa3', marginTop: 4 },
-  muted: { color: '#9aa6b2', textAlign: 'center', marginTop: 24 },
-  listContent: { paddingBottom: 80, gap: 12 },
-  listEmpty: { flexGrow: 1, justifyContent: 'center', paddingBottom: 80 },
-  emptyState: { alignItems: 'center', gap: 12 },
-  resultCard: {
-    backgroundColor: '#0e1522',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#223043',
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  resultDetails: { flex: 1, gap: 4 },
-  resultName: { color: '#e6edf3', fontSize: 16, fontWeight: '600' },
-  resultUsername: { color: '#7ca6ff', fontSize: 13 },
-  resultLocation: { color: '#9aa6b2', fontSize: 12 },
-  resultActions: { justifyContent: 'center', alignItems: 'flex-end', gap: 8, minWidth: 110 },
-  actionRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  actionButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 96,
-  },
-  primaryButton: { backgroundColor: '#5a8efc' },
-  secondaryButton: { borderWidth: 1, borderColor: '#223043', backgroundColor: '#0b1320' },
-  buttonDisabled: { opacity: 0.7 },
-  actionTextPrimary: { color: '#0b0f14', fontWeight: '600' },
-  actionTextSecondary: { color: '#7ca6ff', fontWeight: '600' },
-  statusBadge: { color: '#9aa6b2', fontSize: 12 },
-  linkButton: { paddingVertical: 4, paddingHorizontal: 6 },
-  linkButtonText: { color: '#7ca6ff', fontSize: 12 },
-})
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
+    screen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.lg,
+        paddingBottom: spacing.md,
+    },
+    backButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...shadows.sm,
+    },
+    headerTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    searchContainer: {
+        flexDirection: 'row',
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    searchBox: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        height: 44,
+        gap: spacing.sm,
+        ...shadows.sm,
+    },
+    searchInput: {
+        flex: 1,
+        fontSize: 15,
+        color: colors.text,
+    },
+    searchButton: {
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.lg,
+        justifyContent: 'center',
+    },
+    searchButtonText: {
+        color: colors.textInverted,
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    listContent: {
+        padding: spacing.md,
+        paddingTop: 0,
+    },
+    userCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.sm,
+        ...shadows.sm,
+    },
+    avatar: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    avatarText: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.textInverted,
+    },
+    userInfo: {
+        flex: 1,
+    },
+    userName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    userHandle: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 1,
+    },
+    addButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: colors.primary,
+        paddingHorizontal: spacing.sm + 4,
+        paddingVertical: spacing.xs + 2,
+        borderRadius: 16,
+    },
+    addButtonText: {
+        color: colors.textInverted,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    friendBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    friendBadgeText: {
+        color: colors.success,
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    pendingBadge: {
+        backgroundColor: colors.warning + '20',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: 12,
+    },
+    pendingBadgeText: {
+        color: colors.warning,
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyState: {
+        alignItems: 'center',
+        paddingTop: spacing['2xl'],
+    },
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+        marginTop: spacing.md,
+    },
+    emptyText: {
+        fontSize: 14,
+        color: colors.textMuted,
+        marginTop: spacing.xs,
+    },
+});

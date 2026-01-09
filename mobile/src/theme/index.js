@@ -4,36 +4,36 @@
  */
 
 export const colors = {
-    // Primary brand colors
-    primary: '#6366F1',      // Indigo
-    primaryLight: '#818CF8',
-    primaryDark: '#4F46E5',
+    // Primary brand colors - Warm Wood/Amber
+    primary: '#D4A373',      // Warm Amber/Latte
+    primaryLight: '#E9C46A', // Golden
+    primaryDark: '#AC8153',  // Darker Wood
 
-    // Backgrounds
-    background: '#0F0F0F',
-    surface: '#1A1A1A',
-    surfaceElevated: '#252525',
-    card: '#1F1F1F',
+    // Backgrounds - Dark Coffee Shop Mood
+    background: '#1C1917',   // Very Dark Warm Grey (Espresso)
+    surface: '#292524',      // Dark Warm Grey (Americano)
+    surfaceElevated: '#44403C', // Lighter Warm Grey
+    card: '#292524',         // Same as surface
 
-    // Text
-    text: '#FFFFFF',
-    textSecondary: '#A1A1AA',
-    textMuted: '#71717A',
-    textInverted: '#000000',
+    // Text - Cream/Paper
+    text: '#F5EFE6',         // Off-white/Cream
+    textSecondary: '#A8A29E', // Warm Grey text
+    textMuted: '#78716C',    // Muted Warm Grey
+    textInverted: '#1C1917', // Dark for light buttons
 
     // Accents
-    success: '#10B981',
-    warning: '#F59E0B',
-    error: '#EF4444',
-    info: '#3B82F6',
+    success: '#84A98C',      // Sage Green
+    warning: '#CA6702',      // Burnt Orange/Cinnamon
+    error: '#BC4749',        // Muted Red
+    info: '#6D6875',         // Muted Purple/Info
 
     // Borders
-    border: '#2A2A2A',
-    borderLight: '#3A3A3A',
+    border: '#44403C',       // Warm Grey Border
+    borderLight: '#57534E',
 
-    // Gradients (Optional usage, keeping for reference)
-    gradientStart: '#6366F1',
-    gradientEnd: '#8B5CF6',
+    // Gradients (Optional usage)
+    gradientStart: '#D4A373',
+    gradientEnd: '#E9C46A',
 };
 
 export const typography = {

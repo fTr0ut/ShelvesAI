@@ -1,211 +1,259 @@
-// screens/ManualEditScreen.js
-import React, { useContext, useEffect, useState } from "react";
+import React, { useCallback, useContext, useState } from 'react';
 import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
-
-import FooterNav from "../components/FooterNav";
-import { AuthContext } from "../context/AuthContext";
-import { apiRequest } from "../services/api";
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { apiRequest } from '../services/api';
 
 export default function ManualEditScreen({ route, navigation }) {
-  const { token, apiBase } = useContext(AuthContext);
-  const { shelfId, itemId, isCollectable, initialData = {} } = route.params || {};
+    const { item, shelfId } = route.params || {};
+    const { token, apiBase } = useContext(AuthContext);
+    const { colors, spacing, typography, shadows, radius } = useTheme();
 
-  // Prefill from initialData
-  const [name, setName] = useState(initialData.name || initialData.title || "");
-  const [author, setAuthor] = useState(initialData.author || "");
-  const [format, setFormat] = useState(initialData.format || "");
-  const [position, setPosition] = useState(initialData.position || "");
-  const [year, setYear] = useState(initialData.year || "");
-  const [publisher, setPublisher] = useState(initialData.publisher || "");
-  const [tags, setTags] = useState(
-    Array.isArray(initialData.tags) ? initialData.tags.join(", ") : ""
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+    const manual = item?.manual || item?.manualSnapshot || {};
 
-  // In case navigation re-pushes with new params
-  useEffect(() => {
-    if (!initialData) return;
-    setName(initialData.name || initialData.title || "");
-    setAuthor(initialData.author || "");
-    setFormat(initialData.format || "");
-    setPosition(initialData.position || "");
-    setYear(initialData.year || "");
-    setPublisher(initialData.publisher || "");
-    setTags(Array.isArray(initialData.tags) ? initialData.tags.join(", ") : "");
-  }, [initialData]);
+    const [title, setTitle] = useState(manual?.title || '');
+    const [author, setAuthor] = useState(manual?.author || '');
+    const [publisher, setPublisher] = useState(manual?.publisher || '');
+    const [year, setYear] = useState(manual?.year?.toString() || '');
+    const [description, setDescription] = useState(manual?.description || '');
+    const [notes, setNotes] = useState(item?.notes || '');
+    const [saving, setSaving] = useState(false);
 
-  const saveChanges = async () => {
-    if (!name.trim()) {
-      Alert.alert("Validation", "Name cannot be empty.");
-      return;
-    }
+    const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
-    setSaving(true);
-    setError("");
+    const handleSave = useCallback(async () => {
+        if (!title.trim()) {
+            Alert.alert('Error', 'Title is required');
+            return;
+        }
 
-    try {
-      const common = {
-        name,
-        author,
-        format,
-        position,
-        publisher,
-        year,
-        // normalize tags: comma/space separated → array
-        tags: tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
-      };
+        try {
+            setSaving(true);
+            await apiRequest({
+                apiBase,
+                path: `/api/shelves/${shelfId}/manual/${item?._id}`,
+                method: 'PUT',
+                token,
+                body: {
+                    title: title.trim(),
+                    author: author.trim(),
+                    publisher: publisher.trim(),
+                    year: year ? parseInt(year, 10) : null,
+                    description: description.trim(),
+                    notes: notes.trim(),
+                },
+            });
+            navigation.goBack();
+        } catch (e) {
+            Alert.alert('Error', e.message);
+        } finally {
+            setSaving(false);
+        }
+    }, [apiBase, shelfId, item, title, author, publisher, year, description, notes, token, navigation]);
 
-      // If it *is* a collectable (not the pending path), update the collectable
-      if (isCollectable && itemId) {
-        await apiRequest({
-          apiBase,
-          path: `/api/collectables/${itemId}`,
-          method: "PUT",
-          token,
-          body: common,
-        });
-      } else if (itemId) {
-        // Manual already linked to the shelf → update it
-        await apiRequest({
-          apiBase,
-          path: `/api/shelves/${shelfId}/manual/${itemId}`,
-          method: "PUT",
-          token,
-          body: common,
-        });
-      } else {
-        // Pending edit (no itemId yet) → CREATE manual entry with all fields
-        await apiRequest({
-          apiBase,
-          path: `/api/shelves/${shelfId}/manual`,
-          method: "POST",
-          token,
-          body: {
-            ...common,
-            // type is required for manual creation; default to whatever came from vision or "manual"
-            type: initialData.type || "manual",
-            description: initialData.description || "",
-          },
-        });
-      }
-
-      Alert.alert("Success", "Item saved.");
-      navigation.goBack();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <View style={{ flex: 1 }}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.header}>Edit Metadata</Text>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <TextInput
-          style={styles.input}
-          placeholder="Name"
-          placeholderTextColor="#9aa6b2"
-          value={name}
-          onChangeText={setName}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Author"
-          placeholderTextColor="#9aa6b2"
-          value={author}
-          onChangeText={setAuthor}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Publisher"
-          placeholderTextColor="#9aa6b2"
-          value={publisher}
-          onChangeText={setPublisher}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Format (e.g., Hardcover, Paperback)"
-          placeholderTextColor="#9aa6b2"
-          value={format}
-          onChangeText={setFormat}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Year"
-          placeholderTextColor="#9aa6b2"
-          value={year}
-          onChangeText={setYear}
-          keyboardType="numeric"
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Tags (comma-separated)"
-          placeholderTextColor="#9aa6b2"
-          value={tags}
-          onChangeText={setTags}
-        />
-
-        <TouchableOpacity
-          style={[styles.button, styles.primaryButton]}
-          onPress={saveChanges}
-          disabled={saving}
+    return (
+        <KeyboardAvoidingView
+            style={styles.screen}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <Text style={styles.buttonText}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
+            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="close" size={24} color={colors.text} />
+                    </TouchableOpacity>
+                    <Text style={styles.headerTitle}>Edit Item</Text>
+                    <View style={{ width: 40 }} />
+                </View>
 
-      <FooterNav navigation={navigation} active="shelves" />
-    </View>
-  );
+                {/* Form */}
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Title</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={title}
+                        onChangeText={setTitle}
+                        placeholder="Item title"
+                        placeholderTextColor={colors.textMuted}
+                        editable={!saving}
+                    />
+                </View>
+
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Author / Creator</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={author}
+                        onChangeText={setAuthor}
+                        placeholder="Optional"
+                        placeholderTextColor={colors.textMuted}
+                        editable={!saving}
+                    />
+                </View>
+
+                <View style={styles.row}>
+                    <View style={[styles.inputGroup, { flex: 2 }]}>
+                        <Text style={styles.label}>Publisher</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={publisher}
+                            onChangeText={setPublisher}
+                            placeholder="Optional"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving}
+                        />
+                    </View>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.label}>Year</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={year}
+                            onChangeText={setYear}
+                            placeholder="YYYY"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="numeric"
+                            maxLength={4}
+                            editable={!saving}
+                        />
+                    </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Description</Text>
+                    <TextInput
+                        style={[styles.input, styles.textArea]}
+                        value={description}
+                        onChangeText={setDescription}
+                        placeholder="Optional description"
+                        placeholderTextColor={colors.textMuted}
+                        multiline
+                        numberOfLines={3}
+                        textAlignVertical="top"
+                        editable={!saving}
+                    />
+                </View>
+
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Your Notes</Text>
+                    <TextInput
+                        style={[styles.input, styles.textArea]}
+                        value={notes}
+                        onChangeText={setNotes}
+                        placeholder="Personal notes about this item"
+                        placeholderTextColor={colors.textMuted}
+                        multiline
+                        numberOfLines={3}
+                        textAlignVertical="top"
+                        editable={!saving}
+                    />
+                </View>
+            </ScrollView>
+
+            {/* Save Button */}
+            <View style={styles.footer}>
+                <TouchableOpacity
+                    style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+                    onPress={handleSave}
+                    disabled={saving}
+                >
+                    <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
+                </TouchableOpacity>
+            </View>
+        </KeyboardAvoidingView>
+    );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0b0f14" },
-  content: { padding: 16, paddingBottom: 24 },
-  header: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#e6edf3",
-    marginBottom: 16,
-  },
-  input: {
-    backgroundColor: "#0b1320",
-    color: "#e6edf3",
-    borderColor: "#223043",
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  button: {
-    alignItems: "center",
-    borderRadius: 10,
-    paddingVertical: 12,
-  },
-  primaryButton: { backgroundColor: "#5a8efc" },
-  buttonText: { color: "#0b0f14", fontWeight: "700" },
-  error: { color: "#ff9aa3", marginBottom: 12 },
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
+    screen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    container: {
+        flex: 1,
+    },
+    content: {
+        padding: spacing.md,
+        paddingBottom: 100,
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: spacing.lg,
+    },
+    backButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    headerTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    inputGroup: {
+        marginBottom: spacing.md,
+    },
+    label: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
+        marginBottom: spacing.sm,
+    },
+    input: {
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        fontSize: 16,
+        color: colors.text,
+        ...shadows.sm,
+    },
+    textArea: {
+        minHeight: 80,
+        paddingTop: spacing.md,
+    },
+    row: {
+        flexDirection: 'row',
+        gap: spacing.md,
+    },
+    footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: spacing.md,
+        backgroundColor: colors.background,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    saveButton: {
+        backgroundColor: colors.primary,
+        paddingVertical: spacing.md,
+        borderRadius: radius.lg,
+        alignItems: 'center',
+        ...shadows.md,
+    },
+    saveButtonDisabled: {
+        opacity: 0.6,
+    },
+    saveButtonText: {
+        color: colors.textInverted,
+        fontSize: 16,
+        fontWeight: '600',
+    },
 });

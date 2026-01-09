@@ -1,536 +1,473 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+    StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
-import { colors, spacing, typography } from '../theme';
-import Input from '../components/ui/Input';
-import Card from '../components/ui/Card';
-import Badge from '../components/ui/Badge';
-import Button from '../components/ui/Button';
-import EmptyState from '../components/ui/EmptyState';
 
 const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'friends', label: 'Friends' },
-  { key: 'public', label: 'Public' },
+    { key: 'all', label: 'All' },
+    { key: 'friends', label: 'Friends' },
+    { key: 'public', label: 'Discover' },
 ];
 
-// --- Helpers (kept from original to ensure data compatibility) ---
-
-function attachScope(entries, scope) {
-  return (Array.isArray(entries) ? entries : []).map((entry) => ({ ...entry, __origin: scope }));
-}
-
+// --- Helpers ---
 function normalizeDate(value) {
-  const date = value ? new Date(value) : null;
-  const time = date && !Number.isNaN(date.valueOf()) ? date.getTime() : 0;
-  return time;
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.valueOf()) ? date.getTime() : 0;
 }
 
-function normalizeCandidate(value) {
-  if (value == null) return '';
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number') return String(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const normalized = normalizeCandidate(item);
-      if (normalized) return normalized;
-    }
-    return '';
-  }
-  if (typeof value === 'object') {
-    const fields = ['fullName', 'displayName', 'name', 'title', 'label', 'value', 'text'];
-    for (const field of fields) {
-      if (value[field] != null) {
-        const normalized = normalizeCandidate(value[field]);
-        if (normalized) return normalized;
-      }
-    }
-  }
-  return '';
+function formatRelativeTime(dateString) {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'now';
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays < 7) return `${diffDays}d`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function formatFeedItemPreview(entry) {
-  if (!entry) return { title: 'Untitled item', summary: '' };
-  const collectable =
-    entry.collectable ||
-    entry.item ||
-    entry.collectableSnapshot ||
-    entry.collectableItem ||
-    null;
-  const manual =
-    entry.manual ||
-    entry.manualItem ||
-    entry.manualSnapshot ||
-    (entry.item && entry.item.manual) ||
-    null;
-
-  const titleCandidates = [
-    collectable?.title,
-    collectable?.name,
-    collectable?.displayTitle,
-    collectable?.displayName,
-    collectable?.metadata?.title,
-    manual?.title,
-    manual?.name,
-    entry?.title,
-    entry?.name,
-  ];
-
-  let title = '';
-  for (const candidate of titleCandidates) {
-    title = normalizeCandidate(candidate);
-    if (title) break;
-  }
-  if (!title) title = 'Untitled item';
-
-  const details = [];
-  const addDetail = (value) => {
-    const text = normalizeCandidate(value);
-    if (!text) return;
-    const lower = text.toLowerCase();
-    if (details.some((existing) => existing.toLowerCase() === lower)) return;
-    details.push(text);
-  };
-
-  addDetail(collectable?.primaryCreator);
-  addDetail(collectable?.author);
-  addDetail(collectable?.creators);
-  addDetail(manual?.primaryCreator);
-  addDetail(manual?.author);
-  addDetail(collectable?.format);
-  addDetail(manual?.format);
-  addDetail(manual?.type);
-  addDetail(collectable?.publisher);
-  addDetail(manual?.publisher);
-  addDetail(collectable?.year);
-  addDetail(manual?.year);
-
-  const summary = details.slice(0, 3).join(' | ');
-
-  return { title, summary };
+function getItemPreview(entry) {
+    const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
+    const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
+    const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
+    return title;
 }
 
 // --- Component ---
-
 export default function SocialFeedScreen({ navigation }) {
-  const { token, apiBase } = useContext(AuthContext);
-  const [publicEntries, setPublicEntries] = useState([]);
-  const [friendEntries, setFriendEntries] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [searchTerm, setSearchTerm] = useState('');
+    const { token, apiBase } = useContext(AuthContext);
+    const { colors, spacing, typography, shadows, isDark } = useTheme();
 
-  const load = useCallback(
-    async (opts = {}) => {
-      if (!token) {
-        setPublicEntries([]);
-        setFriendEntries([]);
+    const [publicEntries, setPublicEntries] = useState([]);
+    const [friendEntries, setFriendEntries] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState('');
+    const [activeFilter, setActiveFilter] = useState('all');
+
+    const load = useCallback(async (opts = {}) => {
+        if (!token) {
+            setPublicEntries([]);
+            setFriendEntries([]);
+            setLoading(false);
+            return;
+        }
+        if (!opts.silent) setLoading(true);
+
+        const requests = await Promise.allSettled([
+            apiRequest({ apiBase, path: '/api/feed?scope=global', token }),
+            apiRequest({ apiBase, path: '/api/feed?scope=friends', token }),
+        ]);
+
+        const [globalResult, friendsResult] = requests;
+        if (globalResult.status === 'fulfilled') {
+            setPublicEntries(globalResult.value.entries || []);
+        }
+        if (friendsResult.status === 'fulfilled') {
+            setFriendEntries(friendsResult.value.entries || []);
+        }
+        if (globalResult.status === 'rejected' && friendsResult.status === 'rejected') {
+            setError('Unable to load feed');
+        } else {
+            setError('');
+        }
         setLoading(false);
         setRefreshing(false);
-        return;
-      }
-      if (!opts.silent) setLoading(true);
+    }, [apiBase, token]);
 
-      const requests = await Promise.allSettled([
-        apiRequest({ apiBase, path: '/api/feed?scope=global', token }),
-        apiRequest({ apiBase, path: '/api/feed?scope=friends', token }),
-      ]);
+    useEffect(() => { load(); }, [load]);
 
-      const [globalResult, friendsResult] = requests;
-      const messages = [];
+    const onRefresh = () => {
+        setRefreshing(true);
+        load({ silent: true });
+    };
 
-      if (globalResult.status === 'fulfilled') {
-        setPublicEntries(globalResult.value.entries || []);
-      } else {
-        messages.push('Unable to load public activity.');
-      }
+    const combinedEntries = useMemo(() => {
+        const all = [
+            ...publicEntries.map(e => ({ ...e, __origin: 'public' })),
+            ...friendEntries.map(e => ({ ...e, __origin: 'friends' })),
+        ];
+        let filtered = activeFilter === 'all' ? all : all.filter(e => e.__origin === activeFilter);
+        return filtered.sort((a, b) => normalizeDate(b.shelf?.updatedAt) - normalizeDate(a.shelf?.updatedAt));
+    }, [publicEntries, friendEntries, activeFilter]);
 
-      if (friendsResult.status === 'fulfilled') {
-        setFriendEntries(friendsResult.value.entries || []);
-      } else {
-        messages.push('Unable to load friends activity.');
-      }
+    const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
-      setError(messages.join(' '));
-      setLoading(false);
-      setRefreshing(false);
-    },
-    [apiBase, token]
-  );
+    const renderItem = ({ item }) => {
+        const { shelf, owner, items } = item;
+        const timeAgo = formatRelativeTime(shelf?.updatedAt);
+        const displayName = owner?.name || owner?.username || 'Someone';
+        const initial = displayName.charAt(0).toUpperCase();
+        const previewItems = (items || []).slice(0, 3);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    load({ silent: true });
-  };
-
-  const combinedEntries = useMemo(() => {
-    const decorated = [
-      ...attachScope(publicEntries, 'public'),
-      ...attachScope(friendEntries, 'friends'),
-    ];
-
-    let filtered = decorated;
-
-    if (activeFilter !== 'all') {
-      filtered = filtered.filter((entry) => entry.__origin === activeFilter);
-    }
-
-    const term = searchTerm.trim().toLowerCase();
-    if (term) {
-      filtered = filtered.filter((entry) => {
-        const shelfName = (entry.shelf?.name || '').toLowerCase();
-        const ownerName = (entry.owner?.name || '').toLowerCase();
-        const ownerUsername = (entry.owner?.username || '').toLowerCase();
-        return shelfName.includes(term) || ownerName.includes(term) || ownerUsername.includes(term);
-      });
-    }
-
-    return filtered
-      .slice()
-      .sort((a, b) => normalizeDate(b.shelf?.updatedAt) - normalizeDate(a.shelf?.updatedAt));
-  }, [publicEntries, friendEntries, activeFilter, searchTerm]);
-
-  const renderItem = ({ item }) => {
-    const { shelf, owner, items, __origin } = item;
-    const createdLabel = shelf?.updatedAt ? new Date(shelf.updatedAt).toLocaleDateString() : '';
-    const originLabel = __origin === 'friends' ? 'Friends' : 'Public';
-    const originVariant = __origin === 'friends' ? 'success' : 'primary';
-
-    return (
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={() =>
-          navigation.navigate('Shelves', {
-            screen: 'ShelfDetail', // Navigate effectively to shelf detail, might need adjusting based on navigator nesting
-            params: {
-              id: shelf?.id,
-              title: shelf?.name,
-            }
-          })
-        }
-      >
-        <Card style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.userInfo}>
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{(owner?.name || owner?.username || '?')?.charAt(0).toUpperCase()}</Text>
-              </View>
-              <View>
-                <Text style={styles.userName}>{owner?.name || owner?.username || 'Unknown User'}</Text>
-                <Text style={styles.userLocation}>
-                  {[owner?.city, owner?.state, owner?.country].filter(Boolean).join(', ') || 'No location'}
-                </Text>
-              </View>
-            </View>
-            <Badge variant={originVariant} label={originLabel} size="sm" />
-          </View>
-
-          <View style={styles.shelfInfo}>
-            <Text style={styles.shelfTitle}>{shelf?.name || 'Untitled Shelf'}</Text>
-            <Badge variant="secondary" label={shelf?.type || 'Collection'} size="sm" style={{ alignSelf: 'flex-start' }} />
-          </View>
-
-          {shelf?.description ? (
-            <Text style={styles.description} numberOfLines={2}>{shelf.description}</Text>
-          ) : null}
-
-          <View style={styles.divider} />
-
-          <View style={styles.itemsList}>
-            {items?.length ? (
-              <>
-                {items.slice(0, 3).map((entry, idx) => {
-                  const { title, summary } = formatFeedItemPreview(entry);
-                  return (
-                    <View key={idx} style={styles.itemRow}>
-                      <Ionicons name="ellipse" size={6} color={colors.primary} style={{ marginTop: 6 }} />
-                      <Text style={styles.itemText} numberOfLines={1}>
-                        <Text style={styles.itemTitle}>{title}</Text>
-                        {summary ? <Text style={styles.itemSummary}>{` — ${summary}`}</Text> : null}
-                      </Text>
-                    </View>
-                  )
-                })}
-                {shelf?.itemCount > items.length && (
-                  <Text style={styles.moreItems}>+ {shelf.itemCount - items.length} more items</Text>
-                )}
-              </>
-            ) : (
-              <Text style={styles.emptyItemsText}>No items added yet.</Text>
-            )}
-          </View>
-
-          <View style={styles.cardFooter}>
-            <Text style={styles.timestamp}>{createdLabel}</Text>
-          </View>
-        </Card>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderEmpty = () => {
-    if (loading) return null; // handled by initial load
-
-    let message = "No activity yet.";
-    if (searchTerm) message = "No results found.";
-    else if (activeFilter === 'friends') message = "No activity from friends.";
-
-    return (
-      <EmptyState
-        icon={<Ionicons name="newspaper-outline" size={48} color={colors.textMuted} />}
-        title="Your feed is empty"
-        description={message}
-        actionLabel={activeFilter === 'friends' ? "Find Friends" : undefined}
-        onAction={activeFilter === 'friends' ? () => navigation.navigate('FriendSearch') : undefined}
-      />
-    );
-  };
-
-  return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Social Feed</Text>
-        <Button
-          variant="ghost"
-          title="Find Friends"
-          size="sm"
-          icon={<Ionicons name="people" size={16} color={colors.primaryLight} />}
-          onPress={() => navigation.navigate('FriendSearch')}
-        />
-      </View>
-
-      <View style={styles.searchContainer}>
-        <Input
-          placeholder="Search shelves or collectors..."
-          value={searchTerm}
-          onChangeText={setSearchTerm}
-          leftIcon={<Ionicons name="search" size={18} color={colors.textMuted} />}
-        />
-      </View>
-
-      <View style={styles.filtersContainer}>
-        {FILTERS.map((filter) => {
-          const isActive = activeFilter === filter.key;
-          return (
+        return (
             <TouchableOpacity
-              key={filter.key}
-              onPress={() => setActiveFilter(filter.key)}
-              style={[
-                styles.filterChip,
-                isActive && styles.filterChipActive
-              ]}
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name })}
+                style={styles.feedCard}
             >
-              <Text style={[styles.filterText, isActive && styles.filterTextActive]}>
-                {filter.label}
-              </Text>
+                {/* Thread-style header */}
+                <View style={styles.cardHeader}>
+                    <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{initial}</Text>
+                    </View>
+                    <View style={styles.headerContent}>
+                        <View style={styles.headerTop}>
+                            <Text style={styles.username}>{displayName}</Text>
+                            <Text style={styles.timestamp}>{timeAgo}</Text>
+                        </View>
+                        <Text style={styles.shelfAction}>
+                            updated <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text>
+                        </Text>
+                    </View>
+                </View>
+
+                {/* Content preview */}
+                {shelf?.description ? (
+                    <Text style={styles.description} numberOfLines={2}>{shelf.description}</Text>
+                ) : null}
+
+                {/* Items preview - Goodreads style */}
+                {previewItems.length > 0 && (
+                    <View style={styles.itemsPreview}>
+                        {previewItems.map((entry, idx) => (
+                            <View key={idx} style={styles.itemChip}>
+                                <Ionicons name="book" size={12} color={colors.primary} />
+                                <Text style={styles.itemTitle} numberOfLines={1}>{getItemPreview(entry)}</Text>
+                            </View>
+                        ))}
+                        {(items?.length || 0) > 3 && (
+                            <Text style={styles.moreItems}>+{items.length - 3} more</Text>
+                        )}
+                    </View>
+                )}
+
+                {/* Footer */}
+                <View style={styles.cardFooter}>
+                    <View style={styles.footerStat}>
+                        <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                        <Text style={styles.footerText}>{shelf?.itemCount || 0} items</Text>
+                    </View>
+                    <View style={styles.footerStat}>
+                        <Ionicons name="globe-outline" size={14} color={colors.textMuted} />
+                        <Text style={styles.footerText}>{shelf?.type || 'Collection'}</Text>
+                    </View>
+                </View>
             </TouchableOpacity>
-          )
-        })}
-      </View>
+        );
+    };
 
-      {error ? (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
+    const renderEmpty = () => {
+        if (loading) return null;
+        return (
+            <View style={styles.emptyState}>
+                <Ionicons name="newspaper-outline" size={48} color={colors.textMuted} />
+                <Text style={styles.emptyTitle}>Your feed is quiet</Text>
+                <Text style={styles.emptyText}>
+                    {activeFilter === 'friends'
+                        ? 'Add friends to see their collections'
+                        : 'Collections from other users will appear here'}
+                </Text>
+                {activeFilter === 'friends' && (
+                    <TouchableOpacity
+                        style={styles.emptyButton}
+                        onPress={() => navigation.navigate('FriendSearch')}
+                    >
+                        <Text style={styles.emptyButtonText}>Find Friends</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+        );
+    };
 
-      {loading && !refreshing ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      ) : (
-        <FlatList
-          data={combinedEntries}
-          keyExtractor={(item, idx) => (item?.shelf?.id ? `${item.shelf.id}-${item.__origin}` : `entry-${idx}`)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-          ListEmptyComponent={renderEmpty}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-    </View>
-  );
+    return (
+        <SafeAreaView style={styles.screen} edges={['top']}>
+            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+
+            {/* Header */}
+            <View style={styles.header}>
+                <Text style={styles.headerTitle}>Feed</Text>
+                <View style={styles.headerRight}>
+                    <TouchableOpacity onPress={() => navigation.navigate('FriendSearch')} style={styles.headerButton}>
+                        <Ionicons name="search" size={22} color={colors.text} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
+                        <Ionicons name="person-circle-outline" size={26} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* Filter Tabs - Threads style */}
+            <View style={styles.filterBar}>
+                {FILTERS.map(filter => {
+                    const active = activeFilter === filter.key;
+                    return (
+                        <TouchableOpacity
+                            key={filter.key}
+                            onPress={() => setActiveFilter(filter.key)}
+                            style={[styles.filterTab, active && styles.filterTabActive]}
+                        >
+                            <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                                {filter.label}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
+            </View>
+
+            {/* Error */}
+            {error ? (
+                <View style={styles.errorBanner}>
+                    <Text style={styles.errorText}>{error}</Text>
+                </View>
+            ) : null}
+
+            {/* Content */}
+            {loading && !refreshing ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                </View>
+            ) : (
+                <FlatList
+                    data={combinedEntries}
+                    keyExtractor={(item, idx) => item.shelf?.id ? `${item.shelf.id}-${item.__origin}` : `entry-${idx}`}
+                    renderItem={renderItem}
+                    contentContainerStyle={styles.listContent}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={colors.primary}
+                            colors={[colors.primary]}
+                        />
+                    }
+                    ListEmptyComponent={renderEmpty}
+                    showsVerticalScrollIndicator={false}
+                    ItemSeparatorComponent={() => <View style={styles.separator} />}
+                />
+            )}
+        </SafeAreaView>
+    );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-    paddingTop: 16, // Assuming safe area handled by wrapper or simple padding
-  },
-  header: {
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontFamily: typography.bold,
-    color: colors.textPrimary,
-  },
-  searchContainer: {
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
-  },
-  filtersContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  filterChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceHighlight,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterText: {
-    fontSize: 14,
-    fontFamily: typography.medium,
-    color: colors.textSecondary,
-  },
-  filterTextActive: {
-    color: '#fff',
-  },
-  listContent: {
-    padding: spacing.md,
-    paddingTop: 0,
-    paddingBottom: 40,
-  },
-  card: {
-    marginBottom: spacing.md,
-    padding: spacing.md,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.sm,
-  },
-  userInfo: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-  },
-  avatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  userName: {
-    fontSize: 16,
-    fontFamily: typography.bold,
-    color: colors.textPrimary,
-  },
-  userLocation: {
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  shelfInfo: {
-    marginBottom: 8,
-    gap: 4,
-  },
-  shelfTitle: {
-    fontSize: 18,
-    fontFamily: typography.bold,
-    color: colors.textPrimary,
-  },
-  description: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
-  itemsList: {
-    gap: 6,
-    marginBottom: spacing.sm,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'flex-start',
-  },
-  itemText: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  itemTitle: {
-    color: colors.textPrimary,
-    fontFamily: typography.medium,
-  },
-  itemSummary: {
-    color: colors.textSecondary,
-  },
-  emptyItemsText: {
-    fontStyle: 'italic',
-    color: colors.textSecondary,
-    fontSize: 13,
-  },
-  moreItems: {
-    color: colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: spacing.xs,
-  },
-  timestamp: {
-    fontSize: 12,
-    color: colors.textTertiary,
-  },
-  errorContainer: {
-    padding: spacing.md,
-    backgroundColor: 'rgba(255, 69, 58, 0.1)',
-    margin: spacing.md,
-    borderRadius: 8,
-  },
-  errorText: {
-    color: colors.danger,
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
+const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.create({
+    screen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.lg,
+        paddingBottom: spacing.sm,
+    },
+    headerTitle: {
+        fontSize: 28,
+        fontFamily: typography.bold || 'System',
+        fontWeight: '700',
+        color: colors.text,
+    },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    headerButton: {
+        padding: spacing.xs,
+    },
+    filterBar: {
+        flexDirection: 'row',
+        paddingHorizontal: spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    filterTab: {
+        flex: 1,
+        paddingVertical: spacing.sm + 4,
+        alignItems: 'center',
+        borderBottomWidth: 2,
+        borderBottomColor: 'transparent',
+    },
+    filterTabActive: {
+        borderBottomColor: colors.text,
+    },
+    filterText: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: colors.textMuted,
+    },
+    filterTextActive: {
+        color: colors.text,
+        fontWeight: '600',
+    },
+    listContent: {
+        padding: spacing.md,
+        paddingBottom: 100,
+    },
+    feedCard: {
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        padding: spacing.md,
+        ...shadows.sm,
+    },
+    separator: {
+        height: spacing.sm,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        marginBottom: spacing.sm,
+    },
+    avatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.sm,
+    },
+    avatarText: {
+        color: colors.textInverted,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    headerContent: {
+        flex: 1,
+    },
+    headerTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    username: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    timestamp: {
+        fontSize: 13,
+        color: colors.textMuted,
+    },
+    shelfAction: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        marginTop: 2,
+    },
+    shelfName: {
+        fontWeight: '600',
+        color: colors.text,
+    },
+    description: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        lineHeight: 20,
+        marginBottom: spacing.sm,
+    },
+    itemsPreview: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+        marginBottom: spacing.sm,
+    },
+    itemChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surfaceElevated,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 4,
+        borderRadius: 16,
+        gap: 4,
+    },
+    itemTitle: {
+        fontSize: 12,
+        color: colors.textSecondary,
+        maxWidth: 120,
+    },
+    moreItems: {
+        fontSize: 12,
+        color: colors.primary,
+        fontWeight: '500',
+        alignSelf: 'center',
+    },
+    cardFooter: {
+        flexDirection: 'row',
+        gap: spacing.md,
+        paddingTop: spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    footerStat: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    footerText: {
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyState: {
+        alignItems: 'center',
+        paddingTop: spacing['2xl'],
+        paddingHorizontal: spacing.xl,
+    },
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+        marginTop: spacing.md,
+    },
+    emptyText: {
+        fontSize: 14,
+        color: colors.textMuted,
+        textAlign: 'center',
+        marginTop: spacing.xs,
+        lineHeight: 20,
+    },
+    emptyButton: {
+        marginTop: spacing.lg,
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.sm,
+        backgroundColor: colors.primary,
+        borderRadius: 20,
+    },
+    emptyButtonText: {
+        color: colors.textInverted,
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    errorBanner: {
+        backgroundColor: colors.error + '15',
+        padding: spacing.sm,
+        margin: spacing.md,
+        borderRadius: 8,
+    },
+    errorText: {
+        color: colors.error,
+        textAlign: 'center',
+        fontSize: 14,
+    },
 });

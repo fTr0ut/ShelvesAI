@@ -1,701 +1,391 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
-  Alert,
+  StatusBar,
 } from 'react-native';
-import Constants from 'expo-constants';
-import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { apiRequest, clearToken } from '../services/api';
-import useAuthDebug from '../hooks/useAuthDebug';
-import { colors, spacing, typography } from '../theme';
-
-import Button from '../components/ui/Button';
-import Input from '../components/ui/Input';
-import Card from '../components/ui/Card';
-import Badge from '../components/ui/Badge';
-
-// --- Helpers ---
-function getExtraConfig() {
-  const fromExpoConfig = Constants?.expoConfig?.extra;
-  if (fromExpoConfig) return fromExpoConfig;
-  const fromManifest = Constants?.manifest?.extra;
-  if (fromManifest) return fromManifest;
-  const fromManifest2 = Constants?.manifest2?.extra;
-  if (fromManifest2) return fromManifest2;
-  return {};
-}
-
-function parseSteamCallbackUrl(urlString) {
-  if (!urlString) return { params: {}, state: '' };
-  try {
-    const parsed = new URL(urlString);
-    const segments = [];
-    if (parsed.search && parsed.search.length > 1) {
-      segments.push(parsed.search.slice(1));
-    }
-    if (parsed.hash && parsed.hash.length > 1) {
-      const hash = parsed.hash.slice(1);
-      const idx = hash.indexOf('?');
-      const resolved = idx >= 0 ? hash.slice(idx + 1) : hash;
-      if (resolved) segments.push(resolved);
-    }
-    const params = {};
-    let stateValue = '';
-    segments.forEach((segment) => {
-      const qs = new URLSearchParams(segment);
-      qs.forEach((value, key) => {
-        appendParam(params, key, value);
-        if (key === 'state' && !stateValue) {
-          stateValue = value;
-        }
-      });
-    });
-    return { params, state: stateValue };
-  } catch (err) {
-    return { params: {}, state: '' };
-  }
-}
-
-function appendParam(target, key, value) {
-  if (Object.prototype.hasOwnProperty.call(target, key)) {
-    const existing = target[key];
-    if (Array.isArray(existing)) {
-      target[key] = [...existing, value];
-    } else {
-      target[key] = [existing, value];
-    }
-  } else {
-    target[key] = value;
-  }
-}
-
-function formatTimestamp(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-// --- Components ---
-
-function InfoRow({ label, value, children }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      {children ? (
-        <View style={styles.infoContent}>{children}</View>
-      ) : (
-        <Text style={styles.infoValue}>{value || '—'}</Text>
-      )}
-    </View>
-  );
-}
 
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext);
-  const [friendships, setFriendships] = useState([]);
-  const [friendsLoading, setFriendsLoading] = useState(true);
-  const [friendError, setFriendError] = useState('');
-  const [friendMessage, setFriendMessage] = useState('');
-  const [friendBusy, setFriendBusy] = useState({});
+  const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
+
   const [user, setUser] = useState(null);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-  const { clearAuthCache } = useAuthDebug();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
 
-  // Steam state
-  const [steamStatus, setSteamStatus] = useState(null);
-  const [steamLoading, setSteamLoading] = useState(true);
-  const [steamMessage, setSteamMessage] = useState('');
-  const [steamError, setSteamError] = useState('');
-  const [steamBusy, setSteamBusy] = useState(false);
+  const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
-  const extraConfig = useMemo(() => getExtraConfig(), []);
-  const scheme = useMemo(() => extraConfig?.auth0?.scheme || Constants?.expoConfig?.scheme || 'shelvesai', [extraConfig]);
-  const isExpoGo = Constants?.executionEnvironment === 'expo';
-
-  const steamReturnUrl = useMemo(() => {
-    const config = { scheme, path: 'steam-link' };
-    if (isExpoGo) {
-      config.useProxy = true;
-    }
-    return makeRedirectUri(config);
-  }, [scheme, isExpoGo]);
-
-  const steamClientReturnTo = useMemo(() => `${scheme}://steam-link`, [scheme]);
-
-  // Load User
   useEffect(() => {
     (async () => {
       try {
         const data = await apiRequest({ apiBase, path: '/api/account', token });
         setUser(data.user);
+        setFirstName(data.user?.firstName || '');
+        setLastName(data.user?.lastName || '');
+        setIsPrivate(!!data.user?.isPrivate);
       } catch (e) {
-        setErr(e.message);
+        console.warn('Failed to load account:', e);
+      } finally {
+        setLoading(false);
       }
     })();
   }, [apiBase, token]);
 
-  const loadSteamStatus = useCallback(async () => {
-    if (!token) {
-      setSteamStatus(null);
-      setSteamLoading(false);
-      return;
-    }
-
-    setSteamLoading(true);
-    setSteamError('');
+  const handleSave = useCallback(async () => {
     try {
-      const data = await apiRequest({ apiBase, path: '/api/steam/status', token });
-      setSteamStatus(data.steam || null);
-    } catch (e) {
-      setSteamError(e.message);
-      setSteamStatus(null);
-    } finally {
-      setSteamLoading(false);
-    }
-  }, [apiBase, token]);
-
-  const loadFriendships = useCallback(async () => {
-    if (!token) {
-      setFriendships([]);
-      setFriendsLoading(false);
-      return;
-    }
-
-    setFriendsLoading(true);
-    setFriendError('');
-    setFriendMessage('');
-    try {
-      const data = await apiRequest({ apiBase, path: '/api/friends', token });
-      setFriendships(Array.isArray(data.friendships) ? data.friendships : []);
-    } catch (e) {
-      setFriendError(e.message);
-      setFriendships([]);
-    } finally {
-      setFriendsLoading(false);
-      setFriendBusy({});
-    }
-  }, [apiBase, token]);
-
-  useEffect(() => {
-    loadFriendships();
-  }, [loadFriendships]);
-
-  useEffect(() => {
-    loadSteamStatus();
-  }, [loadSteamStatus]);
-
-  const incomingRequests = useMemo(() => friendships.filter((f) => f.status === 'pending' && !f.isRequester), [friendships]);
-  const outgoingRequests = useMemo(() => friendships.filter((f) => f.status === 'pending' && f.isRequester), [friendships]);
-
-  const getPeer = useCallback((entry) => {
-    if (!entry) return {};
-    return entry[entry.isRequester ? 'addressee' : 'requester'] || {};
-  }, []);
-
-  const handleRefreshSteam = useCallback(() => {
-    setSteamError('');
-    setSteamMessage('');
-    loadSteamStatus();
-  }, [loadSteamStatus]);
-
-  const handleLinkSteam = useCallback(async () => {
-    if (steamBusy || !token) return;
-    setSteamBusy(true);
-    setSteamError('');
-    setSteamMessage('');
-    try {
-      const requestedReturnUrl = (() => {
-        if (!isExpoGo) return steamReturnUrl;
-        try {
-          const url = new URL(steamReturnUrl);
-          url.searchParams.set('client_return_to', steamClientReturnTo);
-          return url.toString();
-        } catch (err) {
-          return steamReturnUrl;
-        }
-      })();
-
-      const start = await apiRequest({ apiBase, path: '/api/steam/link/start', method: 'POST', token, body: { returnUrl: requestedReturnUrl } });
-      if (!start?.redirectUrl) {
-        throw new Error('Steam sign-in is unavailable right now');
-      }
-
-      const authReturnTo = start?.requestedReturnTo || start?.returnTo || requestedReturnUrl;
-      const result = await WebBrowser.openAuthSessionAsync(start.redirectUrl, authReturnTo);
-
-      if (result.type === 'cancel' || result.type === 'dismiss') {
-        setSteamMessage('Steam linking was cancelled.');
-        return;
-      }
-      if (result.type !== 'success' || !result.url) {
-        throw new Error('Steam sign-in did not complete');
-      }
-
-      const { params, state } = parseSteamCallbackUrl(result.url);
-      const finalState = state || start.state;
-      if (!finalState) throw new Error('Steam response was missing state');
-      if (!params || !Object.keys(params).length) throw new Error('Steam response was missing data');
-
+      setSaving(true);
       await apiRequest({
         apiBase,
-        path: '/api/steam/link/complete',
-        method: 'POST',
+        path: '/api/account',
+        method: 'PUT',
         token,
-        body: { state: finalState, params },
+        body: { firstName, lastName, isPrivate },
       });
-      await loadSteamStatus();
-      setSteamMessage('Steam account linked!');
+      Alert.alert('Saved', 'Your profile has been updated');
     } catch (e) {
-      setSteamError(e.message || 'Failed to link Steam');
+      Alert.alert('Error', e.message);
     } finally {
-      setSteamBusy(false);
+      setSaving(false);
     }
-  }, [steamBusy, token, steamReturnUrl, steamClientReturnTo, isExpoGo, apiBase, loadSteamStatus]);
+  }, [apiBase, token, firstName, lastName, isPrivate]);
 
-  const handleUnlinkSteam = useCallback(async () => {
-    if (steamBusy || !token) return;
-    setSteamBusy(true);
-    setSteamError('');
-    setSteamMessage('');
-    try {
-      await apiRequest({ apiBase, path: '/api/steam/link', method: 'DELETE', token });
-      await loadSteamStatus();
-      setSteamMessage('Steam account disconnected.');
-    } catch (e) {
-      setSteamError(e.message || 'Failed to disconnect Steam');
-    } finally {
-      setSteamBusy(false);
-    }
-  }, [steamBusy, token, apiBase, loadSteamStatus]);
-
-  const logout = useCallback(async () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
+  const handleLogout = useCallback(() => {
+    Alert.alert('Log Out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Log Out',
         style: 'destructive',
         onPress: async () => {
-          try {
-            setMsg('');
-            setErr('');
-            await clearToken();
-            setNeedsOnboarding(false);
-            setToken('');
-          } catch (e) {
-            setErr(e.message || 'Failed to log out');
-          }
-        }
-      }
+          await clearToken();
+          setNeedsOnboarding(false);
+          setToken('');
+        },
+      },
     ]);
-  }, [setToken, setErr, setMsg, setNeedsOnboarding]);
+  }, [setToken, setNeedsOnboarding]);
 
-  const handleFriendRespond = useCallback(async (friendshipId, action) => {
-    if (!friendshipId || !action) return;
-    setFriendBusy((prev) => ({ ...prev, [friendshipId]: true }));
-    setFriendMessage('');
-    try {
-      await apiRequest({
-        apiBase,
-        path: '/api/friends/respond',
-        method: 'POST',
-        token,
-        body: { friendshipId, action },
-      });
-      if (action === 'accept') setFriendMessage('Friend request accepted.');
-      else if (action === 'reject') setFriendMessage('Friend request dismissed.');
-      else if (action === 'cancel') setFriendMessage('Friend request cancelled.');
-      await loadFriendships();
-    } catch (e) {
-      setFriendError(e.message);
-    } finally {
-      setFriendBusy((prev) => ({ ...prev, [friendshipId]: false }));
-    }
-  }, [apiBase, token, loadFriendships]);
-
-  const update = async () => {
-    try {
-      setMsg('');
-      setErr('');
-      const data = await apiRequest({ apiBase, path: '/api/account', method: 'PUT', token, body: user });
-      setUser(data.user);
-      Alert.alert('Success', 'Profile updated successfully.');
-    } catch (e) {
-      setErr(e.message);
-    }
-  };
-
-  if (!user) {
+  if (loading) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.screen, styles.centerContainer]}>
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.headerTitle}>Account</Text>
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-      {/* Messages */}
-      {!!msg && <View style={[styles.messageBox, styles.successBox]}><Text style={styles.successText}>{msg}</Text></View>}
-      {!!err && <View style={[styles.messageBox, styles.errorBox]}><Text style={styles.errorText}>{err}</Text></View>}
-
-      {/* Profile Section */}
-      <Card style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Ionicons name="person-circle-outline" size={24} color={colors.primary} />
-          <Text style={styles.cardTitle}>Profile Settings</Text>
+      <ScrollView contentContainerStyle={styles.content}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Account</Text>
+          <View style={{ width: 40 }} />
         </View>
 
-        <View style={styles.formGroup}>
-          <Input
-            label="Username"
-            value={user.username || ''}
-            editable={false}
-            containerStyle={{ opacity: 0.7 }}
-          />
-          <View style={styles.row}>
-            <Input
-              label="First Name"
-              value={user.firstName || ''}
-              onChangeText={(v) => setUser({ ...user, firstName: v })}
-              containerStyle={{ flex: 1 }}
-            />
-            <Input
-              label="Last Name"
-              value={user.lastName || ''}
-              onChangeText={(v) => setUser({ ...user, lastName: v })}
-              containerStyle={{ flex: 1 }}
-            />
+        {/* Profile Section */}
+        <View style={styles.section}>
+          <View style={styles.avatarRow}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>
+                {(user?.firstName?.[0] || user?.username?.[0] || '?').toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.avatarInfo}>
+              <Text style={styles.displayName}>
+                {[user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username}
+              </Text>
+              <Text style={styles.username}>@{user?.username}</Text>
+            </View>
           </View>
-          <Input
-            label="Phone"
-            value={user.phoneNumber || ''}
-            onChangeText={(v) => setUser({ ...user, phoneNumber: v })}
-            keyboardType="phone-pad"
-          />
+        </View>
+
+        {/* Edit Profile */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Edit Profile</Text>
+
           <View style={styles.row}>
-            <Input
-              label="City"
-              value={user.city || ''}
-              onChangeText={(v) => setUser({ ...user, city: v })}
-              containerStyle={{ flex: 1 }}
-            />
-            <Input
-              label="State"
-              value={user.state || ''}
-              onChangeText={(v) => setUser({ ...user, state: v })}
-              containerStyle={{ flex: 1 }}
-            />
+            <View style={styles.inputHalf}>
+              <Text style={styles.label}>First Name</Text>
+              <TextInput
+                style={styles.input}
+                value={firstName}
+                onChangeText={setFirstName}
+                placeholder="First"
+                placeholderTextColor={colors.textMuted}
+              />
+            </View>
+            <View style={styles.inputHalf}>
+              <Text style={styles.label}>Last Name</Text>
+              <TextInput
+                style={styles.input}
+                value={lastName}
+                onChangeText={setLastName}
+                placeholder="Last"
+                placeholderTextColor={colors.textMuted}
+              />
+            </View>
           </View>
-          <Input
-            label="Country"
-            value={user.country || ''}
-            onChangeText={(v) => setUser({ ...user, country: v })}
-          />
 
           <View style={styles.switchRow}>
-            <Text style={styles.label}>Private Account</Text>
+            <View>
+              <Text style={styles.switchLabel}>Private Account</Text>
+              <Text style={styles.switchHint}>Hide your shelves from public</Text>
+            </View>
             <Switch
-              value={!!user.isPrivate}
-              onValueChange={(v) => setUser({ ...user, isPrivate: v })}
-              trackColor={{ false: colors.manualInputBg, true: colors.primary }}
-              thumbColor={colors.textPrimary}
+              value={isPrivate}
+              onValueChange={setIsPrivate}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={isPrivate ? colors.primary : colors.surfaceElevated}
             />
           </View>
 
-          <Button title="Save Changes" onPress={update} variant="primary" />
-        </View>
-      </Card>
-
-      {/* Steam Section */}
-      <Card style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Ionicons name="logo-steam" size={24} color={colors.textPrimary} />
-          <Text style={styles.cardTitle}>Steam Integration</Text>
+          <TouchableOpacity
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={saving}
+          >
+            <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
+          </TouchableOpacity>
         </View>
 
-        {steamError ? <Text style={styles.fieldError}>{steamError}</Text> : null}
-        {steamMessage ? <Text style={styles.fieldSuccess}>{steamMessage}</Text> : null}
+        {/* Settings */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Settings</Text>
 
-        {steamLoading ? (
-          <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
-        ) : steamStatus?.steamId ? (
-          <View style={styles.steamContainer}>
-            <InfoRow label="Linked Account" value={steamStatus.personaName || 'Steam User'} />
-            <InfoRow label="Library Size" value={steamStatus.totalGames ? `${steamStatus.totalGames} Games` : 'Unknown'} />
-            <InfoRow label="Last Import" value={formatTimestamp(steamStatus.lastImportedAt)} />
-
-            <View style={styles.buttonRow}>
-              <Button
-                title="Refresh"
-                variant="secondary"
-                size="sm"
-                onPress={handleRefreshSteam}
-                disabled={steamBusy}
-                style={{ flex: 1 }}
-              />
-              <Button
-                title="Disconnect"
-                variant="ghost"
-                size="sm"
-                onPress={handleUnlinkSteam}
-                disabled={steamBusy}
-                style={{ flex: 1 }}
-              />
+          <TouchableOpacity style={styles.settingsRow} onPress={toggleTheme}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name={isDark ? 'moon' : 'sunny'} size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>Dark Mode</Text>
             </View>
-          </View>
-        ) : (
-          <View style={styles.steamContainer}>
-            <Text style={styles.helperText}>
-              Link your Steam account to automatically import your game library into ShelvesAI.
-            </Text>
-            <Button
-              title="Connect Steam"
-              onPress={handleLinkSteam}
-              loading={steamBusy}
-              variant="outline"
-              icon={<Ionicons name="logo-steam" size={18} color={colors.text} />}
+            <Switch
+              value={isDark}
+              onValueChange={toggleTheme}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={isDark ? colors.primary : colors.surfaceElevated}
             />
-          </View>
-        )}
-      </Card>
+          </TouchableOpacity>
 
-      {/* Friend Requests Section */}
-      {(incomingRequests.length > 0 || outgoingRequests.length > 0) && (
-        <Card style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="people" size={24} color={colors.textPrimary} />
-            <Text style={styles.cardTitle}>Friend Requests</Text>
-          </View>
-
-          {friendError ? <Text style={styles.fieldError}>{friendError}</Text> : null}
-          {friendMessage ? <Text style={styles.fieldSuccess}>{friendMessage}</Text> : null}
-
-          {friendsLoading && <ActivityIndicator color={colors.primary} />}
-
-          {incomingRequests.length > 0 && (
-            <View style={styles.requestGroup}>
-              <Text style={styles.groupLabel}>Received</Text>
-              {incomingRequests.map(req => {
-                const peer = getPeer(req);
-                const busy = friendBusy[req.id];
-                return (
-                  <View key={req.id} style={styles.friendRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.friendName}>{peer.name || peer.username}</Text>
-                      <Text style={styles.friendSub}>{peer.username ? `@${peer.username}` : ''}</Text>
-                    </View>
-                    <View style={styles.actionRow}>
-                      <Button title="Accept" size="sm" onPress={() => handleFriendRespond(req.id, 'accept')} loading={busy} />
-                      <Button title="Ignore" size="sm" variant="ghost" onPress={() => handleFriendRespond(req.id, 'reject')} disabled={busy} />
-                    </View>
-                  </View>
-                );
-              })}
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() => navigation.navigate('FriendSearch')}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="people" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>Find Friends</Text>
             </View>
-          )}
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
 
-          {outgoingRequests.length > 0 && (
-            <View style={styles.requestGroup}>
-              <Text style={styles.groupLabel}>Sent</Text>
-              {outgoingRequests.map(req => {
-                const peer = getPeer(req);
-                const busy = friendBusy[req.id];
-                return (
-                  <View key={req.id} style={styles.friendRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.friendName}>{peer.name || peer.username}</Text>
-                      <Text style={styles.friendSub}>Pending...</Text>
-                    </View>
-                    <Button title="Cancel" size="sm" variant="ghost" onPress={() => handleFriendRespond(req.id, 'cancel')} loading={busy} />
-                  </View>
-                );
-              })}
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() => navigation.navigate('About')}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="information-circle" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>About</Text>
             </View>
-          )}
-        </Card>
-      )}
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
 
-      <Button
-        title="Log Out"
-        variant="danger"
-        onPress={logout}
-        style={styles.logoutButton}
-        icon={<Ionicons name="log-out-outline" size={18} color={colors.text} />}
-      />
+        {/* Logout */}
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Ionicons name="log-out-outline" size={20} color={colors.error} />
+          <Text style={styles.logoutText}>Log Out</Text>
+        </TouchableOpacity>
 
-      <Text style={styles.versionText}>ShelvesAI Mobile v1.0.0</Text>
-
-    </ScrollView>
+        <Text style={styles.versionText}>ShelvesAI v1.0.0</Text>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
+  centerContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   content: {
     padding: spacing.md,
     paddingBottom: 40,
-    gap: spacing.md,
   },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontFamily: typography.bold,
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  card: {
-    padding: spacing.md,
-  },
-  cardHeader: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  section: {
+    marginBottom: spacing.lg,
+  },
+  avatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.textInverted,
+  },
+  avatarInfo: {
+    flex: 1,
+  },
+  displayName: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  username: {
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     marginBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingBottom: spacing.sm,
+    ...shadows.sm,
   },
   cardTitle: {
-    fontSize: 18,
-    fontFamily: typography.bold,
-    color: colors.textPrimary,
-  },
-  formGroup: {
-    gap: spacing.sm,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.md,
   },
   row: {
     flexDirection: 'row',
     gap: spacing.md,
   },
+  inputHalf: {
+    flex: 1,
+    marginBottom: spacing.sm,
+  },
+  label: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginBottom: 4,
+  },
+  input: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    fontSize: 15,
+    color: colors.text,
+  },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: spacing.sm,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
   },
-  label: {
-    fontFamily: typography.medium,
-    color: colors.textSecondary,
-    fontSize: 14,
+  switchLabel: {
+    fontSize: 15,
+    color: colors.text,
   },
-  steamContainer: {
-    gap: spacing.md,
+  switchHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
   },
-  helperText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
+  saveButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    marginTop: spacing.md,
   },
-  infoRow: {
+  saveButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveButtonText: {
+    color: colors.textInverted,
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  settingsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    alignItems: 'center',
+    paddingVertical: spacing.sm + 2,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  infoLabel: {
-    color: colors.textSecondary,
-  },
-  infoValue: {
-    color: colors.textPrimary,
-    fontFamily: typography.medium,
-  },
-  infoContent: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.sm,
-  },
-  requestGroup: {
-    marginTop: spacing.sm,
-    gap: spacing.sm,
-  },
-  groupLabel: {
-    fontSize: 12,
-    textTransform: 'uppercase',
-    color: colors.textTertiary,
-    fontFamily: typography.bold,
-    letterSpacing: 1,
-  },
-  friendRow: {
+  settingsLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceHighlight,
-    padding: spacing.sm,
-    borderRadius: 8,
+    gap: spacing.sm,
   },
-  friendName: {
-    color: colors.textPrimary,
-    fontFamily: typography.medium,
-  },
-  friendSub: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
+  settingsLabel: {
+    fontSize: 15,
+    color: colors.text,
   },
   logoutButton: {
-    marginTop: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    marginTop: spacing.md,
+  },
+  logoutText: {
+    fontSize: 15,
+    color: colors.error,
+    fontWeight: '500',
   },
   versionText: {
     textAlign: 'center',
-    color: colors.textTertiary,
     fontSize: 12,
+    color: colors.textMuted,
     marginTop: spacing.md,
   },
-  messageBox: {
-    padding: spacing.sm,
-    borderRadius: 8,
-    marginBottom: spacing.sm,
-  },
-  successBox: {
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
-  },
-  errorBox: {
-    backgroundColor: 'rgba(255, 69, 58, 0.1)',
-  },
-  successText: {
-    color: colors.success,
-    textAlign: 'center',
-  },
-  errorText: {
-    color: colors.danger,
-    textAlign: 'center',
-  },
-  fieldError: {
-    color: colors.danger,
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  fieldSuccess: {
-    color: colors.success,
-    fontSize: 12,
-    marginBottom: 8,
-  }
 });

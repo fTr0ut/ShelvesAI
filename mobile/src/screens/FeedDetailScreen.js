@@ -1,284 +1,255 @@
-﻿import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+﻿import React, { useContext, useMemo } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
-  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-} from 'react-native'
-import FooterNav from '../components/FooterNav'
-import { AuthContext } from '../context/AuthContext'
-import { apiRequest } from '../services/api'
-
-function formatDate(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) return ''
-  return date.toLocaleString()
-}
-
-function getItemTitle(entry) {
-  if (!entry) return 'Untitled item'
-  const collectable = entry.collectable || null
-  const manual = entry.manual || null
-  return collectable?.name || manual?.name || 'Untitled item'
-}
-
-function getItemMeta(entry) {
-  if (!entry) return ''
-  const collectable = entry.collectable || null
-  const manual = entry.manual || null
-  const parts = []
-  if (collectable) {
-    if (collectable.author) parts.push(collectable.author)
-    if (collectable.format) parts.push(collectable.format)
-    if (collectable.year) parts.push(collectable.year)
-  } else if (manual) {
-    if (manual.type) parts.push(manual.type)
-  }
-  return parts.filter(Boolean).join(' • ')
-}
+  StatusBar,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { apiRequest } from '../services/api';
 
 export default function FeedDetailScreen({ route, navigation }) {
-  const params = route.params || {}
-  const initialEntry = params.entry || null
-  const initialTitle = params.title
-  const paramShelfId = params.shelfId || params.id || initialEntry?.shelf?.id || null
+  const { entry } = route.params || {};
+  const { token, apiBase } = useContext(AuthContext);
+  const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-  const { token, apiBase } = useContext(AuthContext)
-  const [entry, setEntry] = useState(initialEntry || null)
-  const [loading, setLoading] = useState(!initialEntry)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState('')
+  const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
-  const resolvedShelfId = useMemo(() => {
-    if (entry?.shelf?.id) return entry.shelf.id
-    return paramShelfId
-  }, [entry, paramShelfId])
+  const { shelf, owner, items } = entry || {};
+  const displayName = owner?.name || owner?.username || 'Someone';
 
-  useEffect(() => {
-    if (initialEntry?.shelf?.name) {
-      navigation.setOptions({ title: initialEntry.shelf.name })
-    } else if (initialTitle) {
-      navigation.setOptions({ title: initialTitle })
-    }
-  }, [initialEntry, initialTitle, navigation])
+  const getItemTitle = (item) => {
+    const c = item?.collectable || item?.collectableSnapshot;
+    const m = item?.manual || item?.manualSnapshot;
+    return c?.title || m?.title || item?.title || 'Untitled';
+  };
 
-  const load = useCallback(
-    async (opts = {}) => {
-      if (!token || !resolvedShelfId) {
-        setLoading(false)
-        setRefreshing(false)
-        if (!resolvedShelfId) setError('Feed entry is missing.')
-        return
-      }
-
-      if (!opts.silent) setLoading(true)
-      try {
-        const data = await apiRequest({
-          apiBase,
-          path: `/api/feed/${resolvedShelfId}`,
-          token,
-        })
-        setEntry(data.entry)
-        if (data.entry?.shelf?.name) {
-          navigation.setOptions({ title: data.entry.shelf.name })
-        }
-        setError('')
-      } catch (err) {
-        setError(err.message || 'Unable to load feed details.')
-      } finally {
-        setLoading(false)
-        setRefreshing(false)
-      }
-    },
-    [apiBase, token, resolvedShelfId, navigation],
-  )
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true)
-    load({ silent: true })
-  }, [load])
-
-  const items = entry?.items || []
-  const itemsCount = items.length
-
-  const listHeader = useMemo(() => {
-    if (!entry) return null
-    const shelf = entry.shelf || {}
-    const owner = entry.owner || {}
-    const location = [owner.city, owner.state, owner.country].filter(Boolean).join(', ')
-    const visibility = (shelf.visibility || 'public').toUpperCase()
-    const updated = formatDate(shelf.updatedAt)
-    return (
-      <View style={styles.headerCard}>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Text style={styles.shelfName}>{shelf.name || 'Shelf'}</Text>
-        {shelf.description ? <Text style={styles.shelfDescription}>{shelf.description}</Text> : null}
-        <View style={styles.ownerBlock}>
-          <Text style={styles.ownerLabel}>Curated by</Text>
-          <Text style={styles.ownerName}>{owner.name || owner.username || 'Someone'}</Text>
-          {location ? <Text style={styles.ownerMeta}>{location}</Text> : null}
-        </View>
-        <View style={styles.metaRow}>
-          {shelf.type ? <Text style={styles.metaPill}>{shelf.type}</Text> : null}
-          <Text style={styles.metaPill}>{`${itemsCount} item${itemsCount === 1 ? '' : 's'}`}</Text>
-          <Text style={styles.metaPill}>{visibility}</Text>
-        </View>
-        {updated ? <Text style={styles.ownerMeta}>Updated {updated}</Text> : null}
-        <Text style={styles.sectionTitle}>Collectables</Text>
+  const renderItem = ({ item, index }) => (
+    <View style={styles.itemRow}>
+      <Text style={styles.itemNumber}>{index + 1}</Text>
+      <View style={styles.itemContent}>
+        <Text style={styles.itemTitle} numberOfLines={1}>{getItemTitle(item)}</Text>
       </View>
-    )
-  }, [entry, itemsCount, error])
-
-  const handleOpenCollectable = useCallback(
-    (collectable) => {
-      if (!collectable?._id) return
-      navigation.navigate('CollectableDetail', { id: collectable._id, title: collectable.name })
-    },
-    [navigation],
-  )
-
-  const renderItem = useCallback(
-    ({ item }) => {
-      const title = getItemTitle(item)
-      const meta = getItemMeta(item)
-      const manualDescription = item?.manual?.description || ''
-      const added = formatDate(item.createdAt)
-      const canOpenCollectable = Boolean(item?.collectable?._id)
-      const onPress = canOpenCollectable ? () => handleOpenCollectable(item.collectable) : undefined
-
-      return (
-        <TouchableOpacity
-          style={styles.itemCard}
-          activeOpacity={canOpenCollectable ? 0.7 : 1}
-          onPress={onPress}
-          disabled={!canOpenCollectable}
-        >
-          <View style={styles.itemTextBlock}>
-            <Text style={styles.itemTitle}>{title}</Text>
-            {meta ? <Text style={styles.itemMeta}>{meta}</Text> : null}
-            {manualDescription ? <Text style={styles.itemMeta}>{manualDescription}</Text> : null}
-            {added ? <Text style={styles.itemTimestamp}>Added {added}</Text> : null}
-          </View>
-          {canOpenCollectable ? <Text style={styles.itemLink}>View</Text> : null}
-        </TouchableOpacity>
-      )
-    },
-    [handleOpenCollectable],
-  )
-
-  const listEmpty = useMemo(() => {
-    if (loading) {
-      return (
-        <View style={styles.centered}>
-          <ActivityIndicator color='#7ca6ff' size='small' />
-          <Text style={styles.message}>Loading items...</Text>
-        </View>
-      )
-    }
-    return <Text style={styles.message}>No collectables yet.</Text>
-  }, [loading])
-
-  let content = null
-
-  if (!entry && loading) {
-    content = (
-      <View style={styles.centered}>
-        <ActivityIndicator color='#7ca6ff' size='small' />
-        <Text style={styles.message}>Loading feed details...</Text>
-      </View>
-    )
-  } else if (!entry && error) {
-    content = (
-      <View style={styles.centered}>
-        <Text style={styles.error}>{error}</Text>
-        <TouchableOpacity onPress={() => load()} activeOpacity={0.7}>
-          <Text style={styles.retry}>Try again</Text>
-        </TouchableOpacity>
-      </View>
-    )
-  } else if (entry) {
-    content = (
-      <FlatList
-        data={items}
-        keyExtractor={(item, index) => item?.id || `feed-item-${index}`}
-        renderItem={renderItem}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={listEmpty}
-        contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor='#7ca6ff' />}
-      />
-    )
-  } else {
-    content = (
-      <View style={styles.centered}>
-        <Text style={styles.message}>Feed entry unavailable.</Text>
-      </View>
-    )
-  }
+    </View>
+  );
 
   return (
     <View style={styles.screen}>
-      <View style={styles.container}>{content}</View>
-      <FooterNav navigation={navigation} active='home' />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Activity</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      {/* User Info */}
+      <View style={styles.userSection}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+        </View>
+        <View>
+          <Text style={styles.userName}>{displayName}</Text>
+          <Text style={styles.userMeta}>
+            {[owner?.city, owner?.country].filter(Boolean).join(', ') || 'Collector'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Shelf Info */}
+      <View style={styles.shelfCard}>
+        <View style={styles.shelfHeader}>
+          <Text style={styles.shelfLabel}>Shelf</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name })}
+          >
+            <Text style={styles.viewLink}>View →</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
+        {shelf?.description ? (
+          <Text style={styles.shelfDescription}>{shelf.description}</Text>
+        ) : null}
+        <View style={styles.shelfMeta}>
+          <View style={styles.metaItem}>
+            <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+          </View>
+          <View style={styles.metaItem}>
+            <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Items */}
+      <Text style={styles.sectionTitle}>Items in this shelf</Text>
+      <FlatList
+        data={items || []}
+        keyExtractor={(item, idx) => item._id || `item-${idx}`}
+        renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>No items to display</Text>
+        }
+      />
     </View>
-  )
+  );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0b0f14' },
-  container: { flex: 1, padding: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  message: { color: '#9aa6b2', textAlign: 'center' },
-  error: { color: '#ff9aa3', textAlign: 'center' },
-  retry: { color: '#7ca6ff', fontWeight: '600' },
-  listContent: { paddingBottom: 100, gap: 12 },
-  headerCard: {
-    backgroundColor: '#0e1522',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#223043',
-    padding: 16,
-    gap: 8,
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.background,
   },
-  shelfName: { color: '#e6edf3', fontSize: 22, fontWeight: '700' },
-  shelfDescription: { color: '#9aa6b2' },
-  ownerBlock: { gap: 2 },
-  ownerLabel: { color: '#55657a', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-  ownerName: { color: '#e6edf3', fontWeight: '600' },
-  ownerMeta: { color: '#9aa6b2', fontSize: 12 },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  metaPill: {
-    color: '#7ca6ff',
-    borderColor: '#223043',
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    fontSize: 12,
-  },
-  sectionTitle: { color: '#e6edf3', fontSize: 16, fontWeight: '600', marginTop: 4 },
-  itemCard: {
-    backgroundColor: '#0e1522',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#223043',
-    padding: 16,
+  header: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
   },
-  itemTextBlock: { flex: 1, gap: 4 },
-  itemTitle: { color: '#e6edf3', fontSize: 16, fontWeight: '600' },
-  itemMeta: { color: '#9aa6b2', fontSize: 13 },
-  itemTimestamp: { color: '#55657a', fontSize: 11 },
-  itemLink: { color: '#7ca6ff', fontSize: 13, fontWeight: '500' },
-})
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  userSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.textInverted,
+  },
+  userName: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  userMeta: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  shelfCard: {
+    backgroundColor: colors.surface,
+    marginHorizontal: spacing.md,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    ...shadows.sm,
+  },
+  shelfHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  shelfLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  viewLink: {
+    fontSize: 13,
+    color: colors.primary,
+    fontWeight: '500',
+  },
+  shelfName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: spacing.xs,
+  },
+  shelfDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+  },
+  shelfMeta: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  metaText: {
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  listContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: 40,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.sm + 2,
+    marginBottom: spacing.xs,
+  },
+  itemNumber: {
+    width: 24,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  itemContent: {
+    flex: 1,
+  },
+  itemTitle: {
+    fontSize: 14,
+    color: colors.text,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingTop: spacing.lg,
+  },
+});

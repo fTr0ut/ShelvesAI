@@ -30,6 +30,7 @@ import BottomTabNavigator from './navigation/BottomTabNavigator'
 
 
 import { AuthContext } from './context/AuthContext'
+import { ThemeProvider, useTheme } from './context/ThemeContext'
 
 const Stack = createNativeStackNavigator()
 const TOKEN_STORAGE_KEY = 'token'
@@ -131,47 +132,72 @@ export default function App() {
     apiBase,
     user,
     setUser,
+    needsOnboarding,
+    setNeedsOnboarding,
   }), [token, apiBase, needsOnboarding, user])
 
   if (!ready || !fontsLoaded) return null
 
   return (
-    <AuthContext.Provider value={authValue}>
-      <NavigationContainer theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack.Navigator>
-          {!token ? (
-            <>
-              <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-            </>
-          ) : needsOnboarding ? (
-            <>
-              <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} options={{ title: 'Choose Username' }} />
-              <Stack.Screen name="Account" component={AccountScreen} options={{ title: 'Complete Profile' }} />
-            </>
-          ) : (
-            <>
-              <Stack.Screen name="Main" component={BottomTabNavigator} options={{ headerShown: false }} />
+    <ThemeProvider>
+      <AuthContext.Provider value={authValue}>
+        <AppNavigator token={token} needsOnboarding={needsOnboarding} />
+      </AuthContext.Provider>
+    </ThemeProvider>
+  )
+}
 
-              {/* Detail Screens pushed on top of Tabs */}
-              <Stack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Feed Details' })} />
-              <Stack.Screen name="FriendSearch" component={FriendSearchScreen} options={{ title: 'Find Friends' }} />
+// Separate component to use theme context
+function AppNavigator({ token, needsOnboarding }) {
+  const { colors, isDark, typography } = useTheme()
+  const baseTheme = isDark ? DarkTheme : DefaultTheme
 
-              {/* Shelf Management */}
-              <Stack.Screen name="ShelfCreate" component={ShelfCreateScreen} options={{ title: 'New Shelf' }} />
-              <Stack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} options={{ title: 'New Shelf' }} />
-              <Stack.Screen name="ShelfDetail" component={ShelfDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Shelf' })} />
-              <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} options={({ route }) => ({ title: route.params?.initialName ? `Edit ${route.params.initialName}` : 'Edit Shelf' })} />
-              <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Collectable' })} />
+  const navTheme = {
+    ...baseTheme,
+    colors: {
+      ...baseTheme.colors,
+      primary: colors.primary,
+      background: colors.background,
+      card: colors.surface,
+      text: colors.text,
+      border: colors.border,
+      notification: colors.primary,
+    },
+    fonts: {
+      regular: { fontFamily: typography.regular, fontWeight: 'normal' },
+      medium: { fontFamily: typography.medium, fontWeight: '500' },
+      bold: { fontFamily: typography.bold, fontWeight: '600' },
+      heavy: { fontFamily: typography.bold, fontWeight: '700' },
+    },
+  }
 
-              {/* Account/Settings */}
-              <Stack.Screen name="Account" component={AccountScreen} options={{ title: 'Account' }} />
-              <Stack.Screen name="ManualEdit" component={ManualEditScreen} options={{ title: 'Edit Metadata' }} />
-              <Stack.Screen name="About" component={AboutScreen} options={{ title: 'About' }} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
-    </AuthContext.Provider>
+  return (
+    <NavigationContainer theme={navTheme}>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!token ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : needsOnboarding ? (
+          <>
+            <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} />
+            <Stack.Screen name="Account" component={AccountScreen} />
+          </>
+        ) : (
+          <>
+            <Stack.Screen name="Main" component={BottomTabNavigator} />
+            <Stack.Screen name="FeedDetail" component={FeedDetailScreen} />
+            <Stack.Screen name="FriendSearch" component={FriendSearchScreen} />
+            <Stack.Screen name="ShelfCreate" component={ShelfCreateScreen} />
+            <Stack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} />
+            <Stack.Screen name="ShelfDetail" component={ShelfDetailScreen} />
+            <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} />
+            <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} />
+            <Stack.Screen name="Account" component={AccountScreen} />
+            <Stack.Screen name="ManualEdit" component={ManualEditScreen} />
+            <Stack.Screen name="About" component={AboutScreen} />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
   )
 }
 

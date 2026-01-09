@@ -1,291 +1,385 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, StatusBar } from 'react-native';
+import {
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+    StatusBar,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
-import { colors, spacing, typography, radius } from '../theme';
-import Card from '../components/ui/Card';
-import Badge from '../components/ui/Badge';
-import Button from '../components/ui/Button';
-import Input from '../components/ui/Input';
-import EmptyState from '../components/ui/EmptyState';
-import Skeleton from '../components/ui/Skeleton';
-
-const SORT_OPTIONS = [
-  { value: 'alpha-asc', label: 'Name (A-Z)' },
-  { value: 'created-desc', label: 'Newest' },
-];
 
 export default function ShelvesScreen({ navigation }) {
-  const { token, apiBase } = useContext(AuthContext);
-  const [shelves, setShelves] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [sortMode, setSortMode] = useState('alpha-asc');
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
-  const [searchQuery, setSearchQuery] = useState('');
+    const { token, apiBase } = useContext(AuthContext);
+    const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-  const loadShelves = useCallback(async () => {
-    try {
-      if (!refreshing) setLoading(true);
-      const data = await apiRequest({ apiBase, path: '/api/shelves', token });
-      setShelves(Array.isArray(data.shelves) ? data.shelves : []);
-      setError('');
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [apiBase, token, refreshing]);
+    const [shelves, setShelves] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [viewMode, setViewMode] = useState('grid');
 
-  useEffect(() => {
-    loadShelves();
-  }, []); // Run once on mount
+    const loadShelves = useCallback(async () => {
+        try {
+            if (!refreshing) setLoading(true);
+            const data = await apiRequest({ apiBase, path: '/api/shelves', token });
+            setShelves(Array.isArray(data.shelves) ? data.shelves : []);
+        } catch (e) {
+            console.warn('Failed to load shelves:', e);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, [apiBase, token, refreshing]);
 
-  // Refresh when focusing screen to ensure data is up to date (e.g. after create)
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      loadShelves();
-    });
-    return unsubscribe;
-  }, [navigation, loadShelves]);
+    useEffect(() => { loadShelves(); }, []);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    loadShelves();
-  }, [loadShelves]);
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', loadShelves);
+        return unsubscribe;
+    }, [navigation, loadShelves]);
 
-  const sortedShelves = useMemo(() => {
-    let list = Array.isArray(shelves) ? [...shelves] : [];
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        loadShelves();
+    }, [loadShelves]);
 
-    // Filter
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(s => s.name.toLowerCase().includes(q));
-    }
+    const filteredShelves = useMemo(() => {
+        if (!searchQuery.trim()) return shelves;
+        const q = searchQuery.toLowerCase();
+        return shelves.filter(s => s.name?.toLowerCase().includes(q));
+    }, [shelves, searchQuery]);
 
-    // Sort
-    const compareName = (a, b) => String(a?.name || '').localeCompare(String(b?.name || ''));
-    const compareDate = (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0);
+    const getIconForType = (type) => {
+        switch (type?.toLowerCase()) {
+            case 'books': return 'book';
+            case 'movies': return 'film';
+            case 'games': return 'game-controller';
+            case 'music': return 'musical-notes';
+            case 'vinyl': return 'disc';
+            default: return 'library';
+        }
+    };
 
-    if (sortMode === 'alpha-asc') list.sort(compareName);
-    else if (sortMode === 'created-desc') list.sort(compareDate);
+    const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
-    return list;
-  }, [shelves, sortMode, searchQuery]);
+    const handleOpenShelf = (shelf) => {
+        navigation.navigate('ShelfDetail', { id: shelf._id, title: shelf.name });
+    };
 
-  const handleOpenShelf = (shelf) => {
-    navigation.navigate('ShelfDetail', { id: shelf._id, title: shelf.name });
-  };
+    const renderGridItem = ({ item }) => (
+        <TouchableOpacity
+            style={styles.gridCard}
+            onPress={() => handleOpenShelf(item)}
+            activeOpacity={0.8}
+        >
+            <View style={styles.gridIconBox}>
+                <Ionicons name={getIconForType(item.type)} size={28} color={colors.primary} />
+            </View>
+            <Text style={styles.gridTitle} numberOfLines={2}>{item.name}</Text>
+            <Text style={styles.gridMeta}>{item.itemCount || 0} items</Text>
+        </TouchableOpacity>
+    );
 
-  const getIconForType = (type) => {
-    switch (type?.toLowerCase()) {
-      case 'books': return 'book';
-      case 'movies': return 'videocam';
-      case 'games': return 'game-controller';
-      case 'music': return 'musical-notes';
-      default: return 'library'; // generic
-    }
-  };
-
-  const renderShelfItem = ({ item }) => {
-    const iconName = getIconForType(item.type);
-    const countLabel = `${item.itemCount || 0} items`;
-
-    if (viewMode === 'list') {
-      return (
-        <Card onPress={() => handleOpenShelf(item)} style={styles.listCard}>
-          <View style={styles.listRow}>
+    const renderListItem = ({ item }) => (
+        <TouchableOpacity
+            style={styles.listCard}
+            onPress={() => handleOpenShelf(item)}
+            activeOpacity={0.8}
+        >
             <View style={styles.listIcon}>
-              <Ionicons name={iconName} size={24} color={colors.primary} />
+                <Ionicons name={getIconForType(item.type)} size={22} color={colors.primary} />
             </View>
             <View style={styles.listContent}>
-              <Text style={styles.itemTitle}>{item.name}</Text>
-              <Text style={styles.itemSubtitle}>{countLabel} • {item.visibility}</Text>
+                <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </View>
-        </Card>
-      );
-    }
-
-    // Grid Item
-    return (
-      <Card onPress={() => handleOpenShelf(item)} style={styles.gridCard} contentStyle={styles.gridContent}>
-        <View style={styles.gridHeader}>
-          <Ionicons name={iconName} size={32} color={colors.primary} />
-          <Badge count={item.itemCount || 0} color={colors.surfaceElevated} style={{ backgroundColor: colors.surfaceElevated }} />
-          {/* Wait, Badge text color logic might need tweaking for dark bg? Badge default is primary bg white text. passed surfaceElevated. */}
-        </View>
-        <View style={styles.gridBody}>
-          <Text style={styles.itemTitle} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.itemSubtitle}>{item.type || 'Collection'}</Text>
-        </View>
-      </Card>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
     );
-  };
 
-  return (
-    <View style={styles.screen}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-
-      {/* Header Area */}
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.pageTitle}>My Shelves ({shelves.length})</Text>
-          <TouchableOpacity onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
-            <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={24} color={colors.text} />
-          </TouchableOpacity>
+    const renderEmpty = () => (
+        <View style={styles.emptyState}>
+            <Ionicons name="library-outline" size={56} color={colors.textMuted} />
+            <Text style={styles.emptyTitle}>No shelves yet</Text>
+            <Text style={styles.emptyText}>Create your first shelf to start organizing your collection</Text>
+            <TouchableOpacity
+                style={styles.emptyButton}
+                onPress={() => navigation.navigate('ShelfCreateScreen')}
+            >
+                <Ionicons name="add" size={18} color={colors.textInverted} />
+                <Text style={styles.emptyButtonText}>Create Shelf</Text>
+            </TouchableOpacity>
         </View>
+    );
 
-        {/* Search & Sort */}
-        <View style={styles.controls}>
-          <View style={{ flex: 1, marginRight: spacing.sm }}>
-            <Input
-              placeholder="Search shelves..."
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              style={{ marginBottom: 0 }}
-              leftIcon={<Ionicons name="search" size={18} color={colors.textMuted} />}
-            />
-          </View>
-          {/* Sort Toggle (Simple cycle for now) */}
-          <TouchableOpacity
-            style={styles.sortButton}
-            onPress={() => setSortMode(sortMode === 'alpha-asc' ? 'created-desc' : 'alpha-asc')}
-          >
-            <Ionicons name="filter" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Content */}
-      {loading && !refreshing && shelves.length === 0 ? (
+    const renderLoading = () => (
         <View style={styles.loadingContainer}>
-          <Skeleton width="100%" height={100} style={{ marginBottom: 16 }} />
-          <Skeleton width="100%" height={100} style={{ marginBottom: 16 }} />
-          <Skeleton width="100%" height={100} />
+            {[1, 2, 3, 4, 5, 6].map(i => (
+                <View key={i} style={[styles.skeleton, viewMode === 'grid' ? styles.skeletonGrid : styles.skeletonList]} />
+            ))}
         </View>
-      ) : sortedShelves.length === 0 ? (
-        <EmptyState
-          icon={<Ionicons name="library-outline" size={64} color={colors.textMuted} />}
-          title="No Shelves Yet"
-          description="Create your first shelf to start collecting."
-          actionLabel="Create Shelf"
-          onAction={() => navigation.navigate('ShelfCreate')}
-        />
-      ) : (
-        <FlatList
-          data={sortedShelves}
-          keyExtractor={(item) => item._id}
-          renderItem={renderShelfItem}
-          numColumns={viewMode === 'grid' ? 2 : 1}
-          key={viewMode} // Force re-render on mode change
-          contentContainerStyle={styles.listContainer}
-          columnWrapperStyle={viewMode === 'grid' ? styles.columnWrapper : undefined}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-    </View>
-  );
+    );
+
+    return (
+        <SafeAreaView style={styles.screen} edges={['top']}>
+            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+
+            {/* Header */}
+            <View style={styles.header}>
+                <View>
+                    <Text style={styles.headerTitle}>My Shelves</Text>
+                    <Text style={styles.headerSubtitle}>{shelves.length} collection{shelves.length !== 1 ? 's' : ''}</Text>
+                </View>
+                <View style={styles.headerRight}>
+                    <TouchableOpacity
+                        style={styles.viewToggle}
+                        onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
+                    >
+                        <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => navigation.navigate('Account')}>
+                        <Ionicons name="person-circle-outline" size={28} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* Search */}
+            <View style={styles.searchContainer}>
+                <View style={styles.searchBox}>
+                    <Ionicons name="search" size={18} color={colors.textMuted} />
+                    <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search shelves..."
+                        placeholderTextColor={colors.textMuted}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')}>
+                            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
+
+            {/* Content */}
+            {loading && !refreshing ? renderLoading() : filteredShelves.length === 0 && !searchQuery ? renderEmpty() : (
+                <FlatList
+                    data={filteredShelves}
+                    keyExtractor={(item) => item._id}
+                    renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
+                    numColumns={viewMode === 'grid' ? 2 : 1}
+                    key={viewMode}
+                    contentContainerStyle={styles.listContainer}
+                    columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={colors.primary}
+                            colors={[colors.primary]}
+                        />
+                    }
+                    showsVerticalScrollIndicator={false}
+                    ListEmptyComponent={
+                        searchQuery ? (
+                            <View style={styles.emptyState}>
+                                <Ionicons name="search-outline" size={48} color={colors.textMuted} />
+                                <Text style={styles.emptyTitle}>No results</Text>
+                                <Text style={styles.emptyText}>Try a different search term</Text>
+                            </View>
+                        ) : null
+                    }
+                />
+            )}
+        </SafeAreaView>
+    );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  pageTitle: {
-    fontFamily: typography.fontFamily.bold,
-    fontSize: typography.sizes['2xl'],
-    color: colors.text,
-  },
-  controls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sortButton: {
-    width: 56,
-    height: 56, // Match input height
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  listContainer: {
-    padding: spacing.md,
-    paddingBottom: 100, // Space for Fab/Tabs
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-  },
-  // List Styles
-  listCard: {
-    marginBottom: spacing.md,
-  },
-  listRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  listIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceElevated,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  listContent: {
-    flex: 1,
-  },
-  // Grid Styles
-  gridCard: {
-    flex: 0.48, // slightly less than 0.5 to allow gap
-    marginBottom: spacing.md,
-    height: 160,
-  },
-  gridContent: {
-    flex: 1,
-    justifyContent: 'space-between',
-  },
-  gridHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  gridBody: {
-    justifyContent: 'flex-end',
-  },
-  itemTitle: {
-    fontFamily: typography.fontFamily.bold,
-    fontSize: typography.sizes.md,
-    color: colors.text,
-    marginBottom: 2,
-  },
-  itemSubtitle: {
-    fontFamily: typography.fontFamily.regular,
-    fontSize: typography.sizes.xs,
-    color: colors.textSecondary,
-  },
-  loadingContainer: {
-    padding: spacing.md,
-  },
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
+    screen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.lg,
+        paddingBottom: spacing.sm,
+    },
+    headerTitle: {
+        fontSize: 28,
+        fontWeight: '700',
+        color: colors.text,
+    },
+    headerSubtitle: {
+        fontSize: 14,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    viewToggle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...shadows.sm,
+    },
+    searchContainer: {
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.md,
+    },
+    searchBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        height: 44,
+        gap: spacing.sm,
+        ...shadows.sm,
+    },
+    searchInput: {
+        flex: 1,
+        fontSize: 15,
+        color: colors.text,
+        paddingVertical: 0,
+    },
+    listContainer: {
+        padding: spacing.md,
+        paddingTop: 0,
+        paddingBottom: 100,
+    },
+    gridRow: {
+        justifyContent: 'space-between',
+    },
+    // Grid View
+    gridCard: {
+        width: '48%',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+        ...shadows.sm,
+    },
+    gridIconBox: {
+        width: 48,
+        height: 48,
+        borderRadius: radius.md,
+        backgroundColor: colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.sm,
+    },
+    gridTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+        marginBottom: 4,
+    },
+    gridMeta: {
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    // List View
+    listCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.sm,
+        ...shadows.sm,
+    },
+    listIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
+        backgroundColor: colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    listContent: {
+        flex: 1,
+    },
+    listTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    listMeta: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    // Empty State
+    emptyState: {
+        alignItems: 'center',
+        paddingTop: spacing['3xl'],
+        paddingHorizontal: spacing.xl,
+    },
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+        marginTop: spacing.md,
+    },
+    emptyText: {
+        fontSize: 14,
+        color: colors.textMuted,
+        textAlign: 'center',
+        marginTop: spacing.xs,
+        lineHeight: 20,
+    },
+    emptyButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: spacing.lg,
+        paddingHorizontal: spacing.lg,
+        paddingVertical: spacing.sm + 2,
+        backgroundColor: colors.primary,
+        borderRadius: 24,
+    },
+    emptyButtonText: {
+        color: colors.textInverted,
+        fontWeight: '600',
+        fontSize: 15,
+    },
+    // Loading
+    loadingContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        padding: spacing.md,
+    },
+    skeleton: {
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        marginBottom: spacing.md,
+    },
+    skeletonGrid: {
+        width: '48%',
+        height: 120,
+    },
+    skeletonList: {
+        width: '100%',
+        height: 72,
+    },
 });

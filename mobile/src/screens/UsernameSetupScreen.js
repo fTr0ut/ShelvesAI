@@ -1,110 +1,192 @@
-import React, { useCallback, useContext, useMemo, useState } from 'react'
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
-import { AuthContext } from '../context/AuthContext'
-import { apiRequest } from '../services/api'
-
-const MIN_LENGTH = 3
+import React, { useContext, useState } from 'react';
+import {
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+    StatusBar,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { apiRequest } from '../services/api';
 
 export default function UsernameSetupScreen({ navigation }) {
-  const { apiBase, token, setNeedsOnboarding } = useContext(AuthContext)
-  const [username, setUsername] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+    const { token, apiBase, setNeedsOnboarding } = useContext(AuthContext);
+    const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-  const canSubmit = useMemo(() => username.trim().length >= MIN_LENGTH, [username])
+    const [username, setUsername] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-  const submit = useCallback(async () => {
-    const trimmed = username.trim()
-    if (trimmed.length < MIN_LENGTH) {
-      setError(`Username must be at least ${MIN_LENGTH} characters.`)
-      return
-    }
-    if (!/^[a-z0-9._-]+$/i.test(trimmed)) {
-      setError('Usernames can only include letters, numbers, dots, hyphens, and underscores.')
-      return
-    }
+    const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
-    try {
-      setSaving(true)
-      setError('')
-      await apiRequest({ apiBase, path: '/api/username', method: 'POST', token, body: { username: trimmed } })
-      setNeedsOnboarding(false)
-      navigation.reset({ index: 0, routes: [{ name: 'Account' }] })
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setSaving(false)
-    }
-  }, [apiBase, navigation, setNeedsOnboarding, token, username])
+    const handleSubmit = async () => {
+        const trimmed = username.trim();
+        if (!trimmed) {
+            setError('Please enter a username');
+            return;
+        }
+        if (trimmed.length < 3) {
+            setError('Username must be at least 3 characters');
+            return;
+        }
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.select({ ios: 'padding', android: undefined })}
-    >
-      <View style={styles.container}>
-        <Text style={styles.title}>Choose your username</Text>
-        <Text style={styles.subtitle}>
-          Pick a handle for friends to find you. You can change this later from your profile.
-        </Text>
+        try {
+            setLoading(true);
+            setError('');
+            await apiRequest({
+                apiBase,
+                path: '/api/auth/username',
+                method: 'POST',
+                token,
+                body: { username: trimmed },
+            });
+            setNeedsOnboarding(false);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Username</Text>
-          <TextInput
-            style={styles.input}
-            value={username}
-            onChangeText={(value) => {
-              if (error) setError('')
-              setUsername(value)
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="e.g. collectorsam"
-            placeholderTextColor="#55657a"
-            editable={!saving}
-            returnKeyType="done"
-            onSubmitEditing={submit}
-          />
-          <Text style={styles.helper}>At least {MIN_LENGTH} characters, letters and numbers only.</Text>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          <TouchableOpacity
-            style={[styles.button, (!canSubmit || saving) && styles.buttonDisabled]}
-            onPress={submit}
-            disabled={!canSubmit || saving}
-          >
-            <Text style={styles.buttonText}>{saving ? 'Saving...' : 'Continue'}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
-  )
+    return (
+        <KeyboardAvoidingView
+            style={styles.screen}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+
+            <View style={styles.container}>
+                <View style={styles.iconBox}>
+                    <Ionicons name="person-add" size={40} color={colors.primary} />
+                </View>
+
+                <Text style={styles.title}>Choose a Username</Text>
+                <Text style={styles.subtitle}>This is how other collectors will find you</Text>
+
+                {error ? (
+                    <View style={styles.errorBox}>
+                        <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                ) : null}
+
+                <View style={styles.inputContainer}>
+                    <Text style={styles.atSign}>@</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={username}
+                        onChangeText={setUsername}
+                        placeholder="username"
+                        placeholderTextColor={colors.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        autoFocus
+                        editable={!loading}
+                    />
+                </View>
+
+                <TouchableOpacity
+                    style={[styles.continueButton, loading && styles.continueButtonDisabled]}
+                    onPress={handleSubmit}
+                    disabled={loading}
+                >
+                    <Text style={styles.continueButtonText}>
+                        {loading ? 'Setting up...' : 'Continue'}
+                    </Text>
+                    <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
+                </TouchableOpacity>
+            </View>
+        </KeyboardAvoidingView>
+    );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0b0f14' },
-  container: { flex: 1, padding: 24, gap: 16, justifyContent: 'center' },
-  title: { color: '#e6edf3', fontSize: 28, fontWeight: '700' },
-  subtitle: { color: '#9aa6b2', fontSize: 14, lineHeight: 20 },
-  card: { backgroundColor: '#0e1522', borderRadius: 14, borderWidth: 1, borderColor: '#223043', padding: 20, gap: 12 },
-  label: { color: '#9aa6b2', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6 },
-  input: {
-    backgroundColor: '#0b1320',
-    color: '#e6edf3',
-    borderColor: '#223043',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
-  helper: { color: '#55657a', fontSize: 12 },
-  error: { color: '#ff9aa3', fontSize: 13 },
-  button: {
-    backgroundColor: '#5a8efc',
-    borderRadius: 10,
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#0b0f14', fontWeight: '700', fontSize: 16 },
-})
+const createStyles = ({ colors, spacing, typography, shadows, radius }) => StyleSheet.create({
+    screen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    container: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: spacing.lg,
+    },
+    iconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: 20,
+        backgroundColor: colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.lg,
+    },
+    title: {
+        fontSize: 24,
+        fontWeight: '700',
+        color: colors.text,
+        textAlign: 'center',
+    },
+    subtitle: {
+        fontSize: 15,
+        color: colors.textMuted,
+        textAlign: 'center',
+        marginTop: spacing.xs,
+        marginBottom: spacing.xl,
+    },
+    errorBox: {
+        backgroundColor: colors.error + '15',
+        padding: spacing.sm,
+        borderRadius: radius.md,
+        marginBottom: spacing.md,
+        width: '100%',
+    },
+    errorText: {
+        color: colors.error,
+        fontSize: 13,
+        textAlign: 'center',
+    },
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        width: '100%',
+        ...shadows.sm,
+    },
+    atSign: {
+        fontSize: 20,
+        color: colors.textMuted,
+        marginRight: 4,
+    },
+    input: {
+        flex: 1,
+        fontSize: 18,
+        color: colors.text,
+        paddingVertical: spacing.md,
+    },
+    continueButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+        backgroundColor: colors.primary,
+        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.xl,
+        borderRadius: radius.lg,
+        marginTop: spacing.lg,
+        width: '100%',
+    },
+    continueButtonDisabled: {
+        opacity: 0.6,
+    },
+    continueButtonText: {
+        color: colors.textInverted,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+});

@@ -3,26 +3,24 @@ import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, shadows, spacing } from '../theme';
+import { useTheme } from '../context/ThemeContext';
 
 // Screens
 import SocialFeedScreen from '../screens/SocialFeedScreen';
 import ShelvesScreen from '../screens/ShelvesScreen';
-import ShelfCreateScreen from '../screens/ShelfCreateScreen'; // Or a dedicated Add modal wrapper
-
-// Create a dummy component for the 'Add' action since we might want it to open a modal
-const NullComponent = () => null;
 
 const Tab = createBottomTabNavigator();
 
 function CustomTabBarButton({ children, onPress }) {
+    const { colors, shadows } = useTheme();
+
     return (
         <TouchableOpacity
             style={{
-                top: -20, // Float above
+                top: -20,
                 justifyContent: 'center',
                 alignItems: 'center',
-                ...shadows.md,
+                ...shadows.lg,
             }}
             onPress={onPress}
             activeOpacity={0.9}
@@ -32,9 +30,11 @@ function CustomTabBarButton({ children, onPress }) {
                     width: 64,
                     height: 64,
                     borderRadius: 32,
-                    backgroundColor: colors.primary, // Solid indigo
+                    backgroundColor: colors.primary,
                     borderWidth: 4,
-                    borderColor: colors.background, // Match background to create "cutout" effect
+                    borderColor: colors.surface,
+                    justifyContent: 'center',
+                    alignItems: 'center',
                 }}
             >
                 {children}
@@ -43,29 +43,33 @@ function CustomTabBarButton({ children, onPress }) {
     );
 }
 
+// Null component for Add tab (it's just a button)
+const NullComponent = () => null;
+
 export default function BottomTabNavigator() {
     const navigation = useNavigation();
+    const { colors, spacing, shadows } = useTheme();
 
     return (
         <Tab.Navigator
             screenOptions={{
-                headerShown: true, // We want headers for the Account icon
-                headerStyle: {
-                    backgroundColor: colors.background,
-                    borderBottomColor: colors.border,
-                    borderBottomWidth: 1,
-                },
-                headerTintColor: colors.text,
+                headerShown: false,
                 tabBarStyle: {
                     backgroundColor: colors.surface,
                     borderTopColor: colors.border,
+                    borderTopWidth: 1,
                     height: 60,
                     paddingBottom: spacing.sm,
                     paddingTop: spacing.xs,
+                    ...shadows.sm,
                 },
                 tabBarActiveTintColor: colors.primary,
                 tabBarInactiveTintColor: colors.textMuted,
                 tabBarShowLabel: true,
+                tabBarLabelStyle: {
+                    fontSize: 12,
+                    fontWeight: '500',
+                },
             }}
         >
             <Tab.Screen
@@ -75,11 +79,6 @@ export default function BottomTabNavigator() {
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="home" size={size} color={color} />
                     ),
-                    headerRight: () => (
-                        <TouchableOpacity onPress={() => navigation.navigate('Account')} style={{ marginRight: spacing.md }}>
-                            <Ionicons name="person-circle-outline" size={28} color={colors.text} />
-                        </TouchableOpacity>
-                    ),
                 }}
             />
 
@@ -88,18 +87,22 @@ export default function BottomTabNavigator() {
                 component={NullComponent}
                 listeners={() => ({
                     tabPress: (e) => {
-                        e.preventDefault(); // Prevent navigation
-                        navigation.navigate('ShelfCreateScreen'); // Or a generic "Add" modal
+                        e.preventDefault();
+                        navigation.navigate('ShelfCreateScreen');
                     },
                 })}
                 options={{
-                    tabBarIcon: ({ focused }) => (
-                        <Ionicons name="add" size={32} color="#FFF" />
+                    tabBarIcon: () => (
+                        <Ionicons
+                            name="add"
+                            size={32}
+                            color={colors.textInverted}
+                        />
                     ),
                     tabBarButton: (props) => (
                         <CustomTabBarButton {...props} />
                     ),
-                    tabBarLabel: () => null, // No label for button
+                    tabBarLabel: () => null,
                 }}
             />
 
@@ -109,11 +112,6 @@ export default function BottomTabNavigator() {
                 options={{
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="library" size={size} color={color} />
-                    ),
-                    headerRight: () => (
-                        <TouchableOpacity onPress={() => navigation.navigate('Account')} style={{ marginRight: spacing.md }}>
-                            <Ionicons name="person-circle-outline" size={28} color={colors.text} />
-                        </TouchableOpacity>
                     ),
                 }}
             />
