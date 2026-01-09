@@ -310,7 +310,7 @@ export default function SocialFeedScreen({ navigation }) {
           variant="ghost"
           title="Find Friends"
           size="sm"
-          icon="people"
+          icon={<Ionicons name="people" size={16} color={colors.primaryLight} />}
           onPress={() => navigation.navigate('FriendSearch')}
         />
       </View>
@@ -320,7 +320,7 @@ export default function SocialFeedScreen({ navigation }) {
           placeholder="Search shelves or collectors..."
           value={searchTerm}
           onChangeText={setSearchTerm}
-          icon="search"
+          leftIcon={<Ionicons name="search" size={18} color={colors.textMuted} />}
         />
       </View>
 

@@ -466,7 +466,7 @@ export default function AccountScreen({ navigation }) {
               onPress={handleLinkSteam}
               loading={steamBusy}
               variant="outline"
-              icon="logo-steam"
+              icon={<Ionicons name="logo-steam" size={18} color={colors.text} />}
             />
           </View>
         )}
@@ -533,7 +533,7 @@ export default function AccountScreen({ navigation }) {
         variant="danger"
         onPress={logout}
         style={styles.logoutButton}
-        icon="log-out-outline"
+        icon={<Ionicons name="log-out-outline" size={18} color={colors.text} />}
       />
 
       <Text style={styles.versionText}>ShelvesAI Mobile v1.0.0</Text>

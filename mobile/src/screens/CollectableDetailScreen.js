@@ -351,7 +351,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             <Button
               variant="danger"
               title="Delete Item"
-              icon="trash-2"
+              icon={<Ionicons name="trash-outline" size={18} color={colors.text} />}
               onPress={handleDelete}
             />
           </View>
