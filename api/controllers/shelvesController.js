@@ -14,7 +14,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
-const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
+
 
 let visionService;
 let geminiService;

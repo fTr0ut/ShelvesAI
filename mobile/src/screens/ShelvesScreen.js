@@ -1,205 +1,291 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
-import { AuthContext } from '../App'
-import FooterNav from '../components/FooterNav'
-import { apiRequest } from '../services/api'
-
-const VISIBILITY_OPTIONS = [
-  { value: 'private', label: 'Private' },
-  { value: 'friends', label: 'Friends' },
-  { value: 'public', label: 'Public' },
-]
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, StatusBar } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../App';
+import { apiRequest } from '../services/api';
+import { colors, spacing, typography } from '../theme';
+import Card from '../components/ui/Card';
+import Badge from '../components/ui/Badge';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import EmptyState from '../components/ui/EmptyState';
+import Skeleton from '../components/ui/Skeleton';
 
 const SORT_OPTIONS = [
-  { value: 'alpha-asc', label: 'A to Z' },
-  { value: 'alpha-desc', label: 'Z to A' },
-  { value: 'created-desc', label: 'Date Created' },
-]
-
-const COLUMN_COUNT = 3
-const NEW_TILE_ID = '__new__'
+  { value: 'alpha-asc', label: 'Name (A-Z)' },
+  { value: 'created-desc', label: 'Newest' },
+];
 
 export default function ShelvesScreen({ navigation }) {
-  const { token, apiBase } = useContext(AuthContext)
-  const [shelves, setShelves] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [sortMode, setSortMode] = useState('alpha-asc')
+  const { token, apiBase } = useContext(AuthContext);
+  const [shelves, setShelves] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [sortMode, setSortMode] = useState('alpha-asc');
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadShelves = useCallback(async () => {
     try {
-      setLoading(true)
-      const data = await apiRequest({ apiBase, path: '/api/shelves', token })
-      setShelves(Array.isArray(data.shelves) ? data.shelves : [])
-      setError('')
+      if (!refreshing) setLoading(true);
+      const data = await apiRequest({ apiBase, path: '/api/shelves', token });
+      setShelves(Array.isArray(data.shelves) ? data.shelves : []);
+      setError('');
     } catch (e) {
-      setError(e.message)
+      setError(e.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
+      setRefreshing(false);
     }
-  }, [apiBase, token])
+  }, [apiBase, token, refreshing]);
 
   useEffect(() => {
-    loadShelves()
-  }, [loadShelves])
+    loadShelves();
+  }, []); // Run once on mount
+
+  // Refresh when focusing screen to ensure data is up to date (e.g. after create)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadShelves();
+    });
+    return unsubscribe;
+  }, [navigation, loadShelves]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadShelves();
+  }, [loadShelves]);
 
   const sortedShelves = useMemo(() => {
-    const list = Array.isArray(shelves) ? [...shelves] : []
-    const compareName = (a, b) => String(a?.name || '').localeCompare(String(b?.name || ''))
-    const compareDate = (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0)
+    let list = Array.isArray(shelves) ? [...shelves] : [];
 
-    switch (sortMode) {
-      case 'alpha-asc':
-        return list.sort(compareName)
-      case 'alpha-desc':
-        return list.sort((a, b) => compareName(b, a))
-      case 'created-desc':
-        return list.sort(compareDate)
-      default:
-        return list.sort(compareName)
+    // Filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(s => s.name.toLowerCase().includes(q));
     }
-  }, [shelves, sortMode])
 
-  const gridData = useMemo(() => {
-    const base = Array.isArray(sortedShelves) ? sortedShelves : []
-    const newTile = { _id: NEW_TILE_ID, isNew: true }
-    return base.length ? [...base, newTile] : [newTile]
-  }, [sortedShelves])
+    // Sort
+    const compareName = (a, b) => String(a?.name || '').localeCompare(String(b?.name || ''));
+    const compareDate = (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0);
 
-  const visibilityLabelFor = (value) => VISIBILITY_OPTIONS.find((opt) => opt.value === value)?.label || value
+    if (sortMode === 'alpha-asc') list.sort(compareName);
+    else if (sortMode === 'created-desc') list.sort(compareDate);
 
-  const handleOpenShelf = useCallback(
-    (shelf) => {
-      navigation.navigate('ShelfDetail', { id: shelf._id, title: shelf.name })
-    },
-    [navigation],
-  )
+    return list;
+  }, [shelves, sortMode, searchQuery]);
 
-  const handleCreateShelf = useCallback(() => {
-    navigation.navigate('ShelfCreate')
-  }, [navigation])
+  const handleOpenShelf = (shelf) => {
+    navigation.navigate('ShelfDetail', { id: shelf._id, title: shelf.name });
+  };
 
-  const renderShelfTile = ({ item }) => {
-    if (item.isNew) {
+  const getIconForType = (type) => {
+    switch (type?.toLowerCase()) {
+      case 'books': return 'book';
+      case 'movies': return 'videocam';
+      case 'games': return 'game-controller';
+      case 'music': return 'musical-notes';
+      default: return 'library'; // generic
+    }
+  };
+
+  const renderShelfItem = ({ item }) => {
+    const iconName = getIconForType(item.type);
+    const countLabel = `${item.itemCount || 0} items`;
+
+    if (viewMode === 'list') {
       return (
-        <TouchableOpacity style={[styles.tile, styles.newTile]} onPress={handleCreateShelf} activeOpacity={0.85}>
-          <Text style={styles.newTileLabel}>NEW</Text>
-          <Text style={styles.newTileHint}>Create Shelf</Text>
-        </TouchableOpacity>
-      )
+        <Card onPress={() => handleOpenShelf(item)} style={styles.listCard}>
+          <View style={styles.listRow}>
+            <View style={styles.listIcon}>
+              <Ionicons name={iconName} size={24} color={colors.primary} />
+            </View>
+            <View style={styles.listContent}>
+              <Text style={styles.itemTitle}>{item.name}</Text>
+              <Text style={styles.itemSubtitle}>{countLabel} • {item.visibility}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </View>
+        </Card>
+      );
     }
 
-    const createdLabel = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : ''
-
+    // Grid Item
     return (
-      <TouchableOpacity style={styles.tile} onPress={() => handleOpenShelf(item)} activeOpacity={0.8}>
-        <Text style={styles.tileTitle}>{item.name || 'Untitled Shelf'}</Text>
-        <View style={styles.tileMetaRow}>
-          <Text style={styles.pill}>{item.type || 'Unsorted'}</Text>
-          <Text style={[styles.pill, styles.pillSecondary]}>{visibilityLabelFor(item.visibility)}</Text>
+      <Card onPress={() => handleOpenShelf(item)} style={styles.gridCard} contentStyle={styles.gridContent}>
+        <View style={styles.gridHeader}>
+          <Ionicons name={iconName} size={32} color={colors.primary} />
+          <Badge count={item.itemCount || 0} color={colors.surfaceElevated} style={{ backgroundColor: colors.surfaceElevated }} />
+          {/* Wait, Badge text color logic might need tweaking for dark bg? Badge default is primary bg white text. passed surfaceElevated. */}
         </View>
-        {item.description ? (
-          <Text style={styles.tileDescription} numberOfLines={2}>
-            {item.description}
-          </Text>
-        ) : null}
-        <View style={styles.tileFooter}>
-          {createdLabel ? <Text style={styles.tileTimestamp}>{createdLabel}</Text> : <View />}
+        <View style={styles.gridBody}>
+          <Text style={styles.itemTitle} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.itemSubtitle}>{item.type || 'Collection'}</Text>
         </View>
-      </TouchableOpacity>
-    )
-  }
-
-  const renderLoading = () => (
-    <View style={styles.loadingState}>
-      <ActivityIndicator color="#5a8efc" size="large" />
-      <Text style={styles.muted}>Loading shelves...</Text>
-    </View>
-  )
+      </Card>
+    );
+  };
 
   return (
     <View style={styles.screen}>
-      <View style={styles.container}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>My Shelves</Text>
+      <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+
+      {/* Header Area */}
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <Text style={styles.pageTitle}>My Shelves ({shelves.length})</Text>
+          <TouchableOpacity onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
+            <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={24} color={colors.text} />
+          </TouchableOpacity>
         </View>
 
-        {!!error && <Text style={styles.error}>{error}</Text>}
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.section}>Shelves</Text>
-          {sortedShelves.length ? (
-            <TouchableOpacity onPress={handleCreateShelf}>
-              <Text style={styles.link}>New Shelf</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-        {sortedShelves.length ? (
-          <View style={styles.sortRow}>
-            {SORT_OPTIONS.map((opt) => {
-              const selected = sortMode === opt.value
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.sortChip, selected && styles.sortChipActive]}
-                  onPress={() => setSortMode(opt.value)}
-                >
-                  <Text style={[styles.sortChipText, selected && styles.sortChipTextActive]}>{opt.label}</Text>
-                </TouchableOpacity>
-              )
-            })}
+        {/* Search & Sort */}
+        <View style={styles.controls}>
+          <View style={{ flex: 1, marginRight: spacing.sm }}>
+            <Input
+              placeholder="Search shelves..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              style={{ marginBottom: 0 }}
+              leftIcon={<Ionicons name="search" size={18} color={colors.textMuted} />}
+            />
           </View>
-        ) : null}
-
-        {loading ? (
-          renderLoading()
-        ) : (
-          <FlatList
-            data={gridData}
-            keyExtractor={(item) => item._id}
-            renderItem={renderShelfTile}
-            numColumns={COLUMN_COUNT}
-            columnWrapperStyle={gridData.length > 1 ? styles.columnWrapper : undefined}
-            contentContainerStyle={gridData.length > 1 ? styles.gridContent : styles.gridEmpty}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
+          {/* Sort Toggle (Simple cycle for now) */}
+          <TouchableOpacity
+            style={styles.sortButton}
+            onPress={() => setSortMode(sortMode === 'alpha-asc' ? 'created-desc' : 'alpha-asc')}
+          >
+            <Ionicons name="filter" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <FooterNav navigation={navigation} active="shelves" />
+      {/* Content */}
+      {loading && !refreshing && shelves.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <Skeleton width="100%" height={100} style={{ marginBottom: 16 }} />
+          <Skeleton width="100%" height={100} style={{ marginBottom: 16 }} />
+          <Skeleton width="100%" height={100} />
+        </View>
+      ) : sortedShelves.length === 0 ? (
+        <EmptyState
+          icon={<Ionicons name="library-outline" size={64} color={colors.textMuted} />}
+          title="No Shelves Yet"
+          description="Create your first shelf to start collecting."
+          actionLabel="Create Shelf"
+          onAction={() => navigation.navigate('ShelfCreate')}
+        />
+      ) : (
+        <FlatList
+          data={sortedShelves}
+          keyExtractor={(item) => item._id}
+          renderItem={renderShelfItem}
+          numColumns={viewMode === 'grid' ? 2 : 1}
+          key={viewMode} // Force re-render on mode change
+          contentContainerStyle={styles.listContainer}
+          columnWrapperStyle={viewMode === 'grid' ? styles.columnWrapper : undefined}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0b0f14' },
-  container: { flex: 1, padding: 16 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { color: '#e6edf3', fontSize: 22, fontWeight: '700' },
-  link: { color: '#7ca6ff', fontSize: 14 },
-  section: { color: '#9aa6b2', textTransform: 'uppercase', fontSize: 12, letterSpacing: 0.5 },
-  error: { color: '#ff9aa3', marginBottom: 6 },
-  muted: { color: '#9aa6b2', marginTop: 12 },
-  sortRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  sortChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: '#223043', backgroundColor: '#0b1320' },
-  sortChipActive: { borderColor: '#5a8efc', backgroundColor: '#15223a' },
-  sortChipText: { color: '#9aa6b2', fontSize: 12 },
-  sortChipTextActive: { color: '#7ca6ff' },
-  columnWrapper: { gap: 12, marginBottom: 12 },
-  gridContent: { paddingBottom: 100 },
-  gridEmpty: { flexGrow: 1, justifyContent: 'center', paddingBottom: 100 },
-  tile: { flex: 1, backgroundColor: '#0e1522', borderColor: '#223043', borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 120, justifyContent: 'space-between' },
-  tileTitle: { color: '#e6edf3', fontSize: 16, fontWeight: '600' },
-  tileMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  pill: { color: '#9aa6b2', borderColor: '#223043', borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
-  pillSecondary: { borderColor: '#34445d' },
-  tileDescription: { color: '#9aa6b2', fontSize: 12, marginTop: 6 },
-  tileFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 },
-  tileTimestamp: { color: '#55657a', fontSize: 11 },
-  newTile: { alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', borderColor: '#5a8efc', borderWidth: 1.5, backgroundColor: '#0b1320' },
-  newTileLabel: { color: '#5a8efc', fontSize: 22, fontWeight: '700', letterSpacing: 1 },
-  newTileHint: { color: '#9aa6b2', marginTop: 4, fontSize: 12 },
-  loadingState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 40 },
-})
+  screen: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  header: {
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  pageTitle: {
+    fontFamily: typography.fontFamily.bold,
+    fontSize: typography.sizes['2xl'],
+    color: colors.text,
+  },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sortButton: {
+    width: 56,
+    height: 56, // Match input height
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  listContainer: {
+    padding: spacing.md,
+    paddingBottom: 100, // Space for Fab/Tabs
+  },
+  columnWrapper: {
+    justifyContent: 'space-between',
+  },
+  // List Styles
+  listCard: {
+    marginBottom: spacing.md,
+  },
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  listIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.md,
+  },
+  listContent: {
+    flex: 1,
+  },
+  // Grid Styles
+  gridCard: {
+    flex: 0.48, // slightly less than 0.5 to allow gap
+    marginBottom: spacing.md,
+    height: 160,
+  },
+  gridContent: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  gridHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  gridBody: {
+    justifyContent: 'flex-end',
+  },
+  itemTitle: {
+    fontFamily: typography.fontFamily.bold,
+    fontSize: typography.sizes.md,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  itemSubtitle: {
+    fontFamily: typography.fontFamily.regular,
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+  },
+  loadingContainer: {
+    padding: spacing.md,
+  },
+});

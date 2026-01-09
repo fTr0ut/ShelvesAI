@@ -73,20 +73,25 @@ class MovieCatalogService {
     this.timeoutMs = Number.isFinite(options.timeoutMs)
       ? options.timeoutMs
       : Number.parseInt(process.env.TMDB_TIMEOUT_MS || '', 10) ||
-        DEFAULT_TIMEOUT_MS;
+      DEFAULT_TIMEOUT_MS;
     this.concurrency = Number.isFinite(options.concurrency)
       ? Math.max(1, options.concurrency)
       : Number.parseInt(process.env.TMDB_CONCURRENCY || '', 10) ||
-        DEFAULT_CONCURRENCY;
+      DEFAULT_CONCURRENCY;
     this.retries = Number.isFinite(options.retries)
       ? options.retries
       : Number.parseInt(process.env.TMDB_RETRIES || '', 10) ||
-        DEFAULT_RETRIES;
+      DEFAULT_RETRIES;
 
     this.fetch = typeof options.fetch === 'function' ? options.fetch : fetch;
     this.delayFn = typeof options.delayFn === 'function' ? options.delayFn : makeDelay;
 
     this._warnedMissingApiKey = false;
+
+    // TMDB limit: 40 requests per second typically
+    // We set a safe margin, e.g. 35 per 1s, or just use the 40.
+    const RateLimiter = require('../../utils/RateLimiter');
+    this.limiter = new RateLimiter(35, 1);
   }
 
   supportsShelfType(type) {
@@ -254,18 +259,18 @@ class MovieCatalogService {
       collectable.images = Array.isArray(collectable.images)
         ? collectable.images
         : collectable.images
-        ? [collectable.images]
-        : [];
+          ? [collectable.images]
+          : [];
       collectable.tags = Array.isArray(collectable.tags)
         ? collectable.tags
         : collectable.tags
-        ? [collectable.tags]
-        : [];
+          ? [collectable.tags]
+          : [];
       collectable.sources = Array.isArray(collectable.sources)
         ? collectable.sources
         : collectable.sources
-        ? [collectable.sources]
-        : [];
+          ? [collectable.sources]
+          : [];
       collectable.identifiers = collectable.identifiers || {};
       collectable.physical = collectable.physical || {};
       return collectable;
@@ -363,12 +368,12 @@ class MovieCatalogService {
       ? setTimeout(() => controller.abort(), this.timeoutMs)
       : null;
     try {
-      const response = await this.fetch(url, {
+      const response = await this.limiter.acquire().then(() => this.fetch(url, {
         signal: controller ? controller.signal : undefined,
         headers: {
-          'User-Agent': 'CollectorApp/1.0 (+https://collector.example)',
+          'User-Agent': 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)',
         },
-      });
+      }));
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`TMDB request failed with ${response.status}: ${text.slice(0, 200)}`);

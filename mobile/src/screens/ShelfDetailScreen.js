@@ -28,6 +28,14 @@ import * as ImageManipulator from "expo-image-manipulator";
 
 import FooterNav from "../components/FooterNav";
 import ShelfVisionModal from "../components/ShelfVisionModal";
+import { Ionicons } from '@expo/vector-icons';
+import { colors, spacing, typography, radius } from '../theme';
+import Card from '../components/ui/Card';
+import Badge from '../components/ui/Badge';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import EmptyState from '../components/ui/EmptyState';
+import Skeleton from '../components/ui/Skeleton';
 
 const MIME_EXTENSIONS = {
   jpg: 'image/jpeg',
@@ -1125,517 +1133,203 @@ export default function ShelfDetailScreen({ route, navigation }) {
     ? `${shelf.visibility.charAt(0).toUpperCase()}${shelf.visibility.slice(1)}`
     : null;
 
+  /* --- Render Redesign --- */
   return (
     <ShelfDetailSyncProvider value={shelfDetailSyncValue}>
       <View style={styles.screen}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+
         <ScrollView
           style={styles.container}
           contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
         >
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          <View style={styles.card}>
-            <View style={styles.shelfHeader}>
-              <Text style={styles.title}>{shelf?.name || "Shelf"}</Text>
-
-              <TouchableOpacity
-                style={[styles.editButton, !shelf && styles.editButtonDisabled]}
-                onPress={openShelfEdit}
-                disabled={!shelf}
-              >
-                <Text style={styles.editButtonText}>Edit</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {isVideoGameShelf ? (
-            <View style={styles.card}>
-              <Text style={styles.section}>Steam Library</Text>
-
-              {steamError ? <Text style={styles.error}>{steamError}</Text> : null}
-
-              {steamMessage ? (
-                <Text style={styles.success}>{steamMessage}</Text>
-              ) : null}
-
-              {steamLoading ? (
-                <View style={styles.steamStatusRow}>
-                  <ActivityIndicator size="small" color="#9ec1ff" />
-                  <Text style={styles.itemMeta}>Checking Steam link…</Text>
-                </View>
-              ) : steamStatus?.steamId ? (
-                <>
-                  <Text style={styles.itemMeta} numberOfLines={2}>
-                    Linked as {steamStatus.personaName || `SteamID: ${steamStatus.steamId}`}
-                  </Text>
-
-                  {steamStatus.totalGames ? (
-                    <Text style={styles.itemMeta}>
-                      Library size: {steamStatus.totalGames}
-                    </Text>
-                  ) : null}
-
-                  {steamSummary &&
-                    steamSummary.processed !== undefined &&
-                    steamSummary.processed !== null ? (
-                    <Text style={styles.itemMeta}>
-                      Last run processed {steamSummary.processed} items
-                      {typeof steamSummary.imported === "number"
-                        ? `, imported ${steamSummary.imported}`
-                        : ""}
-                      .
-                    </Text>
-                  ) : null}
-
-                  {steamPreviewCount ? (
-                    <View style={styles.steamPreviewList}>
-                      {steamPreview.map((preview) => {
-                        const appId =
-                          preview?.identifiers?.steam?.appId?.[0] ||
-                          preview?.extras?.steam?.appId ||
-                          null;
-                        return (
-                          <View key={preview._id} style={styles.steamPreviewItem}>
-                            <Text style={styles.steamPreviewTitle} numberOfLines={1}>
-                              {preview.title}
-                            </Text>
-                            {appId ? (
-                              <Text style={styles.steamPreviewMeta}>AppID {appId}</Text>
-                            ) : null}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : null}
-
-                  <View style={styles.steamActions}>
-                    <TouchableOpacity
-                      style={[
-                        styles.smallButton,
-                        styles.steamButton,
-                        steamBusy && styles.buttonDisabled,
-                      ]}
-                      onPress={previewSteamLibrary}
-                      disabled={steamBusy}
-                    >
-                      <Text style={[styles.smallButtonText, styles.steamButtonText]}>
-                        {steamBusy ? "Working…" : "Preview import"}
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.smallButton,
-                        styles.primarySmallButton,
-                        steamBusy && styles.buttonDisabled,
-                      ]}
-                      onPress={handleSteamImport}
-                      disabled={steamBusy}
-                    >
-                      <Text style={styles.smallButtonText}>Import from Steam</Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.itemMeta}>
-                    Link your Steam account from the Account tab to import your library.
-                  </Text>
-
-                  <TouchableOpacity
-                    style={[styles.smallButton, styles.steamButton, steamBusy && styles.buttonDisabled]}
-                    onPress={() => navigation.navigate("Account")}
-                    disabled={steamBusy}
-                  >
-                    <Text style={[styles.smallButtonText, styles.steamButtonText]}>Open Account</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
             </View>
           ) : null}
 
-          <View style={styles.card}>
-            <Text style={styles.section}>Items</Text>
-
-            <View
-              style={[
-                styles.itemSortRow,
-
-                !items.length && styles.itemSortRowDisabled,
-              ]}
-            >
-              {ITEM_SORT_OPTIONS.map((opt) => {
-                const selected = itemSortMode === opt.value;
-
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.itemSortChip,
-
-                      selected && styles.itemSortChipActive,
-
-                      !items.length && styles.itemSortChipDisabled,
-                    ]}
-                    onPress={() => {
-                      if (items.length) setItemSortMode(opt.value);
-                    }}
-                    disabled={!items.length}
-                  >
-                    <Text
-                      style={[
-                        styles.itemSortChipText,
-
-                        selected && styles.itemSortChipTextActive,
-
-                        !items.length && styles.itemSortChipTextDisabled,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+          {/* Shelf Header */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.title}>{shelf?.name || "Shelf"}</Text>
+              <Text style={styles.subtitle}>{visibilityLabel || 'Private'} • {shelf?.type || 'Collection'}</Text>
             </View>
-
-            {items.length ? (
-              <View style={styles.itemGrid}>
-                {sortedItems.map((it) => {
-                  const isCollectable = Boolean(it.collectable);
-                  const collectable = it.collectable || null;
-                  const manualItem = it.manual || null;
-                  const isManual = !isCollectable && !!manualItem;
-
-                  const title =
-                    collectable?.title || collectable?.name || manualItem?.name || "Untitled item";
-
-                  const detailParts = isCollectable
-                    ? [
-                      collectable?.primaryCreator || collectable?.author,
-
-                      collectable?.format,
-
-                      collectable?.publisher,
-
-                      collectable?.year,
-                    ]
-                    : [manualItem?.type, manualItem?.description];
-
-                  const detail = detailParts.filter(Boolean).join(" | ");
-
-                  const userCollection =
-                    it.userCollection || it.user_collection || it.usercollection || null;
-
-                  const rawPosition =
-                    userCollection?.position ||
-                    userCollection?.location ||
-                    it.position ||
-                    it.location ||
-                    collectable?.position ||
-                    manualItem?.position ||
-                    collectable?.location ||
-                    manualItem?.location ||
-                    null;
-
-                  let positionLabel = null;
-
-                  if (rawPosition) {
-                    if (Array.isArray(rawPosition)) {
-                      positionLabel = rawPosition.filter(Boolean).join(", ");
-                    } else if (typeof rawPosition === "object") {
-                      const posX =
-                        rawPosition.x ?? rawPosition.col ?? rawPosition.column;
-
-                      const posY = rawPosition.y ?? rawPosition.row;
-
-                      const hasX =
-                        posX !== undefined &&
-                        posX !== null &&
-                        `${posX}`.trim() !== "";
-
-                      const hasY =
-                        posY !== undefined &&
-                        posY !== null &&
-                        `${posY}`.trim() !== "";
-
-                      if (hasX || hasY) {
-                        const displayX = hasX ? posX : "?";
-
-                        const displayY = hasY ? posY : "?";
-
-                        positionLabel = `(${displayX}, ${displayY})`;
-                      }
-                    } else {
-                      positionLabel = String(rawPosition);
-                    }
-                  }
-
-                  const typeLabel = isCollectable
-                    ? collectable?.type || shelf?.type || "Collectable"
-                    : manualItem?.type || shelf?.type || "Manual";
-
-                  // Mark as needing review if:
-                  // 1) backend just told us it was created from vision as manual, OR
-                  // 2) it's a manual item missing common metadata
-
-                  const missingCore =
-                    isManual && (!manualItem.primaryCreator || !manualItem.format || !manualItem.publisher || !manualItem.year);
-                  const needsReview =
-                    isManual && (missingCore || needsReviewIds.includes(it.id));
-                  return (
-                    <View key={it.id} style={[styles.itemTile, needsReview && styles.itemTileNeedsReview]}>
-
-                      <TouchableOpacity
-                        style={styles.itemTileBody}
-                        activeOpacity={isCollectable ? 0.75 : 1}
-                        onPress={() =>
-                          isCollectable && openCollectable(collectable)
-                        }
-                      >
-                        <View style={styles.itemTileHeader}>
-                          <Text style={styles.itemTileType}>{typeLabel}</Text>
-                          {needsReview ? (
-                            <Text style={styles.needsReviewPill}>Needs review</Text>
-                          ) : null}
-
-                          {positionLabel ? (
-                            <Text style={styles.itemTilePosition}>
-                              {positionLabel}
-                            </Text>
-                          ) : null}
-                        </View>
-
-                        <Text style={styles.itemTileTitle} numberOfLines={2}>
-                          {title}
-                        </Text>
-
-                        {detail ? (
-                          <Text style={styles.itemTileMeta} numberOfLines={3}>
-                            {detail}
-                          </Text>
-                        ) : null}
-                      </TouchableOpacity>
-
-                      {isManual && (
-                        <TouchableOpacity
-                          style={[styles.itemTileEdit]}
-                          onPress={() =>
-                            navigation.navigate("ManualEdit", {
-                              shelfId: id,
-                              itemId: it.id,
-                              isCollectable: false,
-                              initialData: manualItem,
-                            })
-                          }
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.itemTileEditText}>Edit</Text>
-                        </TouchableOpacity>
-
-                      )}
-                      <TouchableOpacity
-                        style={styles.itemTileRemove}
-                        onPress={() => confirmRemove(it.id, title)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.itemTileRemoveText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })}
-              </View>
-            ) : (
-              <Text style={styles.muted}>No items yet.</Text>
-            )}
+            <Button
+              title="Edit"
+              variant="secondary"
+              size="sm"
+              onPress={openShelfEdit}
+              disabled={!shelf}
+            />
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.section}>Camera and Vision AI</Text>
+          {/* Tools / Add Section (Collapsible or Card) */}
+          <Card style={styles.toolsCard}>
+            <Text style={styles.sectionTitle}>Add Items</Text>
+            <View style={styles.toolsRow}>
+              <Button
+                title="Scan / Camera"
+                onPress={captureShelf}
+                icon={<Ionicons name="camera" size={18} color={colors.text} />}
+                style={{ flex: 1, marginRight: spacing.sm }}
+                loading={visionLoading}
+              />
+              <Button
+                title="Manual"
+                variant="secondary"
+                onPress={() => setManual({ ...manual, isVisible: !manual.isVisible })}
+                icon={<Ionicons name="create-outline" size={18} color={colors.text} />}
+                style={{ flex: 1 }}
+              />
+            </View>
 
-            <Text style={styles.section}>Camera and Vision AI</Text>
+            {/* Vision Feedback */}
+            {!!visionMessage && (
+              <View style={styles.visionFeedback}>
+                <Text style={styles.successText}>{visionMessage}</Text>
+              </View>
+            )}
 
-            <View style={styles.scanModeContainer}>
-              <Text style={styles.scanModeLabel}>Mode:</Text>
-              <TouchableOpacity
-                onPress={() => setScanMode('quick')}
-                style={[styles.modeButton, scanMode === 'quick' && styles.modeActive]}
-              >
-                <Text style={[styles.modeButtonText, scanMode === 'quick' && styles.modeTextActive]}>Quick Text</Text>
+            {/* Scan Mode Toggle */}
+            <View style={styles.scanToggleRow}>
+              <TouchableOpacity onPress={() => setScanMode('quick')} style={[styles.toggleOption, scanMode === 'quick' && styles.toggleActive]}>
+                <Text style={[styles.toggleText, scanMode === 'quick' && styles.toggleTextActive]}>Quick Text</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setScanMode('cloud')}
-                style={[
-                  styles.modeButton,
-                  scanMode === 'cloud' && styles.modeActive,
-                  (!user?.isPremium) && styles.modeDisabled
-                ]}
                 disabled={!user?.isPremium}
+                style={[styles.toggleOption, scanMode === 'cloud' && styles.toggleActive, !user?.isPremium && styles.toggleDisabled]}
               >
-                <Text style={[
-                  styles.modeButtonText,
-                  scanMode === 'cloud' && styles.modeTextActive,
-                  (!user?.isPremium) && styles.modeTextDisabled
-                ]}>
+                <Text style={[styles.toggleText, scanMode === 'cloud' && styles.toggleTextActive]}>
                   Cloud AI {user?.isPremium ? '' : '🔒'}
                 </Text>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={[styles.button, styles.primaryButton]}
-              onPress={captureShelf}
-              disabled={visionLoading}
-            >
-              <Text style={styles.buttonText}>
-                {visionLoading ? "Analyzing photo..." : "Capture shelf photo"}
-              </Text>
-            </TouchableOpacity>
+            {/* Manual Entry Form (Conditionally Visible or separate modal in future) */}
+            {manual.isVisible && (
+              <View style={styles.manualForm}>
+                <Input placeholder="Title" value={manual.name} onChangeText={(v) => setManual({ ...manual, name: v })} />
+                <Input placeholder="Type (Book, Game...)" value={manual.type} onChangeText={(v) => setManual({ ...manual, type: v })} />
+                <Input placeholder="Description" value={manual.description} onChangeText={(v) => setManual({ ...manual, description: v })} />
+                <Button title="Add Entry" onPress={addManual} fullWidth />
 
-            {visionLoading && visionMetadata?.igdbRateLimited ? (
-              <Text style={styles.rateLimitNotice}>
-                IGDB is rate-limiting us, this may take a bit longer.
-              </Text>
-            ) : null}
+                <View style={styles.separator} />
 
-            {!!visionMessage && (
-              <Text style={styles.success}>{visionMessage}</Text>
-            )}
+                <Text style={styles.labelSmall}>Search Catalog</Text>
+                <Input
+                  placeholder="Search online..."
+                  value={q}
+                  onChangeText={(v) => {
+                    setQ(v);
+                    if (v.trim().length >= 2) search(v);
+                    else setResults([]);
+                  }}
+                  leftIcon={<Ionicons name="search" size={18} color={colors.textMuted} />}
+                />
 
-            {analysis?.items?.length ? (
-              <View style={styles.analysisBox}>
-                <Text style={styles.sectionSmall}>Most recent detection</Text>
-
-                {analysis.items.slice(0, 6).map((item, idx) => (
-                  <Text key={`${item.name}-${idx}`} style={styles.analysisText}>
-                    - {item.name}
-                    {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
-                    {item.format ? ` [${item.format}]` : ""}
-                    {typeof item.confidence === "number"
-                      ? ` (${Math.round(item.confidence * 100)}%)`
-                      : ""}
-                  </Text>
-                ))}
-
-                {analysis.items.length > 6 ? (
-                  <Text style={styles.muted}>
-                    + {analysis.items.length - 6} more detected
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-            {/* {pendingEdits.length > 0 && (
-            <View style={styles.analysisBox}>
-              <Text style={styles.sectionSmall}>Items needing review</Text>
-              {pendingEdits.map((it, idx ) => (
-                <View key={`${it.name || it.title || idx}-${idx}`} style={{ marginBottom: 8 }}>
-                  <Text style={styles.analysisText}>
-                    ✏️ {it.name || it.title || "Untitled"} {it.author ? `by ${it.author}` : ""}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.smallButton}
-                    onPress={() =>
-                      navigation.navigate("ManualEdit", {
-                        shelfId: id,
-                        itemId: it.id,
-                        isCollectable: !!it.collectable,
-                        initialData: it.collectable || it.manual,
-                        itemId: it.id || it._id || null,     // may be empty for pending edits
-                        isCollectable: false,                 // pending edits are not linked yet
-                        initialData: it,                
-                      })
-                    }
-                  >
-                    <Text style={styles.smallButtonText}>Edit Metadata</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )} */}
-            <Text style={styles.helper}>
-              Photos stay on device until you confirm a capture. Only the selected
-              image is sent securely for recognition.
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.section}>Manually add entry</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Title"
-              placeholderTextColor="#9aa6b2"
-              value={manual.name}
-              onChangeText={(value) => setManual({ ...manual, name: value })}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Type"
-              placeholderTextColor="#9aa6b2"
-              value={manual.type}
-              onChangeText={(value) => setManual({ ...manual, type: value })}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Description"
-              placeholderTextColor="#9aa6b2"
-              value={manual.description}
-              onChangeText={(value) =>
-                setManual({ ...manual, description: value })
-              }
-            />
-
-            <TouchableOpacity
-              style={[styles.button, styles.primaryButton]}
-              onPress={addManual}
-            >
-              <Text style={styles.buttonText}>Add</Text>
-            </TouchableOpacity>
-
-            <Text style={[styles.section, { marginTop: 12 }]}>
-              Search catalog
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Search by title"
-              placeholderTextColor="#9aa6b2"
-              value={q}
-              onChangeText={(value) => {
-                setQ(value);
-
-                if (value.trim().length >= 2) search(value);
-                else setResults([]);
-              }}
-            />
-
-            {results.length ? (
-              <View style={styles.searchResults}>
-                {results.map((item) => (
-                  <View key={item._id} style={styles.searchRow}>
-                    <Text style={styles.itemMeta} numberOfLines={2}>
-                      {item.title}
-
-                      {item.primaryCreator ? ` by ${item.primaryCreator}` : ""}
-
-                      {item.format ? ` [${item.format}]` : ""}
-                    </Text>
-
-                    <TouchableOpacity
-                      style={styles.smallButton}
-                      onPress={() => addCollectable(item._id)}
-                    >
-                      <Text style={styles.smallButtonText}>Add</Text>
-                    </TouchableOpacity>
+                {results.length > 0 && (
+                  <View style={styles.searchResults}>
+                    {results.map(r => (
+                      <TouchableOpacity key={r._id} style={styles.searchResultItem} onPress={() => addCollectable(r._id)}>
+                        <View>
+                          <Text style={styles.resultTitle}>{r.title}</Text>
+                          <Text style={styles.resultSubtitle}>{r.primaryCreator} • {r.year}</Text>
+                        </View>
+                        <Ionicons name="add-circle" size={24} color={colors.primary} />
+                      </TouchableOpacity>
+                    ))}
                   </View>
-                ))}
+                )}
               </View>
-            ) : null}
-          </View>
-        </ScrollView>
+            )}
+          </Card>
 
-        <FooterNav navigation={navigation} active="shelves" />
+          {/* Steam Section (Conditional) */}
+          {isVideoGameShelf && (
+            <Card style={styles.steamCard}>
+              <View style={styles.steamHeader}>
+                <Ionicons name="logo-steam" size={24} color="#FFF" style={{ marginRight: spacing.sm }} />
+                <Text style={styles.sectionTitle}>Steam Library</Text>
+              </View>
+
+              {steamError ? <Text style={styles.errorText}>{steamError}</Text> : null}
+              {steamMessage ? <Text style={styles.successText}>{steamMessage}</Text> : null}
+
+              {steamLoading ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
+              ) : (
+                <View>
+                  <Text style={styles.steamStatus}>
+                    {steamStatus?.steamId ? `Linked as ${steamStatus.personaName}` : 'Not linked'}
+                  </Text>
+
+                  <View style={styles.steamActions}>
+                    {steamStatus?.steamId ? (
+                      <>
+                        <Button title="Preview" onPress={previewSteamLibrary} disabled={steamBusy} variant="ghost" size="sm" />
+                        <Button title="Import" onPress={handleSteamImport} disabled={steamBusy} loading={steamBusy} size="sm" />
+                      </>
+                    ) : (
+                      <Button title="Link Account" onPress={() => navigation.navigate("Account")} variant="secondary" size="sm" />
+                    )}
+                  </View>
+
+                  {steamPreview.length > 0 && (
+                    <View style={styles.previewContainer}>
+                      <Text style={styles.labelSmall}>{steamPreview.length} games found in preview</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </Card>
+          )}
+
+          {/* Items Section */}
+          <View style={styles.itemsSection}>
+            <View style={styles.itemsHeader}>
+              <Text style={styles.sectionTitle}>Collection ({items.length})</Text>
+              {/* Sort logic could go here */}
+            </View>
+
+            {items.length === 0 ? (
+              <EmptyState
+                icon={<Ionicons name="albums-outline" size={48} color={colors.textMuted} />}
+                title="Shelf is empty"
+                description="Add items using the tools above."
+              />
+            ) : (
+              <View style={styles.grid}>
+                {sortedItems.map(item => {
+                  const title = item.collectable?.title || item.manual?.name || item.collectable?.name || "Untitled";
+                  const type = item.collectable?.type || item.manual?.type || shelf?.type || "Item";
+                  const needsReview = needsReviewIds.includes(item.id);
+
+                  return (
+                    <Card key={item.id} style={[styles.itemCard, needsReview && styles.needsReviewCard]} contentStyle={styles.itemContent} onPress={() => {
+                      if (item.collectable) openCollectable(item.collectable);
+                    }}>
+                      <View style={styles.itemIcon}>
+                        <Ionicons name="cube-outline" size={24} color={colors.primary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.itemTitle} numberOfLines={2}>{title}</Text>
+                        <Text style={styles.itemSubtitle}>{type}</Text>
+                        {needsReview && <Text style={styles.reviewLabel}>Needs Review</Text>}
+                      </View>
+                      <TouchableOpacity onPress={() => confirmRemove(item.id, title)} style={{ padding: 4 }}>
+                        <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    </Card>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
+        </ScrollView>
 
         <ShelfVisionModal
           visible={visionOpen}
@@ -1649,394 +1343,196 @@ export default function ShelfDetailScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#0b0f14" },
+  screen: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1 },
+  content: { padding: spacing.md, paddingBottom: 80 },
 
-  container: { flex: 1, backgroundColor: "#0b0f14" },
-
-  content: { padding: 16, paddingBottom: 40 },
-
-  headerAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#1f2d44",
-    backgroundColor: "#121b2d",
-  },
-
-  headerActionText: {
-    color: "#9ec1ff",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-
-  card: {
-    backgroundColor: "transparent",
-
-    borderRadius: 12,
-
-    borderWidth: 0,
-
-    padding: 16,
-
-    marginBottom: 8,
-  },
-
-  title: { fontSize: 22, fontWeight: "700", color: "#e6edf3", marginBottom: 6 },
-
-  shelfHeader: {
-    flexDirection: "row",
-
-    justifyContent: "flex-start",
-
-    alignItems: "center",
-
-    gap: 0,
-
-    marginBottom: 2,
-  },
-
-  scanModeContainer: {
+  header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    backgroundColor: '#121b2d',
-    padding: 4,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
+    marginBottom: spacing.lg,
   },
-  scanModeLabel: {
-    color: '#9aa6b2',
-    marginRight: 8,
-    marginLeft: 8,
-    fontSize: 13,
+  title: {
+    fontFamily: typography.fontFamily.bold,
+    fontSize: typography.sizes['2xl'],
+    color: colors.text,
   },
-  modeButton: {
+  subtitle: {
+    fontFamily: typography.fontFamily.medium,
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+
+  toolsCard: {
+    marginBottom: spacing.lg,
+    backgroundColor: colors.surface,
+  },
+  sectionTitle: {
+    fontFamily: typography.fontFamily.bold,
+    fontSize: typography.sizes.lg,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  toolsRow: {
+    flexDirection: 'row',
+    marginBottom: spacing.md,
+  },
+
+  scanToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md,
+    padding: 2,
+    marginBottom: spacing.md,
+  },
+  toggleOption: {
+    flex: 1,
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    alignItems: 'center',
+    borderRadius: radius.sm,
   },
-  modeActive: {
-    backgroundColor: '#2d3b55',
+  toggleActive: {
+    backgroundColor: colors.primary, // or surface logic
+    backgroundColor: '#3b4b6a', // Slightly lighter
   },
-  modeButtonText: {
-    color: '#9aa6b2',
-    fontSize: 13,
+  toggleText: {
+    color: colors.textSecondary,
+    fontSize: 12,
     fontWeight: '600',
   },
-  modeTextActive: {
-    color: '#9ec1ff',
+  toggleTextActive: {
+    color: '#FFF',
   },
-  modeDisabled: {
+  toggleDisabled: {
     opacity: 0.5,
   },
-  modeTextDisabled: {
-    color: '#555',
+
+  visionFeedback: {
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
   },
 
-  editButton: {
-    paddingVertical: 6,
-
-    paddingHorizontal: 12,
-
-    borderRadius: 8,
-
-    borderWidth: 1,
-
-    borderColor: "rgba(0, 0, 0, 0)",
-
-    backgroundColor: "rgba(0, 0, 0, 0)",
+  manualForm: {
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.md,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: spacing.md,
+  },
+  labelSmall: {
+    color: colors.textSecondary,
+    fontSize: typography.sizes.xs,
+    marginBottom: spacing.xs,
+    textTransform: 'uppercase',
   },
 
-  editButtonText: { color: "#9aa6b2", fontSize: 12, fontWeight: "600" },
-
-  editButtonDisabled: { opacity: 0.4 },
-
-  pill: {
-    alignSelf: "flex-start",
-
-    color: "#9aa6b2",
-
-    borderWidth: 1,
-
-    borderColor: "#223043",
-
-    borderRadius: 999,
-
-    paddingHorizontal: 10,
-
-    paddingVertical: 2,
-
-    marginBottom: 12,
+  searchResults: {
+    marginTop: spacing.sm,
   },
-
-  section: {
-    color: "#9aa6b2",
-
-    fontWeight: "500",
-
-    marginBottom: 8,
-
-    textTransform: "uppercase",
-
+  searchResultItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.sm,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md,
+    marginBottom: spacing.xs,
+  },
+  resultTitle: {
+    fontFamily: typography.fontFamily.bold,
+    color: colors.text,
+    fontSize: 14,
+  },
+  resultSubtitle: {
+    color: colors.textSecondary,
     fontSize: 12,
   },
 
-  sectionSmall: { color: "#9aa6b2", marginBottom: 6, fontSize: 11 },
-
-  itemSortRow: {
-    flexDirection: "row",
-
-    flexWrap: "wrap",
-
-    gap: 8,
-
-    marginBottom: 12,
+  steamCard: {
+    backgroundColor: '#1b2838', // Steam blue-ish
+    marginBottom: spacing.lg,
   },
-
-  itemSortRowDisabled: { opacity: 0.6 },
-
-  itemSortChip: {
-    paddingVertical: 6,
-
-    paddingHorizontal: 12,
-
-    borderRadius: 999,
-
-    borderWidth: 1,
-
-    borderColor: "#223043",
-
-    backgroundColor: "#0b1320",
+  steamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
   },
-
-  itemSortChipDisabled: { opacity: 0.6 },
-
-  itemSortChipActive: { borderColor: "#5a8efc", backgroundColor: "#15223a" },
-
-  itemSortChipText: { color: "#9aa6b2", fontSize: 12 },
-
-  itemSortChipTextDisabled: { color: "#55657a" },
-
-  itemSortChipTextActive: { color: "#7ca6ff" },
-
-  itemGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 8 },
-
-  itemTile: {
-    backgroundColor: "transparent",
-
-    borderRadius: 12,
-
-    borderWidth: 1,
-
-    borderColor: "#223043",
-
-    padding: 12,
-
-    width: "31%",
-
-    minWidth: 160,
-
-    marginBottom: 12,
-
-    flexGrow: 1,
+  steamStatus: {
+    color: '#c5c3c0',
+    marginBottom: spacing.md,
   },
-  itemTileNeedsReview: {
-    borderColor: "#f6c749",
-    backgroundColor: "#18140a",
-  },
-  needsReviewPill: {
-    color: "#f6c749",
-    fontSize: 11,
-    borderWidth: 1,
-    borderColor: "#4a3a12",
-    backgroundColor: "#241d0d",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-  itemTileEdit: {
-    marginTop: 8,
-    alignSelf: "flex-start",
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#3b4b6a",
-    backgroundColor: "#0f1a2a",
-  },
-
-  itemTileEditText: { color: "#9ec1ff", fontSize: 12, fontWeight: "600" },
-  itemTileBody: { gap: 6 },
-
-  itemTileHeader: {
-    flexDirection: "row",
-
-    justifyContent: "space-between",
-
-    alignItems: "center",
-  },
-
-  itemTileType: { color: "#7ca6ff", fontSize: 12, fontWeight: "600" },
-
-  itemTilePosition: { color: "#55657a", fontSize: 11 },
-
-  itemTileTitle: { color: "#e6edf3", fontSize: 15, fontWeight: "600" },
-
-  itemTileMeta: { color: "#9aa6b2", fontSize: 12 },
-
-  itemTileRemove: {
-    marginTop: 10,
-
-    alignSelf: "flex-start",
-
-    paddingVertical: 6,
-
-    paddingHorizontal: 10,
-
-    borderRadius: 8,
-
-    borderWidth: 1,
-
-    borderColor: "#34445d",
-
-    backgroundColor: "#111b2a",
-  },
-
-  itemTileRemoveText: { color: "#ff9aa3", fontSize: 12, fontWeight: "600" },
-
-  button: { alignItems: "center", borderRadius: 10, paddingVertical: 12 },
-
-  primaryButton: { backgroundColor: "#5a8efc" },
-
-  buttonDisabled: { opacity: 0.6 },
-
-  buttonText: { color: "#0b0f14", fontWeight: "700" },
-
-  success: { color: "#a5e3bf", marginTop: 8 },
-
-  rateLimitNotice: {
-    marginTop: 12,
-    color: "#f5c16c",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-
-  helper: { color: "#55657a", fontSize: 12, marginTop: 8 },
-
-  analysisBox: {
-    marginTop: 10,
-
-    backgroundColor: "#121c2b",
-
-    borderRadius: 10,
-
-    padding: 12,
-
-    borderWidth: 1,
-
-    borderColor: "#1d2b3f",
-  },
-
-  analysisText: { color: "#e6edf3", marginBottom: 4, fontSize: 13 },
-
-  input: {
-    backgroundColor: "#0b1320",
-
-    color: "#e6edf3",
-
-    borderColor: "#223043",
-
-    borderWidth: 1,
-
-    borderRadius: 10,
-
-    paddingHorizontal: 12,
-
-    paddingVertical: 10,
-
-    marginBottom: 8,
-  },
-
-  searchResults: { marginTop: 8 },
-
-  searchRow: {
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    justifyContent: "space-between",
-
-    borderWidth: 1,
-
-    borderColor: "#223043",
-
-    borderRadius: 12,
-
-    padding: 12,
-
-    backgroundColor: "#0e1522",
-
-    marginBottom: 8,
-  },
-
-  smallButton: {
-    backgroundColor: "#5a8efc",
-
-    paddingVertical: 6,
-
-    paddingHorizontal: 12,
-
-    borderRadius: 8,
-  },
-
-  primarySmallButton: { backgroundColor: "#5a8efc" },
-
-  steamButton: { backgroundColor: "#1c2a3f" },
-
-  steamButtonText: { color: "#e6edf3" },
-
-  smallButtonText: { color: "#0b0f14", fontWeight: "700" },
-
-  steamStatusRow: {
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    gap: 8,
-
-    marginTop: 8,
-  },
-
-  steamPreviewList: { marginTop: 12, gap: 8 },
-
-  steamPreviewItem: {
-    borderWidth: 1,
-
-    borderColor: "#223043",
-
-    borderRadius: 10,
-
-    padding: 10,
-
-    backgroundColor: "#0e1522",
-  },
-
-  steamPreviewTitle: { color: "#e6edf3", fontWeight: "600", fontSize: 13 },
-
-  steamPreviewMeta: { color: "#55657a", fontSize: 11, marginTop: 2 },
-
   steamActions: {
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    gap: 12,
-
-    marginTop: 12,
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  previewContainer: {
+    marginTop: spacing.md,
   },
 
-  muted: { color: "#9aa6b2" },
+  itemsSection: {
+    flex: 1,
+  },
+  itemsHeader: {
+    marginBottom: spacing.md,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  itemCard: {
+    width: '48%', // Grid column
+    marginBottom: 0,
+  },
+  needsReviewCard: {
+    borderColor: colors.warning,
+    borderWidth: 1,
+  },
+  itemContent: {
+    flex: 1,
+    gap: spacing.sm,
+  },
+  itemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  itemTitle: {
+    fontFamily: typography.fontFamily.bold,
+    fontSize: 14,
+    color: colors.text,
+  },
+  itemSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+  },
+  reviewLabel: {
+    color: colors.warning,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
 
-  error: { color: "#ff9aa3", marginBottom: 12 },
+  errorContainer: {
+    backgroundColor: 'rgba(255, 69, 58, 0.1)',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+  },
+  errorText: {
+    color: colors.error,
+  },
+  successText: {
+    color: colors.success,
+  },
 });

@@ -1,95 +1,130 @@
-import React from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
-import { colors, radii, spacing } from '../../../../shared/theme/tokens'
+import React from 'react';
+import { StyleSheet, Text, View, ActivityIndicator, Pressable } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import { colors, spacing, radius, typography } from '../../theme';
 
-const VARIANT_STYLES = {
-  default: {
-    backgroundColor: '#0d1726',
-    borderColor: colors.border,
-    textColor: colors.text,
-  },
-  primary: {
-    backgroundColor: colors.brand,
-    borderColor: 'transparent',
-    textColor: '#0b0f14',
-  },
-  ghost: {
-    backgroundColor: 'transparent',
-    borderColor: colors.border,
-    textColor: colors.text,
-  },
-  danger: {
-    backgroundColor: colors.danger,
-    borderColor: 'transparent',
-    textColor: '#ffffff',
-  },
-}
+import * as Haptics from 'expo-haptics';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function Button({
-  children,
-  variant = 'default',
-  fullWidth = false,
-  disabled = false,
-  startIcon,
-  endIcon,
-  style,
-  contentStyle,
+  title,
   onPress,
+  variant = 'primary', // primary, secondary, ghost, danger
+  size = 'md', // sm, md, lg
+  disabled = false,
+  loading = false,
+  fullWidth = false,
+  style,
+  textStyle,
+  icon,
 }) {
-  const palette = VARIANT_STYLES[variant] || VARIANT_STYLES.default
-  const baseStyle = [
-    styles.base,
-    { backgroundColor: palette.backgroundColor, borderColor: palette.borderColor },
-    fullWidth && styles.fullWidth,
-    disabled && styles.disabled,
-    style,
-  ]
+  const scale = useSharedValue(1);
 
-  const renderLabel = () => {
-    if (typeof children === 'string' || typeof children === 'number') {
-      return <Text style={[styles.label, { color: palette.textColor }]}>{children}</Text>
+  const getBackgroundColor = () => {
+    if (disabled) return colors.surfaceElevated;
+    switch (variant) {
+      case 'primary': return colors.primary;
+      case 'secondary': return colors.surfaceElevated;
+      case 'ghost': return 'transparent';
+      case 'danger': return colors.error;
+      default: return colors.primary;
     }
-    return children
-  }
+  };
+
+  const getTextColor = () => {
+    if (disabled) return colors.textMuted;
+    switch (variant) {
+      case 'primary': return colors.text;
+      case 'secondary': return colors.text;
+      case 'ghost': return colors.primaryLight;
+      case 'danger': return colors.text;
+      default: return colors.text;
+    }
+  };
+
+  const getBorder = () => {
+    if (variant === 'secondary') return { borderWidth: 1, borderColor: colors.borderLight }; // subtle border for secondary
+    if (variant === 'ghost') return {};
+    return {};
+  };
+
+  const height = { sm: 32, md: 48, lg: 56 }[size];
+  const fontSize = { sm: 12, md: 16, lg: 18 }[size];
+  const paddingHorizontal = { sm: 16, md: 24, lg: 32 }[size];
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: scale.value }],
+    };
+  });
+
+  const handlePressIn = () => {
+    if (disabled || loading) return;
+    scale.value = withSpring(0.96, { damping: 10, stiffness: 300 });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handlePressOut = () => {
+    if (disabled || loading) return;
+    scale.value = withSpring(1, { damping: 10, stiffness: 300 });
+  };
 
   return (
-    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [baseStyle, pressed && !disabled && styles.pressed]}>
-      <View style={[styles.content, contentStyle]}>
-        {startIcon ? <View style={styles.icon}>{startIcon}</View> : null}
-        {renderLabel()}
-        {endIcon ? <View style={styles.icon}>{endIcon}</View> : null}
-      </View>
-    </Pressable>
-  )
+    <AnimatedPressable
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      disabled={disabled || loading}
+      style={[
+        styles.container,
+        {
+          backgroundColor: getBackgroundColor(),
+          height,
+          paddingHorizontal: variant === 'ghost' ? 0 : paddingHorizontal,
+          width: fullWidth ? '100%' : undefined,
+          opacity: disabled ? 0.6 : 1,
+        },
+        getBorder(),
+        style,
+        animatedStyle
+      ]}
+    >
+      {loading ? (
+        <ActivityIndicator color={getTextColor()} />
+      ) : (
+        <View style={styles.content}>
+          <Text
+            style={[
+              styles.text,
+              { color: getTextColor(), fontSize },
+              textStyle,
+            ]}
+          >
+            {icon && <View style={{ marginRight: spacing.sm, marginTop: 2 }}>{icon}</View>}
+            {title}
+          </Text>
+        </View>
+      )}
+    </AnimatedPressable>
+  );
 }
 
 const styles = StyleSheet.create({
-  base: {
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
+  container: {
+    borderRadius: radius.full,
+    justifyContent: 'center',
     alignItems: 'center',
-  },
-  fullWidth: {
-    width: '100%',
-  },
-  disabled: {
-    opacity: 0.6,
-  },
-  pressed: {
-    transform: [{ scale: 0.99 }],
+    flexDirection: 'row',
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  icon: {
-    marginHorizontal: spacing.xs,
-  },
-  label: {
-    fontSize: 16,
+  text: {
+    fontFamily: typography.fontFamily.medium,
     fontWeight: '600',
+    textAlign: 'center', // Ensure text centers nicely
   },
-})
+});

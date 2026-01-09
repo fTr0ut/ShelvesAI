@@ -14,7 +14,7 @@
 
 Add User-Agent header to all requests:
 ```javascript
-const USER_AGENT = 'ShelvesAI/1.0 (contact@yourapp.com)';
+const USER_AGENT = 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)';
 
 const headers = {
   'User-Agent': USER_AGENT,

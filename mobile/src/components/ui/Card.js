@@ -1,76 +1,34 @@
-import React from 'react'
-import { StyleSheet, Text, View } from 'react-native'
-import { colors, radii, shadow, spacing } from '../../../../shared/theme/tokens'
+import React from 'react';
+import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import { colors, spacing, radius, shadows } from '../../theme';
 
-export default function Card({
-  title,
-  subtitle,
-  padding = 'default',
-  actions,
-  children,
-  footer,
-  style,
-  contentStyle,
-}) {
+export default function Card({ children, onPress, style, contentStyle }) {
+  const Container = onPress ? TouchableOpacity : View;
+
   return (
-    <View style={[styles.card, padding === 'compact' ? styles.compact : null, style]}>
-      {(title || subtitle || actions) && (
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            {title ? <Text style={styles.title}>{title}</Text> : null}
-            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-          </View>
-          {actions ? <View style={styles.actions}>{actions}</View> : null}
-        </View>
-      )}
-      {children ? <View style={[styles.body, contentStyle]}>{children}</View> : null}
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
-    </View>
-  )
+    <Container
+      onPress={onPress}
+      activeOpacity={onPress ? 0.7 : 1}
+      style={[styles.card, style]}
+    >
+      <View style={[styles.content, contentStyle]}>
+        {children}
+      </View>
+    </Container>
+  );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.lg,
-    gap: spacing.md,
-    ...shadow.card,
+    marginBottom: spacing.md,
+    overflow: 'hidden',
+    // ...shadows.sm, // Shadows strictly for iOS, elevation for Android (usually handled by platform specific styles or needs View wrapping)
   },
-  compact: {
+  content: {
     padding: spacing.md,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  headerText: {
-    flex: 1,
-    paddingRight: spacing.md,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  subtitle: {
-    marginTop: spacing.xs,
-    color: colors.muted,
-    fontSize: 14,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  body: {
-    gap: spacing.sm,
-  },
-  footer: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    paddingTop: spacing.md,
-  },
-})
+});

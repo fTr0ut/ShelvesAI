@@ -63,10 +63,12 @@ async function fetchJson(url) {
   const controller = AbortController ? new AbortController() : null;
   const timeout = controller ? setTimeout(() => controller.abort(), getTimeout()) : null;
   try {
+    const USER_AGENT = 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)';
+
     const response = await fetch(url, {
       signal: controller ? controller.signal : undefined,
       headers: {
-        'User-Agent': 'CollectorApp/1.0 (johnandrewnichols@gmail.com)',
+        'User-Agent': USER_AGENT,
       },
     });
     if (!response.ok) {
@@ -181,7 +183,7 @@ async function mapWithConcurrency(items, concurrency, mapper) {
   let index = 0;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () =>
     (async function worker() {
-      for (;;) {
+      for (; ;) {
         const i = index++;
         if (i >= items.length) break;
         try {
@@ -259,8 +261,8 @@ async function hydrateDoc(doc) {
           bio: asText(a?.bio),
           links: Array.isArray(a?.links)
             ? a.links
-                .map((l) => ({ title: l?.title || null, url: l?.url || null }))
-                .filter((x) => x.url)
+              .map((l) => ({ title: l?.title || null, url: l?.url || null }))
+              .filter((x) => x.url)
             : [],
         };
       } catch {
@@ -303,7 +305,7 @@ async function hydrateDoc(doc) {
   const subjects =
     Array.isArray(work?.subjects) && work.subjects.length ? work.subjects
       : Array.isArray(doc?.subject) ? doc.subject.slice(0, 25)
-      : [];
+        : [];
 
   const normal = normaliseDoc(doc);
 
@@ -458,7 +460,7 @@ function toCollectionDoc(h) {
 
   const primaryAuthor = pickPrimaryAuthorName(h);
   const publishers = h.edition?.publishers?.length ? h.edition.publishers
-                    : (Array.isArray(h.publishers) ? h.publishers : []);
+    : (Array.isArray(h.publishers) ? h.publishers : []);
   const publishYear = h.publishYear
     || (h.edition?.publish_date ? String(h.edition.publish_date).match(/\b(\d{4})\b/)?.[1] : null);
 

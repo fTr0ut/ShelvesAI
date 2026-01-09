@@ -1,4 +1,9 @@
-import MlkitOcr from 'react-native-mlkit-ocr';
+let MlkitOcr;
+try {
+    MlkitOcr = require('react-native-mlkit-ocr').default;
+} catch (e) {
+    console.warn('react-native-mlkit-ocr not available (running in Expo Go?)', e);
+}
 
 /**
  * Extract text from image using on-device ML Kit
@@ -7,6 +12,9 @@ import MlkitOcr from 'react-native-mlkit-ocr';
  */
 export async function extractTextFromImage(imageUri) {
     try {
+        if (!MlkitOcr) {
+            throw new Error("OCR not available in this environment");
+        }
         const result = await MlkitOcr.detectFromUri(imageUri);
         // result is array of blocks: [{ text, lines, confidence, cornerPoints, boundingBox }]
         // Construct full text

@@ -4,6 +4,15 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { Appearance, Platform } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import Constants from 'expo-constants'
+import {
+  useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter'
+import * as SplashScreen from 'expo-splash-screen'
+
 import LoginScreen from './screens/LoginScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
 import FeedDetailScreen from './screens/FeedDetailScreen'
@@ -16,6 +25,8 @@ import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
+import AboutScreen from './screens/AboutScreen'
+import BottomTabNavigator from './navigation/BottomTabNavigator'
 
 
 export const AuthContext = createContext({
@@ -30,8 +41,10 @@ export const AuthContext = createContext({
 })
 
 const Stack = createNativeStackNavigator()
-
 const TOKEN_STORAGE_KEY = 'token'
+
+SplashScreen.preventAutoHideAsync()
+
 function getExtraConfig() {
   const fromExpoConfig = Constants?.expoConfig?.extra
   if (fromExpoConfig) return fromExpoConfig
@@ -54,6 +67,19 @@ function guessApiBase() {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  })
+
+  useEffect(() => {
+    if (fontsLoaded) {
+      SplashScreen.hideAsync()
+    }
+  }, [fontsLoaded])
+
   const colorScheme = Appearance.getColorScheme()
   const [token, setToken] = useState('')
   const [ready, setReady] = useState(false)
@@ -116,7 +142,7 @@ export default function App() {
     setUser,
   }), [token, apiBase, needsOnboarding, user])
 
-  if (!ready) return null
+  if (!ready || !fontsLoaded) return null
 
   return (
     <AuthContext.Provider value={authValue}>
@@ -133,17 +159,23 @@ export default function App() {
             </>
           ) : (
             <>
-              <Stack.Screen name="Feed" component={SocialFeedScreen} options={{ title: 'Feed' }} />
+              <Stack.Screen name="Main" component={BottomTabNavigator} options={{ headerShown: false }} />
+
+              {/* Detail Screens pushed on top of Tabs */}
               <Stack.Screen name="FeedDetail" component={FeedDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Feed Details' })} />
               <Stack.Screen name="FriendSearch" component={FriendSearchScreen} options={{ title: 'Find Friends' }} />
-              <Stack.Screen name="Shelves" component={ShelvesScreen} options={{ title: 'Shelves' }} />
+
+              {/* Shelf Management */}
               <Stack.Screen name="ShelfCreate" component={ShelfCreateScreen} options={{ title: 'New Shelf' }} />
               <Stack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} options={{ title: 'New Shelf' }} />
               <Stack.Screen name="ShelfDetail" component={ShelfDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Shelf' })} />
               <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} options={({ route }) => ({ title: route.params?.initialName ? `Edit ${route.params.initialName}` : 'Edit Shelf' })} />
               <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Collectable' })} />
+
+              {/* Account/Settings */}
               <Stack.Screen name="Account" component={AccountScreen} options={{ title: 'Account' }} />
-              <Stack.Screen name="ManualEdit" component={ManualEditScreen} options={{ title: 'Edit Metadat' }} />
+              <Stack.Screen name="ManualEdit" component={ManualEditScreen} options={{ title: 'Edit Metadata' }} />
+              <Stack.Screen name="About" component={AboutScreen} options={{ title: 'About' }} />
             </>
           )}
         </Stack.Navigator>
