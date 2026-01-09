@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+﻿import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native'
 import FooterNav from '../components/FooterNav'
-import { AuthContext } from '../App'
+import { AuthContext } from '../context/AuthContext'
 import { apiRequest } from '../services/api'
 
 function formatDate(value) {
@@ -38,7 +38,7 @@ function getItemMeta(entry) {
   } else if (manual) {
     if (manual.type) parts.push(manual.type)
   }
-  return parts.filter(Boolean).join(' � ')
+  return parts.filter(Boolean).join(' • ')
 }
 
 export default function FeedDetailScreen({ route, navigation }) {

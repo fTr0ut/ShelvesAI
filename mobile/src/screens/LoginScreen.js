@@ -1,7 +1,7 @@
 import React, { useContext, useState } from 'react';
 import { View, Text, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { AuthContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import { apiRequest, saveToken } from '../services/api';
 import { colors, spacing, typography } from '../theme';
 import Input from '../components/ui/Input';

@@ -17,7 +17,7 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { AuthContext } from "../App";
+import { AuthContext } from "../context/AuthContext";
 import { apiRequest } from "../services/api";
 import { colors, spacing, typography } from "../theme";
 import Button from "../components/ui/Button";

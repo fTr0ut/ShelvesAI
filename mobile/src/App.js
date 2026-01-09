@@ -29,16 +29,7 @@ import AboutScreen from './screens/AboutScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 
 
-export const AuthContext = createContext({
-  token: '',
-  setToken: () => { },
-  apiBase: '',
-
-  needsOnboarding: false,
-  setNeedsOnboarding: () => { },
-  user: null,
-  setUser: () => { },
-})
+import { AuthContext } from './context/AuthContext'
 
 const Stack = createNativeStackNavigator()
 const TOKEN_STORAGE_KEY = 'token'

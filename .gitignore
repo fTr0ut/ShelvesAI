@@ -33,6 +33,7 @@ build/
 logs/
 *.log
 npm-debug.log*
+*.txt
 
 # Google Cloud credentials (never commit!)
 *-service-account.json

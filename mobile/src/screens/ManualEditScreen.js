@@ -11,7 +11,7 @@ import {
 } from "react-native";
 
 import FooterNav from "../components/FooterNav";
-import { AuthContext } from "../App";
+import { AuthContext } from "../context/AuthContext";
 import { apiRequest } from "../services/api";
 
 export default function ManualEditScreen({ route, navigation }) {

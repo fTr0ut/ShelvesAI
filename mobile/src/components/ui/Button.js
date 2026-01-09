@@ -94,6 +94,7 @@ export default function Button({
         <ActivityIndicator color={getTextColor()} />
       ) : (
         <View style={styles.content}>
+          {icon && <View style={{ marginRight: spacing.sm }}>{icon}</View>}
           <Text
             style={[
               styles.text,
@@ -101,7 +102,6 @@ export default function Button({
               textStyle,
             ]}
           >
-            {icon && <View style={{ marginRight: spacing.sm, marginTop: 2 }}>{icon}</View>}
             {title}
           </Text>
         </View>

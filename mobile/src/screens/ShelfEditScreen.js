@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native"
 import FooterNav from "../components/FooterNav"
-import { AuthContext } from "../App"
+import { AuthContext } from "../context/AuthContext"
 import { apiRequest } from "../services/api"
 
 const VISIBILITY_OPTIONS = [

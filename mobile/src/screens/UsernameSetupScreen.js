@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useMemo, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
-import { AuthContext } from '../App'
+import { AuthContext } from '../context/AuthContext'
 import { apiRequest } from '../services/api'
 
 const MIN_LENGTH = 3

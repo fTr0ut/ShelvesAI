@@ -2,7 +2,7 @@ import React from "react";
 import { View, TouchableOpacity, Text, StyleSheet, Image } from "react-native";
 
 const tabs = [
-  { key: "home", label: "Home", icon: require("../assets/icons/home.png"), route: "Feed" },
+  { key: "home", label: "Home", icon: require("../assets/icons/home.png"), route: "Home" },
   { key: "shelves", label: "Shelves", icon: require("../assets/icons/book.png"), route: "Shelves" },
   { key: "account", label: "Profile", icon: require("../assets/icons/hamburger.png"), route: "Account" },
 ];

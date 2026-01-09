@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { AuthContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import { apiRequest } from '../services/api';
 import { colors, spacing, typography } from '../theme';
 import Input from '../components/ui/Input';
@@ -262,7 +262,7 @@ export default function SocialFeedScreen({ navigation }) {
                       <Ionicons name="ellipse" size={6} color={colors.primary} style={{ marginTop: 6 }} />
                       <Text style={styles.itemText} numberOfLines={1}>
                         <Text style={styles.itemTitle}>{title}</Text>
-                        {summary ? <Text style={styles.itemSummary}> — {summary}</Text> : null}
+                        {summary ? <Text style={styles.itemSummary}>{` — ${summary}`}</Text> : null}
                       </Text>
                     </View>
                   )
@@ -293,9 +293,9 @@ export default function SocialFeedScreen({ navigation }) {
 
     return (
       <EmptyState
-        icon="newspaper-outline"
+        icon={<Ionicons name="newspaper-outline" size={48} color={colors.textMuted} />}
         title="Your feed is empty"
-        message={message}
+        description={message}
         actionLabel={activeFilter === 'friends' ? "Find Friends" : undefined}
         onAction={activeFilter === 'friends' ? () => navigation.navigate('FriendSearch') : undefined}
       />

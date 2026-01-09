@@ -160,11 +160,7 @@ function transformSteamGameToCollectable(game) {
 }
 
 
-import { AuthContext } from "../App";
-
-import { apiRequest } from "../services/api";
-import { AuthContext } from "../App";
-
+import { AuthContext } from "../context/AuthContext";
 import { apiRequest } from "../services/api";
 import { ShelfDetailSyncProvider } from "../hooks/useShelfDetailSync";
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';

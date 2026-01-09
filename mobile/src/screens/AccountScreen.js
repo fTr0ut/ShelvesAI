@@ -13,7 +13,7 @@ import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import { Ionicons } from '@expo/vector-icons';
-import { AuthContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import { apiRequest, clearToken } from '../services/api';
 import useAuthDebug from '../hooks/useAuthDebug';
 import { colors, spacing, typography } from '../theme';
