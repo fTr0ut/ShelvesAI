@@ -13,13 +13,37 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { extractTextFromImage, parseTextToItems } from '../services/ocr';
+
+const CAMERA_QUALITY = 0.6;
+
+async function getBase64Payload(asset) {
+    if (!asset?.uri) return null;
+    if (asset.base64) {
+        return { base64: asset.base64, mime: asset.mimeType || 'image/jpeg' };
+    }
+    try {
+        const processed = await ImageManipulator.manipulateAsync(
+            asset.uri,
+            [],
+            { compress: CAMERA_QUALITY, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+        if (!processed?.base64) return null;
+        return { base64: processed.base64, mime: 'image/jpeg' };
+    } catch (e) {
+        console.warn('Failed to prepare image payload', e);
+        return null;
+    }
+}
 
 export default function ShelfDetailScreen({ route, navigation }) {
     const { id, title } = route.params || {};
-    const { token, apiBase } = useContext(AuthContext);
+    const { token, apiBase, premiumEnabled } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [shelf, setShelf] = useState(null);
@@ -27,8 +51,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [visionLoading, setVisionLoading] = useState(false);
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
+    const shelfType = shelf?.type || route?.params?.type || '';
 
     const loadShelf = useCallback(async () => {
         try {
@@ -136,6 +162,127 @@ export default function ShelfDetailScreen({ route, navigation }) {
         </View>
     );
 
+    const handleCameraScan = useCallback(async () => {
+        if (!id || visionLoading) return;
+
+        const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+        const libraryPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!cameraPermission.granted && !libraryPermission.granted) {
+            Alert.alert('Permission required', 'Camera or photo library permission is required to scan items.');
+            return;
+        }
+
+        let selectedSource = null;
+        if (cameraPermission.granted && libraryPermission.granted) {
+            selectedSource = await new Promise((resolve) => {
+                Alert.alert('Add Photo', 'Choose how you want to add a photo', [
+                    { text: 'Take Photo', onPress: () => resolve('camera') },
+                    { text: 'Choose from Library', onPress: () => resolve('library') },
+                    { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+                ]);
+            });
+            if (!selectedSource) return;
+        } else if (cameraPermission.granted) {
+            selectedSource = 'camera';
+        } else {
+            selectedSource = 'library';
+        }
+
+        const pickerConfig = {
+            base64: true,
+            quality: CAMERA_QUALITY,
+            mediaTypes: ImagePicker.MediaType.Images,
+            allowsMultipleSelection: false,
+            exif: false,
+        };
+
+        const result = selectedSource === 'camera'
+            ? await ImagePicker.launchCameraAsync(pickerConfig)
+            : await ImagePicker.launchImageLibraryAsync(pickerConfig);
+
+        if (result.canceled) return;
+
+        const asset = result.assets?.[0];
+        if (!asset?.uri) {
+            Alert.alert('Error', 'No photo captured.');
+            return;
+        }
+
+        setVisionLoading(true);
+        try {
+            if (premiumEnabled) {
+                const payload = await getBase64Payload(asset);
+                if (!payload?.base64) {
+                    Alert.alert('Error', 'Unable to read the captured photo.');
+                    return;
+                }
+
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${id}/vision`,
+                    method: 'POST',
+                    token,
+                    body: {
+                        imageBase64: `data:${payload.mime};base64,${payload.base64}`,
+                    },
+                });
+
+                if (Array.isArray(data?.items)) {
+                    setItems(data.items);
+                }
+                const detected = data?.analysis?.items?.length || 0;
+                Alert.alert('Scan complete', detected ? `Detected ${detected} items.` : 'No items detected.');
+                return;
+            }
+
+            const { text } = await extractTextFromImage(asset.uri);
+            if (!text || text.trim().length < 5) {
+                Alert.alert('No text found', 'Try a clearer photo or enable premium scanning.');
+                return;
+            }
+
+            const parsedItems = parseTextToItems(text, shelfType);
+            if (!parsedItems.length) {
+                Alert.alert('No items detected', 'Try a clearer photo.');
+                return;
+            }
+
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${id}/catalog-lookup`,
+                method: 'POST',
+                token,
+                body: { items: parsedItems, autoApply: true },
+            });
+
+            if (Array.isArray(data?.items)) {
+                setItems(data.items);
+            }
+            const detected = data?.analysis?.items?.length || parsedItems.length;
+            Alert.alert('Scan complete', `Detected ${detected} items.`);
+        } catch (e) {
+            const requiresPremium = e?.data?.requiresPremium;
+            const message = requiresPremium
+                ? 'Premium is required for cloud vision scanning.'
+                : (e.message || 'Scan failed');
+            Alert.alert('Error', message);
+        } finally {
+            setVisionLoading(false);
+        }
+    }, [apiBase, id, premiumEnabled, shelfType, token, visionLoading]);
+
+    const handleOpenSearch = useCallback(() => {
+        navigation.navigate('ItemSearch', { shelfId: id, shelfType });
+    }, [navigation, id, shelfType]);
+
+    const handleAddItem = useCallback(() => {
+        Alert.alert('Add Item', 'Scan with camera or search catalog', [
+            { text: 'Camera', onPress: handleCameraScan },
+            { text: 'Search', onPress: handleOpenSearch },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    }, [handleCameraScan, handleOpenSearch]);
+
     if (loading && !refreshing) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -198,17 +345,15 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
             {/* FAB for adding items */}
             <TouchableOpacity
-                style={styles.fab}
-                onPress={() => {
-                    // This would open camera/search modal
-                    Alert.alert('Add Item', 'Scan with camera or search catalog', [
-                        { text: 'Camera', onPress: () => { } },
-                        { text: 'Search', onPress: () => { } },
-                        { text: 'Cancel', style: 'cancel' },
-                    ]);
-                }}
+                style={[styles.fab, visionLoading && styles.fabDisabled]}
+                onPress={handleAddItem}
+                disabled={visionLoading}
             >
-                <Ionicons name="add" size={28} color={colors.textInverted} />
+                {visionLoading ? (
+                    <ActivityIndicator size="small" color={colors.textInverted} />
+                ) : (
+                    <Ionicons name="add" size={28} color={colors.textInverted} />
+                )}
             </TouchableOpacity>
         </SafeAreaView>
     );
@@ -344,5 +489,8 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.lg,
+    },
+    fabDisabled: {
+        opacity: 0.6,
     },
 });

@@ -25,7 +25,14 @@ pool.on('error', (err) => {
 
 // Test connection on startup
 pool.query('SELECT NOW()')
-  .then(() => console.log('PostgreSQL connected'))
+  .then(async () => {
+    console.log('PostgreSQL connected');
+    try {
+      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE');
+    } catch (err) {
+      console.warn('Failed to ensure users.is_premium column:', err.message);
+    }
+  })
   .catch((err) => console.error('PostgreSQL connection error:', err));
 
 /**

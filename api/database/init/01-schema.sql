@@ -24,6 +24,7 @@ CREATE TABLE users (
     
     -- Privacy
     is_private BOOLEAN DEFAULT FALSE,
+    is_premium BOOLEAN DEFAULT FALSE,
     
     -- Timestamps
     created_at TIMESTAMPTZ DEFAULT NOW(),

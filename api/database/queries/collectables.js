@@ -141,6 +141,44 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
     return result.rows.map(rowToCamelCase);
 }
 
+/**
+ * Find a collectable using fuzzy matching on title and creator.
+ * Uses PostgreSQL pg_trgm extension for similarity matching.
+ * 
+ * @param {string} title - Item title to match
+ * @param {string} primaryCreator - Creator/author to match
+ * @param {string} kind - Type filter (book, game, movie)
+ * @param {number} threshold - Minimum similarity score (0.0-1.0), default 0.3
+ * @returns {Promise<Object|null>} Best matching collectable or null
+ */
+async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
+    if (!title) return null;
+
+    let sql = `
+    SELECT *,
+           similarity(title, $1) AS title_sim,
+           similarity(COALESCE(primary_creator, ''), $2) AS creator_sim,
+           (similarity(title, $1) * 0.7 + similarity(COALESCE(primary_creator, ''), $2) * 0.3) AS combined_sim
+    FROM collectables
+    WHERE similarity(title, $1) > $3
+  `;
+    const params = [title, primaryCreator || '', threshold];
+
+    if (kind) {
+        sql += ` AND kind = $4`;
+        params.push(kind);
+    }
+
+    sql += ` ORDER BY combined_sim DESC LIMIT 1`;
+
+    const result = await query(sql, params);
+
+    if (result.rows.length && result.rows[0].combined_sim >= threshold) {
+        return rowToCamelCase(result.rows[0]);
+    }
+    return null;
+}
+
 module.exports = {
     findByFingerprint,
     findByLightweightFingerprint,
@@ -148,4 +186,5 @@ module.exports = {
     searchByTitle,
     upsert,
     searchGlobal,
+    fuzzyMatch,
 };

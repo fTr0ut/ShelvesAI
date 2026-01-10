@@ -26,7 +26,7 @@ async function updateAccount(req, res) {
   try {
     const allowedFields = [
       'first_name', 'last_name', 'phone_number',
-      'country', 'city', 'state', 'is_private', 'picture'
+      'country', 'city', 'state', 'is_private', 'is_premium', 'picture'
     ];
 
     const updateQuery = buildUpdateQuery(

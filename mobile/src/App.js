@@ -20,6 +20,7 @@ import ShelvesScreen from './screens/ShelvesScreen'
 import ShelfDetailScreen from './screens/ShelfDetailScreen'
 import ShelfCreateScreen from './screens/ShelfCreateScreen'
 import ShelfEditScreen from './screens/ShelfEditScreen'
+import ItemSearchScreen from './screens/ItemSearchScreen'
 import FriendSearchScreen from './screens/FriendSearchScreen'
 import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
@@ -34,6 +35,7 @@ import { ThemeProvider, useTheme } from './context/ThemeContext'
 
 const Stack = createNativeStackNavigator()
 const TOKEN_STORAGE_KEY = 'token'
+const PREMIUM_STORAGE_KEY = 'premiumEnabled'
 
 SplashScreen.preventAutoHideAsync()
 
@@ -94,20 +96,36 @@ export default function App() {
   const [ready, setReady] = useState(false)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
   const [user, setUser] = useState(null)
+  const [premiumEnabled, setPremiumEnabledState] = useState(false)
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
 
   useEffect(() => {
     (async () => {
       try {
-        const storedToken = await AsyncStorage.getItem(TOKEN_STORAGE_KEY)
+        const [storedToken, storedPremium] = await Promise.all([
+          AsyncStorage.getItem(TOKEN_STORAGE_KEY),
+          AsyncStorage.getItem(PREMIUM_STORAGE_KEY),
+        ])
         if (storedToken) {
           setToken(storedToken)
+        }
+        if (storedPremium !== null) {
+          setPremiumEnabledState(storedPremium === 'true')
         }
       } finally {
         setReady(true)
       }
     })()
+  }, [])
+
+  const setPremiumEnabled = useCallback(async (value) => {
+    setPremiumEnabledState(value)
+    try {
+      await AsyncStorage.setItem(PREMIUM_STORAGE_KEY, value ? 'true' : 'false')
+    } catch (err) {
+      console.warn('Failed to save premium flag', err)
+    }
   }, [])
   useEffect(() => {
     if (!token) {
@@ -130,6 +148,9 @@ export default function App() {
           const missing = !data?.user?.username
           setNeedsOnboarding(missing)
           setUser(data.user || null)
+          if (typeof data?.user?.isPremium === 'boolean') {
+            setPremiumEnabled(data.user.isPremium)
+          }
         }
       } catch (err) {
         // ignore errors and keep existing onboarding state
@@ -141,7 +162,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [apiBase, token])
+  }, [apiBase, token, setPremiumEnabled])
 
   const authValue = useMemo(() => ({
     token,
@@ -151,7 +172,9 @@ export default function App() {
     setUser,
     needsOnboarding,
     setNeedsOnboarding,
-  }), [token, apiBase, needsOnboarding, user])
+    premiumEnabled,
+    setPremiumEnabled,
+  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled])
 
   if (!ready || !fontsLoaded) return null
 
@@ -207,6 +230,7 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} />
             <Stack.Screen name="ShelfDetail" component={ShelfDetailScreen} />
             <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} />
+            <Stack.Screen name="ItemSearch" component={ItemSearchScreen} />
             <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} />
             <Stack.Screen name="Account" component={AccountScreen} />
             <Stack.Screen name="ManualEdit" component={ManualEditScreen} />

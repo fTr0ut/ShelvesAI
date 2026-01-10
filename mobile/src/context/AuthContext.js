@@ -4,6 +4,8 @@ export const AuthContext = createContext({
     token: '',
     setToken: () => { },
     apiBase: '',
+    premiumEnabled: false,
+    setPremiumEnabled: () => { },
 
     needsOnboarding: false,
     setNeedsOnboarding: () => { },

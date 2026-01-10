@@ -34,6 +34,7 @@ logs/
 *.log
 npm-debug.log*
 *.txt
+payload-logs/
 
 # Google Cloud credentials (never commit!)
 *-service-account.json

@@ -6,6 +6,7 @@ const { GameCatalogService } = require("../services/catalog/GameCatalogService")
 const { MovieCatalogService } = require("../services/catalog/MovieCatalogService");
 const { GoogleCloudVisionService } = require('../services/googleCloudVision');
 const { GoogleGeminiService } = require('../services/googleGemini');
+const { VisionPipelineService } = require('../services/visionPipeline');
 
 // PostgreSQL imports
 const { query, transaction } = require('../database/pg');
@@ -13,6 +14,8 @@ const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
+const needsReviewQueries = require('../database/queries/needsReview');
+const { makeCollectableFingerprint } = require('../services/collectables/fingerprint');
 
 
 
@@ -476,102 +479,49 @@ async function updateManualEntry(req, res) {
 }
 
 // Vision processing (simplified - preserves core logic)
+// Vision processing (using VisionPipelineService)
 async function processShelfVision(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { imageBase64, autoApply = true, metadata: requestMetadata = {}, prompt } = req.body ?? {};
+    const { imageBase64, metadata: requestMetadata = {} } = req.body ?? {};
     if (!imageBase64) return res.status(400).json({ error: "imageBase64 is required" });
 
-
-    // Clean image payload
-    const rawImagePayload = String(imageBase64);
-    const explicitMatch = rawImagePayload.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/i);
-    let mimeType = explicitMatch ? explicitMatch[1] : null;
-    let cleanedSource = explicitMatch
-      ? rawImagePayload.slice(explicitMatch[0].length)
-      : rawImagePayload.startsWith("data:image;base64,")
-        ? rawImagePayload.slice("data:image;base64,".length)
-        : rawImagePayload;
-
-    if (!mimeType && rawImagePayload.startsWith("data:image;base64,")) {
-      mimeType = "image/jpeg";
-    }
-
-    const cleaned = cleanedSource.replace(/\s+/g, "");
-    if (!cleaned || !/^[A-Za-z0-9+/]+=*$/.test(cleaned)) {
-      return res.status(400).json({ error: "Invalid base64 payload" });
-    }
-    if (cleaned.length > 8 * 1024 * 1024) {
-      return res.status(400).json({ error: "Image too large; limit to 8MB base64 payload" });
-    }
-
-    const imageDataUrl = `data:${mimeType || "image/jpeg"};base64,${cleaned}`;
-    const normalizedShelfType = String(shelf.type || "").trim().toLowerCase();
-    const visionShelfType = normalizedShelfType === "game" ? "video game" : shelf.type;
-    const systemPrompt = prompt || buildVisionPrompt(visionShelfType);
-
-    // 1. Premium Check & Vision Service Availability
-    // Assuming req.user.isPremium is populated by middleware or similar logic. 
-    // If not present, default to false.
-    const isPremium = !!req.user.isPremium;
-    const visionSvc = getVisionService();
-    const geminiSvc = getGeminiService();
-
-    if (!isPremium) {
+    // Premium Check
+    if (!req.user.isPremium) {
       return res.status(403).json({
         error: "Vision features are premium only.",
         requiresPremium: true
       });
     }
 
-    if (!visionSvc.isConfigured()) {
-      return res.status(503).json({
-        error: "Vision AI not configured (Server Side)",
-        details: "Google Cloud Vision credentials missing"
-      });
-    }
-
-    // 2. Run Vision OCR (Google Cloud Vision)
     console.log(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
-    const visionResult = await visionSvc.detectShelfItems(imageDataUrl, shelf.type);
 
-    // 3. Run Enrichment (Google Gemini)
-    // If Gemini is not configured, we just return the raw OCR items.
-    let finalItems = visionResult.items;
+    // Instantiate new Pipeline
+    const pipeline = new VisionPipelineService();
 
-    if (geminiSvc.isConfigured()) {
-      console.log(`[Vision] Enriching ${visionResult.items.length} items with Gemini`);
-      finalItems = await geminiSvc.enrichShelfItems(visionResult.items, shelf.type);
-    } else {
-      console.warn('[Vision] Gemini not configured, skipping enrichment.');
-    }
+    // Process Image
+    // Note: processImage returns { analysis, results, addedItems, needsReview }
+    const result = await pipeline.processImage(imageBase64, shelf, req.user.id);
 
-    // 4. Response Format
-    // Construct response matching the structure expected by the frontend
-    // The frontend likely expects an 'analysis' object with an 'items' array.
-
-    // Extract and return results
-    const parsed = {
-      shelfConfirmed: true, // Vision assumed successful if we got here
-      items: finalItems
-    };
+    // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
 
     res.json({
-
-      analysis: parsed,
-      visionStatus: { status: 'completed', provider: 'google-vision-gemini' },
-      results: [],
+      analysis: result.analysis,
+      results: result.results,
+      addedItems: result.addedItems,
+      needsReview: result.needsReview,
       items,
-      metadata: requestMetadata,
+      visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
+      metadata: requestMetadata
     });
+
   } catch (err) {
     console.error("Vision analysis failed", err);
     res.status(502).json({ error: "Vision analysis failed" });
   }
-
 }
 
 async function processCatalogLookup(req, res) {
@@ -606,18 +556,6 @@ async function processCatalogLookup(req, res) {
       items: finalItems
     };
 
-    // If autoApply, we might want to save them here. 
-    // The current processShelfVision just returns results and the frontend decides? 
-    // Actually processShelfVision implementation I read (lines 479-574) returns `results: []` and hydrate items. 
-    // It seems it DOES NOT SAVE items in the code I read?? 
-    // Wait, line 560: `const items = await hydrateShelfItems(...)`.
-    // Where are items saved?
-    // Ah, lines 479-574 in `processShelfVision` shown in view_file DOES NOT SAVE items.
-    // It only returns `analysis: parsed` and `items` (existing items).
-    // The frontend must handle the "Add" or "Approve". 
-    // But the task description says "Runs catalog lookup... Returns results". 
-    // I will stick to returning analysis results.
-
     res.json({
       analysis: parsed,
       results: [], // No database changes yet
@@ -627,6 +565,91 @@ async function processCatalogLookup(req, res) {
   } catch (err) {
     console.error("Catalog lookup failed", err);
     res.status(500).json({ error: "Catalog lookup failed" });
+  }
+}
+
+async function listReviewItems(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const items = await needsReviewQueries.listPending(req.user.id, shelf.id);
+    res.json({ items });
+  } catch (err) {
+    console.error('listReviewItems error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function completeReviewItem(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const reviewItem = await needsReviewQueries.getById(req.params.id, req.user.id);
+    if (!reviewItem) return res.status(404).json({ error: "Review item not found" });
+
+    // Merge user edits with raw data
+    // Prioritize user body over rawData
+    const completedData = { ...reviewItem.rawData, ...req.body };
+
+    // RE-MATCH: Run fingerprint + fuzzy match to prevent duplicates
+    // makeLightweightFingerprint(item) helper from existing imports? 
+    // shelvesController imports `makeLightweightFingerprint` at the top (line 1).
+    const lwf = makeLightweightFingerprint(completedData);
+    let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+
+    if (!collectable) {
+      collectable = await collectablesQueries.fuzzyMatch(
+        completedData.title,
+        completedData.primaryCreator,
+        shelf.type
+      );
+    }
+
+    if (!collectable) {
+      // No match found - create new collectable
+      collectable = await collectablesQueries.upsert({
+        ...completedData,
+        kind: shelf.type,
+        fingerprint: makeCollectableFingerprint(completedData), // Imported/Available?
+        lightweightFingerprint: lwf,
+      });
+    }
+
+    // Add to user's shelf
+    const item = await shelvesQueries.addCollectable({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      collectableId: collectable.id,
+    });
+
+    // Mark review item as completed
+    await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
+
+    // Log event
+    await logShelfEvent({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      type: "item.collectable_added",
+      payload: { source: "review", reviewItemId: reviewItem.id },
+    });
+
+    res.json({ item: { id: item.id, collectable, position: item.position, notes: item.notes, rating: item.rating } });
+  } catch (err) {
+    console.error('completeReviewItem error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function dismissReviewItem(req, res) {
+  try {
+    const result = await needsReviewQueries.dismiss(req.params.id, req.user.id);
+    if (!result) return res.status(404).json({ error: "Review item not found" });
+    res.json({ dismissed: true, id: req.params.id });
+  } catch (err) {
+    console.error('dismissReviewItem error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -643,5 +666,9 @@ module.exports = {
   removeShelfItem,
   processShelfVision,
   processCatalogLookup,
+  processCatalogLookup,
   updateManualEntry,
+  listReviewItems,
+  completeReviewItem,
+  dismissReviewItem,
 };

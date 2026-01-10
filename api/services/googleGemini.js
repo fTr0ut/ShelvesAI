@@ -1,16 +1,22 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { logPayload } = require('../utils/payloadLogger');
 
 class GoogleGeminiService {
     constructor() {
         const apiKey = process.env.GOOGLE_GEN_AI_KEY;
         if (apiKey) {
             this.genAI = new GoogleGenerativeAI(apiKey);
-            // Using gemini-1.5-flash for cost efficiency and speed
-            this.model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const configuredModel =
+                process.env.GOOGLE_GEMINI_MODEL ||
+                process.env.GOOGLE_GEN_AI_MODEL ||
+                "gemini-1.0-pro";
+            this.modelName = configuredModel;
+            this.model = this.genAI.getGenerativeModel({ model: configuredModel });
         } else {
             console.warn('[GoogleGeminiService] GOOGLE_GEN_AI_KEY not set.');
             this.genAI = null;
             this.model = null;
+            this.modelName = null;
         }
     }
 
@@ -25,61 +31,115 @@ class GoogleGeminiService {
      * @returns {Promise<Array<Object>>} - List of enriched items with full metadata.
      */
     async enrichShelfItems(itemsRaw, shelfType) {
+        if (!itemsRaw || itemsRaw.length === 0) return [];
+
+        // Map old input format to new expected format if needed, but enrichWithSchema handles basic objects
+        // We will call the new schema-enforced method
+        return this.enrichWithSchema(itemsRaw, shelfType);
+    }
+
+    /**
+     * Enrich minimal items with full collectable metadata using strict schema.
+     * @param {Array<{title, author}>} items - Minimal items from vision
+     * @param {string} shelfType
+     * @returns {Promise<Array<CollectableSchema>>}
+     */
+    async enrichWithSchema(items, shelfType) {
         if (!this.model) {
             throw new Error('Google Gemini client not initialized.');
         }
 
-        if (!itemsRaw || itemsRaw.length === 0) return [];
+        const categoryPrompts = {
+            book: "Include fields: title, primaryCreator (author), publishers (array), year (string), description, isbn (indetifiers object), pageCount (format).",
+            game: "Include fields: title, primaryCreator (developer), publishers (array), year (string), platform (format), description, series.",
+            movie: "Include fields: title, primaryCreator (director), publishers (studio), year (string), format (DVD/Bluray), description, cast (tags).",
+            music: "Include fields: title, primaryCreator (artist), publishers (label), year (string), format, description."
+        };
 
-        const itemNames = itemsRaw.map(i => i.name).join('\n');
+        const specificInstruction = categoryPrompts[shelfType] || categoryPrompts['book'];
+
+        const itemText = items.map(i => {
+            return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
+        }).join('\n');
+
         const prompt = `
-      You are an expert librarian and collector helper. I have a list of text strings extracted from a photo of a ${shelfType} shelf via OCR. 
-      Some text might be fragments, authors, or titles. 
-      
-      Please analyze the following list of strings, correct any obvious OCR errors, and identify the distinct real-world items (books, games, movies, etc.). 
-      For each identified item, provide the following details in JSON format:
-      - title: The canonical title.
-      - author: Primary author, director, or creator.
-      - publisher: Publisher or studio.
-      - year: Release year (string).
-      - format: Physical format if inferable (e.g., Hardcover, Blu-ray), otherwise "Physical".
-      - description: A very brief 1-sentence description.
-      - genre: Primary genre.
-      
-      Return ONLY a valid JSON array of objects. Do not wrap in markdown code blocks.
+        You are an expert cataloguer. Validate and enrich the following items found on a ${shelfType} shelf.
+        
+        Input Items:
+        ${itemText}
 
-      Input Strings:
-      ${itemNames}
-    `;
+        Task:
+        1. Correct OCR errors in titles/names.
+        2. Identify the real-world collectable.
+        3. Output a valid JSON array of objects strictly matching this schema:
+        
+        interface CollectableSchema {
+          title: string;
+          primaryCreator: string | null; // Author, Developer, Director, or Artist
+          year: string | null;
+          kind: "${shelfType}";
+          publishers: string[];
+          tags: string[]; // Genres, notable attributes
+          identifiers: object; // e.g. { isbn: "..." } or { upc: "..." }
+          description: string | null;
+          format: string | null; // e.g. Hardcover, PS5, DVD
+          confidence: number; // 0.0 to 1.0 confidence in identification
+        }
+        
+        ${specificInstruction}
+        
+        Return ONLY valid JSON. No markdown formatting.
+        `;
 
         try {
             const result = await this.model.generateContent(prompt);
             const response = await result.response;
             const text = response.text();
 
+            logPayload({
+                source: 'google-gemini',
+                operation: 'generateContent',
+                payload: {
+                    model: this.modelName,
+                    promptPreview: prompt.substring(0, 200),
+                    text
+                }
+            });
+
             // Clean markdown if present
             const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
             const enrichedItems = JSON.parse(jsonStr);
 
-            // Merge/Validation (ensure we return what's expected)
+            // Validation / Fallback for array
+            if (!Array.isArray(enrichedItems)) {
+                console.warn('[GoogleGeminiService] Response was not an array:', enrichedItems);
+                return [];
+            }
+
             return enrichedItems.map(item => ({
                 ...item,
-                type: shelfType, // Ensure type matches shelf
-                confidence: 0.95,
-                source: 'gemini-enrichment'
+                // Ensure kind is set correctly if AI hallucinated
+                kind: shelfType,
+                // Ensure array fields are arrays
+                publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                identifiers: item.identifiers || {},
+                source: 'gemini-schema-enriched'
             }));
 
         } catch (err) {
-            console.error('[GoogleGeminiService] Enrichment failed:', err);
-            // Fallback: return extracting items as is with basics
-            return itemsRaw.map(i => ({
-                title: i.name,
-                type: shelfType,
+            console.error('[GoogleGeminiService] Schema enrichment failed:', err);
+            // Fallback: return extracting items as is
+            return items.map(i => ({
+                title: i.name || i.title,
+                primaryCreator: i.author,
+                kind: shelfType,
                 confidence: 0.5,
-                notes: "Enrichment failed, raw OCR result."
+                notes: "Enrichment failed"
             }));
         }
     }
+
 }
 
 module.exports = { GoogleGeminiService };

@@ -25,6 +25,11 @@ router.get('/:shelfId/search', ctrl.searchCollectablesForShelf);
 router.post('/:shelfId/vision', requireFields(['imageBase64']), ctrl.processShelfVision);
 router.post('/:shelfId/catalog-lookup', ctrl.processCatalogLookup);
 
+// Review Queue
+router.get('/:shelfId/review', ctrl.listReviewItems);
+router.post('/:shelfId/review/:id/complete', ctrl.completeReviewItem);
+router.delete('/:shelfId/review/:id', ctrl.dismissReviewItem);
+
 
 module.exports = router;
 

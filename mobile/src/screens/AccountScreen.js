@@ -18,12 +18,13 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest, clearToken } from '../services/api';
 
 export default function AccountScreen({ navigation }) {
-  const { token, setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext);
+  const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [premiumSaving, setPremiumSaving] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
@@ -38,13 +39,16 @@ export default function AccountScreen({ navigation }) {
         setFirstName(data.user?.firstName || '');
         setLastName(data.user?.lastName || '');
         setIsPrivate(!!data.user?.isPrivate);
+        if (typeof data.user?.isPremium === 'boolean') {
+          setPremiumEnabled(data.user.isPremium);
+        }
       } catch (e) {
         console.warn('Failed to load account:', e);
       } finally {
         setLoading(false);
       }
     })();
-  }, [apiBase, token]);
+  }, [apiBase, token, setPremiumEnabled]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -54,7 +58,7 @@ export default function AccountScreen({ navigation }) {
         path: '/api/account',
         method: 'PUT',
         token,
-        body: { firstName, lastName, isPrivate },
+        body: { firstName, lastName, isPrivate, isPremium: premiumEnabled },
       });
       Alert.alert('Saved', 'Your profile has been updated');
     } catch (e) {
@@ -62,7 +66,27 @@ export default function AccountScreen({ navigation }) {
     } finally {
       setSaving(false);
     }
-  }, [apiBase, token, firstName, lastName, isPrivate]);
+  }, [apiBase, token, firstName, lastName, isPrivate, premiumEnabled]);
+
+  const handlePremiumToggle = useCallback(async (value) => {
+    const previous = premiumEnabled;
+    setPremiumEnabled(value);
+    try {
+      setPremiumSaving(true);
+      await apiRequest({
+        apiBase,
+        path: '/api/account',
+        method: 'PUT',
+        token,
+        body: { isPremium: value },
+      });
+    } catch (e) {
+      setPremiumEnabled(previous);
+      Alert.alert('Error', e.message);
+    } finally {
+      setPremiumSaving(false);
+    }
+  }, [apiBase, token, premiumEnabled, setPremiumEnabled]);
 
   const handleLogout = useCallback(() => {
     Alert.alert('Log Out', 'Are you sure?', [
@@ -170,6 +194,23 @@ export default function AccountScreen({ navigation }) {
         {/* Settings */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Settings</Text>
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name="star" size={20} color={colors.text} />
+              <View>
+                <Text style={styles.settingsLabel}>Premium Features</Text>
+                <Text style={styles.settingsHint}>Use cloud vision scanning</Text>
+              </View>
+            </View>
+            <Switch
+              value={premiumEnabled}
+              onValueChange={handlePremiumToggle}
+              disabled={premiumSaving}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={premiumEnabled ? colors.primary : colors.surfaceElevated}
+            />
+          </View>
 
           <TouchableOpacity style={styles.settingsRow} onPress={toggleTheme}>
             <View style={styles.settingsLeft}>
@@ -368,6 +409,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   settingsLabel: {
     fontSize: 15,
     color: colors.text,
+  },
+  settingsHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   logoutButton: {
     flexDirection: 'row',
