@@ -95,37 +95,90 @@ class VisionPipelineService {
 
     /**
      * Main entry point: process image and return results
+     * 
+     * Workflow:
+     * 1. Extract items from image (Gemini Vision)
+     * 1b. Early categorize - low confidence OCR items → needs_review immediately
+     * 2. matchCollectable (fingerprint + fuzzy lookup in Postgres)
+     * 3. lookupCatalog (OpenLibrary → Hardcover) for unmatched items
+     * 4. enrichUnresolved (Gemini) - ONLY if both fingerprint AND catalog fail
+     * 5. Final save to shelf + remaining needs_review items
      */
     async processImage(imageBase64, shelf, userId) {
         if (!shelf || !shelf.type) throw new Error('Invalid shelf provided');
+        console.log('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId });
 
         // Step 1: Extract items from image
+        console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
         const rawItems = await this.extractItems(imageBase64, shelf.type);
+        console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
 
-        // Step 2: Lookup in catalog API
-        const catalogResults = await this.lookupCatalog(rawItems, shelf.type);
+        // Step 1b: Early categorize - low confidence OCR items go directly to needs_review
+        console.log('[VisionPipeline] Step 1b: Early categorizing by confidence (threshold:', AUTO_ADD_THRESHOLD, ')...');
+        const { autoAdd: highConfidenceItems, needsReview: lowConfidenceItems } = this.categorizeByConfidence(rawItems);
+        console.log('[VisionPipeline] Step 1b Complete: High confidence:', highConfidenceItems.length, ', Low confidence → needs_review:', lowConfidenceItems.length);
 
-        // Step 3: Enrich unresolved with Gemini
-        // We only enrich items that weren't resolved by the catalog to save costs/latency
-        // But for "needs review" items, we might want Gemini to take a pass at them too if catalog failed
-        const enriched = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
+        // Save low confidence items to review queue immediately
+        if (lowConfidenceItems.length > 0) {
+            console.log('[VisionPipeline] Sending', lowConfidenceItems.length, 'low-confidence items to review queue...');
+            await this.saveToReviewQueue(lowConfidenceItems, userId, shelf.id);
+        }
 
-        // Step 4: Combine and categorize by confidence
-        // resolved items generally have high confidence (e.g. 1.0 from catalog)
-        const allItems = [...catalogResults.resolved, ...enriched];
-        const { autoAdd, needsReview } = this.categorizeByConfidence(allItems);
+        // Step 2: matchCollectable (fingerprint + fuzzy lookup in Postgres)
+        console.log('[VisionPipeline] Step 2: Fingerprint/fuzzy lookup in Postgres for', highConfidenceItems.length, 'items...');
+        const matched = [];
+        const unmatched = [];
+        for (const item of highConfidenceItems) {
+            const collectable = await this.matchCollectable(item, shelf.type);
+            if (collectable) {
+                matched.push({ ...item, collectable, source: 'database-match' });
+            } else {
+                unmatched.push(item);
+            }
+        }
+        console.log('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched:', unmatched.length);
 
-        // Step 5: Process auto-add items
-        const addedItems = await this.saveToShelf(autoAdd, userId, shelf.id, shelf.type);
+        // Step 3: lookupCatalog (OpenLibrary → Hardcover) for unmatched items only
+        console.log('[VisionPipeline] Step 3: Catalog lookup (OpenLibrary/Hardcover) for', unmatched.length, 'unmatched items...');
+        const catalogResults = await this.lookupCatalog(unmatched, shelf.type);
+        console.log('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
 
-        // Step 6: Save needs-review items
-        await this.saveToReviewQueue(needsReview, userId, shelf.id);
+        // Step 4: enrichUnresolved (Gemini) - ONLY if both fingerprint AND catalog failed
+        let enriched = [];
+        if (catalogResults.unresolved.length > 0) {
+            console.log('[VisionPipeline] Step 4: Enriching', catalogResults.unresolved.length, 'items via Gemini (both fingerprint AND catalog failed)...');
+            enriched = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
+            console.log('[VisionPipeline] Step 4 Complete: Gemini enriched', enriched.length, 'items');
+        } else {
+            console.log('[VisionPipeline] Step 4: Skipped - no items need Gemini enrichment');
+        }
+
+        // Step 5: Final save to shelf
+        // Combine all resolved items: DB matches + catalog matches + enriched
+        const allResolvedItems = [
+            ...matched.map(m => ({ ...m, confidence: 1.0 })), // DB matches have full confidence
+            ...catalogResults.resolved,
+            ...enriched
+        ];
+        console.log('[VisionPipeline] Step 5: Saving', allResolvedItems.length, 'resolved items to shelf...');
+        const addedItems = await this.saveToShelf(allResolvedItems, userId, shelf.id, shelf.type);
+        console.log('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
+
+        // Check if any enriched items are still low confidence after enrichment
+        const { autoAdd: finalAutoAdd, needsReview: finalNeedsReview } = this.categorizeByConfidence(enriched);
+        if (finalNeedsReview.length > 0) {
+            console.log('[VisionPipeline] Post-enrichment: Sending', finalNeedsReview.length, 'low-confidence enriched items to review queue...');
+            await this.saveToReviewQueue(finalNeedsReview, userId, shelf.id);
+        }
+
+        const totalNeedsReview = lowConfidenceItems.length + finalNeedsReview.length;
+        console.log('[VisionPipeline] === processImage Complete ===', { added: addedItems.length, needsReview: totalNeedsReview });
 
         return {
-            analysis: { shelfConfirmed: true, items: allItems },
-            results: { added: addedItems.length, needsReview: needsReview.length },
+            analysis: { shelfConfirmed: true, items: allResolvedItems },
+            results: { added: addedItems.length, needsReview: totalNeedsReview },
             addedItems,
-            needsReview
+            needsReview: [...lowConfidenceItems, ...finalNeedsReview]
         };
     }
 
@@ -136,23 +189,31 @@ class VisionPipelineService {
     }
 
     async lookupCatalog(items, shelfType) {
+        console.log('[VisionPipeline.lookupCatalog] Starting catalog lookup for', items.length, 'items, shelfType:', shelfType);
         const catalogService = this.resolveCatalogServiceForShelf(shelfType);
         if (!catalogService) {
-            // If no catalog service (e.g. music/custom), everything is unresolved
+            console.log('[VisionPipeline.lookupCatalog] No catalog service available for shelfType:', shelfType);
             return { resolved: [], unresolved: items };
         }
+        console.log('[VisionPipeline.lookupCatalog] Using catalog service:', catalogService.constructor.name);
 
         if (typeof catalogService.lookupFirstPass === 'function') {
             const resolved = [];
             const unresolved = [];
             try {
+                console.log('[VisionPipeline.lookupCatalog] Calling lookupFirstPass (OpenLibrary -> Hardcover)...');
                 const results = await catalogService.lookupFirstPass(items);
                 const entries = Array.isArray(results) ? results : [];
+                console.log('[VisionPipeline.lookupCatalog] lookupFirstPass returned', entries.length, 'entries');
 
                 for (let index = 0; index < items.length; index++) {
                     const entry = entries[index];
                     const input = entry?.input || items[index];
+                    const itemTitle = input?.title || input?.name || 'Unknown';
+                    console.log(`[VisionPipeline.lookupCatalog] Processing item ${index + 1}/${items.length}:`, itemTitle, '- status:', entry?.status || 'no-entry');
+
                     if (entry && entry.status === 'resolved' && entry.enrichment) {
+                        console.log('[VisionPipeline.lookupCatalog] ✓ Resolved via catalog:', itemTitle);
                         const lwf = makeLightweightFingerprint(input);
                         let collectable = null;
                         if (typeof catalogService.buildCollectablePayload === 'function') {
@@ -191,11 +252,15 @@ class VisionPipelineService {
                             continue;
                         }
                     }
-                    if (input) unresolved.push(input);
+                    if (input) {
+                        console.log('[VisionPipeline.lookupCatalog] ✗ Unresolved, will try Gemini enrichment:', input?.title || input?.name);
+                        unresolved.push(input);
+                    }
                 }
+                console.log('[VisionPipeline.lookupCatalog] Summary: resolved:', resolved.length, 'unresolved:', unresolved.length);
                 return { resolved, unresolved };
             } catch (err) {
-                console.error('[VisionPipelineService.lookupCatalog] lookupFirstPass failed', err);
+                console.error('[VisionPipeline.lookupCatalog] lookupFirstPass failed:', err.message || err);
                 return { resolved: [], unresolved: items };
             }
         }
@@ -258,31 +323,55 @@ class VisionPipelineService {
     }
 
     async matchCollectable(item, shelfType) {
+        const itemTitle = item.title || item.name;
+        console.log('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle);
+
         // 1. Lightweight fingerprint
         const lwf = makeLightweightFingerprint(item);
+        console.log('[VisionPipeline.matchCollectable] Lightweight fingerprint lookup:', lwf);
         let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
 
-        if (collectable) return collectable;
+        if (collectable) {
+            console.log('[VisionPipeline.matchCollectable] ✓ Found via fingerprint:', collectable.id, collectable.title);
+            return collectable;
+        }
+        console.log('[VisionPipeline.matchCollectable] No fingerprint match, trying fuzzy match...');
 
         // 2. Fuzzy Match
-        // Assuming fuzzyMatch signature: (title, creatorName, kind)
         if (collectablesQueries.fuzzyMatch) {
             collectable = await collectablesQueries.fuzzyMatch(item.title, item.primaryCreator, shelfType);
+            if (collectable) {
+                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy match:', collectable.id, collectable.title);
+            } else {
+                console.log('[VisionPipeline.matchCollectable] ✗ No fuzzy match found for:', itemTitle);
+            }
         }
 
         return collectable;
     }
 
     async saveToShelf(items, userId, shelfId, shelfType) {
+        console.log('[VisionPipeline.saveToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
-        for (const item of items) {
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            console.log(`[VisionPipeline.saveToShelf] Item ${i + 1}/${items.length}:`, item.title || item.name);
             try {
-                let collectable = await this.matchCollectable(item, shelfType);
+                // Check if item already has a collectable from Step 2 (database match)
+                let collectable = item.collectable || null;
 
                 if (!collectable) {
+                    // Only call matchCollectable if we don't already have one
+                    collectable = await this.matchCollectable(item, shelfType);
+                } else {
+                    console.log('[VisionPipeline.saveToShelf] Using pre-matched collectable:', collectable.id, collectable.title);
+                }
+
+                if (!collectable) {
+                    console.log('[VisionPipeline.saveToShelf] No existing collectable found, creating new entry...');
                     const title = normalizeString(item.title || item.name);
                     if (!title) {
-                        console.warn('[VisionPipelineService.saveToShelf] missing title', { item });
+                        console.warn('[VisionPipeline.saveToShelf] Skipping - missing title', { item });
                         continue;
                     }
 
@@ -343,9 +432,13 @@ class VisionPipelineService {
                         externalId: externalId || null,
                         fuzzyFingerprints: normalizeArray(item.fuzzyFingerprints),
                     });
+                    console.log('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
+                } else {
+                    console.log('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
                 }
 
                 // Add to shelf
+                console.log('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
                 await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
@@ -353,6 +446,7 @@ class VisionPipelineService {
                 });
 
                 added.push({ ...item, collectableId: collectable.id });
+                console.log('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
             } catch (err) {
                 console.error(`Failed to save item ${item.title}:`, err);
                 // Fail safe: maybe add to review queue instead?
@@ -363,11 +457,19 @@ class VisionPipelineService {
     }
 
     async saveToReviewQueue(items, userId, shelfId) {
-        if (!Array.isArray(items) || items.length === 0) return;
-        if (!this.reviewQueueAvailable) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            console.log('[VisionPipeline.saveToReviewQueue] No items to add to review queue');
+            return;
+        }
+        if (!this.reviewQueueAvailable) {
+            console.log('[VisionPipeline.saveToReviewQueue] Review queue not available, skipping');
+            return;
+        }
 
+        console.log('[VisionPipeline.saveToReviewQueue] Adding', items.length, 'items to review queue');
         for (const item of items) {
             try {
+                console.log('[VisionPipeline.saveToReviewQueue] Adding:', item.title || item.name, '(confidence:', item.confidence, ')');
                 await needsReviewQueries.create({
                     userId,
                     shelfId,

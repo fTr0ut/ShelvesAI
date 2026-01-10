@@ -70,7 +70,7 @@ async function searchByTitle(term, kind = null, limit = 20) {
     const params = [term];
 
     if (kind) {
-        sql += ` AND kind = $2`;
+        sql += ` AND c.kind = $2`;
         params.push(kind);
     }
 
@@ -184,7 +184,7 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
     const params = [q];
 
     if (kind) {
-        sql += ` AND kind = $${params.length + 1}`;
+        sql += ` AND c.kind = $${params.length + 1}`;
         params.push(kind);
     }
 
@@ -222,7 +222,7 @@ async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
     const params = [title, primaryCreator || '', threshold];
 
     if (kind) {
-        sql += ` AND kind = $4`;
+        sql += ` AND c.kind = $4`;
         params.push(kind);
     }
 
