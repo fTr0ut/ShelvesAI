@@ -109,6 +109,32 @@ CREATE INDEX idx_collectables_title_trgm ON collectables USING GIN (title gin_tr
 CREATE INDEX idx_collectables_external_id ON collectables(external_id) WHERE external_id IS NOT NULL;
 
 -- ============================================
+-- MEDIA (Cached images and binaries)
+-- ============================================
+CREATE TABLE media (
+    id SERIAL PRIMARY KEY,
+    collectable_id INTEGER NOT NULL REFERENCES collectables(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    variant TEXT,
+    provider TEXT,
+    source_url TEXT NOT NULL,
+    local_path TEXT,
+    content_type TEXT,
+    size_bytes INTEGER,
+    checksum TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_media_collectable ON media(collectable_id);
+CREATE INDEX idx_media_kind ON media(kind);
+CREATE UNIQUE INDEX idx_media_collectable_url ON media(collectable_id, source_url);
+
+ALTER TABLE collectables
+    ADD COLUMN cover_media_id INTEGER REFERENCES media(id) ON DELETE SET NULL;
+CREATE INDEX idx_collectables_cover_media ON collectables(cover_media_id);
+
+-- ============================================
 -- USER MANUALS (Custom entries not in catalog)
 -- ============================================
 CREATE TABLE user_manuals (
@@ -164,6 +190,25 @@ CREATE TABLE user_collections (
 CREATE INDEX idx_user_collections_shelf ON user_collections(shelf_id);
 CREATE INDEX idx_user_collections_user ON user_collections(user_id);
 CREATE INDEX idx_user_collections_collectable ON user_collections(collectable_id) WHERE collectable_id IS NOT NULL;
+
+-- ============================================
+-- NEEDS REVIEW QUEUE
+-- ============================================
+CREATE TABLE needs_review (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+
+    raw_data JSONB NOT NULL,
+    confidence DECIMAL(3,2),
+    status TEXT DEFAULT 'pending',  -- pending, completed, dismissed
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_needs_review_user_status ON needs_review(user_id, status);
+CREATE INDEX idx_needs_review_shelf_status ON needs_review(shelf_id, status);
 
 -- ============================================
 -- FRIENDSHIPS
@@ -234,6 +279,10 @@ CREATE TRIGGER update_shelves_updated_at
 
 CREATE TRIGGER update_collectables_updated_at
     BEFORE UPDATE ON collectables
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_media_updated_at
+    BEFORE UPDATE ON media
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_friendships_updated_at

@@ -32,6 +32,63 @@ pool.query('SELECT NOW()')
     } catch (err) {
       console.warn('Failed to ensure users.is_premium column:', err.message);
     }
+    try {
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS media (
+          id SERIAL PRIMARY KEY,
+          collectable_id INTEGER NOT NULL REFERENCES collectables(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          variant TEXT,
+          provider TEXT,
+          source_url TEXT NOT NULL,
+          local_path TEXT,
+          content_type TEXT,
+          size_bytes INTEGER,
+          checksum TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )`,
+      );
+      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS local_path TEXT');
+      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS content_type TEXT');
+      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS size_bytes INTEGER');
+      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS checksum TEXT');
+      await pool.query('ALTER TABLE collectables ADD COLUMN IF NOT EXISTS cover_media_id INTEGER');
+      await pool.query(
+        `DO $$
+         BEGIN
+           IF EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_name = 'media' AND column_name = 'bytes'
+           ) THEN
+             ALTER TABLE media ALTER COLUMN bytes DROP NOT NULL;
+           END IF;
+         END $$`,
+      );
+      await pool.query(
+        `DO $$
+         BEGIN
+           IF NOT EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conname = 'collectables_cover_media_id_fkey'
+           ) THEN
+             ALTER TABLE collectables
+               ADD CONSTRAINT collectables_cover_media_id_fkey
+               FOREIGN KEY (cover_media_id)
+               REFERENCES media(id)
+               ON DELETE SET NULL;
+           END IF;
+         END $$`,
+      );
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_media_collectable ON media(collectable_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_media_kind ON media(kind)');
+      await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_media_collectable_url ON media(collectable_id, source_url)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_collectables_cover_media ON collectables(cover_media_id)');
+    } catch (err) {
+      console.warn('Failed to ensure media tables:', err.message);
+    }
   })
   .catch((err) => console.error('PostgreSQL connection error:', err));
 

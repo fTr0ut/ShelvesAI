@@ -3,6 +3,7 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Modal,
     RefreshControl,
     StyleSheet,
     Text,
@@ -21,11 +22,46 @@ import { apiRequest } from '../services/api';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 
 const CAMERA_QUALITY = 0.6;
+const SUPPORTED_VISION_MIME_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/bmp',
+    'image/tiff',
+]);
+
+const SORT_OPTIONS = [
+    { key: 'title_asc', label: 'Title A-Z' },
+    { key: 'title_desc', label: 'Title Z-A' },
+    { key: 'creator_asc', label: 'Author/Creator A-Z' },
+    { key: 'creator_desc', label: 'Author/Creator Z-A' },
+    { key: 'year_desc', label: 'Year' },
+    { key: 'date_desc', label: 'Date Added to Collection' },
+];
+
+function normalizeImageMime(mimeType) {
+    if (!mimeType) return null;
+    const normalized = String(mimeType).toLowerCase();
+    return normalized === 'image/jpg' ? 'image/jpeg' : normalized;
+}
+
+function extractInlineBase64(input) {
+    if (!input || typeof input !== 'string') return null;
+    const match = input.match(/^data:(image\/[a-z0-9.+-]+);base64,(.*)$/i);
+    if (!match) return null;
+    return { mime: normalizeImageMime(match[1]), base64: match[2] };
+}
 
 async function getBase64Payload(asset) {
     if (!asset?.uri) return null;
-    if (asset.base64) {
-        return { base64: asset.base64, mime: asset.mimeType || 'image/jpeg' };
+    const inline = extractInlineBase64(asset.base64);
+    const rawBase64 = inline?.base64 || asset.base64 || null;
+    const rawMime = inline?.mime || normalizeImageMime(asset.mimeType);
+    const hasSupportedMime = rawMime && SUPPORTED_VISION_MIME_TYPES.has(rawMime);
+
+    if (rawBase64 && hasSupportedMime) {
+        return { base64: rawBase64.replace(/\s+/g, ''), mime: rawMime };
     }
     try {
         const processed = await ImageManipulator.manipulateAsync(
@@ -37,6 +73,9 @@ async function getBase64Payload(asset) {
         return { base64: processed.base64, mime: 'image/jpeg' };
     } catch (e) {
         console.warn('Failed to prepare image payload', e);
+        if (rawBase64) {
+            return { base64: rawBase64.replace(/\s+/g, ''), mime: rawMime || 'image/jpeg' };
+        }
         return null;
     }
 }
@@ -52,6 +91,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [visionLoading, setVisionLoading] = useState(false);
+    const [sortKey, setSortKey] = useState('date_desc');
+    const [sortOpen, setSortOpen] = useState(false);
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
@@ -103,14 +144,89 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ]);
     }, [apiBase, id, token]);
 
-    const filteredItems = useMemo(() => {
-        if (!searchQuery.trim()) return items;
-        const q = searchQuery.toLowerCase();
-        return items.filter(item => {
-            const title = item.collectable?.title || item.manual?.title || item.title || '';
-            return title.toLowerCase().includes(q);
+    const visibleItems = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        const base = query
+            ? items.filter(item => {
+                const title = item.collectable?.title || item.manual?.title || item.title || '';
+                return title.toLowerCase().includes(query);
+            })
+            : [...items];
+
+        const normalizeText = (value) => String(value || '').trim();
+        const compareText = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+        const parseYear = (value) => {
+            if (!value) return null;
+            const match = String(value).match(/\b(\d{4})\b/);
+            return match ? parseInt(match[1], 10) : null;
+        };
+
+        const getTitle = (item) => normalizeText(item.collectable?.title || item.manual?.title || item.title);
+        const getCreator = (item) => normalizeText(item.collectable?.author || item.collectable?.primaryCreator || item.manual?.author);
+        const getYear = (item) => parseYear(item.collectable?.year || item.manual?.year || item.collectable?.publishYear || item.collectable?.releaseYear);
+        const getCreatedAt = (item) => {
+            const raw = item.createdAt || item.created_at;
+            const value = raw ? new Date(raw).getTime() : 0;
+            return Number.isFinite(value) ? value : 0;
+        };
+
+        const compareNullableText = (a, b, direction = 1) => {
+            if (!a && !b) return 0;
+            if (!a) return 1;
+            if (!b) return -1;
+            return compareText(a, b) * direction;
+        };
+
+        const compareWithFallback = (primary, secondary, direction = 1) => {
+            const first = compareNullableText(primary, secondary, direction);
+            if (first !== 0) return first;
+            return 0;
+        };
+
+        base.sort((a, b) => {
+            const titleA = getTitle(a);
+            const titleB = getTitle(b);
+            const creatorA = getCreator(a);
+            const creatorB = getCreator(b);
+
+            switch (sortKey) {
+                case 'title_asc':
+                    return compareWithFallback(titleA, titleB, 1);
+                case 'title_desc':
+                    return compareWithFallback(titleA, titleB, -1);
+                case 'creator_asc': {
+                    const primary = compareNullableText(creatorA, creatorB, 1);
+                    return primary !== 0 ? primary : compareNullableText(titleA, titleB, 1);
+                }
+                case 'creator_desc': {
+                    const primary = compareNullableText(creatorA, creatorB, -1);
+                    return primary !== 0 ? primary : compareNullableText(titleA, titleB, -1);
+                }
+                case 'year_desc': {
+                    const yearA = getYear(a);
+                    const yearB = getYear(b);
+                    if (yearA == null && yearB == null) {
+                        return compareNullableText(titleA, titleB, 1);
+                    }
+                    if (yearA == null) return 1;
+                    if (yearB == null) return -1;
+                    return yearB - yearA;
+                }
+                case 'date_desc': {
+                    const dateA = getCreatedAt(a);
+                    const dateB = getCreatedAt(b);
+                    if (dateA === dateB) {
+                        return compareNullableText(titleA, titleB, 1);
+                    }
+                    return dateB - dateA;
+                }
+                default:
+                    return compareNullableText(titleA, titleB, 1);
+            }
         });
-    }, [items, searchQuery]);
+
+        return base;
+    }, [items, searchQuery, sortKey]);
 
     const getItemInfo = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
@@ -191,7 +307,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         const pickerConfig = {
             base64: true,
             quality: CAMERA_QUALITY,
-            mediaTypes: ImagePicker.MediaType.Images,
+            mediaTypes: ['images'],
             allowsMultipleSelection: false,
             exif: false,
         };
@@ -283,6 +399,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ]);
     }, [handleCameraScan, handleOpenSearch]);
 
+    const sortLabel = useMemo(() => {
+        const match = SORT_OPTIONS.find(option => option.key === sortKey);
+        return match ? match.label : 'Sort';
+    }, [sortKey]);
+
     if (loading && !refreshing) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -309,9 +430,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 </TouchableOpacity>
             </View>
 
-            {/* Search */}
-            {items.length > 5 && (
-                <View style={styles.searchContainer}>
+            {/* Search + Sort */}
+            <View style={[styles.controlsRow, items.length > 5 ? null : styles.controlsRowRight]}>
+                {items.length > 5 && (
                     <View style={styles.searchBox}>
                         <Ionicons name="search" size={18} color={colors.textMuted} />
                         <TextInput
@@ -322,12 +443,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
                             onChangeText={setSearchQuery}
                         />
                     </View>
-                </View>
-            )}
+                )}
+                <TouchableOpacity
+                    style={styles.sortButton}
+                    onPress={() => setSortOpen(true)}
+                    accessibilityLabel="Sort items"
+                >
+                    <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
+                    <Text style={styles.sortButtonText} numberOfLines={1}>{sortLabel}</Text>
+                </TouchableOpacity>
+            </View>
 
             {/* Items List */}
             <FlatList
-                data={filteredItems}
+                data={visibleItems}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderItem}
                 contentContainerStyle={styles.listContent}
@@ -355,6 +484,47 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     <Ionicons name="add" size={28} color={colors.textInverted} />
                 )}
             </TouchableOpacity>
+
+            <Modal
+                visible={sortOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setSortOpen(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setSortOpen(false)}
+                >
+                    <TouchableOpacity activeOpacity={1} style={styles.sortModal}>
+                        <Text style={styles.sortModalTitle}>Sort by</Text>
+                        {SORT_OPTIONS.map(option => {
+                            const isSelected = option.key === sortKey;
+                            return (
+                                <TouchableOpacity
+                                    key={option.key}
+                                    style={[styles.sortOption, isSelected && styles.sortOptionSelected]}
+                                    onPress={() => {
+                                        setSortKey(option.key);
+                                        setSortOpen(false);
+                                    }}
+                                >
+                                    <Text style={[styles.sortOptionText, isSelected && styles.sortOptionTextSelected]}>
+                                        {option.label}
+                                    </Text>
+                                    {isSelected ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
+                                </TouchableOpacity>
+                            );
+                        })}
+                        <TouchableOpacity
+                            style={styles.sortCancel}
+                            onPress={() => setSortOpen(false)}
+                        >
+                            <Text style={styles.sortCancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -407,9 +577,15 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         ...shadows.sm,
     },
-    searchContainer: {
+    controlsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
         paddingHorizontal: spacing.md,
         paddingBottom: spacing.sm,
+    },
+    controlsRowRight: {
+        justifyContent: 'flex-end',
     },
     searchBox: {
         flexDirection: 'row',
@@ -420,11 +596,27 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         height: 40,
         gap: spacing.sm,
         ...shadows.sm,
+        flex: 1,
     },
     searchInput: {
         flex: 1,
         fontSize: 14,
         color: colors.text,
+    },
+    sortButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        height: 40,
+        gap: spacing.xs,
+        ...shadows.sm,
+        maxWidth: 220,
+    },
+    sortButtonText: {
+        fontSize: 12,
+        color: colors.textMuted,
     },
     listContent: {
         padding: spacing.md,
@@ -492,5 +684,58 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     },
     fabDisabled: {
         opacity: 0.6,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: spacing.md,
+    },
+    sortModal: {
+        width: '100%',
+        maxWidth: 360,
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        ...shadows.lg,
+    },
+    sortModalTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.textMuted,
+        marginBottom: spacing.sm,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    sortOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.sm,
+        borderRadius: radius.md,
+    },
+    sortOptionSelected: {
+        backgroundColor: colors.primary + '15',
+    },
+    sortOptionText: {
+        fontSize: 15,
+        color: colors.text,
+    },
+    sortOptionTextSelected: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    sortCancel: {
+        marginTop: spacing.sm,
+        paddingVertical: spacing.sm,
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    sortCancelText: {
+        fontSize: 14,
+        color: colors.textMuted,
     },
 });

@@ -1,7 +1,7 @@
 exports.up = async function (knex) {
     await knex.schema.createTable('needs_review', (table) => {
         table.increments('id').primary();
-        table.integer('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+        table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
         table.integer('shelf_id').notNullable().references('id').inTable('shelves').onDelete('CASCADE');
         table.jsonb('raw_data').notNullable();
         table.decimal('confidence', 3, 2);

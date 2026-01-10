@@ -205,7 +205,9 @@ router.put("/:collectableId", async (req, res) => {
       values
     );
 
-    res.json({ collectable: rowToCamelCase(result.rows[0]) });
+    const updated = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    const hydrated = updated ? await collectablesQueries.findById(updated.id) : null;
+    res.json({ collectable: hydrated || updated });
   } catch (err) {
     console.error('PUT /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });

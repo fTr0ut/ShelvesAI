@@ -1,9 +1,9 @@
-const { GoogleCloudVisionService } = require('./googleCloudVision');
 const { GoogleGeminiService } = require('./googleGemini');
+// const { GoogleCloudVisionService } = require('./googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
-const { makeLightweightFingerprint } = require('./collectables/fingerprint');
+const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./collectables/fingerprint');
 
 // Catalog Services
 const { BookCatalogService } = require('./catalog/BookCatalogService');
@@ -13,10 +13,63 @@ const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 // Configurable threshold (default 90%)
 const AUTO_ADD_THRESHOLD = parseFloat(process.env.VISION_AUTO_ADD_THRESHOLD || '0.9');
 
+function normalizeString(value) {
+    if (value == null) return '';
+    return String(value).trim();
+}
+
+function normalizeStringArray(...values) {
+    const out = [];
+    values.forEach((value) => {
+        if (!value) return;
+        if (Array.isArray(value)) {
+            value.forEach((entry) => out.push(entry));
+        } else {
+            out.push(value);
+        }
+    });
+    const normalized = out
+        .map((entry) => normalizeString(entry))
+        .filter(Boolean);
+    return Array.from(new Set(normalized));
+}
+
+function normalizeArray(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.filter(Boolean);
+    return [value];
+}
+
+function normalizeIdentifiers(value) {
+    if (!value) return {};
+    if (value instanceof Map) return Object.fromEntries(value.entries());
+    if (Array.isArray(value)) return {};
+    if (typeof value === 'object') return value;
+    return {};
+}
+
+function pickCoverUrl(images, fallback) {
+    if (fallback) return fallback;
+    if (!Array.isArray(images)) return null;
+    for (const image of images) {
+        const candidate = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
+        if (candidate) return candidate;
+    }
+    return null;
+}
+
+function isMissingRelationError(err, tableName) {
+    if (!err) return false;
+    if (err.code === '42P01') return true;
+    const message = String(err.message || err);
+    return tableName ? message.includes(tableName) : false;
+}
+
 class VisionPipelineService {
     constructor() {
-        this.visionService = new GoogleCloudVisionService();
         this.geminiService = new GoogleGeminiService();
+        // this.visionService = new GoogleCloudVisionService();
+        this.reviewQueueAvailable = true;
 
         // Initialize catalogs
         this.catalogs = {
@@ -77,12 +130,8 @@ class VisionPipelineService {
     }
 
     async extractItems(imageBase64, shelfType) {
-        // GCV Detect
-        const detectionResult = await this.visionService.detectShelfItems(imageBase64, shelfType);
-        // The service now handles parsing internally via the new parseToItems method if we use detectShelfItems correctly
-        // But detectShelfItems returns { items: [...] }. 
-        // We really want to ensure we're getting the parsed list.
-        // GoogleCloudVisionService.detectShelfItems calls parseDocumentToItems -> parseToItems internally.
+        // Gemini Vision Detect (Cloud Vision temporarily disabled)
+        const detectionResult = await this.geminiService.detectShelfItemsFromImage(imageBase64, shelfType);
         return detectionResult.items || [];
     }
 
@@ -93,42 +142,87 @@ class VisionPipelineService {
             return { resolved: [], unresolved: items };
         }
 
-        // We need a specific lookupFirstPass or similar bulk method on catalog services.
-        // Assuming they support something like `findMany` or we loop. 
-        // For efficiency, let's assume we loop for now or they implement `lookupFirstPass`.
-        // Since `lookupFirstPass` was mentioned in the spec but might not exist, I'll implement a basic loop here.
+        if (typeof catalogService.lookupFirstPass === 'function') {
+            const resolved = [];
+            const unresolved = [];
+            try {
+                const results = await catalogService.lookupFirstPass(items);
+                const entries = Array.isArray(results) ? results : [];
+
+                for (let index = 0; index < items.length; index++) {
+                    const entry = entries[index];
+                    const input = entry?.input || items[index];
+                    if (entry && entry.status === 'resolved' && entry.enrichment) {
+                        const lwf = makeLightweightFingerprint(input);
+                        let collectable = null;
+                        if (typeof catalogService.buildCollectablePayload === 'function') {
+                            collectable = catalogService.buildCollectablePayload(entry, input, lwf);
+                        }
+
+                        if (collectable) {
+                            resolved.push({
+                                ...collectable,
+                                kind: shelfType,
+                                confidence: 1.0,
+                                source: 'catalog-match',
+                            });
+                            continue;
+                        }
+
+                        const fallbackTitle = normalizeString(
+                            entry.enrichment?.title || input?.title || input?.name,
+                        );
+                        if (fallbackTitle) {
+                            resolved.push({
+                                title: fallbackTitle,
+                                primaryCreator:
+                                    normalizeString(
+                                        entry.enrichment?.primaryCreator ||
+                                        entry.enrichment?.author ||
+                                        input?.author ||
+                                        input?.primaryCreator,
+                                    ) || null,
+                                year: entry.enrichment?.year || input?.year || null,
+                                description: entry.enrichment?.description || input?.description || null,
+                                kind: shelfType,
+                                confidence: 0.9,
+                                source: 'catalog-match',
+                            });
+                            continue;
+                        }
+                    }
+                    if (input) unresolved.push(input);
+                }
+                return { resolved, unresolved };
+            } catch (err) {
+                console.error('[VisionPipelineService.lookupCatalog] lookupFirstPass failed', err);
+                return { resolved: [], unresolved: items };
+            }
+        }
+
+        if (typeof catalogService.search !== 'function') {
+            console.warn('[VisionPipelineService.lookupCatalog] catalog service missing lookup method');
+            return { resolved: [], unresolved: items };
+        }
 
         const resolved = [];
         const unresolved = [];
 
         for (const item of items) {
-            // Basic lookup by title/author
-            // This logic depends heavily on the CatalogService signatures.
-            // BookCatalogService likely has search(title, author). 
             try {
-                // naive first match
-                const results = await catalogService.search(item.title);
-                // filter by author if present to be sure? 
-                // For now, let's just say if we get a High Confidence match from catalog, use it.
-                // Real implementation would be more robust.
-
-                // SIMULATION: If 0 results, unresolved. If results, unresolved (let Gemini confirm?) or resolved?
-                // The specific requirement: "Items with a result from the catalog service ... should be automatically added"
-
+                const results = await catalogService.search(item.title || item.name);
                 if (results && results.length > 0) {
-                    // Take top result
                     const match = results[0];
-                    // Map to schema
                     resolved.push({
-                        ...item, // keep original OCR text potentially?
-                        title: match.title,
-                        primaryCreator: match.authors ? match.authors.join(', ') : (match.developer || match.director),
+                        ...item,
+                        title: match.title || item.title || item.name,
+                        primaryCreator: match.authors ? match.authors.join(', ') : (match.developer || match.director || item.author || item.primaryCreator || null),
                         year: match.publishedDate ? match.publishedDate.substring(0, 4) : match.releaseDate,
-                        confidence: 1.0, // Catalog match deemed high confidence
+                        confidence: 1.0,
                         source: 'catalog-match',
                         catalogId: match.id,
                         description: match.description,
-                        image: match.imageLinks?.thumbnail || match.cover?.url
+                        image: match.imageLinks?.thumbnail || match.cover?.url,
                     });
                 } else {
                     unresolved.push(item);
@@ -186,17 +280,68 @@ class VisionPipelineService {
                 let collectable = await this.matchCollectable(item, shelfType);
 
                 if (!collectable) {
-                    // Create new
+                    const title = normalizeString(item.title || item.name);
+                    if (!title) {
+                        console.warn('[VisionPipelineService.saveToShelf] missing title', { item });
+                        continue;
+                    }
+
+                    const primaryCreator = normalizeString(
+                        item.primaryCreator || item.author || item.creator,
+                    );
+                    const kind = normalizeString(item.kind || shelfType) || shelfType;
+                    const year = normalizeString(item.year || item.releaseYear);
+                    const publishers = normalizeStringArray(item.publishers, item.publisher);
+                    const tags = normalizeStringArray(item.tags, item.genre);
+                    const creators = normalizeStringArray(item.creators, primaryCreator);
+                    const identifiers = normalizeIdentifiers(item.identifiers);
+                    const images = normalizeArray(item.images);
+                    const sources = normalizeArray(item.sources);
+                    const coverUrl = pickCoverUrl(
+                        images,
+                        normalizeString(
+                            item.coverUrl ||
+                            item.coverImage ||
+                            item.image ||
+                            item.urlCoverFront ||
+                            item.urlCoverBack,
+                        ),
+                    );
+                    const externalId = normalizeString(item.externalId || item.catalogId);
+
+                    const fingerprint = item.fingerprint || makeCollectableFingerprint({
+                        title,
+                        primaryCreator: primaryCreator || null,
+                        releaseYear: year || null,
+                        mediaType: kind,
+                        format: item.format,
+                        platforms: item.systemName ? [item.systemName] : item.platforms || item.platform,
+                    });
+
+                    const lightweightFingerprint = item.lightweightFingerprint || makeLightweightFingerprint({
+                        title,
+                        primaryCreator: primaryCreator || null,
+                        kind,
+                    });
+
                     collectable = await collectablesQueries.upsert({
-                        title: item.title,
-                        primaryCreator: item.primaryCreator,
-                        kind: shelfType,
-                        year: item.year,
-                        description: item.description,
-                        // lightweightFingerprint generated in upsert or we pass it? 
-                        // queries usually handle generation if missing, but let's pass if we have it
-                        lightweightFingerprint: makeLightweightFingerprint(item),
-                        // ... other fields
+                        fingerprint,
+                        lightweightFingerprint,
+                        kind,
+                        title,
+                        subtitle: normalizeString(item.subtitle) || null,
+                        description: normalizeString(item.description) || null,
+                        primaryCreator: primaryCreator || null,
+                        creators,
+                        publishers,
+                        year: year || null,
+                        tags,
+                        identifiers,
+                        images,
+                        coverUrl,
+                        sources,
+                        externalId: externalId || null,
+                        fuzzyFingerprints: normalizeArray(item.fuzzyFingerprints),
                     });
                 }
 
@@ -218,13 +363,25 @@ class VisionPipelineService {
     }
 
     async saveToReviewQueue(items, userId, shelfId) {
+        if (!Array.isArray(items) || items.length === 0) return;
+        if (!this.reviewQueueAvailable) return;
+
         for (const item of items) {
-            await needsReviewQueries.create({
-                userId,
-                shelfId,
-                rawData: item,
-                confidence: item.confidence
-            });
+            try {
+                await needsReviewQueries.create({
+                    userId,
+                    shelfId,
+                    rawData: item,
+                    confidence: item.confidence
+                });
+            } catch (err) {
+                if (isMissingRelationError(err, 'needs_review')) {
+                    this.reviewQueueAvailable = false;
+                    console.warn('[VisionPipelineService] needs_review table missing; skipping review queue.');
+                    break;
+                }
+                throw err;
+            }
         }
     }
 }

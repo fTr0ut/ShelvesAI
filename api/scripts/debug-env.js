@@ -8,6 +8,8 @@ console.log('GOOGLE_GEN_AI_KEY set:', !!process.env.GOOGLE_GEN_AI_KEY);
 if (process.env.GOOGLE_GEN_AI_KEY) {
     console.log('GOOGLE_GEN_AI_KEY length:', process.env.GOOGLE_GEN_AI_KEY.length);
 }
+console.log('GOOGLE_GEMINI_TEXT_MODEL:', process.env.GOOGLE_GEMINI_TEXT_MODEL);
+console.log('GOOGLE_GEMINI_VISION_MODEL:', process.env.GOOGLE_GEMINI_VISION_MODEL);
 
 console.log('GOOGLE_APPLICATION_CREDENTIALS set:', !!process.env.GOOGLE_APPLICATION_CREDENTIALS);
 console.log('GOOGLE_APPLICATION_CREDENTIALS value:', process.env.GOOGLE_APPLICATION_CREDENTIALS);

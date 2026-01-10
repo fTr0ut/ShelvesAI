@@ -7,6 +7,7 @@ import {
     View,
     StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 
@@ -21,18 +22,44 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const isManual = !collectable?.title && manual?.title;
     const source = isManual ? manual : collectable;
 
+    const normalizeList = (value) => {
+        if (!value) return [];
+        if (Array.isArray(value)) return value.filter(Boolean);
+        if (typeof value === 'string') return value.split(',').map(v => v.trim()).filter(Boolean);
+        return [];
+    };
+
     const title = source?.title || source?.name || 'Untitled';
     const subtitle = source?.author || source?.primaryCreator || source?.publisher || '';
     const type = source?.type || 'Item';
-    const description = source?.description || item?.notes || '';
+    const description = source?.description || source?.overview || item?.notes || '';
+    const publishers = [
+        ...normalizeList(source?.publisher),
+        ...normalizeList(source?.publishers),
+    ];
+    const publisher = publishers.length ? Array.from(new Set(publishers)).join(', ') : null;
+    const yearRaw = source?.year || source?.publishYear || source?.releaseYear || source?.publishDate || null;
+    const year = yearRaw != null ? String(yearRaw) : null;
+    const tagList = [
+        ...normalizeList(source?.tags),
+        ...normalizeList(source?.genre),
+        ...normalizeList(source?.subjects),
+    ];
+    const tags = tagList.length ? Array.from(new Set(tagList)).join(', ') : null;
+    const isbn = source?.isbn
+        || source?.isbn13
+        || source?.isbn10
+        || (Array.isArray(source?.identifiers?.isbn13) ? source.identifiers.isbn13[0] : null)
+        || (Array.isArray(source?.identifiers?.isbn10) ? source.identifiers.isbn10[0] : null);
 
     const metadata = [
         { label: 'Type', value: type },
         { label: 'Author', value: source?.author || source?.primaryCreator },
-        { label: 'Publisher', value: source?.publisher },
-        { label: 'Year', value: source?.year || source?.releaseYear },
+        { label: 'Publisher', value: publisher },
+        { label: 'Year', value: year },
         { label: 'Format', value: source?.format },
-        { label: 'ISBN', value: source?.isbn },
+        { label: 'ISBN', value: isbn },
+        { label: 'Tags', value: tags },
     ].filter(m => m.value);
 
     const getIconForType = (t) => {
@@ -46,7 +73,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     return (
-        <View style={styles.screen}>
+        <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
             {/* Header */}
@@ -76,14 +103,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
                 </View>
 
-                {/* Description */}
-                {description ? (
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Description</Text>
-                        <Text style={styles.description}>{description}</Text>
-                    </View>
-                ) : null}
-
                 {/* Metadata */}
                 {metadata.length > 0 && (
                     <View style={styles.section}>
@@ -99,6 +118,14 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     </View>
                 )}
 
+                {/* Description */}
+                {description ? (
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>Description</Text>
+                        <Text style={styles.description}>{description}</Text>
+                    </View>
+                ) : null}
+
                 {/* Notes */}
                 {item?.notes && !description && (
                     <View style={styles.section}>
@@ -113,7 +140,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <Text style={styles.sourceText}>{isManual ? 'Manual entry' : 'From catalog'}</Text>
                 </View>
             </ScrollView>
-        </View>
+        </SafeAreaView>
     );
 }
 

@@ -1,15 +1,14 @@
 require('dotenv').config();
 const fs = require('fs');
-const { GoogleCloudVisionService } = require('../services/googleCloudVision');
+// const { GoogleCloudVisionService } = require('../services/googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const { GoogleGeminiService } = require('../services/googleGemini');
 
 async function test() {
-    const visionService = new GoogleCloudVisionService();
     const geminiService = new GoogleGeminiService();
 
     console.log('--- Configuration Check ---');
-    console.log('Vision Service Configured:', visionService.isConfigured());
-    console.log('Gemini Service Configured:', geminiService.isConfigured());
+    console.log('Gemini Vision Configured:', geminiService.isVisionConfigured());
+    console.log('Gemini Text Configured:', geminiService.isConfigured());
 
     // Test with a sample image (create or download a shelf image)
     const imagePath = process.argv[2];
@@ -27,15 +26,12 @@ async function test() {
     const imageBuffer = fs.readFileSync(imagePath);
     const base64 = imageBuffer.toString('base64');
 
-    // 1. Vision OCR
-    if (visionService.isConfigured()) {
-        console.log('\n--- Testing Vision OCR ---');
+    // 1. Gemini Vision
+    if (geminiService.isVisionConfigured()) {
+        console.log('\n--- Testing Gemini Vision ---');
         try {
-            const textResult = await visionService.extractText(base64);
-            console.log('Extracted Text Preview:', textResult.text.substring(0, 100).replace(/\n/g, ' '));
-
             console.log('Detecting Shelf Items (Raw)...');
-            const itemResult = await visionService.detectShelfItems(base64, 'book');
+            const itemResult = await geminiService.detectShelfItemsFromImage(base64, 'book');
             console.log('Raw Items Found:', itemResult.items.length);
             console.log('Sample Raw Item:', itemResult.items[0]);
 
@@ -52,7 +48,7 @@ async function test() {
             console.error('Vision Test Failed:', err);
         }
     } else {
-        console.log('\n--- Vision Not Configured (Skipping OCR) ---');
+        console.log('\n--- Gemini Vision Not Configured (Skipping Vision) ---');
     }
 }
 

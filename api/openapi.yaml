@@ -422,6 +422,17 @@ components:
               provider:
                 type: string
                 nullable: true
+        coverUrl:
+          type: string
+          format: uri
+          nullable: true
+        coverMediaId:
+          type: integer
+          nullable: true
+        coverMediaPath:
+          type: string
+          nullable: true
+          description: Relative path under /media for the cached cover file.
         identifiers:
           type: object
           additionalProperties: true

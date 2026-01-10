@@ -118,7 +118,13 @@ app.use((req, _res, next) => {
 
 app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
 
-const mediaRoot = path.join(__dirname, 'cache');
+const rawMediaRoot =
+  process.env.MEDIA_CACHE_DIR ||
+  process.env.COVER_CACHE_DIR ||
+  path.join(__dirname, 'cache');
+const mediaRoot = path.isAbsolute(rawMediaRoot)
+  ? rawMediaRoot
+  : path.resolve(__dirname, rawMediaRoot);
 try {
   if (!fs.existsSync(mediaRoot)) {
     fs.mkdirSync(mediaRoot, { recursive: true });

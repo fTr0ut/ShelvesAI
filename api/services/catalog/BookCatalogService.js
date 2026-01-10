@@ -1,9 +1,11 @@
 const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
+const { hardcoverToCollectable } = require('../../adapters/hardcover.adapter');
 const {
   lookupWorkBookMetadata,
   lookupWorkByISBN,
 } = require('../openLibrary');
+const { HardcoverClient } = require('../hardcover');
 
 const DEFAULT_CONCURRENCY = 5;
 const DEFAULT_RETRIES = 2;
@@ -33,6 +35,16 @@ class BookCatalogService {
     this.enableSecondPass = String(enableSecondPass || 'false')
       .trim()
       .toLowerCase() === 'true';
+
+    this.hardcoverClient = new HardcoverClient({
+      token: options.hardcoverToken,
+      baseUrl: options.hardcoverBaseUrl,
+      timeoutMs: options.hardcoverTimeoutMs,
+      requestsPerMinute: options.hardcoverRequestsPerMinute,
+      userAgent: options.hardcoverUserAgent,
+      fetch: options.hardcoverFetch,
+    });
+    this._warnedMissingHardcoverToken = false;
   }
 
   supportsShelfType(type) {
@@ -104,6 +116,63 @@ class BookCatalogService {
       .map((code) => normalizeString(code))
       .filter(Boolean);
 
+    const hardcoverEnabled = this.hardcoverClient?.isConfigured();
+    if (!hardcoverEnabled && !this._warnedMissingHardcoverToken) {
+      this._warnedMissingHardcoverToken = true;
+      console.warn('[BookCatalogService.safeLookup] Hardcover API token missing; skipping Hardcover fallback');
+    }
+
+    const handleHardcoverError = async (err, attempt, payload, stage) => {
+      const message = String(err?.message || err);
+      if (
+        (message.includes('429') || message.toLowerCase().includes('throttled') || message.toLowerCase().includes('rate limit')) &&
+        attempt < retries
+      ) {
+        const backoff = 500 * Math.pow(2, attempt);
+        console.warn('[BookCatalogService.safeLookup] Hardcover rate limited', {
+          backoff,
+          stage,
+          payload,
+        });
+        await makeDelay(backoff);
+        return true;
+      }
+      if (message.toLowerCase().includes('aborted') && attempt < retries) {
+        const backoff = 1000 * (attempt + 1);
+        console.warn('[BookCatalogService.safeLookup] Hardcover request aborted', {
+          backoff,
+          stage,
+          payload,
+        });
+        await makeDelay(backoff);
+        return true;
+      }
+      console.error('[BookCatalogService.safeLookup] Hardcover lookup failed', {
+        stage,
+        payload,
+        error: err,
+      });
+      return false;
+    };
+
+    if (hardcoverEnabled && isbnCandidates.length) {
+      for (const isbn of isbnCandidates) {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          try {
+            const hardcoverByIsbn = await this.hardcoverClient.lookupByISBN(isbn);
+            if (hardcoverByIsbn) {
+              return hardcoverByIsbn;
+            }
+            break;
+          } catch (err) {
+            const shouldRetry = await handleHardcoverError(err, attempt, { isbn }, 'isbn');
+            if (shouldRetry) continue;
+            break;
+          }
+        }
+      }
+    }
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const result = await lookupWorkBookMetadata({
@@ -138,7 +207,27 @@ class BookCatalogService {
           payload,
           error: err,
         });
-        throw err;
+        break;
+      }
+    }
+
+    if (hardcoverEnabled) {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const hardcoverResult = await this.hardcoverClient.lookupByTitleAuthor({
+            title: payload.title,
+            author: payload.author,
+            limit: 5,
+          });
+          if (hardcoverResult) {
+            return hardcoverResult;
+          }
+          break;
+        } catch (err) {
+          const shouldRetry = await handleHardcoverError(err, attempt, payload, 'search');
+          if (shouldRetry) continue;
+          break;
+        }
       }
     }
 
@@ -502,10 +591,18 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       return direct;
     }
 
-    const payload = openLibraryToCollectable({
-      ...entry.enrichment,
-      lightweightFingerprint: lightweightFingerprint || null,
-    });
+    let payload = null;
+
+    if (entry.enrichment?.provider === 'hardcover') {
+      payload = hardcoverToCollectable(entry.enrichment, {
+        lightweightFingerprint: lightweightFingerprint || null,
+      });
+    } else {
+      payload = openLibraryToCollectable({
+        ...entry.enrichment,
+        lightweightFingerprint: lightweightFingerprint || null,
+      });
+    }
 
     if (payload) {
       if (lightweightFingerprint && !payload.lightweightFingerprint) {

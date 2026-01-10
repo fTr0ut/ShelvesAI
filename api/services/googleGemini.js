@@ -1,27 +1,80 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { logPayload } = require('../utils/payloadLogger');
 
+const DEFAULT_VISION_CONFIDENCE = 0.7;
+const MAX_VISION_ITEMS = 50;
+
+function cleanJsonResponse(text) {
+    return String(text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+}
+
+function parseInlineImage(base64Image) {
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/.exec(String(base64Image || ''));
+    if (match) {
+        return { data: match[2], mimeType: match[1] };
+    }
+    return { data: base64Image, mimeType: 'image/jpeg' };
+}
+
+function normalizeString(value) {
+    if (value == null) return '';
+    return String(value).trim();
+}
+
+function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(0, Math.min(1, num));
+}
+
 class GoogleGeminiService {
     constructor() {
         const apiKey = process.env.GOOGLE_GEN_AI_KEY;
         if (apiKey) {
             this.genAI = new GoogleGenerativeAI(apiKey);
-            const configuredModel =
+            const textModelName =
+                process.env.GOOGLE_GEMINI_TEXT_MODEL ||
                 process.env.GOOGLE_GEMINI_MODEL ||
                 process.env.GOOGLE_GEN_AI_MODEL ||
                 "gemini-1.0-pro";
-            this.modelName = configuredModel;
-            this.model = this.genAI.getGenerativeModel({ model: configuredModel });
+            const visionModelName =
+                process.env.GOOGLE_GEMINI_VISION_MODEL ||
+                textModelName;
+            this.textModelName = textModelName;
+            this.visionModelName = visionModelName;
+            this.textModel = this.genAI.getGenerativeModel({ model: textModelName });
+            this.visionModel = this.genAI.getGenerativeModel({ model: visionModelName });
+            this.modelName = textModelName;
+            this.model = this.textModel;
         } else {
             console.warn('[GoogleGeminiService] GOOGLE_GEN_AI_KEY not set.');
             this.genAI = null;
+            this.textModel = null;
+            this.visionModel = null;
+            this.textModelName = null;
+            this.visionModelName = null;
             this.model = null;
             this.modelName = null;
         }
     }
 
     isConfigured() {
-        return !!this.model;
+        return !!this.textModel;
+    }
+
+    isVisionConfigured() {
+        return !!this.visionModel;
+    }
+
+    buildVisionPrompt(shelfType) {
+        const normalizedShelf = normalizeString(shelfType || 'collection');
+        return `You are assisting with cataloging physical collections. Identify the visible items on a ${normalizedShelf} shelf.
+Return ONLY a valid JSON array of objects with:
+- title (string)
+- author (string or null)
+- confidence (number from 0 to 1)
+If no items are visible, return [].
+Do not include explanations or markdown.`;
     }
 
     /**
@@ -45,7 +98,7 @@ class GoogleGeminiService {
      * @returns {Promise<Array<CollectableSchema>>}
      */
     async enrichWithSchema(items, shelfType) {
-        if (!this.model) {
+        if (!this.textModel) {
             throw new Error('Google Gemini client not initialized.');
         }
 
@@ -92,7 +145,7 @@ class GoogleGeminiService {
         `;
 
         try {
-            const result = await this.model.generateContent(prompt);
+            const result = await this.textModel.generateContent(prompt);
             const response = await result.response;
             const text = response.text();
 
@@ -107,7 +160,7 @@ class GoogleGeminiService {
             });
 
             // Clean markdown if present
-            const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            const jsonStr = cleanJsonResponse(text);
             const enrichedItems = JSON.parse(jsonStr);
 
             // Validation / Fallback for array
@@ -137,6 +190,70 @@ class GoogleGeminiService {
                 confidence: 0.5,
                 notes: "Enrichment failed"
             }));
+        }
+    }
+
+    /**
+     * Extract shelf items directly from an image using Gemini Vision.
+     * @param {string} base64Image
+     * @param {string} shelfType
+     * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>}>}
+     */
+    async detectShelfItemsFromImage(base64Image, shelfType) {
+        if (!this.visionModel) {
+            throw new Error('Google Gemini vision model not initialized.');
+        }
+
+        const { data, mimeType } = parseInlineImage(base64Image);
+        const prompt = this.buildVisionPrompt(shelfType);
+
+        try {
+            const result = await this.visionModel.generateContent([
+                prompt,
+                {
+                    inlineData: {
+                        data,
+                        mimeType,
+                    },
+                },
+            ]);
+            const response = await result.response;
+            const text = response.text();
+
+            logPayload({
+                source: 'google-gemini-vision',
+                operation: 'detectShelfItems',
+                payload: {
+                    model: this.visionModelName,
+                    promptPreview: prompt.substring(0, 200),
+                    text
+                }
+            });
+
+            const jsonStr = cleanJsonResponse(text);
+            const parsed = JSON.parse(jsonStr);
+            if (!Array.isArray(parsed)) {
+                console.warn('[GoogleGeminiService] Vision response was not an array:', parsed);
+                return { items: [] };
+            }
+
+            const items = parsed.map(item => {
+                const title = normalizeString(item?.title || item?.name);
+                if (!title) return null;
+                const author = normalizeString(item?.author || item?.primaryCreator);
+                return {
+                    name: title,
+                    title,
+                    author: author || null,
+                    type: shelfType,
+                    confidence: coerceConfidence(item?.confidence),
+                };
+            }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
+
+            return { items };
+        } catch (err) {
+            console.error('[GoogleGeminiService] Vision item detection failed:', err);
+            return { items: [] };
         }
     }
 

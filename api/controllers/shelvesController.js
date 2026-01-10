@@ -4,8 +4,8 @@ const OpenAI = require("openai");
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
 const { GameCatalogService } = require("../services/catalog/GameCatalogService");
 const { MovieCatalogService } = require("../services/catalog/MovieCatalogService");
-const { GoogleCloudVisionService } = require('../services/googleCloudVision');
 const { GoogleGeminiService } = require('../services/googleGemini');
+// const { GoogleCloudVisionService } = require('../services/googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const { VisionPipelineService } = require('../services/visionPipeline');
 
 // PostgreSQL imports
@@ -19,15 +19,15 @@ const { makeCollectableFingerprint } = require('../services/collectables/fingerp
 
 
 
-let visionService;
 let geminiService;
 
-function getVisionService() {
-  if (!visionService) {
-    visionService = new GoogleCloudVisionService();
-  }
-  return visionService;
-}
+// let visionService;
+// function getVisionService() {
+//   if (!visionService) {
+//     visionService = new GoogleCloudVisionService();
+//   }
+//   return visionService;
+// }
 
 function getGeminiService() {
   if (!geminiService) {
@@ -100,8 +100,64 @@ async function loadShelfForUser(userId, shelfId) {
   return shelvesQueries.getById(parseInt(shelfId, 10), userId);
 }
 
+function formatShelfItem(row) {
+  if (!row) return null;
+  const collectablePublishers = Array.isArray(row.collectablePublishers)
+    ? row.collectablePublishers.filter(Boolean)
+    : [];
+  const collectable = row.collectableId ? {
+    id: row.collectableId,
+    title: row.collectableTitle || null,
+    subtitle: row.collectableSubtitle || null,
+    description: row.collectableDescription || null,
+    primaryCreator: row.collectableCreator || null,
+    publisher: collectablePublishers[0] || null,
+    publishers: collectablePublishers,
+    year: row.collectableYear || null,
+    tags: Array.isArray(row.collectableTags) ? row.collectableTags : [],
+    images: Array.isArray(row.collectableImages) ? row.collectableImages : [],
+    identifiers: row.collectableIdentifiers && typeof row.collectableIdentifiers === 'object'
+      ? row.collectableIdentifiers
+      : {},
+    sources: Array.isArray(row.collectableSources) ? row.collectableSources : [],
+    coverUrl: row.collectableCover || null,
+    coverMediaId: row.collectableCoverMediaId || null,
+    coverMediaPath: row.collectableCoverMediaPath || null,
+    type: row.collectableKind || null,
+    kind: row.collectableKind || null,
+    fingerprint: row.collectableFingerprint || null,
+    lightweightFingerprint: row.collectableLightweightFingerprint || null,
+    externalId: row.collectableExternalId || null,
+  } : null;
+
+  const manual = row.manualId ? {
+    id: row.manualId,
+    name: row.manualName || null,
+    title: row.manualName || null,
+    type: row.manualType || null,
+    description: row.manualDescription || null,
+    author: row.manualAuthor || null,
+    publisher: row.manualPublisher || null,
+    format: row.manualFormat || null,
+    year: row.manualYear || null,
+    tags: Array.isArray(row.manualTags) ? row.manualTags : [],
+  } : null;
+
+  return {
+    id: row.id,
+    collectable,
+    manual,
+    position: row.position ?? null,
+    format: row.format ?? null,
+    notes: row.notes ?? null,
+    rating: row.rating ?? null,
+    createdAt: row.createdAt || null,
+  };
+}
+
 async function hydrateShelfItems(userId, shelfId, { limit, skip = 0 } = {}) {
-  return shelvesQueries.getItems(shelfId, userId, { limit: limit || 100, offset: skip });
+  const rows = await shelvesQueries.getItems(shelfId, userId, { limit: limit || 100, offset: skip });
+  return rows.map(formatShelfItem).filter(Boolean);
 }
 
 async function logShelfEvent({ userId, shelfId, type, payload }) {

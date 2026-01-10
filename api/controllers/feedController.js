@@ -10,11 +10,13 @@ async function summarizeItems(shelfIds) {
   const result = await query(
     `SELECT uc.shelf_id,
             uc.id, uc.collectable_id, uc.manual_id, uc.position, uc.notes, uc.rating,
-            c.title as collectable_title, c.primary_creator, c.cover_url, c.kind,
+            c.title as collectable_title, c.primary_creator, c.cover_url, c.cover_media_id, c.kind,
+            m.local_path as cover_media_path,
             um.name as manual_name, um.author as manual_author
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
+     LEFT JOIN media m ON m.id = c.cover_media_id
      WHERE uc.shelf_id = ANY($1)
      ORDER BY uc.created_at DESC`,
     [shelfIds]
@@ -33,6 +35,8 @@ async function summarizeItems(shelfIds) {
           title: row.collectable_title,
           primaryCreator: row.primary_creator,
           coverUrl: row.cover_url,
+          coverMediaId: row.cover_media_id,
+          coverMediaPath: row.cover_media_path,
           kind: row.kind,
         } : null,
         manual: row.manual_id ? {
@@ -213,12 +217,14 @@ async function getFeedEntryDetails(req, res) {
     // Get all items
     const itemsResult = await query(
       `SELECT uc.*, 
-              c.title as collectable_title, c.primary_creator, c.cover_url, c.kind,
+              c.title as collectable_title, c.primary_creator, c.cover_url, c.cover_media_id, c.kind,
+              m.local_path as cover_media_path,
               c.description as collectable_description, c.year, c.tags,
               um.name as manual_name, um.author as manual_author, um.description as manual_description
        FROM user_collections uc
        LEFT JOIN collectables c ON c.id = uc.collectable_id
        LEFT JOIN user_manuals um ON um.id = uc.manual_id
+       LEFT JOIN media m ON m.id = c.cover_media_id
        WHERE uc.shelf_id = $1
        ORDER BY uc.created_at DESC`,
       [shelfId]
@@ -251,6 +257,8 @@ async function getFeedEntryDetails(req, res) {
           title: row.collectable_title,
           primaryCreator: row.primary_creator,
           coverUrl: row.cover_url,
+          coverMediaId: row.cover_media_id,
+          coverMediaPath: row.cover_media_path,
           kind: row.kind,
           description: row.collectable_description,
           year: row.year,

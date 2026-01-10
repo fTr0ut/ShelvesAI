@@ -23,6 +23,29 @@ class GoogleCloudVisionService {
         return !!this.client;
     }
 
+    buildTextDetectionRequest(cleanedBase64) {
+        return {
+            image: { content: cleanedBase64 },
+            features: [{ type: 'TEXT_DETECTION', maxResults: 1 }],
+        };
+    }
+
+    extractTextFromResult(result) {
+        if (!result) return '';
+        if (result.fullTextAnnotation?.text) return result.fullTextAnnotation.text;
+        return result.textAnnotations?.[0]?.description || '';
+    }
+
+    buildLogPayload(result) {
+        const text = this.extractTextFromResult(result);
+        return {
+            textPreview: text.slice(0, 4000),
+            textLength: text.length,
+            annotationCount: Array.isArray(result?.textAnnotations) ? result.textAnnotations.length : 0,
+            locale: result?.textAnnotations?.[0]?.locale || null,
+        };
+    }
+
     /**
      * Extract all text from an image.
      * @param {string} base64Image - The base64 encoded image string (with or without data URI prefix).
@@ -33,22 +56,16 @@ class GoogleCloudVisionService {
 
         // Clean base64 string
         const cleaned = base64Image.replace(/^data:image\/[a-z]+;base64,/, '');
-        const request = {
-            image: {
-                content: cleaned,
-            },
-        };
-
-        const [result] = await this.client.textDetection(request);
+        const [result] = await this.client.annotateImage(this.buildTextDetectionRequest(cleaned));
+        const logRaw = process.env.VISION_LOG_RAW_RESPONSE === 'true';
         logPayload({
             source: 'google-cloud-vision',
             operation: 'textDetection',
-            payload: result
+            payload: logRaw ? result : this.buildLogPayload(result)
         });
-        const fullTextAnnotation = result.fullTextAnnotation;
 
         return {
-            text: fullTextAnnotation ? fullTextAnnotation.text : '',
+            text: this.extractTextFromResult(result),
             confidence: 0.9 // GCV doesn't provide a single global confidence for full text, assuming high if successful
         };
     }
@@ -66,13 +83,12 @@ class GoogleCloudVisionService {
         if (!this.client) throw new Error('Google Cloud Vision client not initialized.');
 
         const cleaned = base64Image.replace(/^data:image\/[a-z]+;base64,/, '');
-        const [result] = await this.client.documentTextDetection({
-            image: { content: cleaned },
-        });
+        const [result] = await this.client.annotateImage(this.buildTextDetectionRequest(cleaned));
+        const logRaw = process.env.VISION_LOG_RAW_RESPONSE === 'true';
         logPayload({
             source: 'google-cloud-vision',
-            operation: 'documentTextDetection',
-            payload: result
+            operation: 'textDetection',
+            payload: logRaw ? result : this.buildLogPayload(result)
         });
 
         const items = this.parseDocumentToItems(result, shelfType);
@@ -83,7 +99,7 @@ class GoogleCloudVisionService {
         // This is a naive implementation that assumes lines of text map to items.
         // In reality, proper segmentation requires more complex geometry logic (bounding boxes).
         // For now, we take significant lines of text as potential item names.
-        const text = result.fullTextAnnotation?.text || '';
+        const text = this.extractTextFromResult(result);
         return this.parseToItems(text, shelfType);
     }
 

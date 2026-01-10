@@ -1,11 +1,9 @@
 const { VisionPipelineService } = require('../services/visionPipeline');
-const { GoogleCloudVisionService } = require('../services/googleCloudVision');
 const { GoogleGeminiService } = require('../services/googleGemini');
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 
-jest.mock('../services/googleCloudVision');
 jest.mock('../services/googleGemini');
 jest.mock('../database/queries/collectables');
 jest.mock('../database/queries/needsReview');
@@ -17,18 +15,18 @@ jest.mock('../services/catalog/BookCatalogService');
 
 describe('VisionPipelineService', () => {
     let service;
-    let mockVision, mockGemini;
+    let mockGemini;
 
     beforeEach(() => {
         jest.clearAllMocks();
         service = new VisionPipelineService();
-        mockVision = GoogleCloudVisionService.mock.instances[0];
         mockGemini = GoogleGeminiService.mock.instances[0];
+        mockGemini.detectShelfItemsFromImage = jest.fn();
     });
 
     it('should process high confidence items and add them to shelf', async () => {
         // Setup mocks
-        mockVision.detectShelfItems.mockResolvedValue({ items: [{ title: 'Book 1', confidence: 0.95 }] });
+        mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [{ title: 'Book 1', confidence: 0.95 }] });
 
         // Mock catalog lookup (unresolved)
         service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
@@ -52,7 +50,7 @@ describe('VisionPipelineService', () => {
     });
 
     it('should send low confidence items to review queue', async () => {
-        mockVision.detectShelfItems.mockResolvedValue({ items: [{ title: 'Blurry Book', confidence: 0.5 }] });
+        mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [{ title: 'Blurry Book', confidence: 0.5 }] });
 
         service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
             search: jest.fn().mockResolvedValue([])
@@ -69,7 +67,7 @@ describe('VisionPipelineService', () => {
     });
 
     it('should integrate catalog results', async () => {
-        mockVision.detectShelfItems.mockResolvedValue({ items: [{ title: 'Known Book', confidence: 0.9 }] });
+        mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [{ title: 'Known Book', confidence: 0.9 }] });
 
         const mockCatalog = {
             search: jest.fn().mockResolvedValue([{ title: 'Known Book', authors: ['Author'], id: 'cat-1' }])

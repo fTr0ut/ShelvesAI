@@ -72,17 +72,40 @@ The trusted global catalog of items (movies, games, books, etc.).
 | identifiers | JSONB | `DEFAULT {}` | ISBN, IMDB ID, IGDB ID, etc. |
 | images | JSONB | `DEFAULT []` | Array of image URLs |
 | cover_url | TEXT | | Primary cover image |
+| cover_media_id | INTEGER | `FK -> media(id)` | Linked cached media entry |
 | sources | JSONB | `DEFAULT []` | Provenance metadata |
 | external_id | TEXT | | Primary external ID reference |
 | fuzzy_fingerprints | JSONB | `DEFAULT []` | For OCR matching |
 | created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
 | updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
 
-**Indexes:** `fingerprint`, `lightweight_fingerprint`, `kind`, `title` (trigram), `external_id`
+**Indexes:** `fingerprint`, `lightweight_fingerprint`, `kind`, `title` (trigram), `external_id`, `cover_media_id`
 
 ---
 
-### 4. **user_manuals**
+### 4. **media**
+Cached media assets stored on disk (covers, thumbnails, etc.).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique media ID |
+| collectable_id | INTEGER | `FK -> collectables(id)` | Owning collectable |
+| kind | TEXT | `NOT NULL` | Media kind (cover, screenshot) |
+| variant | TEXT | | Size/variant (small, medium, large) |
+| provider | TEXT | | Source provider |
+| source_url | TEXT | `NOT NULL` | Original source URL |
+| local_path | TEXT | | Relative file path under /media (e.g., books/Oathbringer/sha1.jpg) |
+| content_type | TEXT | | MIME type |
+| size_bytes | INTEGER | | Payload size |
+| checksum | TEXT | | Content hash (sha1) |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
+
+**Indexes:** `collectable_id`, `kind`, `collectable_id+source_url` (unique)
+
+---
+
+### 5. **user_manuals**
 Custom user-created items that don't exist in the global catalog.
 
 | Column | Type | Constraints | Description |
@@ -104,7 +127,7 @@ Custom user-created items that don't exist in the global catalog.
 
 ---
 
-### 5. **user_collections**
+### 6. **user_collections**
 The join table linking items to shelves (the actual "instances" of items in a user's library).
 
 | Column | Type | Constraints | Description |
@@ -128,7 +151,7 @@ The join table linking items to shelves (the actual "instances" of items in a us
 
 ---
 
-### 6. **friendships**
+### 7. **friendships**
 Manages social connections between users.
 
 | Column | Type | Constraints | Description |
@@ -149,7 +172,7 @@ Manages social connections between users.
 
 ---
 
-### 7. **event_logs**
+### 8. **event_logs**
 Activity feed system.
 
 | Column | Type | Constraints | Description |
@@ -181,6 +204,7 @@ erDiagram
     shelves ||--o{ event_logs : "related to"
 
     collectables ||--o{ user_collections : "referenced by"
+    collectables ||--o{ media : "has media"
 
     user_manuals ||--o{ user_collections : "referenced by"
 
@@ -202,6 +226,14 @@ erDiagram
         string title
         string kind
         string fingerprint
+        int cover_media_id FK
+    }
+
+    media {
+        int id PK
+        int collectable_id FK
+        string kind
+        string source_url
     }
 
     user_collections {
