@@ -3,6 +3,7 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Image,
     Modal,
     RefreshControl,
     StyleSheet,
@@ -94,6 +95,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
 
+    // Pagination state
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [totalItems, setTotalItems] = useState(0);
+
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
 
@@ -102,10 +108,19 @@ export default function ShelfDetailScreen({ route, navigation }) {
             if (!refreshing) setLoading(true);
             const [shelfData, itemsData] = await Promise.all([
                 apiRequest({ apiBase, path: `/api/shelves/${id}`, token }),
-                apiRequest({ apiBase, path: `/api/shelves/${id}/items`, token }),
+                apiRequest({ apiBase, path: `/api/shelves/${id}/items?limit=25&skip=0`, token }),
             ]);
             setShelf(shelfData.shelf);
-            setItems(Array.isArray(itemsData.items) ? itemsData.items : []);
+            const loadedItems = Array.isArray(itemsData.items) ? itemsData.items : [];
+            setItems(loadedItems);
+            // Track pagination state from response
+            if (itemsData.pagination) {
+                setHasMore(itemsData.pagination.hasMore || false);
+                setTotalItems(itemsData.pagination.total || loadedItems.length);
+            } else {
+                setHasMore(false);
+                setTotalItems(loadedItems.length);
+            }
         } catch (e) {
             console.warn('Failed to load shelf:', e);
         } finally {
@@ -113,6 +128,30 @@ export default function ShelfDetailScreen({ route, navigation }) {
             setRefreshing(false);
         }
     }, [apiBase, id, token, refreshing]);
+
+    const loadMore = useCallback(async () => {
+        if (loadingMore || !hasMore) return;
+        setLoadingMore(true);
+        try {
+            const skip = items.length;
+            const itemsData = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${id}/items?limit=25&skip=${skip}`,
+                token,
+            });
+            const newItems = Array.isArray(itemsData.items) ? itemsData.items : [];
+            setItems(prev => [...prev, ...newItems]);
+            if (itemsData.pagination) {
+                setHasMore(itemsData.pagination.hasMore || false);
+            } else {
+                setHasMore(false);
+            }
+        } catch (e) {
+            console.warn('Failed to load more items:', e);
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [apiBase, id, token, items.length, loadingMore, hasMore]);
 
     useEffect(() => { loadShelf(); }, [loadShelf]);
 
@@ -234,7 +273,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return {
             title: collectable?.title || manual?.title || item.title || 'Untitled',
             subtitle: collectable?.author || collectable?.primaryCreator || manual?.author || collectable?.publisher || '',
-            type: collectable?.type || manual?.type || 'item',
+            type: collectable?.type || collectable?.kind || manual?.type || 'item',
         };
     };
 
@@ -248,16 +287,79 @@ export default function ShelfDetailScreen({ route, navigation }) {
         }
     };
 
+    const resolveCoverPath = (item) => {
+        const collectable = item.collectable || item.collectableSnapshot;
+        if (!collectable) return null;
+
+        // Prefer locally cached media path
+        if (collectable.coverMediaPath) {
+            return collectable.coverMediaPath;
+        }
+
+        // Check images array for cached paths
+        const images = Array.isArray(collectable.images) ? collectable.images : [];
+        for (const image of images) {
+            const cached = image?.cachedSmallPath || image?.cachedPath;
+            if (typeof cached === 'string' && cached.trim()) {
+                return cached.trim();
+            }
+        }
+
+        // Fall back to cover URL
+        if (collectable.coverUrl) {
+            return collectable.coverUrl;
+        }
+
+        // Check images array for URLs
+        for (const image of images) {
+            const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
+            if (typeof url === 'string' && url.trim()) {
+                return url.trim();
+            }
+        }
+
+        return null;
+    };
+
+    const buildCoverUri = (pathOrUrl) => {
+        if (!pathOrUrl) return null;
+        // If it's already an http URL, use it directly
+        if (/^https?:/i.test(pathOrUrl)) {
+            return pathOrUrl;
+        }
+        // Build URI from local path via media endpoint
+        const trimmed = pathOrUrl.replace(/^\/+/, '');
+        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+        if (!apiBase) {
+            return `/${resource}`;
+        }
+        const normalizedBase = apiBase.replace(/\/+$/, '');
+        return `${normalizedBase}/${resource}`;
+    };
+
     const renderItem = ({ item }) => {
         const info = getItemInfo(item);
+        const coverPath = resolveCoverPath(item);
+        const coverUri = buildCoverUri(coverPath);
+
         return (
             <TouchableOpacity
                 style={styles.itemCard}
                 onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id })}
                 activeOpacity={0.7}
             >
-                <View style={styles.itemIcon}>
-                    <Ionicons name={getIconForType(info.type)} size={20} color={colors.primary} />
+                <View style={styles.itemCover}>
+                    {coverUri ? (
+                        <Image
+                            source={{ uri: coverUri }}
+                            style={styles.itemCoverImage}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <View style={styles.itemCoverFallback}>
+                            <Ionicons name={getIconForType(info.type)} size={22} color={colors.primary} />
+                        </View>
+                    )}
                 </View>
                 <View style={styles.itemContent}>
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
@@ -423,7 +525,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 </TouchableOpacity>
                 <View style={styles.headerCenter}>
                     <Text style={styles.headerTitle} numberOfLines={1}>{shelf?.name || title || 'Shelf'}</Text>
-                    <Text style={styles.headerSubtitle}>{items.length} item{items.length !== 1 ? 's' : ''}</Text>
+                    <Text style={styles.headerSubtitle}>{totalItems} item{totalItems !== 1 ? 's' : ''}{hasMore ? ` (${items.length} loaded)` : ''}</Text>
                 </View>
                 <TouchableOpacity onPress={() => navigation.navigate('ShelfEdit', { shelf })} style={styles.editButton}>
                     <Ionicons name="settings-outline" size={22} color={colors.text} />
@@ -470,6 +572,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 }
                 ListEmptyComponent={renderEmpty}
                 showsVerticalScrollIndicator={false}
+                onEndReached={loadMore}
+                onEndReachedThreshold={0.3}
+                ListFooterComponent={
+                    loadingMore ? (
+                        <View style={styles.loadingMore}>
+                            <ActivityIndicator size="small" color={colors.primary} />
+                            <Text style={styles.loadingMoreText}>Loading more items...</Text>
+                        </View>
+                    ) : null
+                }
             />
 
             {/* FAB for adding items */}
@@ -631,14 +743,24 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginBottom: spacing.sm,
         ...shadows.sm,
     },
-    itemIcon: {
-        width: 40,
-        height: 40,
+    itemCover: {
+        width: 48,
+        height: 64,
         borderRadius: radius.md,
+        overflow: 'hidden',
+        marginRight: spacing.md,
+        backgroundColor: colors.surface,
+    },
+    itemCoverImage: {
+        width: '100%',
+        height: '100%',
+    },
+    itemCoverFallback: {
+        width: '100%',
+        height: '100%',
         backgroundColor: colors.primary + '15',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: spacing.md,
     },
     itemContent: {
         flex: 1,
@@ -669,6 +791,17 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textMuted,
         textAlign: 'center',
         marginTop: spacing.xs,
+    },
+    loadingMore: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.md,
+        gap: spacing.sm,
+    },
+    loadingMoreText: {
+        fontSize: 13,
+        color: colors.textMuted,
     },
     fab: {
         position: 'absolute',

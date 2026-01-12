@@ -208,6 +208,49 @@ async function removeItem(itemId, userId, shelfId) {
     return result.rowCount > 0;
 }
 
+/**
+ * List shelves visible to a viewer (for profile pages)
+ * @param {string} ownerId - The owner of the shelves
+ * @param {string|null} viewerId - The person viewing (null if unauthenticated)
+ */
+async function listVisibleForUser(ownerId, viewerId = null) {
+    // If viewer is the owner, show all shelves
+    if (viewerId && ownerId === viewerId) {
+        return listForUser(ownerId);
+    }
+
+    // Check if they're friends
+    let isFriend = false;
+    if (viewerId) {
+        const friendResult = await query(
+            `SELECT 1 FROM friendships 
+             WHERE status = 'accepted'
+        AND((requester_id = $1 AND addressee_id = $2)
+        OR(requester_id = $2 AND addressee_id = $1))`,
+            [ownerId, viewerId]
+        );
+        isFriend = friendResult.rows.length > 0;
+    }
+
+    // Build visibility filter
+    const visibilityConditions = ["s.visibility = 'public'"];
+    if (isFriend) {
+        visibilityConditions.push("s.visibility = 'friends'");
+    }
+
+    const result = await query(
+        `SELECT s.*,
+        COUNT(uc.id) as item_count
+         FROM shelves s
+         LEFT JOIN user_collections uc ON uc.shelf_id = s.id
+         WHERE s.owner_id = $1 AND(${visibilityConditions.join(' OR ')})
+         GROUP BY s.id
+         ORDER BY s.created_at DESC`,
+        [ownerId]
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
 module.exports = {
     listForUser,
     getById,
@@ -219,4 +262,5 @@ module.exports = {
     addCollectable,
     addManual,
     removeItem,
+    listVisibleForUser,
 };

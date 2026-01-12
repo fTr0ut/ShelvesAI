@@ -9,7 +9,8 @@
         "test:backend": "jest --config jest.config.js",
         "build-indexes": "node scripts/build-indexes.js",
         "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000",
-        "cache-covers": "node scripts/cache-collectable-covers.js"
+        "cache-covers": "node scripts/cache-collectable-covers.js",
+        "test:tmdb": "node scripts/test-tmdb.js"
     },
     "keywords": [],
     "author": "",
@@ -25,6 +26,8 @@
         "dotenv": "^17.2.1",
         "express": "^5.1.0",
         "jsonwebtoken": "^9.0.2",
+        "knex": "^3.1.0",
+        "multer": "^2.0.2",
         "node-fetch": "^2.7.0",
         "openai": "^4.54.0",
         "pg": "^8.16.3"

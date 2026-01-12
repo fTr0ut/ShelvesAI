@@ -1,0 +1,29 @@
+{
+    "defaults": {
+        "confidenceMax": 0.92,
+        "confidenceMin": 0.85,
+        "prompt": "You are assisting with cataloging physical collections. Identify the visible items on a {shelfType} shelf.\nReturn ONLY a valid JSON array of objects with:\n- title (string)\n- author (string or null)\n- confidence (number from 0 to 1)\nIf no items are visible, return [].\nDo not include explanations or markdown."
+    },
+    "types": {
+        "book": {
+            "confidenceMax": 0.92,
+            "confidenceMin": 0.85,
+            "prompt": "You are cataloging a book shelf. Identify all visible books by reading their spines.\nFor each book, extract:\n- title: The book title\n- author: The author name (usually printed on the spine)\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"1984\", \"author\": \"George Orwell\", \"confidence\": 0.95}]\nIf no books are visible, return []."
+        },
+        "movie": {
+            "confidenceMax": 0.80,
+            "confidenceMin": 0.70,
+            "prompt": "You are cataloging a movie/Blu-ray/DVD shelf. Identify all visible movies by reading their spines.\nFor each movie, extract:\n- title: The movie title\n- author: The director name ONLY if explicitly printed on the spine (usually NOT visible on movie spines - set to null if not clearly printed)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Directors are rarely printed on movie spines. Do NOT guess the director. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy, not whether you found a director.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Inception\", \"author\": null, \"confidence\": 0.95}]\nIf no movies are visible, return []."
+        },
+        "game": {
+            "confidenceMax": 0.85,
+            "confidenceMin": 0.75,
+            "prompt": "You are cataloging a video game shelf. Identify all visible games by reading their spines.\nFor each game, extract:\n- title: The game title\n- author: The publisher/developer ONLY if clearly printed on the spine (often NOT visible - set to null if not clear)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Publishers are sometimes on game spines but not always. Do NOT guess. Only include author if clearly visible. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"The Last of Us\", \"author\": \"Naughty Dog\", \"confidence\": 0.9}]\nIf no games are visible, return []."
+        },
+        "vinyl": {
+            "confidenceMax": 0.85,
+            "confidenceMin": 0.75,
+            "prompt": "You are cataloging a vinyl record collection. Identify all visible records by reading their spines.\nFor each record, extract:\n- title: The album title\n- author: The artist/band name (usually printed on the spine)\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Abbey Road\", \"author\": \"The Beatles\", \"confidence\": 0.95}]\nIf no records are visible, return []."
+        }
+    }
+}

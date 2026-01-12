@@ -27,6 +27,12 @@ import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
 import AboutScreen from './screens/AboutScreen'
+import ProfileScreen from './screens/ProfileScreen'
+import ProfileEditScreen from './screens/ProfileEditScreen'
+import WishlistsScreen from './screens/WishlistsScreen'
+import WishlistScreen from './screens/WishlistScreen'
+import WishlistCreateScreen from './screens/WishlistCreateScreen'
+import FriendsListScreen from './screens/FriendsListScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 
 
@@ -235,6 +241,12 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="Account" component={AccountScreen} />
             <Stack.Screen name="ManualEdit" component={ManualEditScreen} />
             <Stack.Screen name="About" component={AboutScreen} />
+            <Stack.Screen name="Profile" component={ProfileScreen} />
+            <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
+            <Stack.Screen name="Wishlists" component={WishlistsScreen} />
+            <Stack.Screen name="Wishlist" component={WishlistScreen} />
+            <Stack.Screen name="WishlistCreate" component={WishlistCreateScreen} />
+            <Stack.Screen name="FriendsList" component={FriendsListScreen} />
           </>
         )}
       </Stack.Navigator>

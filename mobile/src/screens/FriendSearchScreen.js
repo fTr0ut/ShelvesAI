@@ -9,6 +9,7 @@ import {
     View,
     StatusBar,
     Alert,
+    SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
@@ -47,22 +48,22 @@ export default function FriendSearchScreen({ navigation }) {
         }
     }, [apiBase, token, query]);
 
-    const handleSendRequest = useCallback(async (userId) => {
-        setSending(prev => ({ ...prev, [userId]: true }));
+    const handleSendRequest = useCallback(async (targetUserId) => {
+        setSending(prev => ({ ...prev, [targetUserId]: true }));
         try {
             await apiRequest({
                 apiBase,
                 path: '/api/friends/request',
                 method: 'POST',
                 token,
-                body: { userId },
+                body: { targetUserId },
             });
             // Update result to show pending
-            setResults(prev => prev.map(u => u._id === userId ? { ...u, requestSent: true } : u));
+            setResults(prev => prev.map(u => u.id === targetUserId ? { ...u, requestSent: true } : u));
         } catch (e) {
             Alert.alert('Error', e.message);
         } finally {
-            setSending(prev => ({ ...prev, [userId]: false }));
+            setSending(prev => ({ ...prev, [targetUserId]: false }));
         }
     }, [apiBase, token]);
 
@@ -71,12 +72,15 @@ export default function FriendSearchScreen({ navigation }) {
             ? `${item.firstName} ${item.lastName}`
             : item.name || item.username;
         const initial = (displayName || '?').charAt(0).toUpperCase();
-        const isSending = sending[item._id];
+        const isSending = sending[item.id];
         const isPending = item.requestSent || item.isFriend === 'pending';
         const isFriend = item.isFriend === true;
 
         return (
-            <View style={styles.userCard}>
+            <TouchableOpacity
+                style={styles.userCard}
+                onPress={() => navigation.navigate('Profile', { username: item.username })}
+            >
                 <View style={styles.avatar}>
                     <Text style={styles.avatarText}>{initial}</Text>
                 </View>
@@ -96,7 +100,7 @@ export default function FriendSearchScreen({ navigation }) {
                 ) : (
                     <TouchableOpacity
                         style={styles.addButton}
-                        onPress={() => handleSendRequest(item._id)}
+                        onPress={(e) => { e.stopPropagation(); handleSendRequest(item.id); }}
                         disabled={isSending}
                     >
                         {isSending ? (
@@ -109,12 +113,13 @@ export default function FriendSearchScreen({ navigation }) {
                         )}
                     </TouchableOpacity>
                 )}
-            </View>
+            </TouchableOpacity>
         );
     };
 
+
     return (
-        <View style={styles.screen}>
+        <SafeAreaView style={styles.screen}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
             {/* Header */}
@@ -160,7 +165,7 @@ export default function FriendSearchScreen({ navigation }) {
             ) : (
                 <FlatList
                     data={results}
-                    keyExtractor={(item) => item._id}
+                    keyExtractor={(item) => String(item.id)}
                     renderItem={renderUser}
                     contentContainerStyle={styles.listContent}
                     ListEmptyComponent={
@@ -180,7 +185,7 @@ export default function FriendSearchScreen({ navigation }) {
                     }
                 />
             )}
-        </View>
+        </SafeAreaView>
     );
 }
 

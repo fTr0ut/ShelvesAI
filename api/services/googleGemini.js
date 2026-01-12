@@ -1,10 +1,43 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { logPayload } = require('../utils/payloadLogger');
+const fs = require('fs');
+const path = require('path');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
 // Higher output tokens for enrichment calls to prevent JSON truncation
 const ENRICHMENT_MAX_OUTPUT_TOKENS = 16384;
+
+// Load vision settings from config file
+let visionSettings = null;
+try {
+    const configPath = path.join(__dirname, '../config/visionSettings.json');
+    if (fs.existsSync(configPath)) {
+        visionSettings = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        console.log('[GoogleGeminiService] Loaded vision settings from config');
+    }
+} catch (err) {
+    console.warn('[GoogleGeminiService] Failed to load visionSettings.json:', err.message);
+}
+
+/**
+ * Get vision settings for a specific shelf type
+ * @param {string} shelfType
+ * @returns {{ confidenceMax: number, confidenceMin: number, prompt: string }}
+ */
+function getVisionSettingsForType(shelfType) {
+    const defaults = visionSettings?.defaults || {
+        confidenceMax: 0.92,
+        confidenceMin: 0.85,
+        prompt: null
+    };
+    const typeSettings = visionSettings?.types?.[shelfType] || {};
+    return {
+        confidenceMax: typeSettings.confidenceMax ?? defaults.confidenceMax,
+        confidenceMin: typeSettings.confidenceMin ?? defaults.confidenceMin,
+        prompt: typeSettings.prompt || defaults.prompt || null
+    };
+}
 
 function cleanJsonResponse(text) {
     return String(text || '').replace(/```json/g, '').replace(/```/g, '').trim();
@@ -104,6 +137,14 @@ class GoogleGeminiService {
 
     buildVisionPrompt(shelfType) {
         const normalizedShelf = normalizeString(shelfType || 'collection');
+        const settings = getVisionSettingsForType(normalizedShelf);
+
+        // Use type-specific prompt from config if available
+        if (settings.prompt) {
+            return settings.prompt.replace(/{shelfType}/g, normalizedShelf);
+        }
+
+        // Fallback to generic prompt
         return `You are assisting with cataloging physical collections. Identify the visible items on a ${normalizedShelf} shelf.
 Return ONLY a valid JSON array of objects with:
 - title (string)
@@ -141,7 +182,7 @@ Do not include explanations or markdown.`;
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
             game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
-            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio, poster URL from TMDB if known.`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
@@ -273,7 +314,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
             game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
-            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio, poster URL from TMDB if known.`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
@@ -451,4 +492,4 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
 }
 
-module.exports = { GoogleGeminiService };
+module.exports = { GoogleGeminiService, getVisionSettingsForType };

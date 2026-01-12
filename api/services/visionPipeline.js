@@ -1,4 +1,4 @@
-const { GoogleGeminiService } = require('./googleGemini');
+const { GoogleGeminiService, getVisionSettingsForType } = require('./googleGemini');
 // const { GoogleCloudVisionService } = require('./googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
@@ -10,12 +10,12 @@ const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 
-// Tiered confidence thresholds (configurable via env)
+// Default tiered confidence thresholds (can be overridden per-type via visionSettings.json)
 // High confidence (≥ max): catalog workflow
 // Medium confidence (≥ min, < max): special enrichment only (skip catalog APIs)
 // Low confidence (< min): needs_review directly
-const VISION_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
-const VISION_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
+const DEFAULT_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
+const DEFAULT_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -115,18 +115,24 @@ class VisionPipelineService {
         // Track any warnings from enrichment (e.g., truncated responses)
         const warnings = [];
 
+        // Get per-type confidence thresholds from config
+        const typeSettings = getVisionSettingsForType(shelf.type);
+        const confidenceMax = typeSettings.confidenceMax ?? DEFAULT_CONFIDENCE_MAX;
+        const confidenceMin = typeSettings.confidenceMin ?? DEFAULT_CONFIDENCE_MIN;
+        console.log('[VisionPipeline] Using confidence thresholds for', shelf.type, ':', { max: confidenceMax, min: confidenceMin });
+
         // Step 1: Extract items from image
         console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
         const rawItems = await this.extractItems(imageBase64, shelf.type);
         console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
 
-        // Step 1b: Categorize into three tiers
+        // Step 1b: Categorize into three tiers using per-type thresholds
         console.log('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
-        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(rawItems);
+        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(rawItems, confidenceMax, confidenceMin);
 
         // Low confidence items go directly to needs_review
         if (lowConfidence.length > 0) {
-            console.log('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + VISION_CONFIDENCE_MIN + ') to review queue...');
+            console.log('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
             await this.saveToReviewQueue(lowConfidence, userId, shelf.id);
         }
 
@@ -238,7 +244,7 @@ class VisionPipelineService {
         // Only save items that meet the minimum threshold to shelf
         // Items below threshold go to review instead
         const allEnriched = [...enrichedHighConf, ...enrichedMediumConf];
-        const { highConfidence: enrichedToSave, mediumConfidence: enrichedMedium, lowConfidence: enrichedToReview } = this.categorizeByConfidence(allEnriched);
+        const { highConfidence: enrichedToSave, mediumConfidence: enrichedMedium, lowConfidence: enrichedToReview } = this.categorizeByConfidence(allEnriched, confidenceMax, confidenceMin);
 
         // Medium confidence enriched items should also be saved (they were already medium-tier input)
         const itemsToSave = [...enrichedToSave, ...enrichedMedium];
@@ -422,20 +428,23 @@ class VisionPipelineService {
 
     /**
      * Categorize items by confidence into three tiers:
-     * - highConfidence (≥ VISION_CONFIDENCE_MAX): catalog workflow
-     * - mediumConfidence (≥ VISION_CONFIDENCE_MIN, < MAX): special enrichment
-     * - lowConfidence (< VISION_CONFIDENCE_MIN): needs_review directly
+     * - highConfidence (≥ max): catalog workflow
+     * - mediumConfidence (≥ min, < max): special enrichment
+     * - lowConfidence (< min): needs_review directly
+     * @param {Array} items - Items to categorize
+     * @param {number} maxThreshold - High confidence threshold (default from config/env)
+     * @param {number} minThreshold - Medium confidence threshold (default from config/env)
      */
-    categorizeByConfidence(items) {
+    categorizeByConfidence(items, maxThreshold = DEFAULT_CONFIDENCE_MAX, minThreshold = DEFAULT_CONFIDENCE_MIN) {
         const highConfidence = [];
         const mediumConfidence = [];
         const lowConfidence = [];
 
         items.forEach(item => {
             const conf = item.confidence ?? 0;
-            if (conf >= VISION_CONFIDENCE_MAX) {
+            if (conf >= maxThreshold) {
                 highConfidence.push(item);
-            } else if (conf >= VISION_CONFIDENCE_MIN) {
+            } else if (conf >= minThreshold) {
                 mediumConfidence.push(item);
             } else {
                 lowConfidence.push(item);
@@ -446,7 +455,7 @@ class VisionPipelineService {
             high: highConfidence.length,
             medium: mediumConfidence.length,
             low: lowConfidence.length,
-            thresholds: { max: VISION_CONFIDENCE_MAX, min: VISION_CONFIDENCE_MIN }
+            thresholds: { max: maxThreshold, min: minThreshold }
         });
 
         return { highConfidence, mediumConfidence, lowConfidence };

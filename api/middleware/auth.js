@@ -34,5 +34,48 @@ async function auth(req, res, next) {
   }
 }
 
-module.exports = { auth };
+/**
+ * Optional auth middleware - sets req.user if valid token present, but doesn't require it
+ */
+async function optionalAuth(req, res, next) {
+  const header = req.headers['authorization'] || '';
+  const [scheme, token] = header.split(' ');
+
+  // No token provided - continue without user
+  if (scheme !== 'Bearer' || !token) {
+    req.user = null;
+    return next();
+  }
+
+  let payload;
+  try {
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    // Invalid token - continue without user
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const result = await query(
+      'SELECT id, username, is_premium FROM users WHERE id = $1',
+      [payload.id]
+    );
+
+    if (result.rows.length) {
+      const user = result.rows[0];
+      req.user = { id: user.id, username: user.username, isPremium: !!user.is_premium };
+    } else {
+      req.user = null;
+    }
+    next();
+  } catch (err) {
+    console.error('optionalAuth middleware error:', err);
+    req.user = null;
+    next();
+  }
+}
+
+module.exports = { auth, optionalAuth };
+
 

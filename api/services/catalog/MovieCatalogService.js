@@ -312,7 +312,6 @@ class MovieCatalogService {
     }
     params.set('language', 'en-US');
     params.set('page', '1');
-    params.set('api_key', this.apiKey);
 
     const url = `${this.baseUrl.replace(/\/$/, '')}/search/movie?${params.toString()}`;
     return this.fetchJson(url);
@@ -321,7 +320,6 @@ class MovieCatalogService {
   async fetchMovieDetails(id) {
     const params = new URLSearchParams();
     params.set('append_to_response', 'credits,release_dates,keywords');
-    params.set('api_key', this.apiKey);
     params.set('language', 'en-US');
 
     const url = `${this.baseUrl.replace(/\/$/, '')}/movie/${id}?${params.toString()}`;
@@ -371,6 +369,7 @@ class MovieCatalogService {
       const response = await this.limiter.acquire().then(() => this.fetch(url, {
         signal: controller ? controller.signal : undefined,
         headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
           'User-Agent': 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)',
         },
       }));

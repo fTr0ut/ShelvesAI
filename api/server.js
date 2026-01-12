@@ -13,11 +13,14 @@ const accountRoutes = require('./routes/account');
 const collectablesRoutes = require('./routes/collectables');
 const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
+const profileRoutes = require('./routes/profile');
+const wishlistsRoutes = require('./routes/wishlists');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
 
 const app = express();
+
 // Minimal request log (dev only)
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
@@ -43,6 +46,7 @@ if (process.env.NODE_ENV !== 'production') {
     next();
   });
 }
+
 const defaultCorsOrigins = [
   'http://localhost:3000',
   'http://localhost:5001',
@@ -114,9 +118,8 @@ app.use((req, _res, next) => {
   req.signedCookies = signedCookies;
   next();
 });
-// Plasmic host support was removed; '/plasmic-host' routes are no longer proxied.
 
-app.use(express.json({ limit: '10mb' }));    // parse JSON bodies
+app.use(express.json({ limit: '10mb' }));
 
 const rawMediaRoot =
   process.env.MEDIA_CACHE_DIR ||
@@ -134,10 +137,6 @@ try {
   console.warn('Failed to initialize media cache directory:', err.message);
 }
 
-// Database connection handled in index.js via pg.js
-
-
-
 // Routes
 app.use('/api', authRoutes);
 app.use('/api/auth', authRoutes);
@@ -146,15 +145,7 @@ app.use('/api/account', accountRoutes);
 app.use('/api/collectables', collectablesRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
-// app.use('/steam', steamOpenIdRoutes);
-// app.use('/api/steam', steamRoutes);
-// Optional: Auth0-protected example route when configured
-
+app.use('/api/profile', profileRoutes);
+app.use('/api/wishlists', wishlistsRoutes);
 
 module.exports = app;
-
-
-
-
-
-

@@ -81,17 +81,32 @@ flowchart TD
 | [BookCatalogService.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/BookCatalogService.js) | Book catalog lookups |
 | [CatalogRouter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/CatalogRouter.js) | Config-driven API routing |
 | [apiContainers.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/apiContainers.json) | API priority configuration |
+| [visionSettings.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/visionSettings.json) | Per-type prompts & confidence thresholds |
 | [collectables.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/collectables.js) | Fingerprint + fuzzy matching queries |
 
 ## Configuration
 
+### Environment Variables
 | Env Variable | Default | Purpose |
-|--------------|---------|---------|
-| `VISION_CONFIDENCE_MAX` | `0.92` | High confidence threshold |
-| `VISION_CONFIDENCE_MIN` | `0.85` | Medium confidence threshold |
+|--------------|---------|------------|
+| `VISION_CONFIDENCE_MAX` | `0.92` | Default high confidence threshold (fallback) |
+| `VISION_CONFIDENCE_MIN` | `0.85` | Default medium confidence threshold (fallback) |
 | `USE_CATALOG_ROUTER` | `false` | Enable config-driven API routing |
 | `DISABLE_HARDCOVER` | `false` | Skip Hardcover API (env override) |
 | `DISABLE_OPENLIBRARY` | `false` | Skip OpenLibrary API (env override) |
+
+### Per-Type Vision Settings
+
+Configured in [visionSettings.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/visionSettings.json):
+
+| Type | Max Threshold | Min Threshold | Notes |
+|------|---------------|---------------|-------|
+| `book` | 0.92 | 0.85 | Standard - author usually visible on spine |
+| `movie` | 0.80 | 0.70 | Lower - director rarely on Blu-ray spines |
+| `game` | 0.85 | 0.75 | Lower - publisher sometimes visible |
+| `vinyl` | 0.85 | 0.75 | Standard - artist usually visible |
+
+Each type also has a custom prompt that tells Gemini what metadata to expect (e.g., movies prompt explicitly states directors are rarely visible).
 
 ---
 

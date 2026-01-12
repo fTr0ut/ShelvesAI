@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useContext, useMemo } from 'react';
 import {
+    Image,
     ScrollView,
     StyleSheet,
     Text,
@@ -9,10 +10,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId } = route.params || {};
+    const { apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
@@ -72,6 +75,59 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     };
 
+    const resolveCoverPath = () => {
+        const c = collectable;
+        if (!c) return null;
+
+        // Prefer locally cached media path
+        if (c.coverMediaPath) {
+            return c.coverMediaPath;
+        }
+
+        // Check images array for cached paths
+        const images = Array.isArray(c.images) ? c.images : [];
+        for (const image of images) {
+            const cached = image?.cachedSmallPath || image?.cachedPath;
+            if (typeof cached === 'string' && cached.trim()) {
+                return cached.trim();
+            }
+        }
+
+        // Fall back to cover URL
+        if (c.coverUrl) {
+            return c.coverUrl;
+        }
+
+        // Check images array for URLs
+        for (const image of images) {
+            const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
+            if (typeof url === 'string' && url.trim()) {
+                return url.trim();
+            }
+        }
+
+        return null;
+    };
+
+    const buildCoverUri = (pathOrUrl) => {
+        if (!pathOrUrl) return null;
+        // If it's already an http URL, use it directly
+        if (/^https?:/i.test(pathOrUrl)) {
+            return pathOrUrl;
+        }
+        // Build URI from local path via media endpoint
+        const trimmed = pathOrUrl.replace(/^\/+/, '');
+        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+        if (!apiBase) {
+            return `/${resource}`;
+        }
+        const normalizedBase = apiBase.replace(/\/+$/, '');
+        return `${normalizedBase}/${resource}`;
+    };
+
+    const coverPath = resolveCoverPath();
+    const coverUri = buildCoverUri(coverPath);
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -96,8 +152,18 @@ export default function CollectableDetailScreen({ route, navigation }) {
             <ScrollView style={styles.container} contentContainerStyle={styles.content}>
                 {/* Hero */}
                 <View style={styles.hero}>
-                    <View style={styles.iconBox}>
-                        <Ionicons name={getIconForType(type)} size={48} color={colors.primary} />
+                    <View style={styles.coverBox}>
+                        {coverUri ? (
+                            <Image
+                                source={{ uri: coverUri }}
+                                style={styles.coverImage}
+                                resizeMode="cover"
+                            />
+                        ) : (
+                            <View style={styles.coverFallback}>
+                                <Ionicons name={getIconForType(type)} size={48} color={colors.primary} />
+                            </View>
+                        )}
                     </View>
                     <Text style={styles.title}>{title}</Text>
                     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -191,14 +257,25 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         marginBottom: spacing.xl,
     },
-    iconBox: {
-        width: 96,
-        height: 96,
-        borderRadius: 20,
+    coverBox: {
+        width: 120,
+        height: 160,
+        borderRadius: 12,
+        overflow: 'hidden',
+        marginBottom: spacing.md,
+        backgroundColor: colors.surface,
+        ...shadows.md,
+    },
+    coverImage: {
+        width: '100%',
+        height: '100%',
+    },
+    coverFallback: {
+        width: '100%',
+        height: '100%',
         backgroundColor: colors.primary + '15',
         justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: spacing.md,
     },
     title: {
         fontSize: 22,

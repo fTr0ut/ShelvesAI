@@ -6,7 +6,6 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
   StatusBar,
@@ -23,11 +22,7 @@ export default function AccountScreen({ navigation }) {
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [premiumSaving, setPremiumSaving] = useState(false);
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
 
   const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -36,9 +31,6 @@ export default function AccountScreen({ navigation }) {
       try {
         const data = await apiRequest({ apiBase, path: '/api/account', token });
         setUser(data.user);
-        setFirstName(data.user?.firstName || '');
-        setLastName(data.user?.lastName || '');
-        setIsPrivate(!!data.user?.isPrivate);
         if (typeof data.user?.isPremium === 'boolean') {
           setPremiumEnabled(data.user.isPremium);
         }
@@ -49,24 +41,6 @@ export default function AccountScreen({ navigation }) {
       }
     })();
   }, [apiBase, token, setPremiumEnabled]);
-
-  const handleSave = useCallback(async () => {
-    try {
-      setSaving(true);
-      await apiRequest({
-        apiBase,
-        path: '/api/account',
-        method: 'PUT',
-        token,
-        body: { firstName, lastName, isPrivate, isPremium: premiumEnabled },
-      });
-      Alert.alert('Saved', 'Your profile has been updated');
-    } catch (e) {
-      Alert.alert('Error', e.message);
-    } finally {
-      setSaving(false);
-    }
-  }, [apiBase, token, firstName, lastName, isPrivate, premiumEnabled]);
 
   const handlePremiumToggle = useCallback(async (value) => {
     const previous = premiumEnabled;
@@ -125,71 +99,25 @@ export default function AccountScreen({ navigation }) {
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Profile Section */}
-        <View style={styles.section}>
-          <View style={styles.avatarRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(user?.firstName?.[0] || user?.username?.[0] || '?').toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.avatarInfo}>
-              <Text style={styles.displayName}>
-                {[user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username}
-              </Text>
-              <Text style={styles.username}>@{user?.username}</Text>
-            </View>
+        {/* Profile Section - Tappable to go to profile */}
+        <TouchableOpacity
+          style={styles.profileCard}
+          onPress={() => navigation.navigate('Profile')}
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {(user?.firstName?.[0] || user?.username?.[0] || '?').toUpperCase()}
+            </Text>
           </View>
-        </View>
-
-        {/* Edit Profile */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Edit Profile</Text>
-
-          <View style={styles.row}>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>First Name</Text>
-              <TextInput
-                style={styles.input}
-                value={firstName}
-                onChangeText={setFirstName}
-                placeholder="First"
-                placeholderTextColor={colors.textMuted}
-              />
-            </View>
-            <View style={styles.inputHalf}>
-              <Text style={styles.label}>Last Name</Text>
-              <TextInput
-                style={styles.input}
-                value={lastName}
-                onChangeText={setLastName}
-                placeholder="Last"
-                placeholderTextColor={colors.textMuted}
-              />
-            </View>
+          <View style={styles.profileInfo}>
+            <Text style={styles.displayName}>
+              {[user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username}
+            </Text>
+            <Text style={styles.username}>@{user?.username}</Text>
+            <Text style={styles.profileHint}>View & edit your profile</Text>
           </View>
-
-          <View style={styles.switchRow}>
-            <View>
-              <Text style={styles.switchLabel}>Private Account</Text>
-              <Text style={styles.switchHint}>Hide your shelves from public</Text>
-            </View>
-            <Switch
-              value={isPrivate}
-              onValueChange={setIsPrivate}
-              trackColor={{ false: colors.border, true: colors.primary + '80' }}
-              thumbColor={isPrivate ? colors.primary : colors.surfaceElevated}
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
-          </TouchableOpacity>
-        </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
 
         {/* Settings */}
         <View style={styles.card}>
@@ -227,10 +155,32 @@ export default function AccountScreen({ navigation }) {
 
           <TouchableOpacity
             style={styles.settingsRow}
+            onPress={() => navigation.navigate('Wishlists')}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="heart" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>My Wishlists</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() => navigation.navigate('FriendsList')}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="people-circle" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>My Friends</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsRow}
             onPress={() => navigation.navigate('FriendSearch')}
           >
             <View style={styles.settingsLeft}>
-              <Ionicons name="people" size={20} color={colors.text} />
+              <Ionicons name="person-add" size={20} color={colors.text} />
               <Text style={styles.settingsLabel}>Find Friends</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -293,38 +243,45 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     fontWeight: '600',
     color: colors.text,
   },
-  section: {
-    marginBottom: spacing.lg,
-  },
-  avatarRow: {
+  profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.sm,
   },
   avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: spacing.md,
   },
   avatarText: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '600',
     color: colors.textInverted,
   },
-  avatarInfo: {
+  profileInfo: {
     flex: 1,
   },
   displayName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: colors.text,
   },
   username: {
     fontSize: 14,
     color: colors.textMuted,
+  },
+  profileHint: {
+    fontSize: 12,
+    color: colors.primary,
+    marginTop: 2,
   },
   card: {
     backgroundColor: colors.surface,
@@ -340,58 +297,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: spacing.md,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  inputHalf: {
-    flex: 1,
-    marginBottom: spacing.sm,
-  },
-  label: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginBottom: 4,
-  },
-  input: {
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    fontSize: 15,
-    color: colors.text,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  switchLabel: {
-    fontSize: 15,
-    color: colors.text,
-  },
-  switchHint: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  saveButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    marginTop: spacing.md,
-  },
-  saveButtonDisabled: {
-    opacity: 0.6,
-  },
-  saveButtonText: {
-    color: colors.textInverted,
-    fontWeight: '600',
-    fontSize: 15,
   },
   settingsRow: {
     flexDirection: 'row',

@@ -261,4 +261,25 @@ async function respondToRequest(req, res) {
   }
 }
 
-module.exports = { listFriendships, sendFriendRequest, respondToRequest, searchUsers };
+async function removeFriendship(req, res) {
+  try {
+    const friendshipId = parseInt(req.params.id, 10);
+    if (isNaN(friendshipId)) {
+      return res.status(400).json({ error: 'Invalid friendship ID' });
+    }
+
+    const removed = await friendshipQueries.remove(friendshipId, req.user.id);
+
+    if (!removed) {
+      return res.status(404).json({ error: 'Friendship not found' });
+    }
+
+    res.json({ removed: true });
+  } catch (err) {
+    console.error('removeFriendship error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+module.exports = { listFriendships, sendFriendRequest, respondToRequest, searchUsers, removeFriendship };
+
