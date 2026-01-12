@@ -2,18 +2,19 @@
     "books": {
         "mode": "fallback",
         "apis": [
-            {
-                "name": "hardcover",
-                "enabled": true,
-                "priority": 1,
-                "envDisableKey": "DISABLE_HARDCOVER"
-            },
+
             {
                 "name": "openLibrary",
                 "enabled": true,
-                "priority": 2,
+                "priority": 1,
                 "envDisableKey": "DISABLE_OPENLIBRARY"
             }
+    {
+                "name": "hardcover",
+                "enabled": true,
+                "priority": 2,
+                "envDisableKey": "DISABLE_HARDCOVER"
+            },
         ]
     },
     "games": {

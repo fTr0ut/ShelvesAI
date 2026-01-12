@@ -571,7 +571,8 @@ async function processShelfVision(req, res) {
       needsReview: result.needsReview,
       items,
       visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
-      metadata: requestMetadata
+      metadata: requestMetadata,
+      warnings: result.warnings
     });
 
   } catch (err) {

@@ -33,6 +33,9 @@ query HardcoverBookDetails($ids: [Int!]) {
     slug
     cached_tags
     cached_image
+    image {
+      url
+    }
     cached_contributors
     contributions {
       contribution
@@ -50,6 +53,9 @@ query HardcoverBookDetails($ids: [Int!]) {
       edition_format
       physical_format
       cached_image
+      image {
+        url
+      }
       reading_format {
         format
       }
@@ -78,6 +84,9 @@ query HardcoverEditionByIsbn13($isbn: String!) {
     edition_format
     physical_format
     cached_image
+    image {
+      url
+    }
     reading_format {
       format
     }
@@ -97,6 +106,9 @@ query HardcoverEditionByIsbn13($isbn: String!) {
       slug
       cached_tags
       cached_image
+      image {
+        url
+      }
       cached_contributors
       contributions {
         contribution
@@ -123,6 +135,9 @@ query HardcoverEditionByIsbn10($isbn: String!) {
     edition_format
     physical_format
     cached_image
+    image {
+      url
+    }
     reading_format {
       format
     }
@@ -142,6 +157,9 @@ query HardcoverEditionByIsbn10($isbn: String!) {
       slug
       cached_tags
       cached_image
+      image {
+        url
+      }
       cached_contributors
       contributions {
         contribution
@@ -225,12 +243,12 @@ class HardcoverClient {
     this.timeoutMs = Number.isFinite(options.timeoutMs)
       ? options.timeoutMs
       : Number.parseInt(process.env.HARDCOVER_TIMEOUT_MS || '', 10) ||
-        DEFAULT_TIMEOUT_MS;
+      DEFAULT_TIMEOUT_MS;
 
     const rpm = Number.isFinite(options.requestsPerMinute)
       ? options.requestsPerMinute
       : Number.parseInt(process.env.HARDCOVER_REQUESTS_PER_MINUTE || '', 10) ||
-        DEFAULT_REQUESTS_PER_MINUTE;
+      DEFAULT_REQUESTS_PER_MINUTE;
     const perMinute = Math.max(1, rpm);
 
     this.userAgent =
@@ -306,10 +324,10 @@ class HardcoverClient {
     const topCandidates = scored.length
       ? scored.slice(0, maxCandidates)
       : searchPayload.ids.slice(0, maxCandidates).map((id) => ({
-          id,
-          result: null,
-          score: null,
-        }));
+        id,
+        result: null,
+        score: null,
+      }));
     if (!topCandidates.length) return null;
     const ids = topCandidates.map((entry) => entry.id).filter(Boolean);
     const books = await this.fetchBooksByIds(ids);

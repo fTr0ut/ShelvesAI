@@ -112,6 +112,9 @@ class VisionPipelineService {
         if (!shelf || !shelf.type) throw new Error('Invalid shelf provided');
         console.log('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId });
 
+        // Track any warnings from enrichment (e.g., truncated responses)
+        const warnings = [];
+
         // Step 1: Extract items from image
         console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
         const rawItems = await this.extractItems(imageBase64, shelf.type);
@@ -163,8 +166,13 @@ class VisionPipelineService {
                 rawOcrFingerprints.set(item.title || item.name, rawFp);
             }
 
-            const enrichedResults = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
-            enrichedHighConf = enrichedResults.map(enrichedItem => {
+            const enrichResult = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
+            // Handle new format {items, warning} or legacy array format
+            const enrichedArray = Array.isArray(enrichResult) ? enrichResult : enrichResult.items || [];
+            if (enrichResult.warning) {
+                warnings.push(enrichResult.warning);
+            }
+            enrichedHighConf = enrichedArray.map(enrichedItem => {
                 const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
                 const rawFp = rawOcrFingerprints.get(originalTitle);
                 if (rawFp) {
@@ -207,8 +215,13 @@ class VisionPipelineService {
                 }
 
                 // Use special uncertain prompt for medium confidence
-                const enrichedResults = await this.enrichUncertain(mediumUnmatched, shelf.type);
-                enrichedMediumConf = enrichedResults.map(enrichedItem => {
+                const enrichResult = await this.enrichUncertain(mediumUnmatched, shelf.type);
+                // Handle new format {items, warning} or legacy array format
+                const enrichedArray = Array.isArray(enrichResult) ? enrichResult : enrichResult.items || [];
+                if (enrichResult.warning) {
+                    warnings.push(enrichResult.warning);
+                }
+                enrichedMediumConf = enrichedArray.map(enrichedItem => {
                     const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
                     const rawFp = rawOcrFingerprints.get(originalTitle);
                     if (rawFp) {
@@ -259,7 +272,8 @@ class VisionPipelineService {
             analysis: { shelfConfirmed: true, items: allResolvedItems },
             results: { added: addedItems.length, needsReview: totalNeedsReview },
             addedItems,
-            needsReview: [...lowConfidence, ...itemsToReview]
+            needsReview: [...lowConfidence, ...itemsToReview],
+            warnings: warnings.length > 0 ? warnings : undefined
         };
     }
 

@@ -3,6 +3,8 @@ const { logPayload } = require('../utils/payloadLogger');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
+// Higher output tokens for enrichment calls to prevent JSON truncation
+const ENRICHMENT_MAX_OUTPUT_TOKENS = 16384;
 
 function cleanJsonResponse(text) {
     return String(text || '').replace(/```json/g, '').replace(/```/g, '').trim();
@@ -64,6 +66,40 @@ class GoogleGeminiService {
 
     isVisionConfigured() {
         return !!this.visionModel;
+    }
+
+    /**
+     * Attempt to repair a truncated JSON array by extracting complete objects.
+     * @param {string} jsonStr - Potentially truncated JSON array string
+     * @returns {string|null} - Repaired JSON array or null if not recoverable
+     */
+    repairTruncatedJsonArray(jsonStr) {
+        // Find the last complete object by looking for "}," or "}" followed by truncation
+        const lastCompleteObj = jsonStr.lastIndexOf('},');
+        if (lastCompleteObj > 0) {
+            // Close the array after the last complete object
+            const repaired = jsonStr.substring(0, lastCompleteObj + 1) + ']';
+            try {
+                JSON.parse(repaired);
+                return repaired;
+            } catch (e) {
+                // Still invalid, try fallback
+            }
+        }
+
+        // Fallback: look for second-to-last complete object
+        const secondLast = jsonStr.lastIndexOf('},', lastCompleteObj - 1);
+        if (secondLast > 0) {
+            const repaired = jsonStr.substring(0, secondLast + 1) + ']';
+            try {
+                JSON.parse(repaired);
+                return repaired;
+            } catch (e) {
+                // Can't repair
+            }
+        }
+
+        return null;
     }
 
     buildVisionPrompt(shelfType) {
@@ -149,7 +185,11 @@ Return ONLY valid JSON array. No markdown, no explanation.
         `;
 
         try {
-            const result = await this.textModel.generateContent(prompt);
+            // Use higher maxOutputTokens to prevent truncation with many items
+            const result = await this.textModel.generateContent({
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+            });
             const response = await result.response;
             const text = response.text();
 
@@ -165,6 +205,29 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
             // Clean markdown if present
             const jsonStr = cleanJsonResponse(text);
+
+            // Check for truncation (incomplete JSON)
+            if (!jsonStr.endsWith(']')) {
+                console.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
+                const repaired = this.repairTruncatedJsonArray(jsonStr);
+                if (repaired) {
+                    const partialItems = JSON.parse(repaired);
+                    console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
+                    const items = partialItems.map(item => ({
+                        ...item,
+                        kind: shelfType,
+                        publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
+                        tags: Array.isArray(item.tags) ? item.tags : [],
+                        identifiers: item.identifiers || {},
+                        source: 'gemini-schema-enriched-partial'
+                    }));
+                    return {
+                        items,
+                        warning: 'Not all items could be processed. Try again or take multiple photos of smaller subsets.'
+                    };
+                }
+            }
+
             const enrichedItems = JSON.parse(jsonStr);
 
             // Validation / Fallback for array
@@ -172,6 +235,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
                 console.warn('[GoogleGeminiService] Response was not an array:', enrichedItems);
                 return [];
             }
+
 
             return enrichedItems.map(item => ({
                 ...item,
@@ -253,7 +317,11 @@ Output a JSON array with this schema for each item:
 Return ONLY valid JSON array. No markdown, no explanation.`;
 
         try {
-            const result = await this.textModel.generateContent(prompt);
+            // Use higher maxOutputTokens to prevent truncation with many items
+            const result = await this.textModel.generateContent({
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+            });
             const response = await result.response;
             const text = response.text();
 
@@ -264,6 +332,30 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             });
 
             const jsonStr = cleanJsonResponse(text);
+
+            // Check for truncation (incomplete JSON)
+            if (!jsonStr.endsWith(']')) {
+                console.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
+                // Try to extract complete items before the truncation point
+                const repaired = this.repairTruncatedJsonArray(jsonStr);
+                if (repaired) {
+                    const partialItems = JSON.parse(repaired);
+                    console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
+                    const items = partialItems.map(item => ({
+                        ...item,
+                        kind: shelfType,
+                        publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
+                        tags: Array.isArray(item.tags) ? item.tags : [],
+                        identifiers: item.identifiers || {},
+                        source: 'gemini-uncertain-enriched-partial'
+                    }));
+                    return {
+                        items,
+                        warning: 'Not all items could be processed. Try again or take multiple photos of smaller subsets.'
+                    };
+                }
+            }
+
             const enrichedItems = JSON.parse(jsonStr);
 
             if (!Array.isArray(enrichedItems)) {

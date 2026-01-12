@@ -113,27 +113,40 @@ function extractTags(book, fallback = []) {
   return uniqueStrings(tags);
 }
 
-function extractImageVariants(value) {
-  const parsed = parseJsonMaybe(value);
-  if (!parsed) return null;
-  if (typeof parsed === 'string') {
-    return { urlSmall: parsed, urlMedium: parsed, urlLarge: parsed };
+function extractImageVariants(cachedImage, imageRelation) {
+  // First try cached_image
+  const parsed = parseJsonMaybe(cachedImage);
+  if (parsed) {
+    if (typeof parsed === 'string') {
+      return { urlSmall: parsed, urlMedium: parsed, urlLarge: parsed };
+    }
+    if (typeof parsed === 'object') {
+      const urlLarge =
+        parsed.url_large ||
+        parsed.large ||
+        parsed.full ||
+        parsed.url ||
+        parsed.src ||
+        null;
+      const urlMedium = parsed.url_medium || parsed.medium || urlLarge || null;
+      const urlSmall = parsed.url_small || parsed.small || urlMedium || urlLarge || null;
+      if (urlSmall || urlMedium || urlLarge) {
+        return { urlSmall, urlMedium, urlLarge };
+      }
+    }
   }
-  if (typeof parsed === 'object') {
-    const urlLarge =
-      parsed.url_large ||
-      parsed.large ||
-      parsed.full ||
-      parsed.url ||
-      parsed.src ||
-      null;
-    const urlMedium = parsed.url_medium || parsed.medium || urlLarge || null;
-    const urlSmall = parsed.url_small || parsed.small || urlMedium || urlLarge || null;
-    if (!urlSmall && !urlMedium && !urlLarge) return null;
-    return { urlSmall, urlMedium, urlLarge };
+
+  // Fallback to image relation (which returns { url: "..." } from GraphQL)
+  if (imageRelation && typeof imageRelation === 'object' && imageRelation.url) {
+    const url = normalizeString(imageRelation.url);
+    if (url) {
+      return { urlSmall: url, urlMedium: url, urlLarge: url };
+    }
   }
+
   return null;
 }
+
 
 function hardcoverToCollectable(enrichment, options = {}) {
   if (!enrichment?.book) return null;
@@ -175,8 +188,8 @@ function hardcoverToCollectable(enrichment, options = {}) {
 
   const images = [];
   const coverVariants =
-    extractImageVariants(edition?.cached_image) ||
-    extractImageVariants(book?.cached_image);
+    extractImageVariants(edition?.cached_image, edition?.image) ||
+    extractImageVariants(book?.cached_image, book?.image);
   if (coverVariants) {
     images.push({
       kind: 'cover',
