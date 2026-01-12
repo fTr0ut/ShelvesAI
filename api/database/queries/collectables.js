@@ -236,12 +236,50 @@ async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
     return null;
 }
 
+/**
+ * Find collectable by fuzzy fingerprint (searches the fuzzy_fingerprints array)
+ * Used to match raw OCR text that was previously cleaned up by enrichment.
+ */
+async function findByFuzzyFingerprint(fuzzyFp) {
+    if (!fuzzyFp) return null;
+    const result = await query(
+        `SELECT c.*, m.local_path as cover_media_path
+         FROM collectables c
+         LEFT JOIN media m ON m.id = c.cover_media_id
+         WHERE c.fuzzy_fingerprints @> $1::jsonb`,
+        [JSON.stringify([fuzzyFp])]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Add a fuzzy fingerprint to an existing collectable's fuzzy_fingerprints array.
+ * This is used to store raw OCR hashes that map to this collectable.
+ */
+async function addFuzzyFingerprint(collectableId, fuzzyFp) {
+    if (!collectableId || !fuzzyFp) return null;
+    const result = await query(
+        `UPDATE collectables 
+         SET fuzzy_fingerprints = CASE 
+             WHEN fuzzy_fingerprints @> $2::jsonb THEN fuzzy_fingerprints
+             ELSE fuzzy_fingerprints || $2::jsonb
+         END,
+         updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [collectableId, JSON.stringify([fuzzyFp])]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
 module.exports = {
     findByFingerprint,
     findByLightweightFingerprint,
+    findByFuzzyFingerprint,
     findById,
     searchByTitle,
     upsert,
     searchGlobal,
     fuzzyMatch,
+    addFuzzyFingerprint,
 };

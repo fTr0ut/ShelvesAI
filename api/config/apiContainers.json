@@ -1,0 +1,52 @@
+{
+    "books": {
+        "mode": "fallback",
+        "apis": [
+            {
+                "name": "hardcover",
+                "enabled": true,
+                "priority": 1,
+                "envDisableKey": "DISABLE_HARDCOVER"
+            },
+            {
+                "name": "openLibrary",
+                "enabled": true,
+                "priority": 2,
+                "envDisableKey": "DISABLE_OPENLIBRARY"
+            }
+        ]
+    },
+    "games": {
+        "mode": "fallback",
+        "apis": [
+            {
+                "name": "igdb",
+                "enabled": true,
+                "priority": 1,
+                "envDisableKey": "DISABLE_IGDB"
+            }
+        ]
+    },
+    "movies": {
+        "mode": "fallback",
+        "apis": [
+            {
+                "name": "tmdb",
+                "enabled": true,
+                "priority": 1,
+                "envDisableKey": "DISABLE_TMDB"
+            }
+        ]
+    },
+    "vinyl": {
+        "mode": "fallback",
+        "apis": [
+            {
+                "name": "discogs",
+                "enabled": false,
+                "priority": 1,
+                "envDisableKey": "DISABLE_DISCOGS"
+            }
+        ]
+    }
+}

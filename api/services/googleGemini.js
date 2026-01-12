@@ -103,10 +103,10 @@ Do not include explanations or markdown.`;
         }
 
         const categoryPrompts = {
-            book: "Include fields: title, primaryCreator (author), publishers (array), year (string), description, isbn (indetifiers object), pageCount (format).",
-            game: "Include fields: title, primaryCreator (developer), publishers (array), year (string), platform (format), description, series.",
-            movie: "Include fields: title, primaryCreator (director), publishers (studio), year (string), format (DVD/Bluray), description, cast (tags).",
-            music: "Include fields: title, primaryCreator (artist), publishers (label), year (string), format, description."
+            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
+            game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio, poster URL from TMDB if known.`,
+            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
         const specificInstruction = categoryPrompts[shelfType] || categoryPrompts['book'];
@@ -115,33 +115,37 @@ Do not include explanations or markdown.`;
             return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
         }).join('\n');
 
-        const prompt = `
-        You are an expert cataloguer. Validate and enrich the following items found on a ${shelfType} shelf.
-        
-        Input Items:
-        ${itemText}
+        const prompt = `You are an expert librarian and cataloguer. Validate and enrich the following items found on a ${shelfType} shelf with CATALOG-QUALITY metadata.
 
-        Task:
-        1. Correct OCR errors in titles/names.
-        2. Identify the real-world collectable.
-        3. Output a valid JSON array of objects strictly matching this schema:
-        
-        interface CollectableSchema {
-          title: string;
-          primaryCreator: string | null; // Author, Developer, Director, or Artist
-          year: string | null;
-          kind: "${shelfType}";
-          publishers: string[];
-          tags: string[]; // Genres, notable attributes
-          identifiers: object; // e.g. { isbn: "..." } or { upc: "..." }
-          description: string | null;
-          format: string | null; // e.g. Hardcover, PS5, DVD
-          confidence: number; // 0.0 to 1.0 confidence in identification
-        }
-        
-        ${specificInstruction}
-        
-        Return ONLY valid JSON. No markdown formatting.
+Input Items:
+${itemText}
+
+Task:
+1. Correct any OCR errors in titles/names.
+2. Identify the real-world collectable.
+3. Provide comprehensive metadata equivalent to OpenLibrary, Hardcover, or similar databases.
+
+${specificInstruction}
+
+Output a JSON array with this schema for each item:
+{
+  "title": "string - corrected full title",
+  "subtitle": "string or null",
+  "primaryCreator": "string - author/developer/director/artist",
+  "year": "string - publication/release year (4 digits)",
+  "kind": "${shelfType}",
+  "publishers": ["array of publisher names"],
+  "tags": ["genres", "categories", "notable attributes"],
+  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
+  "description": "string - brief synopsis (1-2 sentences)",
+  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "pageCount": number or null,
+  "series": { "name": "string or null", "number": number or null },
+  "coverUrl": "string - URL to cover image if you can construct one from ISBN, otherwise null",
+  "confidence": number 0.0-1.0
+}
+
+Return ONLY valid JSON array. No markdown, no explanation.
         `;
 
         try {
@@ -189,6 +193,102 @@ Do not include explanations or markdown.`;
                 kind: shelfType,
                 confidence: 0.5,
                 notes: "Enrichment failed"
+            }));
+        }
+    }
+
+    /**
+     * Enrich UNCERTAIN items (medium-confidence OCR) with special handling.
+     * Returns catalog-quality metadata matching what OpenLibrary/Hardcover would return.
+     */
+    async enrichWithSchemaUncertain(items, shelfType) {
+        if (!this.textModel) {
+            throw new Error('Google Gemini client not initialized.');
+        }
+
+        const categoryPrompts = {
+            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
+            game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio, poster URL from TMDB if known.`,
+            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
+        };
+
+        const specificInstruction = categoryPrompts[shelfType] || categoryPrompts['book'];
+        const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
+
+        const prompt = `You are an expert librarian and cataloguer with extensive knowledge of published works. The following items were extracted via OCR but recognition is UNCERTAIN or PARTIAL. Text may be incomplete or misspelled.
+
+Input Items (uncertain OCR):
+${itemText}
+
+Your task is to identify these items and return CATALOG-QUALITY metadata equivalent to what OpenLibrary, Hardcover, or similar databases would provide.
+
+Instructions:
+1. Make your BEST GUESS at the real-world item. Use your knowledge of popular ${shelfType}s.
+2. Correct OCR errors (missing letters, garbled text, partial titles).
+3. If the input appears to be just an author/creator name without a title, try to identify their most popular or recent work, OR return title: null if you cannot determine the specific work.
+4. Provide as much metadata as you can confidently identify.
+
+${specificInstruction}
+
+Output a JSON array with this schema for each item:
+{
+  "title": "string - corrected full title",
+  "subtitle": "string or null",
+  "primaryCreator": "string - author/developer/director/artist",
+  "year": "string - publication/release year (4 digits)",
+  "kind": "${shelfType}",
+  "publishers": ["array of publisher names"],
+  "tags": ["genres", "categories", "notable attributes"],
+  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
+  "description": "string - brief synopsis (1-2 sentences)",
+  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "pageCount": number or null,
+  "series": { "name": "string or null", "number": number or null },
+  "coverUrl": "string - URL to cover image if you can construct one from ISBN or known sources, otherwise null",
+  "confidence": number 0.0-1.0 (be honest - 0.9+ only if certain, 0.6-0.8 for educated guesses),
+  "_originalTitle": "string - keep the exact original OCR text for matching"
+}
+
+Return ONLY valid JSON array. No markdown, no explanation.`;
+
+        try {
+            const result = await this.textModel.generateContent(prompt);
+            const response = await result.response;
+            const text = response.text();
+
+            logPayload({
+                source: 'google-gemini',
+                operation: 'generateContentUncertain',
+                payload: { model: this.modelName, promptPreview: prompt.substring(0, 300), text }
+            });
+
+            const jsonStr = cleanJsonResponse(text);
+            const enrichedItems = JSON.parse(jsonStr);
+
+            if (!Array.isArray(enrichedItems)) {
+                console.warn('[GoogleGeminiService] Uncertain response was not an array:', enrichedItems);
+                return [];
+            }
+
+            return enrichedItems.map(item => ({
+                ...item,
+                kind: shelfType,
+                publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                identifiers: item.identifiers || {},
+                source: 'gemini-uncertain-enriched'
+            }));
+
+        } catch (err) {
+            console.error('[GoogleGeminiService] Uncertain enrichment failed:', err);
+            return items.map(i => ({
+                title: i.name || i.title,
+                _originalTitle: i.name || i.title,
+                primaryCreator: i.author,
+                kind: shelfType,
+                confidence: 0.4,
+                notes: "Uncertain enrichment failed"
             }));
         }
     }

@@ -10,8 +10,12 @@ const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 
-// Configurable threshold (default 90%)
-const AUTO_ADD_THRESHOLD = parseFloat(process.env.VISION_AUTO_ADD_THRESHOLD || '0.9');
+// Tiered confidence thresholds (configurable via env)
+// High confidence (≥ max): catalog workflow
+// Medium confidence (≥ min, < max): special enrichment only (skip catalog APIs)
+// Low confidence (< min): needs_review directly
+const VISION_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
+const VISION_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -113,72 +117,149 @@ class VisionPipelineService {
         const rawItems = await this.extractItems(imageBase64, shelf.type);
         console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
 
-        // Step 1b: Early categorize - low confidence OCR items go directly to needs_review
-        console.log('[VisionPipeline] Step 1b: Early categorizing by confidence (threshold:', AUTO_ADD_THRESHOLD, ')...');
-        const { autoAdd: highConfidenceItems, needsReview: lowConfidenceItems } = this.categorizeByConfidence(rawItems);
-        console.log('[VisionPipeline] Step 1b Complete: High confidence:', highConfidenceItems.length, ', Low confidence → needs_review:', lowConfidenceItems.length);
+        // Step 1b: Categorize into three tiers
+        console.log('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
+        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(rawItems);
 
-        // Save low confidence items to review queue immediately
-        if (lowConfidenceItems.length > 0) {
-            console.log('[VisionPipeline] Sending', lowConfidenceItems.length, 'low-confidence items to review queue...');
-            await this.saveToReviewQueue(lowConfidenceItems, userId, shelf.id);
+        // Low confidence items go directly to needs_review
+        if (lowConfidence.length > 0) {
+            console.log('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + VISION_CONFIDENCE_MIN + ') to review queue...');
+            await this.saveToReviewQueue(lowConfidence, userId, shelf.id);
         }
 
-        // Step 2: matchCollectable (fingerprint + fuzzy lookup in Postgres)
-        console.log('[VisionPipeline] Step 2: Fingerprint/fuzzy lookup in Postgres for', highConfidenceItems.length, 'items...');
+        // ===== HIGH CONFIDENCE WORKFLOW (≥ max threshold) =====
+        // Step 2: Fingerprint lookup for high confidence items
+        console.log('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
         const matched = [];
-        const unmatched = [];
-        for (const item of highConfidenceItems) {
+        const unmatchedHigh = [];
+        for (const item of highConfidence) {
             const collectable = await this.matchCollectable(item, shelf.type);
             if (collectable) {
                 matched.push({ ...item, collectable, source: 'database-match' });
             } else {
-                unmatched.push(item);
+                unmatchedHigh.push(item);
             }
         }
-        console.log('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched:', unmatched.length);
+        console.log('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched high-conf:', unmatchedHigh.length);
 
-        // Step 3: lookupCatalog (OpenLibrary → Hardcover) for unmatched items only
-        console.log('[VisionPipeline] Step 3: Catalog lookup (OpenLibrary/Hardcover) for', unmatched.length, 'unmatched items...');
-        const catalogResults = await this.lookupCatalog(unmatched, shelf.type);
-        console.log('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
-
-        // Step 4: enrichUnresolved (Gemini) - ONLY if both fingerprint AND catalog failed
-        let enriched = [];
-        if (catalogResults.unresolved.length > 0) {
-            console.log('[VisionPipeline] Step 4: Enriching', catalogResults.unresolved.length, 'items via Gemini (both fingerprint AND catalog failed)...');
-            enriched = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
-            console.log('[VisionPipeline] Step 4 Complete: Gemini enriched', enriched.length, 'items');
+        // Step 3: Catalog lookup for unmatched HIGH confidence items only
+        let catalogResults = { resolved: [], unresolved: [] };
+        if (unmatchedHigh.length > 0) {
+            console.log('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
+            catalogResults = await this.lookupCatalog(unmatchedHigh, shelf.type);
+            console.log('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
         } else {
-            console.log('[VisionPipeline] Step 4: Skipped - no items need Gemini enrichment');
+            console.log('[VisionPipeline] Step 3: Skipped - all high-confidence items matched in database');
         }
 
-        // Step 5: Final save to shelf
-        // Combine all resolved items: DB matches + catalog matches + enriched
+        // Step 4a: Standard enrichment for high-confidence items that failed both fingerprint AND catalog
+        let enrichedHighConf = [];
+        if (catalogResults.unresolved.length > 0) {
+            console.log('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
+
+            const rawOcrFingerprints = new Map();
+            for (const item of catalogResults.unresolved) {
+                const rawFp = makeLightweightFingerprint(item);
+                rawOcrFingerprints.set(item.title || item.name, rawFp);
+            }
+
+            const enrichedResults = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
+            enrichedHighConf = enrichedResults.map(enrichedItem => {
+                const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
+                const rawFp = rawOcrFingerprints.get(originalTitle);
+                if (rawFp) {
+                    return { ...enrichedItem, rawOcrFingerprint: rawFp };
+                }
+                return enrichedItem;
+            });
+
+            console.log('[VisionPipeline] Step 4a Complete: Enriched', enrichedHighConf.length, 'high-confidence items');
+        }
+
+        // ===== MEDIUM CONFIDENCE WORKFLOW (between min and max) =====
+        // Skip catalog APIs, go directly to special enrichment
+        let enrichedMediumConf = [];
+        if (mediumConfidence.length > 0) {
+            console.log('[VisionPipeline] Step 4b: Special enrichment for', mediumConfidence.length, 'medium-confidence items (skipping catalog APIs)...');
+
+            // First try fingerprint lookup (they might exist in DB)
+            const mediumMatched = [];
+            const mediumUnmatched = [];
+            for (const item of mediumConfidence) {
+                const collectable = await this.matchCollectable(item, shelf.type);
+                if (collectable) {
+                    mediumMatched.push({ ...item, collectable, source: 'database-match' });
+                } else {
+                    mediumUnmatched.push(item);
+                }
+            }
+            console.log('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Need enrichment:', mediumUnmatched.length);
+
+            // Add DB matches to our matched list
+            matched.push(...mediumMatched);
+
+            // Special enrichment for medium confidence (no catalog, uncertain prompt)
+            if (mediumUnmatched.length > 0) {
+                const rawOcrFingerprints = new Map();
+                for (const item of mediumUnmatched) {
+                    const rawFp = makeLightweightFingerprint(item);
+                    rawOcrFingerprints.set(item.title || item.name, rawFp);
+                }
+
+                // Use special uncertain prompt for medium confidence
+                const enrichedResults = await this.enrichUncertain(mediumUnmatched, shelf.type);
+                enrichedMediumConf = enrichedResults.map(enrichedItem => {
+                    const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
+                    const rawFp = rawOcrFingerprints.get(originalTitle);
+                    if (rawFp) {
+                        return { ...enrichedItem, rawOcrFingerprint: rawFp };
+                    }
+                    return enrichedItem;
+                });
+
+                console.log('[VisionPipeline] Step 4b Complete: Special-enriched', enrichedMediumConf.length, 'medium-confidence items');
+            }
+        }
+
+        // Step 5: Filter enriched items by confidence BEFORE saving
+        // Only save items that meet the minimum threshold to shelf
+        // Items below threshold go to review instead
+        const allEnriched = [...enrichedHighConf, ...enrichedMediumConf];
+        const { highConfidence: enrichedToSave, mediumConfidence: enrichedMedium, lowConfidence: enrichedToReview } = this.categorizeByConfidence(allEnriched);
+
+        // Medium confidence enriched items should also be saved (they were already medium-tier input)
+        const itemsToSave = [...enrichedToSave, ...enrichedMedium];
+        const itemsToReview = enrichedToReview;
+
+        console.log('[VisionPipeline] Step 5: Enriched items split:', {
+            toSave: itemsToSave.length,
+            toReview: itemsToReview.length
+        });
+
+        // Combine all items to save: DB matches + catalog matches + enriched items meeting threshold
         const allResolvedItems = [
-            ...matched.map(m => ({ ...m, confidence: 1.0 })), // DB matches have full confidence
+            ...matched.map(m => ({ ...m, confidence: 1.0 })),
             ...catalogResults.resolved,
-            ...enriched
+            ...itemsToSave
         ];
         console.log('[VisionPipeline] Step 5: Saving', allResolvedItems.length, 'resolved items to shelf...');
         const addedItems = await this.saveToShelf(allResolvedItems, userId, shelf.id, shelf.type);
         console.log('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
 
-        // Check if any enriched items are still low confidence after enrichment
-        const { autoAdd: finalAutoAdd, needsReview: finalNeedsReview } = this.categorizeByConfidence(enriched);
-        if (finalNeedsReview.length > 0) {
-            console.log('[VisionPipeline] Post-enrichment: Sending', finalNeedsReview.length, 'low-confidence enriched items to review queue...');
-            await this.saveToReviewQueue(finalNeedsReview, userId, shelf.id);
+        // Send enriched items that didn't meet threshold to review queue
+        if (itemsToReview.length > 0) {
+            console.log('[VisionPipeline] Post-enrichment: Sending', itemsToReview.length, 'low-confidence enriched items to review queue...');
+            await this.saveToReviewQueue(itemsToReview, userId, shelf.id);
         }
 
-        const totalNeedsReview = lowConfidenceItems.length + finalNeedsReview.length;
+        const totalNeedsReview = lowConfidence.length + itemsToReview.length;
         console.log('[VisionPipeline] === processImage Complete ===', { added: addedItems.length, needsReview: totalNeedsReview });
 
         return {
             analysis: { shelfConfirmed: true, items: allResolvedItems },
             results: { added: addedItems.length, needsReview: totalNeedsReview },
             addedItems,
-            needsReview: [...lowConfidenceItems, ...finalNeedsReview]
+            needsReview: [...lowConfidence, ...itemsToReview]
         };
     }
 
@@ -307,47 +388,92 @@ class VisionPipelineService {
         return this.geminiService.enrichWithSchema(items, shelfType);
     }
 
+    /**
+     * Special enrichment for medium-confidence items.
+     * Uses a prompt that emphasizes OCR uncertainty and asks for best-guess corrections.
+     */
+    async enrichUncertain(items, shelfType) {
+        if (!items.length) return [];
+        console.log('[VisionPipeline.enrichUncertain] Processing', items.length, 'uncertain items...');
+
+        // Use enrichWithSchema but with an uncertain flag for special prompt handling
+        if (typeof this.geminiService.enrichWithSchemaUncertain === 'function') {
+            return this.geminiService.enrichWithSchemaUncertain(items, shelfType);
+        }
+
+        // Fallback to standard enrichment if specialized method not available
+        console.log('[VisionPipeline.enrichUncertain] Falling back to standard enrichment (enrichWithSchemaUncertain not found)');
+        return this.geminiService.enrichWithSchema(items, shelfType);
+    }
+
+    /**
+     * Categorize items by confidence into three tiers:
+     * - highConfidence (≥ VISION_CONFIDENCE_MAX): catalog workflow
+     * - mediumConfidence (≥ VISION_CONFIDENCE_MIN, < MAX): special enrichment
+     * - lowConfidence (< VISION_CONFIDENCE_MIN): needs_review directly
+     */
     categorizeByConfidence(items) {
-        const autoAdd = [];
-        const needsReview = [];
+        const highConfidence = [];
+        const mediumConfidence = [];
+        const lowConfidence = [];
 
         items.forEach(item => {
-            if (item.confidence >= AUTO_ADD_THRESHOLD) {
-                autoAdd.push(item);
+            const conf = item.confidence ?? 0;
+            if (conf >= VISION_CONFIDENCE_MAX) {
+                highConfidence.push(item);
+            } else if (conf >= VISION_CONFIDENCE_MIN) {
+                mediumConfidence.push(item);
             } else {
-                needsReview.push(item);
+                lowConfidence.push(item);
             }
         });
 
-        return { autoAdd, needsReview };
+        console.log('[VisionPipeline.categorizeByConfidence] Tiers:', {
+            high: highConfidence.length,
+            medium: mediumConfidence.length,
+            low: lowConfidence.length,
+            thresholds: { max: VISION_CONFIDENCE_MAX, min: VISION_CONFIDENCE_MIN }
+        });
+
+        return { highConfidence, mediumConfidence, lowConfidence };
     }
 
     async matchCollectable(item, shelfType) {
         const itemTitle = item.title || item.name;
         console.log('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle);
 
-        // 1. Lightweight fingerprint
-        const lwf = makeLightweightFingerprint(item);
-        console.log('[VisionPipeline.matchCollectable] Lightweight fingerprint lookup:', lwf);
-        let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-
-        if (collectable) {
-            console.log('[VisionPipeline.matchCollectable] ✓ Found via fingerprint:', collectable.id, collectable.title);
-            return collectable;
-        }
-        console.log('[VisionPipeline.matchCollectable] No fingerprint match, trying fuzzy match...');
-
-        // 2. Fuzzy Match
-        if (collectablesQueries.fuzzyMatch) {
-            collectable = await collectablesQueries.fuzzyMatch(item.title, item.primaryCreator, shelfType);
-            if (collectable) {
-                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy match:', collectable.id, collectable.title);
-            } else {
-                console.log('[VisionPipeline.matchCollectable] ✗ No fuzzy match found for:', itemTitle);
+        // 1. Check by fingerprint (if present on item from catalog)
+        if (item.fingerprint) {
+            console.log('[VisionPipeline.matchCollectable] Checking fingerprint:', item.fingerprint);
+            const byFp = await collectablesQueries.findByFingerprint(item.fingerprint);
+            if (byFp) {
+                console.log('[VisionPipeline.matchCollectable] ✓ Found via fingerprint:', byFp.id, byFp.title);
+                return byFp;
             }
         }
 
-        return collectable;
+        // 2. Lightweight fingerprint (title + creator hash)
+        const lwf = makeLightweightFingerprint(item);
+        console.log('[VisionPipeline.matchCollectable] Checking lightweight fingerprint:', lwf);
+        let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+
+        if (collectable) {
+            console.log('[VisionPipeline.matchCollectable] ✓ Found via lightweight fingerprint:', collectable.id, collectable.title);
+            return collectable;
+        }
+
+        // 3. Fuzzy fingerprints array (raw OCR hashes stored from previous enrichments)
+        if (collectablesQueries.findByFuzzyFingerprint) {
+            console.log('[VisionPipeline.matchCollectable] Checking fuzzy fingerprints array:', lwf);
+            collectable = await collectablesQueries.findByFuzzyFingerprint(lwf);
+            if (collectable) {
+                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy fingerprint:', collectable.id, collectable.title);
+                return collectable;
+            }
+        }
+
+        console.log('[VisionPipeline.matchCollectable] ✗ No hash match found for:', itemTitle);
+        return null;
     }
 
     async saveToShelf(items, userId, shelfId, shelfType) {
@@ -430,7 +556,11 @@ class VisionPipelineService {
                         coverUrl,
                         sources,
                         externalId: externalId || null,
-                        fuzzyFingerprints: normalizeArray(item.fuzzyFingerprints),
+                        // Include rawOcrFingerprint (from enrichment) in fuzzy fingerprints
+                        fuzzyFingerprints: [
+                            ...normalizeArray(item.fuzzyFingerprints),
+                            ...(item.rawOcrFingerprint ? [item.rawOcrFingerprint] : [])
+                        ].filter(Boolean),
                     });
                     console.log('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
                 } else {

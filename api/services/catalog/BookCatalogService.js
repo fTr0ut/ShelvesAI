@@ -7,6 +7,20 @@ const {
 } = require('../openLibrary');
 const { HardcoverClient } = require('../hardcover');
 
+// Config-driven router (optional, for gradual migration)
+let catalogRouter = null;
+function getCatalogRouter() {
+  if (!catalogRouter) {
+    try {
+      const { getCatalogRouter: getRouter } = require('./CatalogRouter');
+      catalogRouter = getRouter();
+    } catch (err) {
+      console.warn('[BookCatalogService] CatalogRouter not available:', err.message);
+    }
+  }
+  return catalogRouter;
+}
+
 const DEFAULT_CONCURRENCY = 5;
 const DEFAULT_RETRIES = 2;
 
@@ -35,6 +49,10 @@ class BookCatalogService {
     this.enableSecondPass = String(enableSecondPass || 'false')
       .trim()
       .toLowerCase() === 'true';
+
+    // Enable config-driven routing (set USE_CATALOG_ROUTER=true to activate)
+    const useRouter = options.useRouter ?? process.env.USE_CATALOG_ROUTER;
+    this.useRouter = String(useRouter || 'false').trim().toLowerCase() === 'true';
 
     this.hardcoverClient = new HardcoverClient({
       token: options.hardcoverToken,
@@ -72,12 +90,17 @@ class BookCatalogService {
     const results = [];
     let index = 0;
 
+    // Use config-driven router if enabled
+    const lookupFn = this.useRouter
+      ? (item, retries) => this.routerLookup(item, retries)
+      : (item, retries) => this.safeLookup(item, retries);
+
     const worker = async () => {
       while (index < items.length) {
         const currentIndex = index++;
         const input = items[currentIndex];
         try {
-          const value = await this.safeLookup(input, options.retries);
+          const value = await lookupFn(input, options.retries);
           if (value) {
             results[currentIndex] = {
               status: 'resolved',
@@ -96,6 +119,26 @@ class BookCatalogService {
 
     await Promise.all(Array.from({ length: concurrency }, worker));
     return results;
+  }
+
+  /**
+   * Router-based lookup using config-driven API priority
+   * Falls back to safeLookup if router is not available
+   */
+  async routerLookup(item, retries = DEFAULT_RETRIES) {
+    const router = getCatalogRouter();
+    if (!router) {
+      console.warn('[BookCatalogService.routerLookup] Router not available, falling back to safeLookup');
+      return this.safeLookup(item, retries);
+    }
+
+    try {
+      const result = await router.lookup(item, 'books', { retries });
+      return result;
+    } catch (err) {
+      console.error('[BookCatalogService.routerLookup] failed:', err?.message || err);
+      return null;
+    }
   }
 
   async safeLookup(item, retries = DEFAULT_RETRIES) {
@@ -124,6 +167,7 @@ class BookCatalogService {
 
     const handleHardcoverError = async (err, attempt, payload, stage) => {
       const message = String(err?.message || err);
+      // Handle rate limiting (429)
       if (
         (message.includes('429') || message.toLowerCase().includes('throttled') || message.toLowerCase().includes('rate limit')) &&
         attempt < retries
@@ -137,12 +181,26 @@ class BookCatalogService {
         await makeDelay(backoff);
         return true;
       }
+      // Handle aborted requests
       if (message.toLowerCase().includes('aborted') && attempt < retries) {
         const backoff = 1000 * (attempt + 1);
         console.warn('[BookCatalogService.safeLookup] Hardcover request aborted', {
           backoff,
           stage,
           payload,
+        });
+        await makeDelay(backoff);
+        return true;
+      }
+      // Handle 503 (Service Unavailable) and 502 (Bad Gateway) - transient server errors
+      if ((message.includes('503') || message.includes('502') || message.toLowerCase().includes('no available server')) && attempt < retries) {
+        const backoff = 2000 * Math.pow(2, attempt); // Longer backoff for server issues
+        console.warn('[BookCatalogService.safeLookup] Hardcover server unavailable (503/502), retrying...', {
+          backoff,
+          stage,
+          payload,
+          attempt: attempt + 1,
+          maxRetries: retries,
         });
         await makeDelay(backoff);
         return true;
@@ -333,9 +391,9 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
         },
       ],
       text: {
-       format:{
-        name: 'CorrectedBookMetadata',
-        type: 'json_schema',                
+        format: {
+          name: 'CorrectedBookMetadata',
+          type: 'json_schema',
           schema: {
             type: 'object',
             additionalProperties: false,
@@ -392,15 +450,15 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
                       required: ["isbn13", "isbn10", "asin"],
                     },
                   },
-                  required: ['inputId', 'title','subtitle','author','year','primaryCreator','creators','publisher','publishers','description','tags','identifiers','coverImage','coverImageLarge','coverImageMedium','coverImageSmall','sourceUrl','confidence' ],
+                  required: ['inputId', 'title', 'subtitle', 'author', 'year', 'primaryCreator', 'creators', 'publisher', 'publishers', 'description', 'tags', 'identifiers', 'coverImage', 'coverImageLarge', 'coverImageMedium', 'coverImageSmall', 'sourceUrl', 'confidence'],
                 },
               },
             },
             required: ['items'],
           },
+        },
       },
-    },
-  });
+    });
 
     let corrections = [];
     if (Array.isArray(resp?.output_parsed?.items)) {
@@ -460,9 +518,9 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       );
       const baseCreator = normalizeString(
         corrCopy.primaryCreator ||
-          corrCopy.author ||
-          (Array.isArray(corrCopy.creators) ? corrCopy.creators.find(Boolean) : null) ||
-          orig.author,
+        corrCopy.author ||
+        (Array.isArray(corrCopy.creators) ? corrCopy.creators.find(Boolean) : null) ||
+        orig.author,
       );
 
       if (!baseTitle) {
@@ -486,14 +544,14 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       const coverSmall = corrCopy.coverImageSmall || corrCopy.coverImage || null;
       const images = coverLarge || coverMedium || coverSmall
         ? [
-            {
-              kind: 'cover',
-              urlLarge: coverLarge || null,
-              urlMedium: coverMedium || null,
-              urlSmall: coverSmall || null,
-              provider: 'openai',
-            },
-          ]
+          {
+            kind: 'cover',
+            urlLarge: coverLarge || null,
+            urlMedium: coverMedium || null,
+            urlSmall: coverSmall || null,
+            provider: 'openai',
+          },
+        ]
         : [];
 
       const identifiers = normalizeIdentifiers(corrCopy.identifiers);
@@ -576,18 +634,18 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       direct.images = Array.isArray(direct.images)
         ? direct.images
         : direct.images
-        ? [direct.images]
-        : [];
+          ? [direct.images]
+          : [];
       direct.tags = Array.isArray(direct.tags)
         ? direct.tags
         : direct.tags
-        ? [direct.tags]
-        : [];
+          ? [direct.tags]
+          : [];
       direct.sources = Array.isArray(direct.sources)
         ? direct.sources
         : direct.sources
-        ? [direct.sources]
-        : [];
+          ? [direct.sources]
+          : [];
       return direct;
     }
 
