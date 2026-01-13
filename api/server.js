@@ -15,6 +15,9 @@ const feedRoutes = require('./routes/feed');
 const friendsRoutes = require('./routes/friends');
 const profileRoutes = require('./routes/profile');
 const wishlistsRoutes = require('./routes/wishlists');
+const favoritesRoutes = require('./routes/favorites');
+const listsRoutes = require('./routes/lists');
+const unmatchedRoutes = require('./routes/unmatched');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -147,5 +150,8 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/friends', friendsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/wishlists', wishlistsRoutes);
+app.use('/api/favorites', favoritesRoutes);
+app.use('/api/lists', listsRoutes);
+app.use('/api/unmatched', unmatchedRoutes);
 
 module.exports = app;

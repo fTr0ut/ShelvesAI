@@ -8,13 +8,13 @@
                 "enabled": true,
                 "priority": 1,
                 "envDisableKey": "DISABLE_OPENLIBRARY"
-            }
-    {
+            },
+            {
                 "name": "hardcover",
                 "enabled": true,
                 "priority": 2,
                 "envDisableKey": "DISABLE_HARDCOVER"
-            },
+            }
         ]
     },
     "games": {

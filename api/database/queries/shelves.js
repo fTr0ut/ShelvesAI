@@ -294,6 +294,46 @@ async function listVisibleForUser(ownerId, viewerId = null) {
     return result.rows.map(rowToCamelCase);
 }
 
+/**
+ * Update rating for a user collection item
+ * @param {number} itemId - The user_collections id
+ * @param {string} userId - The user's UUID
+ * @param {number} shelfId - The shelf id
+ * @param {number|null} rating - Rating from 0 to 5 (supports half-points like 4.5)
+ */
+async function updateItemRating(itemId, userId, shelfId, rating) {
+    const result = await query(
+        `UPDATE user_collections 
+         SET rating = $1
+         WHERE id = $2 AND user_id = $3 AND shelf_id = $4
+         RETURNING *`,
+        [rating, itemId, userId, shelfId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Get a single collection item by ID with full details
+ */
+async function getItemById(itemId, userId, shelfId) {
+    const result = await query(
+        `SELECT uc.*, 
+            c.id as collectable_id,
+            c.title as collectable_title,
+            c.subtitle as collectable_subtitle,
+            c.primary_creator as collectable_creator,
+            c.cover_url as collectable_cover,
+            c.kind as collectable_kind,
+            m.local_path as collectable_cover_media_path
+         FROM user_collections uc
+         LEFT JOIN collectables c ON c.id = uc.collectable_id
+         LEFT JOIN media m ON m.id = c.cover_media_id
+         WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
+        [itemId, userId, shelfId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
 module.exports = {
     listForUser,
     getById,
@@ -307,4 +347,6 @@ module.exports = {
     addManual,
     removeItem,
     listVisibleForUser,
+    updateItemRating,
+    getItemById,
 };

@@ -12,6 +12,7 @@ import {
   Inter_700Bold,
 } from '@expo-google-fonts/inter'
 import * as SplashScreen from 'expo-splash-screen'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import LoginScreen from './screens/LoginScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
@@ -33,11 +34,17 @@ import WishlistsScreen from './screens/WishlistsScreen'
 import WishlistScreen from './screens/WishlistScreen'
 import WishlistCreateScreen from './screens/WishlistCreateScreen'
 import FriendsListScreen from './screens/FriendsListScreen'
+import FavoritesScreen from './screens/FavoritesScreen'
+import ListCreateScreen from './screens/ListCreateScreen'
+import ListDetailScreen from './screens/ListDetailScreen'
+import UnmatchedScreen from './screens/UnmatchedScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 
 
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
+import { ToastProvider } from './context/ToastContext'
+import ToastContainer from './components/Toast'
 
 const Stack = createNativeStackNavigator()
 const TOKEN_STORAGE_KEY = 'token'
@@ -185,11 +192,16 @@ export default function App() {
   if (!ready || !fontsLoaded) return null
 
   return (
-    <ThemeProvider>
-      <AuthContext.Provider value={authValue}>
-        <AppNavigator token={token} needsOnboarding={needsOnboarding} />
-      </AuthContext.Provider>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthContext.Provider value={authValue}>
+            <AppNavigator token={token} needsOnboarding={needsOnboarding} />
+            <ToastContainer />
+          </AuthContext.Provider>
+        </ToastProvider>
+      </ThemeProvider>
+    </SafeAreaProvider>
   )
 }
 
@@ -247,6 +259,10 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="Wishlist" component={WishlistScreen} />
             <Stack.Screen name="WishlistCreate" component={WishlistCreateScreen} />
             <Stack.Screen name="FriendsList" component={FriendsListScreen} />
+            <Stack.Screen name="Favorites" component={FavoritesScreen} />
+            <Stack.Screen name="ListCreate" component={ListCreateScreen} />
+            <Stack.Screen name="ListDetail" component={ListDetailScreen} />
+            <Stack.Screen name="Unmatched" component={UnmatchedScreen} />
           </>
         )}
       </Stack.Navigator>

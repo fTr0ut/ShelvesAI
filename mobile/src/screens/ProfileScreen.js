@@ -32,6 +32,17 @@ export default function ProfileScreen({ navigation, route }) {
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [error, setError] = useState(null);
 
+    // Tab state
+    const [activeTab, setActiveTab] = useState('posts');
+    const [posts, setPosts] = useState([]);
+    const [postsLoading, setPostsLoading] = useState(false);
+    const [favorites, setFavorites] = useState([]);
+    const [favoritesLoading, setFavoritesLoading] = useState(false);
+    const [favoritesLoaded, setFavoritesLoaded] = useState(false);
+    const [lists, setLists] = useState([]);
+    const [listsLoading, setListsLoading] = useState(false);
+    const [listsLoaded, setListsLoaded] = useState(false);
+
     // Editable fields
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
@@ -72,7 +83,7 @@ export default function ProfileScreen({ navigation, route }) {
                 setIsPrivate(profileData.profile.isPrivate || false);
             }
 
-            // Load shelves if not private or own profile
+            // Load shelves and posts if not private or own profile
             if (profileData.profile && (!profileData.profile.isPrivate || isOwnProfile)) {
                 try {
                     const shelvesPath = route.params?.username
@@ -84,6 +95,23 @@ export default function ProfileScreen({ navigation, route }) {
                     console.warn('Failed to load shelves:', e);
                     setShelves([]);
                 }
+
+                // Load user's posts/activity
+                try {
+                    setPostsLoading(true);
+                    const userId = profileData.profile.id;
+                    const feedData = await apiRequest({
+                        apiBase,
+                        path: `/api/feed?ownerId=${userId}`,
+                        token
+                    });
+                    setPosts(feedData.entries || []);
+                } catch (e) {
+                    console.warn('Failed to load posts:', e);
+                    setPosts([]);
+                } finally {
+                    setPostsLoading(false);
+                }
             }
         } catch (e) {
             console.error('Failed to load profile:', e);
@@ -92,6 +120,58 @@ export default function ProfileScreen({ navigation, route }) {
             setLoading(false);
         }
     };
+
+    const loadFavorites = useCallback(async () => {
+        if (!isOwnProfile) return; // Only show favorites on own profile
+        setFavoritesLoading(true);
+        try {
+            const favData = await apiRequest({
+                apiBase,
+                path: '/api/favorites',
+                token,
+            });
+            setFavorites(favData.favorites || []);
+            setFavoritesLoaded(true);
+        } catch (e) {
+            console.warn('Failed to load favorites:', e);
+            setFavorites([]);
+        } finally {
+            setFavoritesLoading(false);
+        }
+    }, [apiBase, token, isOwnProfile]);
+
+    // Load favorites when tab switches to favorites
+    useEffect(() => {
+        if (activeTab === 'favorites' && !favoritesLoaded && !favoritesLoading) {
+            loadFavorites();
+        }
+    }, [activeTab, favoritesLoaded, favoritesLoading, loadFavorites]);
+
+    const loadLists = useCallback(async () => {
+        if (!isOwnProfile) return; // Only show own lists on profile
+        setListsLoading(true);
+        try {
+            const data = await apiRequest({
+                apiBase,
+                path: '/api/lists',
+                token,
+            });
+            setLists(data.lists || []);
+            setListsLoaded(true);
+        } catch (e) {
+            console.warn('Failed to load lists:', e);
+            setLists([]);
+        } finally {
+            setListsLoading(false);
+        }
+    }, [apiBase, token, isOwnProfile]);
+
+    // Load lists when tab switches to lists
+    useEffect(() => {
+        if (activeTab === 'lists' && !listsLoaded && !listsLoading) {
+            loadLists();
+        }
+    }, [activeTab, listsLoaded, listsLoading, loadLists]);
 
     const handleSave = useCallback(async () => {
         try {
@@ -237,6 +317,123 @@ export default function ProfileScreen({ navigation, route }) {
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </TouchableOpacity>
     );
+
+    const renderListCard = ({ item }) => (
+        <TouchableOpacity
+            style={styles.shelfCard}
+            onPress={() => navigation.navigate('ListDetail', { id: item.id })}
+        >
+            <View style={styles.shelfIcon}>
+                <Ionicons name="list" size={24} color={colors.primary} />
+            </View>
+            <View style={styles.shelfInfo}>
+                <Text style={styles.shelfName} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.shelfMeta}>
+                    {item.itemCount || 0} item{(item.itemCount || 0) !== 1 ? 's' : ''} • {item.visibility || 'private'}
+                </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
+    );
+
+    // Helper functions for posts
+    const formatRelativeTime = (dateString) => {
+        if (!dateString) return '';
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return 'now';
+        if (diffMins < 60) return `${diffMins}m`;
+        if (diffHours < 24) return `${diffHours}h`;
+        if (diffDays < 7) return `${diffDays}d`;
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+
+    const getItemPreview = (entry) => {
+        const collectable = entry.collectable || entry.item || null;
+        const manual = entry.manual || entry.manualItem || null;
+        return collectable?.title || manual?.name || entry?.title || 'Untitled';
+    };
+
+    const renderPostCard = ({ item }) => {
+        const { shelf, items = [], eventType } = item;
+        const timeAgo = formatRelativeTime(shelf?.updatedAt || item.createdAt);
+        const previewItems = items.slice(0, 3);
+        const totalItems = item?.eventItemCount || items.length || 0;
+
+        let actionText = 'updated';
+        if (eventType === 'shelf.created') actionText = 'created';
+        else if (eventType && eventType.includes('added')) actionText = 'added';
+
+        const handlePostPress = () => {
+            if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
+                navigation.navigate('FeedDetail', { entry: item });
+            } else {
+                navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
+            }
+        };
+
+        return (
+            <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={handlePostPress}
+                style={styles.postCard}
+            >
+                <View style={styles.postHeader}>
+                    <Text style={styles.postAction}>
+                        {actionText}{' '}
+                        {totalItems > 0 && <Text style={styles.postItemCount}>{totalItems} item{totalItems !== 1 ? 's' : ''}</Text>}
+                        {' to '}
+                        <Text style={styles.postShelfName}>{shelf?.name || 'a shelf'}</Text>
+                    </Text>
+                    <Text style={styles.postTime}>{timeAgo}</Text>
+                </View>
+
+                {previewItems.length > 0 && (
+                    <View style={styles.postItemsPreview}>
+                        {previewItems.map((entry, idx) => (
+                            <View key={idx} style={styles.postItemChip}>
+                                <Ionicons name="book" size={12} color={colors.primary} />
+                                <Text style={styles.postItemTitle} numberOfLines={1}>{getItemPreview(entry)}</Text>
+                            </View>
+                        ))}
+                        {totalItems > previewItems.length && (
+                            <Text style={styles.postMoreItems}>+{totalItems - previewItems.length} more</Text>
+                        )}
+                    </View>
+                )}
+
+                <View style={styles.postFooter}>
+                    <View style={styles.postStat}>
+                        <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                        <Text style={styles.postStatText}>{shelf?.type || 'Collection'}</Text>
+                    </View>
+                    {(item.likeCount > 0 || item.commentCount > 0) && (
+                        <View style={styles.postSocialStats}>
+                            <View style={styles.postStat}>
+                                <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                <Text style={styles.postStatText}>{item.likeCount || 0}</Text>
+                            </View>
+                            <View style={styles.postStat}>
+                                <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                <Text style={styles.postStatText}>{item.commentCount || 0}</Text>
+                            </View>
+                        </View>
+                    )}
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
+    const PROFILE_TABS = [
+        { key: 'posts', label: 'Posts', icon: 'newspaper-outline' },
+        { key: 'shelves', label: 'Shelves', icon: 'library-outline' },
+        { key: 'lists', label: 'Lists', icon: 'list-outline' },
+    ];
 
     if (loading) {
         return (
@@ -458,13 +655,22 @@ export default function ProfileScreen({ navigation, route }) {
                             )}
 
                             {isOwnProfile && (
-                                <TouchableOpacity
-                                    style={styles.wishlistButton}
-                                    onPress={() => navigation.navigate('Wishlists')}
-                                >
-                                    <Ionicons name="heart" size={18} color={colors.primary} />
-                                    <Text style={styles.wishlistButtonText}>My Wishlists</Text>
-                                </TouchableOpacity>
+                                <View style={styles.profileButtonsRow}>
+                                    <TouchableOpacity
+                                        style={styles.wishlistButton}
+                                        onPress={() => navigation.navigate('Wishlists')}
+                                    >
+                                        <Ionicons name="gift-outline" size={18} color={colors.primary} />
+                                        <Text style={styles.wishlistButtonText}>My Wishlists</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.wishlistButton}
+                                        onPress={() => navigation.navigate('Favorites')}
+                                    >
+                                        <Ionicons name="heart" size={18} color={colors.error} />
+                                        <Text style={styles.wishlistButtonText}>My Favorites</Text>
+                                    </TouchableOpacity>
+                                </View>
                             )}
                         </>
                     )}
@@ -478,21 +684,119 @@ export default function ProfileScreen({ navigation, route }) {
                     </View>
                 )}
 
-                {/* Shelves */}
-                {!editing && shelves.length > 0 && (
-                    <View style={styles.shelvesSection}>
-                        <Text style={styles.sectionTitle}>Shelves</Text>
-                        {shelves.map((shelf) => (
-                            <View key={shelf.id}>{renderShelfCard({ item: shelf })}</View>
-                        ))}
-                    </View>
-                )}
+                {/* Tabs - Only show when not editing and profile is visible */}
+                {!editing && (!profile.isPrivate || isOwnProfile || profile.isFriend) && (
+                    <>
+                        {/* Tab Bar */}
+                        <View style={styles.tabBar}>
+                            {PROFILE_TABS.map((tab) => {
+                                const isActive = activeTab === tab.key;
+                                return (
+                                    <TouchableOpacity
+                                        key={tab.key}
+                                        style={[styles.tab, isActive && styles.tabActive]}
+                                        onPress={() => setActiveTab(tab.key)}
+                                    >
+                                        <Ionicons
+                                            name={tab.icon}
+                                            size={18}
+                                            color={isActive ? colors.primary : colors.textMuted}
+                                        />
+                                        <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                                            {tab.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
 
-                {!editing && !profile.isPrivate && shelves.length === 0 && (
-                    <View style={styles.emptyState}>
-                        <Ionicons name="library-outline" size={32} color={colors.textMuted} />
-                        <Text style={styles.emptyStateText}>No visible shelves</Text>
-                    </View>
+                        {/* Tab Content */}
+                        <View style={styles.tabContent}>
+                            {/* Posts Tab */}
+                            {activeTab === 'posts' && (
+                                <>
+                                    {postsLoading ? (
+                                        <View style={styles.tabLoadingState}>
+                                            <ActivityIndicator size="small" color={colors.primary} />
+                                        </View>
+                                    ) : posts.length > 0 ? (
+                                        posts.map((post) => (
+                                            <View key={post.id || post.aggregateId}>
+                                                {renderPostCard({ item: post })}
+                                            </View>
+                                        ))
+                                    ) : (
+                                        <View style={styles.tabEmptyState}>
+                                            <Ionicons name="newspaper-outline" size={32} color={colors.textMuted} />
+                                            <Text style={styles.tabEmptyText}>No posts yet</Text>
+                                            <Text style={styles.tabEmptySubtext}>
+                                                {isOwnProfile
+                                                    ? 'Your activity will appear here'
+                                                    : 'Activity will appear here'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Shelves Tab */}
+                            {activeTab === 'shelves' && (
+                                <>
+                                    {shelves.length > 0 ? (
+                                        shelves.map((shelf) => (
+                                            <View key={shelf.id}>{renderShelfCard({ item: shelf })}</View>
+                                        ))
+                                    ) : (
+                                        <View style={styles.tabEmptyState}>
+                                            <Ionicons name="library-outline" size={32} color={colors.textMuted} />
+                                            <Text style={styles.tabEmptyText}>No visible shelves</Text>
+                                            <Text style={styles.tabEmptySubtext}>
+                                                {isOwnProfile
+                                                    ? 'Create a shelf to get started'
+                                                    : 'This user has no public shelves'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Lists Tab */}
+                            {activeTab === 'lists' && (
+                                <>
+                                    {/* Create List Button */}
+                                    {isOwnProfile && (
+                                        <TouchableOpacity
+                                            style={styles.createListButton}
+                                            onPress={() => navigation.navigate('ListCreate')}
+                                        >
+                                            <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+                                            <Text style={styles.createListButtonText}>Create New List</Text>
+                                        </TouchableOpacity>
+                                    )}
+
+                                    {listsLoading ? (
+                                        <View style={styles.tabLoadingState}>
+                                            <ActivityIndicator size="small" color={colors.primary} />
+                                        </View>
+                                    ) : lists.length > 0 ? (
+                                        lists.map((list) => (
+                                            <View key={list.id}>{renderListCard({ item: list })}</View>
+                                        ))
+                                    ) : (
+                                        <View style={styles.tabEmptyState}>
+                                            <Ionicons name="list-outline" size={32} color={colors.textMuted} />
+                                            <Text style={styles.tabEmptyText}>No lists yet</Text>
+                                            <Text style={styles.tabEmptySubtext}>
+                                                {isOwnProfile
+                                                    ? 'Create a list to curate your top picks'
+                                                    : 'This user has no public lists'}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+                        </View>
+                    </>
                 )}
             </ScrollView>
         </SafeAreaView>
@@ -781,6 +1085,31 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             fontWeight: '600',
             color: colors.primary,
         },
+        profileButtonsRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
+            marginTop: spacing.sm,
+        },
+        createListButton: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: spacing.sm,
+            backgroundColor: colors.surface,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            borderRadius: radius.md,
+            marginBottom: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.primary,
+            borderStyle: 'dashed',
+        },
+        createListButtonText: {
+            fontSize: 15,
+            fontWeight: '600',
+            color: colors.primary,
+        },
         privateNotice: {
             flexDirection: 'row',
             alignItems: 'center',
@@ -862,5 +1191,139 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
         retryButtonText: {
             color: colors.textInverted,
             fontWeight: '600',
+        },
+        // Tab Bar Styles
+        tabBar: {
+            flexDirection: 'row',
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+            marginTop: spacing.md,
+            marginHorizontal: -spacing.md,
+            paddingHorizontal: spacing.md,
+        },
+        tab: {
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: spacing.xs,
+            paddingVertical: spacing.sm + 4,
+            borderBottomWidth: 2,
+            borderBottomColor: 'transparent',
+        },
+        tabActive: {
+            borderBottomColor: colors.primary,
+        },
+        tabText: {
+            fontSize: 14,
+            fontWeight: '500',
+            color: colors.textMuted,
+        },
+        tabTextActive: {
+            color: colors.primary,
+            fontWeight: '600',
+        },
+        tabContent: {
+            marginTop: spacing.md,
+        },
+        tabLoadingState: {
+            padding: spacing.xl,
+            alignItems: 'center',
+        },
+        tabEmptyState: {
+            alignItems: 'center',
+            padding: spacing.xl,
+        },
+        tabEmptyText: {
+            fontSize: 16,
+            fontWeight: '600',
+            color: colors.text,
+            marginTop: spacing.sm,
+        },
+        tabEmptySubtext: {
+            fontSize: 14,
+            color: colors.textMuted,
+            textAlign: 'center',
+            marginTop: spacing.xs,
+        },
+        // Post Card Styles
+        postCard: {
+            backgroundColor: colors.surface,
+            borderRadius: radius.md,
+            padding: spacing.md,
+            marginBottom: spacing.sm,
+            ...shadows.sm,
+        },
+        postHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: spacing.sm,
+        },
+        postAction: {
+            flex: 1,
+            fontSize: 14,
+            color: colors.textSecondary,
+        },
+        postItemCount: {
+            fontWeight: '600',
+            color: colors.text,
+        },
+        postShelfName: {
+            fontWeight: '600',
+            color: colors.primary,
+        },
+        postTime: {
+            fontSize: 13,
+            color: colors.textMuted,
+            marginLeft: spacing.sm,
+        },
+        postItemsPreview: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: spacing.xs,
+            marginBottom: spacing.sm,
+        },
+        postItemChip: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: colors.surfaceElevated,
+            paddingHorizontal: spacing.sm,
+            paddingVertical: 4,
+            borderRadius: 16,
+            gap: 4,
+        },
+        postItemTitle: {
+            fontSize: 12,
+            color: colors.textSecondary,
+            maxWidth: 100,
+        },
+        postMoreItems: {
+            fontSize: 12,
+            color: colors.primary,
+            fontWeight: '500',
+            alignSelf: 'center',
+        },
+        postFooter: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingTop: spacing.sm,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+        },
+        postStat: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+        },
+        postStatText: {
+            fontSize: 12,
+            color: colors.textMuted,
+        },
+        postSocialStats: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
         },
     });

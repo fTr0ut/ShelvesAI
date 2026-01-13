@@ -10,9 +10,9 @@ const fetch = require('node-fetch');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 
-// Media storage configuration (reuse from media.js pattern)
+// Media storage configuration - use same cache directory as server.js
 const API_ROOT = path.resolve(__dirname, '..', '..');
-const RAW_CACHE_ROOT = process.env.MEDIA_CACHE_PATH || './cache/media';
+const RAW_CACHE_ROOT = process.env.MEDIA_CACHE_DIR || process.env.COVER_CACHE_DIR || './cache';
 const CACHE_ROOT = path.isAbsolute(RAW_CACHE_ROOT)
     ? RAW_CACHE_ROOT
     : path.resolve(API_ROOT, RAW_CACHE_ROOT);

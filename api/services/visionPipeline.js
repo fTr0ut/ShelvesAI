@@ -3,12 +3,44 @@ const { GoogleGeminiService, getVisionSettingsForType } = require('./googleGemin
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
+const feedQueries = require('../database/queries/feed');
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./collectables/fingerprint');
+const processingStatus = require('./processingStatus');
+const path = require('path');
+const fs = require('fs');
 
 // Catalog Services
 const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
+
+// Load progress messages config
+let progressMessagesConfig = {};
+try {
+    const configPath = path.join(__dirname, '..', 'config', 'visionProgressMessages.json');
+    progressMessagesConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (err) {
+    console.warn('[VisionPipeline] Could not load visionProgressMessages.json, using defaults:', err.message);
+}
+
+/**
+ * Get a progress message from config with optional template substitution
+ * @param {string} key - Config key (e.g., 'extracting', 'matching')
+ * @param {object} vars - Variables for template substitution (e.g., { count: 5 })
+ */
+function getProgressMessage(key, vars = {}) {
+    const cfg = progressMessagesConfig.progressMessages?.[key] || {};
+    let message = cfg.message || cfg.messageTemplate || `Processing ${key}...`;
+    // Replace template variables like {count}
+    for (const [varName, value] of Object.entries(vars)) {
+        message = message.replace(new RegExp(`\\{${varName}\\}`, 'g'), value);
+    }
+    return {
+        step: cfg.step || key,
+        progress: cfg.progress ?? 0,
+        message,
+    };
+}
 
 // Default tiered confidence thresholds (can be overridden per-type via visionSettings.json)
 // High confidence (≥ max): catalog workflow
@@ -16,6 +48,7 @@ const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 // Low confidence (< min): needs_review directly
 const DEFAULT_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
 const DEFAULT_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
+const FEED_EVENT_ITEM_ID_CAP = parseInt(process.env.FEED_EVENT_ITEM_ID_CAP || '250', 10);
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -107,10 +140,30 @@ class VisionPipelineService {
      * 3. lookupCatalog (OpenLibrary → Hardcover) for unmatched items
      * 4. enrichUnresolved (Gemini) - ONLY if both fingerprint AND catalog fail
      * 5. Final save to shelf + remaining needs_review items
+     * 
+     * @param {string} imageBase64 - Base64 encoded image
+     * @param {object} shelf - Shelf object with id and type
+     * @param {number} userId - User ID
+     * @param {string} [jobId] - Optional job ID for progress tracking
      */
-    async processImage(imageBase64, shelf, userId) {
+    async processImage(imageBase64, shelf, userId, jobId = null) {
         if (!shelf || !shelf.type) throw new Error('Invalid shelf provided');
-        console.log('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId });
+        console.log('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId, jobId });
+
+        // Helper to update progress if jobId is provided (uses config for messaging)
+        const updateProgress = (key, vars = {}) => {
+            if (jobId) {
+                const { step, progress, message } = getProgressMessage(key, vars);
+                processingStatus.updateJob(jobId, { step, progress, message, status: 'processing' });
+            }
+        };
+
+        // Helper to check if job was aborted
+        const checkAborted = () => {
+            if (jobId && processingStatus.isAborted(jobId)) {
+                throw new Error('Processing cancelled by user');
+            }
+        };
 
         // Track any warnings from enrichment (e.g., truncated responses)
         const warnings = [];
@@ -122,11 +175,15 @@ class VisionPipelineService {
         console.log('[VisionPipeline] Using confidence thresholds for', shelf.type, ':', { max: confidenceMax, min: confidenceMin });
 
         // Step 1: Extract items from image
+        checkAborted();
+        updateProgress('extracting');
         console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
         const rawItems = await this.extractItems(imageBase64, shelf.type);
         console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
 
         // Step 1b: Categorize into three tiers using per-type thresholds
+        checkAborted();
+        updateProgress('categorizing', { count: rawItems.length });
         console.log('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
         const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(rawItems, confidenceMax, confidenceMin);
 
@@ -138,10 +195,13 @@ class VisionPipelineService {
 
         // ===== HIGH CONFIDENCE WORKFLOW (≥ max threshold) =====
         // Step 2: Fingerprint lookup for high confidence items
+        checkAborted();
+        updateProgress('matching', { count: highConfidence.length });
         console.log('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
         const matched = [];
         const unmatchedHigh = [];
         for (const item of highConfidence) {
+            checkAborted();
             const collectable = await this.matchCollectable(item, shelf.type);
             if (collectable) {
                 matched.push({ ...item, collectable, source: 'database-match' });
@@ -152,6 +212,8 @@ class VisionPipelineService {
         console.log('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched high-conf:', unmatchedHigh.length);
 
         // Step 3: Catalog lookup for unmatched HIGH confidence items only
+        checkAborted();
+        updateProgress('catalog', { count: unmatchedHigh.length });
         let catalogResults = { resolved: [], unresolved: [] };
         if (unmatchedHigh.length > 0) {
             console.log('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
@@ -162,6 +224,8 @@ class VisionPipelineService {
         }
 
         // Step 4a: Standard enrichment for high-confidence items that failed both fingerprint AND catalog
+        checkAborted();
+        updateProgress('enriching', { count: catalogResults.unresolved.length });
         let enrichedHighConf = [];
         if (catalogResults.unresolved.length > 0) {
             console.log('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
@@ -192,6 +256,8 @@ class VisionPipelineService {
 
         // ===== MEDIUM CONFIDENCE WORKFLOW (between min and max) =====
         // Skip catalog APIs, go directly to special enrichment
+        checkAborted();
+        updateProgress('enrichingMedium', { count: mediumConfidence.length });
         let enrichedMediumConf = [];
         if (mediumConfidence.length > 0) {
             console.log('[VisionPipeline] Step 4b: Special enrichment for', mediumConfidence.length, 'medium-confidence items (skipping catalog APIs)...');
@@ -262,8 +328,42 @@ class VisionPipelineService {
             ...itemsToSave
         ];
         console.log('[VisionPipeline] Step 5: Saving', allResolvedItems.length, 'resolved items to shelf...');
+        checkAborted();
+        updateProgress('saving', { count: allResolvedItems.length });
         const addedItems = await this.saveToShelf(allResolvedItems, userId, shelf.id, shelf.type);
         console.log('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
+
+        if (addedItems.length > 0) {
+            const previewLimit = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
+            const summaryItems = addedItems.map((item) => ({
+                itemId: item.itemId,
+                collectableId: item.collectableId,
+                title: item.title || item.name || null,
+                primaryCreator: item.primaryCreator || item.author || null,
+                coverUrl: item.coverUrl || null,
+                type: item.type || item.kind || shelf.type,
+            }));
+            const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
+            const cappedItemIds = Number.isFinite(FEED_EVENT_ITEM_ID_CAP) && FEED_EVENT_ITEM_ID_CAP > 0
+                ? itemIds.slice(0, FEED_EVENT_ITEM_ID_CAP)
+                : itemIds;
+
+            try {
+                await feedQueries.logEvent({
+                    userId,
+                    shelfId: shelf.id,
+                    eventType: 'item.collectable_added',
+                    payload: {
+                        source: 'vision',
+                        itemCount: summaryItems.length,
+                        itemIds: cappedItemIds,
+                        items: summaryItems.slice(0, previewLimit),
+                    },
+                });
+            } catch (err) {
+                console.warn('[VisionPipeline] Event log failed', err?.message || err);
+            }
+        }
 
         // Send enriched items that didn't meet threshold to review queue
         if (itemsToReview.length > 0) {
@@ -592,13 +692,21 @@ class VisionPipelineService {
 
                 // Add to shelf
                 console.log('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
-                await shelvesQueries.addCollectable({
+                const shelfItem = await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
                     collectableId: collectable.id
                 });
 
-                added.push({ ...item, collectableId: collectable.id });
+                added.push({
+                    ...item,
+                    itemId: shelfItem?.id,
+                    collectableId: collectable.id,
+                    title: collectable.title || item.title || item.name || null,
+                    primaryCreator: collectable.primaryCreator || item.primaryCreator || item.author || null,
+                    coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
+                    type: collectable.kind || item.type || item.kind || shelfType,
+                });
                 console.log('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
             } catch (err) {
                 console.error(`Failed to save item ${item.title}:`, err);

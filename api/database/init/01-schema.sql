@@ -304,6 +304,49 @@ CREATE INDEX idx_event_comments_event ON event_comments(event_id);
 CREATE INDEX idx_event_comments_created ON event_comments(event_id, created_at DESC);
 
 -- ============================================
+-- USER FAVORITES (Items user loves)
+-- ============================================
+CREATE TABLE user_favorites (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    collectable_id INTEGER NOT NULL REFERENCES collectables(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, collectable_id)
+);
+
+CREATE INDEX idx_user_favorites_user ON user_favorites(user_id);
+CREATE INDEX idx_user_favorites_collectable ON user_favorites(collectable_id);
+
+-- ============================================
+-- USER LISTS (Custom collections like "Top 10 Horror Movies")
+-- ============================================
+CREATE TABLE user_lists (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    visibility TEXT DEFAULT 'private' 
+        CHECK (visibility IN ('private', 'friends', 'public')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_lists_user ON user_lists(user_id);
+
+CREATE TABLE user_list_items (
+    id SERIAL PRIMARY KEY,
+    list_id INTEGER NOT NULL REFERENCES user_lists(id) ON DELETE CASCADE,
+    collectable_id INTEGER NOT NULL REFERENCES collectables(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 1 AND position <= 10),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(list_id, collectable_id),
+    UNIQUE(list_id, position)
+);
+
+CREATE INDEX idx_user_list_items_list ON user_list_items(list_id);
+
+-- ============================================
 -- HELPER FUNCTIONS
 -- ============================================
 
@@ -335,4 +378,8 @@ CREATE TRIGGER update_media_updated_at
 
 CREATE TRIGGER update_friendships_updated_at
     BEFORE UPDATE ON friendships
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_user_lists_updated_at
+    BEFORE UPDATE ON user_lists
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

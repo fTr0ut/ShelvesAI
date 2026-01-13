@@ -5,6 +5,95 @@ const eventSocialQueries = require('../database/queries/eventSocial');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
+const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
+
+function flattenPayloadItems(payloads) {
+  const out = [];
+  if (!Array.isArray(payloads)) return out;
+  payloads.forEach((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    if (Array.isArray(payload.items)) {
+      payload.items.forEach((item) => {
+        if (item && typeof item === 'object') out.push(item);
+      });
+      return;
+    }
+    out.push(payload);
+  });
+  return out;
+}
+
+function buildFeedItemsFromPayloads(payloads, eventType, limit) {
+  if (!Array.isArray(payloads) || !eventType) return [];
+  const maxItems = Number.isFinite(limit) ? limit : Number.MAX_SAFE_INTEGER;
+  const items = [];
+  const flattened = flattenPayloadItems(payloads);
+  for (const payload of flattened) {
+    if (!payload || typeof payload !== 'object') continue;
+    if (eventType === 'item.collectable_added') {
+      items.push({
+        id: payload.itemId || payload.id || null,
+        collectable: {
+          title: payload.title || payload.name || null,
+          primaryCreator: payload.primaryCreator || payload.author || null,
+          coverUrl: payload.coverUrl || null,
+          kind: payload.type || payload.kind || null,
+        },
+      });
+    } else if (eventType === 'item.manual_added') {
+      const name = payload.name || payload.title || null;
+      items.push({
+        id: payload.itemId || payload.id || null,
+        manual: {
+          name,
+          title: name,
+          author: payload.author || null,
+        },
+      });
+    }
+    if (items.length >= maxItems) break;
+  }
+  return items;
+}
+
+function getPayloadItemCount(payloads) {
+  if (!Array.isArray(payloads)) return null;
+  let total = 0;
+  let found = false;
+  payloads.forEach((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const count = Number(payload.itemCount);
+    if (Number.isFinite(count) && count > 0) {
+      total += Math.trunc(count);
+      found = true;
+      return;
+    }
+    if (Array.isArray(payload.items)) {
+      total += payload.items.length;
+      found = true;
+    }
+  });
+  return found ? total : null;
+}
+
+function extractItemIdsFromPayloads(payloads) {
+  if (!Array.isArray(payloads)) return [];
+  const ids = [];
+  payloads.forEach((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    if (Array.isArray(payload.itemIds)) {
+      payload.itemIds.forEach((id) => {
+        const parsed = parseInt(id, 10);
+        if (Number.isFinite(parsed)) ids.push(parsed);
+      });
+      return;
+    }
+    const parsed = parseInt(payload.itemId, 10);
+    if (Number.isFinite(parsed)) ids.push(parsed);
+  });
+  return ids;
+}
+
 async function summarizeItems(shelfIds) {
   if (!shelfIds.length) return new Map();
 
@@ -102,28 +191,10 @@ async function getFeed(req, res) {
 
     const entries = events.map(e => {
       const payloads = Array.isArray(e.previewPayloads) ? e.previewPayloads : [];
-      let feedItems = [];
-
-      // Construct item previews from aggregate payloads if applicable
-      if (e.eventType === 'item.collectable_added') {
-        feedItems = payloads.map((payload) => ({
-          id: payload?.itemId,
-          collectable: {
-            title: payload?.title,
-            primaryCreator: payload?.primaryCreator,
-            coverUrl: payload?.coverUrl,
-            kind: payload?.type || payload?.kind,
-          }
-        }));
-      } else if (e.eventType === 'item.manual_added') {
-        feedItems = payloads.map((payload) => ({
-          id: payload?.itemId,
-          manual: {
-            name: payload?.name,
-            title: payload?.name,
-          }
-        }));
-      }
+      const feedItems = buildFeedItemsFromPayloads(payloads, e.eventType, PREVIEW_PAYLOAD_LIMIT);
+      const payloadItemCount = getPayloadItemCount(payloads);
+      const counts = [e.itemCount, payloadItemCount].filter((value) => Number.isFinite(value) && value > 0);
+      const eventItemCount = counts.length ? Math.max(...counts) : feedItems.length;
 
       const social = socialMap.get(e.id) || {};
 
@@ -132,7 +203,7 @@ async function getFeed(req, res) {
         aggregateId: e.id,
         eventType: e.eventType,
         createdAt: e.createdAt,
-        eventItemCount: e.itemCount || 0,
+        eventItemCount: eventItemCount || 0,
         likeCount: social.likeCount || 0,
         commentCount: social.commentCount || 0,
         hasLiked: !!social.hasLiked,
@@ -200,73 +271,56 @@ async function getFeedEntryDetails(req, res) {
         if (!shelf) return res.status(404).json({ error: 'Feed entry not found' });
       }
 
-      const itemsResult = await query(
-        `SELECT e.id, e.event_type, e.payload, e.created_at,
-                c.title as collectable_title,
-                c.primary_creator as collectable_primary_creator,
-                c.cover_url as collectable_cover_url,
-                c.kind as collectable_kind,
-                um.name as manual_name,
-                um.author as manual_author
+      const logsResult = await query(
+        `SELECT e.id, e.event_type, e.payload, e.created_at
          FROM event_logs e
-         LEFT JOIN user_collections uc
-           ON uc.id = CASE
-             WHEN (e.payload->>'itemId') ~ '^[0-9]+$'
-             THEN (e.payload->>'itemId')::int
-             ELSE NULL
-           END
-         LEFT JOIN collectables c
-           ON c.id = COALESCE(
-             uc.collectable_id,
-             CASE
-               WHEN (e.payload->>'collectableId') ~ '^[0-9]+$'
-               THEN (e.payload->>'collectableId')::int
-               ELSE NULL
-             END
-           )
-         LEFT JOIN user_manuals um
-           ON um.id = COALESCE(
-             uc.manual_id,
-             CASE
-               WHEN (e.payload->>'manualId') ~ '^[0-9]+$'
-               THEN (e.payload->>'manualId')::int
-               ELSE NULL
-             END
-           )
          WHERE e.aggregate_id = $1
          ORDER BY e.created_at ASC`,
         [aggregateId]
       );
 
-      const items = itemsResult.rows.map((row) => {
-        const payload = row.payload || {};
-        const resolvedTitle = payload.title || payload.name || row.collectable_title || row.manual_name || 'Unknown item';
-        if (row.event_type === 'item.collectable_added') {
+      const payloads = logsResult.rows.map((row) => row.payload || {});
+      const payloadItemCount = getPayloadItemCount(payloads);
+      const itemIds = extractItemIdsFromPayloads(payloads);
+      let items = [];
+
+      if (itemIds.length) {
+        const itemsResult = await query(
+          `SELECT uc.id, uc.collectable_id, uc.manual_id,
+                  c.title as collectable_title,
+                  c.primary_creator as collectable_primary_creator,
+                  c.cover_url as collectable_cover_url,
+                  c.kind as collectable_kind,
+                  um.name as manual_name,
+                  um.author as manual_author
+           FROM user_collections uc
+           LEFT JOIN collectables c ON c.id = uc.collectable_id
+           LEFT JOIN user_manuals um ON um.id = uc.manual_id
+           WHERE uc.id = ANY($1)
+           ORDER BY array_position($1, uc.id)`,
+          [itemIds]
+        );
+
+        items = itemsResult.rows.map((row) => {
+          const resolvedTitle = row.collectable_title || row.manual_name || 'Unknown item';
           return {
             id: row.id,
-            collectable: {
+            collectable: row.collectable_id ? {
               title: resolvedTitle,
-              primaryCreator: payload.primaryCreator || row.collectable_primary_creator || null,
-              coverUrl: payload.coverUrl || row.collectable_cover_url || null,
-              kind: payload.type || payload.kind || row.collectable_kind || null,
-            },
-          };
-        }
-        if (row.event_type === 'item.manual_added') {
-          return {
-            id: row.id,
-            manual: {
+              primaryCreator: row.collectable_primary_creator || null,
+              coverUrl: row.collectable_cover_url || null,
+              kind: row.collectable_kind || null,
+            } : null,
+            manual: row.manual_id ? {
               name: resolvedTitle,
               title: resolvedTitle,
-              author: payload.author || row.manual_author || null,
-            },
+              author: row.manual_author || null,
+            } : null,
           };
-        }
-        return {
-          id: row.id,
-          payload,
-        };
-      });
+        });
+      } else {
+        items = buildFeedItemsFromPayloads(payloads, aggregate.eventType);
+      }
 
       const entry = {
         id: aggregate.id,
@@ -274,7 +328,11 @@ async function getFeedEntryDetails(req, res) {
         eventType: aggregate.eventType,
         createdAt: aggregate.createdAt,
         updatedAt: aggregate.lastActivityAt || aggregate.createdAt,
-        itemCount: aggregate.itemCount || items.length,
+        itemCount: Math.max(
+          Number.isFinite(payloadItemCount) ? payloadItemCount : 0,
+          Number.isFinite(aggregate.itemCount) ? aggregate.itemCount : 0,
+          items.length
+        ),
         likeCount: 0,
         commentCount: 0,
         hasLiked: false,

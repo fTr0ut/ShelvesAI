@@ -3,6 +3,7 @@ const { rowToCamelCase, parsePagination } = require('./utils');
 
 const AGGREGATE_WINDOW_MINUTES = parseInt(process.env.FEED_AGGREGATE_WINDOW_MINUTES || '15', 10);
 const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
+const FEED_AGGREGATE_DEBUG = String(process.env.FEED_AGGREGATE_DEBUG || '').toLowerCase() === 'true';
 
 function normalizePayload(payload) {
   if (payload && typeof payload === 'object') return payload;
@@ -31,6 +32,16 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
      RETURNING *`,
     [userId, shelfId, eventType, AGGREGATE_WINDOW_MINUTES]
   );
+
+  if (FEED_AGGREGATE_DEBUG) {
+    console.log('[feed.aggregate] created', {
+      aggregateId: insertResult.rows[0]?.id,
+      userId,
+      shelfId,
+      eventType,
+      windowMinutes: AGGREGATE_WINDOW_MINUTES,
+    });
+  }
 
   return insertResult.rows[0];
 }
@@ -154,6 +165,8 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
   return transaction(async (client) => {
     const aggregate = await getOrCreateAggregate(client, { userId, shelfId, eventType });
     const payloadValue = normalizePayload(payload);
+    const payloadCount = Number(payloadValue.itemCount);
+    const itemIncrement = Number.isFinite(payloadCount) && payloadCount > 0 ? Math.trunc(payloadCount) : 1;
 
     const insertResult = await client.query(
       `INSERT INTO event_logs (user_id, shelf_id, aggregate_id, event_type, payload)
@@ -164,16 +177,26 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
 
     await client.query(
       `UPDATE event_aggregates
-       SET item_count = item_count + 1,
+       SET item_count = item_count + $1,
            last_activity_at = NOW(),
            preview_payloads = CASE
-             WHEN jsonb_array_length(preview_payloads) < $1
-             THEN preview_payloads || jsonb_build_array($2::jsonb)
+             WHEN jsonb_array_length(preview_payloads) < $2
+             THEN preview_payloads || jsonb_build_array($3::jsonb)
              ELSE preview_payloads
            END
-       WHERE id = $3`,
-      [PREVIEW_PAYLOAD_LIMIT, JSON.stringify(payloadValue), aggregate.id]
+       WHERE id = $4`,
+      [itemIncrement, PREVIEW_PAYLOAD_LIMIT, JSON.stringify(payloadValue), aggregate.id]
     );
+
+    if (FEED_AGGREGATE_DEBUG) {
+      console.log('[feed.event] logged', {
+        eventId: insertResult.rows[0]?.id,
+        aggregateId: aggregate?.id,
+        userId,
+        shelfId,
+        eventType,
+      });
+    }
 
     return rowToCamelCase(insertResult.rows[0]);
   });

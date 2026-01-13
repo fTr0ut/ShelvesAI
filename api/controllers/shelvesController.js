@@ -7,6 +7,7 @@ const { MovieCatalogService } = require("../services/catalog/MovieCatalogService
 const { GoogleGeminiService } = require('../services/googleGemini');
 // const { GoogleCloudVisionService } = require('../services/googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const { VisionPipelineService } = require('../services/visionPipeline');
+const processingStatus = require('../services/processingStatus');
 
 // PostgreSQL imports
 const { query, transaction } = require('../database/pg');
@@ -545,13 +546,13 @@ async function updateManualEntry(req, res) {
 }
 
 // Vision processing (simplified - preserves core logic)
-// Vision processing (using VisionPipelineService)
+// Vision processing (using VisionPipelineService with async job tracking)
 async function processShelfVision(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { imageBase64, metadata: requestMetadata = {} } = req.body ?? {};
+    const { imageBase64, metadata: requestMetadata = {}, async: asyncMode = true } = req.body ?? {};
     if (!imageBase64) return res.status(400).json({ error: "imageBase64 is required" });
 
     // Premium Check
@@ -564,17 +565,57 @@ async function processShelfVision(req, res) {
 
     console.log(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
 
+    // Generate job ID and create job entry
+    const jobId = processingStatus.generateJobId(req.user.id, shelf.id);
+    processingStatus.createJob(jobId, req.user.id, shelf.id);
+
     // Instantiate new Pipeline
     const pipeline = new VisionPipelineService();
 
-    // Process Image
-    // Note: processImage returns { analysis, results, addedItems, needsReview }
-    const result = await pipeline.processImage(imageBase64, shelf, req.user.id);
+    // If async mode (default), return immediately with jobId
+    if (asyncMode) {
+      // Start processing in background
+      (async () => {
+        try {
+          const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId);
+
+          // Mark job complete with result
+          processingStatus.completeJob(jobId, {
+            analysis: result.analysis,
+            results: result.results,
+            addedCount: result.addedItems?.length || 0,
+            needsReviewCount: result.needsReview?.length || 0,
+            warnings: result.warnings,
+          });
+        } catch (err) {
+          if (err.message === 'Processing cancelled by user') {
+            // Already marked as aborted
+            console.log(`[Vision] Job ${jobId} was cancelled by user`);
+          } else {
+            console.error(`[Vision] Job ${jobId} failed:`, err);
+            processingStatus.failJob(jobId, err.message || 'Processing failed');
+          }
+        }
+      })();
+
+      // Return immediately with job ID for polling
+      return res.status(202).json({
+        jobId,
+        status: 'processing',
+        message: 'Vision processing started. Poll /vision/:jobId/status for updates.',
+        metadata: requestMetadata,
+      });
+    }
+
+    // Synchronous mode (for backwards compatibility)
+    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId);
+    processingStatus.completeJob(jobId, result);
 
     // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
 
     res.json({
+      jobId,
       analysis: result.analysis,
       results: result.results,
       addedItems: result.addedItems,
@@ -588,6 +629,75 @@ async function processShelfVision(req, res) {
   } catch (err) {
     console.error("Vision analysis failed", err);
     res.status(502).json({ error: "Vision analysis failed" });
+  }
+}
+
+/**
+ * Get vision processing job status (for polling)
+ */
+async function getVisionStatus(req, res) {
+  try {
+    const { jobId } = req.params;
+    const job = processingStatus.getJob(jobId);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found or expired' });
+    }
+
+    // Verify job belongs to this user
+    if (job.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // If completed, also return shelf items
+    let items = null;
+    if (job.status === 'completed' && job.shelfId) {
+      items = await hydrateShelfItems(req.user.id, job.shelfId);
+    }
+
+    res.json({
+      jobId: job.jobId,
+      status: job.status,
+      step: job.step,
+      progress: job.progress,
+      message: job.message,
+      result: job.result,
+      items,
+    });
+  } catch (err) {
+    console.error('getVisionStatus error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * Abort vision processing job
+ */
+async function abortVision(req, res) {
+  try {
+    const { jobId } = req.params;
+    const job = processingStatus.getJob(jobId);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found or expired' });
+    }
+
+    // Verify job belongs to this user
+    if (job.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Mark as aborted
+    const aborted = processingStatus.abortJob(jobId);
+
+    res.json({
+      jobId,
+      aborted,
+      message: aborted ? 'Job abort requested' : 'Job could not be aborted',
+    });
+  } catch (err) {
+    console.error('abortVision error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -720,6 +830,73 @@ async function dismissReviewItem(req, res) {
   }
 }
 
+/**
+ * Rate a shelf item (supports half-point ratings 0-5)
+ */
+async function rateShelfItem(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: "Invalid shelf or item id" });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const { rating } = req.body ?? {};
+
+    // Validate rating: must be null or number between 0-5 in 0.5 increments
+    if (rating !== null && rating !== undefined) {
+      const numRating = parseFloat(rating);
+      if (isNaN(numRating) || numRating < 0 || numRating > 5) {
+        return res.status(400).json({ error: "Rating must be between 0 and 5" });
+      }
+      // Check for half-point increments (0, 0.5, 1, 1.5, etc.)
+      if ((numRating * 2) % 1 !== 0) {
+        return res.status(400).json({ error: "Rating must be in half-point increments (e.g., 3.5, 4.0)" });
+      }
+    }
+
+    const validRating = rating === null ? null : parseFloat(rating);
+
+    const updated = await shelvesQueries.updateItemRating(itemId, req.user.id, shelfId, validRating);
+    if (!updated) {
+      return res.status(404).json({ error: "Item not found" });
+    }
+
+    // Get full item details for response and feed event
+    const fullItem = await shelvesQueries.getItemById(itemId, req.user.id, shelfId);
+
+    // Log feed event if rating was set (not cleared)
+    if (validRating !== null) {
+      await logShelfEvent({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        type: "item.rated",
+        payload: {
+          itemId,
+          collectableId: fullItem?.collectableId || null,
+          title: fullItem?.collectableTitle || 'Unknown',
+          primaryCreator: fullItem?.collectableCreator || null,
+          rating: validRating,
+          type: fullItem?.collectableKind || shelf.type,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      rating: validRating,
+      item: fullItem
+    });
+  } catch (err) {
+    console.error('rateShelfItem error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 
 module.exports = {
   listShelves,
@@ -738,4 +915,7 @@ module.exports = {
   listReviewItems,
   completeReviewItem,
   dismissReviewItem,
+  rateShelfItem,
+  getVisionStatus,
+  abortVision,
 };

@@ -18,11 +18,14 @@ router.get('/:shelfId/items', ctrl.listShelfItems);
 router.post('/:shelfId/manual', requireFields(['name']), ctrl.addManualEntry);
 router.post('/:shelfId/items', requireFields(['collectableId']), ctrl.addCollectable);
 router.delete('/:shelfId/items/:itemId', ctrl.removeShelfItem);
+router.put('/:shelfId/items/:itemId/rating', ctrl.rateShelfItem);
 router.put('/:shelfId/manual/:itemId', ctrl.updateManualEntry);
 
 
 router.get('/:shelfId/search', ctrl.searchCollectablesForShelf);
 router.post('/:shelfId/vision', requireFields(['imageBase64']), ctrl.processShelfVision);
+router.get('/:shelfId/vision/:jobId/status', ctrl.getVisionStatus);
+router.delete('/:shelfId/vision/:jobId', ctrl.abortVision);
 router.post('/:shelfId/catalog-lookup', ctrl.processCatalogLookup);
 
 // Review Queue

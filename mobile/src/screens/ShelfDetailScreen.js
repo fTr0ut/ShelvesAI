@@ -21,6 +21,9 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
+import { StarRating } from '../components/ui';
+import VisionProcessingModal from '../components/VisionProcessingModal';
+import { useVisionProcessing } from '../hooks/useVisionProcessing';
 
 const CAMERA_QUALITY = 0.6;
 const SUPPORTED_VISION_MIME_TYPES = new Set([
@@ -92,6 +95,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [visionLoading, setVisionLoading] = useState(false);
+    const [visionModalVisible, setVisionModalVisible] = useState(false);
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
 
@@ -99,6 +103,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [totalItems, setTotalItems] = useState(0);
+
+    // Favorites state
+    const [favorites, setFavorites] = useState({}); // Map of collectableId -> isFavorite
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
@@ -121,6 +128,25 @@ export default function ShelfDetailScreen({ route, navigation }) {
             } else {
                 setHasMore(false);
                 setTotalItems(loadedItems.length);
+            }
+
+            // Load favorites status for collectables
+            const collectableIds = loadedItems
+                .filter(item => item.collectable?.id)
+                .map(item => item.collectable.id);
+            if (collectableIds.length > 0) {
+                try {
+                    const favData = await apiRequest({
+                        apiBase,
+                        path: '/api/favorites/check-batch',
+                        method: 'POST',
+                        token,
+                        body: { collectableIds },
+                    });
+                    setFavorites(favData.status || {});
+                } catch (e) {
+                    console.warn('Failed to load favorites:', e);
+                }
             }
         } catch (e) {
             console.warn('Failed to load shelf:', e);
@@ -184,6 +210,70 @@ export default function ShelfDetailScreen({ route, navigation }) {
             },
         ]);
     }, [apiBase, id, token, isReadOnly]);
+
+    const handleRateItem = useCallback(async (itemId, rating) => {
+        if (isReadOnly) return;
+
+        // Optimistic update
+        setItems(prev => prev.map(item =>
+            item.id === itemId ? { ...item, rating } : item
+        ));
+
+        try {
+            await apiRequest({
+                apiBase,
+                path: `/api/shelves/${id}/items/${itemId}/rating`,
+                method: 'PUT',
+                token,
+                body: { rating },
+            });
+        } catch (e) {
+            // Revert on error
+            console.warn('Failed to update rating:', e);
+            Alert.alert('Error', 'Failed to update rating');
+            loadShelf(); // Reload to get current state
+        }
+    }, [apiBase, id, token, isReadOnly, loadShelf]);
+
+    const handleToggleFavorite = useCallback(async (collectableId) => {
+        if (!collectableId) return;
+
+        const currentlyFavorited = favorites[collectableId];
+
+        // Optimistic update
+        setFavorites(prev => ({
+            ...prev,
+            [collectableId]: !currentlyFavorited,
+        }));
+
+        try {
+            if (currentlyFavorited) {
+                await apiRequest({
+                    apiBase,
+                    path: `/api/favorites/${collectableId}`,
+                    method: 'DELETE',
+                    token,
+                });
+            } else {
+                await apiRequest({
+                    apiBase,
+                    path: '/api/favorites',
+                    method: 'POST',
+                    token,
+                    body: { collectableId },
+                });
+            }
+        } catch (e) {
+            // Revert on error
+            console.warn('Failed to toggle favorite:', e);
+            setFavorites(prev => ({
+                ...prev,
+                [collectableId]: currentlyFavorited,
+            }));
+            Alert.alert('Error', 'Failed to update favorite');
+        }
+    }, [apiBase, token, favorites]);
+
 
     const visibleItems = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
@@ -343,6 +433,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
         const info = getItemInfo(item);
         const coverPath = resolveCoverPath(item);
         const coverUri = buildCoverUri(coverPath);
+        const collectableId = item.collectable?.id;
+        const isFavorited = collectableId ? favorites[collectableId] : false;
 
         return (
             <TouchableOpacity
@@ -366,12 +458,35 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <View style={styles.itemContent}>
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
                     {info.subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
+                    <View style={styles.itemRatingRow}>
+                        <StarRating
+                            rating={item.rating || 0}
+                            size={16}
+                            onRatingChange={!isReadOnly ? (newRating) => handleRateItem(item.id, newRating) : undefined}
+                            disabled={isReadOnly}
+                        />
+                    </View>
                 </View>
-                {!isReadOnly ? (
-                    <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        <Ionicons name="close" size={18} color={colors.textMuted} />
-                    </TouchableOpacity>
-                ) : null}
+                <View style={styles.itemActions}>
+                    {collectableId && !isReadOnly ? (
+                        <TouchableOpacity
+                            onPress={() => handleToggleFavorite(collectableId)}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            style={styles.favoriteButton}
+                        >
+                            <Ionicons
+                                name={isFavorited ? 'heart' : 'heart-outline'}
+                                size={20}
+                                color={isFavorited ? colors.error : colors.textMuted}
+                            />
+                        </TouchableOpacity>
+                    ) : null}
+                    {!isReadOnly ? (
+                        <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                            <Ionicons name="close" size={18} color={colors.textMuted} />
+                        </TouchableOpacity>
+                    ) : null}
+                </View>
             </TouchableOpacity>
         );
     };
@@ -383,6 +498,119 @@ export default function ShelfDetailScreen({ route, navigation }) {
             <Text style={styles.emptyText}>{isReadOnly ? 'No items are visible yet.' : 'Add items to this shelf using the camera or search'}</Text>
         </View>
     );
+
+    // Vision processing state
+    const [visionProgress, setVisionProgress] = useState(0);
+    const [visionMessage, setVisionMessage] = useState('');
+    const [visionStatus, setVisionStatus] = useState(null);
+    const [currentJobId, setCurrentJobId] = useState(null);
+    const pollIntervalRef = React.useRef(null);
+
+    // Poll for vision job status
+    const pollVisionStatus = useCallback(async (jobId) => {
+        setCurrentJobId(jobId);
+
+        const poll = async () => {
+            try {
+                const response = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${id}/vision/${jobId}/status`,
+                    token,
+                });
+
+                setVisionProgress(response.progress || 0);
+                setVisionMessage(response.message || '');
+                setVisionStatus(response.status);
+
+                if (response.status === 'completed') {
+                    clearInterval(pollIntervalRef.current);
+                    pollIntervalRef.current = null;
+                    setVisionLoading(false);
+
+                    // Reload items
+                    if (response.items) {
+                        setItems(response.items);
+                    } else {
+                        loadShelf();
+                    }
+
+                    const addedCount = response.result?.addedCount || 0;
+                    const needsReviewCount = response.result?.needsReviewCount || 0;
+
+                    if (needsReviewCount > 0) {
+                        setTimeout(() => setVisionModalVisible(false), 1000);
+                        setTimeout(() => {
+                            Alert.alert(
+                                'Scan Complete',
+                                `${addedCount} items added. ${needsReviewCount} items need review.`,
+                                [
+                                    { text: 'Later', style: 'cancel' },
+                                    { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
+                                ]
+                            );
+                        }, 1200);
+                    } else {
+                        setTimeout(() => setVisionModalVisible(false), 1000);
+                        Alert.alert('Scan Complete', `${addedCount} items added to your shelf.`);
+                    }
+                } else if (response.status === 'failed' || response.status === 'aborted') {
+                    clearInterval(pollIntervalRef.current);
+                    pollIntervalRef.current = null;
+                    setVisionLoading(false);
+                    setVisionModalVisible(false);
+
+                    if (response.status !== 'aborted') {
+                        Alert.alert('Error', response.message || 'Vision processing failed');
+                    }
+                }
+            } catch (err) {
+                console.warn('Polling error:', err);
+            }
+        };
+
+        // Start polling
+        poll();
+        pollIntervalRef.current = setInterval(poll, 2000);
+    }, [apiBase, id, token, navigation, loadShelf]);
+
+    // Cancel vision processing
+    const handleCancelVision = useCallback(async () => {
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+        }
+
+        if (currentJobId) {
+            try {
+                await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${id}/vision/${currentJobId}`,
+                    method: 'DELETE',
+                    token,
+                });
+            } catch (err) {
+                console.warn('Failed to abort job:', err);
+            }
+        }
+
+        setVisionLoading(false);
+        setVisionModalVisible(false);
+        setCurrentJobId(null);
+    }, [apiBase, id, token, currentJobId]);
+
+    // Hide modal but continue processing
+    const handleHideToBackground = useCallback(() => {
+        setVisionModalVisible(false);
+    }, []);
+
+    // Cleanup on unmount
+    React.useEffect(() => {
+        return () => {
+            if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current);
+            }
+        };
+    }, []);
 
     const handleCameraScan = useCallback(async () => {
         if (!id || visionLoading) return;
@@ -446,9 +674,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     token,
                     body: {
                         imageBase64: `data:${payload.mime};base64,${payload.base64}`,
+                        async: true,
                     },
                 });
 
+                // If async mode, show modal and poll for status
+                if (data.jobId) {
+                    setVisionModalVisible(true);
+                    pollVisionStatus(data.jobId);
+                    return;
+                }
+
+                // Synchronous fallback
                 if (Array.isArray(data?.items)) {
                     setItems(data.items);
                 }
@@ -649,6 +886,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     </TouchableOpacity>
                 </TouchableOpacity>
             </Modal>
+
+            {/* Vision Processing Modal */}
+            <VisionProcessingModal
+                visible={visionModalVisible}
+                progress={visionProgress}
+                message={visionMessage}
+                status={visionStatus}
+                onCancel={handleCancelVision}
+                onHideBackground={handleHideToBackground}
+            />
         </SafeAreaView>
     );
 }
@@ -786,6 +1033,17 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 13,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    itemRatingRow: {
+        marginTop: 4,
+    },
+    itemActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    favoriteButton: {
+        padding: 2,
     },
     emptyState: {
         alignItems: 'center',

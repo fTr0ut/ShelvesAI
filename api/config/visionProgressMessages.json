@@ -1,0 +1,44 @@
+{
+    "progressMessages": {
+        "extracting": {
+            "step": "extracting",
+            "progress": 10,
+            "message": "Analyzing image with AI vision..."
+        },
+        "categorizing": {
+            "step": "categorizing",
+            "progress": 20,
+            "messageTemplate": "Found {count} items, categorizing by confidence..."
+        },
+        "matching": {
+            "step": "matching",
+            "progress": 30,
+            "messageTemplate": "Matching {count} high-confidence items to database..."
+        },
+        "catalog": {
+            "step": "catalog",
+            "progress": 50,
+            "messageTemplate": "Looking up {count} items in catalogs..."
+        },
+        "enriching": {
+            "step": "enriching",
+            "progress": 65,
+            "messageTemplate": "Enriching {count} unresolved items with AI..."
+        },
+        "enrichingMedium": {
+            "step": "enriching-medium",
+            "progress": 75,
+            "messageTemplate": "Processing {count} medium-confidence items..."
+        },
+        "saving": {
+            "step": "saving",
+            "progress": 90,
+            "messageTemplate": "Saving {count} items to your shelf..."
+        },
+        "complete": {
+            "step": "complete",
+            "progress": 100,
+            "message": "Processing complete!"
+        }
+    }
+}

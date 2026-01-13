@@ -10,7 +10,7 @@
             "confidenceMin": 0.85,
             "prompt": "You are cataloging a book shelf. Identify all visible books by reading their spines.\nFor each book, extract:\n- title: The book title\n- author: The author name (usually printed on the spine)\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"1984\", \"author\": \"George Orwell\", \"confidence\": 0.95}]\nIf no books are visible, return []."
         },
-        "movie": {
+        "movies": {
             "confidenceMax": 0.80,
             "confidenceMin": 0.70,
             "prompt": "You are cataloging a movie/Blu-ray/DVD shelf. Identify all visible movies by reading their spines.\nFor each movie, extract:\n- title: The movie title\n- author: The director name ONLY if explicitly printed on the spine (usually NOT visible on movie spines - set to null if not clearly printed)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Directors are rarely printed on movie spines. Do NOT guess the director. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy, not whether you found a director.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Inception\", \"author\": null, \"confidence\": 0.95}]\nIf no movies are visible, return []."

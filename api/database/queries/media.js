@@ -106,6 +106,19 @@ async function fileExists(filePath) {
   }
 }
 
+/**
+ * Check if a file exists AND has content (size >= minBytes).
+ * Used to validate that cached media files are not 0-byte placeholders.
+ */
+async function fileExistsWithContent(filePath, minBytes = 1) {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.isFile() && stats.size >= minBytes;
+  } catch (err) {
+    return false;
+  }
+}
+
 function buildLocalPath({ collectableId, kind, title, checksum, ext }) {
   const typeSegment = normalizeMediaType(kind);
   const titleSegment = normalizePathSegment(title || `collectable-${collectableId}`);
@@ -187,6 +200,9 @@ async function downloadImage(url) {
   }
 
   const buffer = await response.buffer();
+  if (buffer.length === 0) {
+    throw new Error('downloaded image has 0 bytes');
+  }
   if (buffer.length > DEFAULT_MAX_BYTES) {
     throw new Error(`download exceeds ${DEFAULT_MAX_BYTES} bytes`);
   }
@@ -220,7 +236,7 @@ async function ensureCoverMediaForCollectable({
       if (row?.source_url === candidate.url) {
         if (row.local_path) {
           const absolutePath = toAbsolutePath(row.local_path);
-          if (await fileExists(absolutePath)) {
+          if (await fileExistsWithContent(absolutePath)) {
             return { id: coverMediaId, localPath: row.local_path };
           }
         }
@@ -236,7 +252,7 @@ async function ensureCoverMediaForCollectable({
       const existingPath = existingByUrl.rows[0].local_path || null;
       if (existingPath) {
         const absolutePath = toAbsolutePath(existingPath);
-        if (await fileExists(absolutePath)) {
+        if (await fileExistsWithContent(absolutePath)) {
           await query(
             'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
             [existingId, collectableId],
@@ -258,8 +274,12 @@ async function ensureCoverMediaForCollectable({
     });
     const absolutePath = toAbsolutePath(localPath);
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    if (!(await fileExists(absolutePath))) {
+    if (!(await fileExistsWithContent(absolutePath))) {
       await fs.writeFile(absolutePath, buffer);
+      // Verify the file was written with content
+      if (!(await fileExistsWithContent(absolutePath))) {
+        throw new Error('file write verification failed: 0 bytes on disk');
+      }
     }
 
     const insertResult = await query(

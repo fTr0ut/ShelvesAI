@@ -24,12 +24,17 @@ export default function ShelvesScreen({ navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState('grid');
+    const [unmatchedCount, setUnmatchedCount] = useState(0);
 
     const loadShelves = useCallback(async () => {
         try {
             if (!refreshing) setLoading(true);
-            const data = await apiRequest({ apiBase, path: '/api/shelves', token });
+            const [data, unmatchedData] = await Promise.all([
+                apiRequest({ apiBase, path: '/api/shelves', token }),
+                apiRequest({ apiBase, path: '/api/unmatched/count', token }).catch(() => ({ count: 0 })),
+            ]);
             setShelves(Array.isArray(data.shelves) ? data.shelves : []);
+            setUnmatchedCount(unmatchedData.count || 0);
         } catch (e) {
             console.warn('Failed to load shelves:', e);
         } finally {
@@ -168,6 +173,24 @@ export default function ShelvesScreen({ navigation }) {
                     )}
                 </View>
             </View>
+
+            {/* Unmatched Entry (shown when count > 0) */}
+            {unmatchedCount > 0 && (
+                <TouchableOpacity
+                    style={styles.unmatchedEntry}
+                    onPress={() => navigation.navigate('Unmatched')}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.unmatchedIcon}>
+                        <Ionicons name="alert-circle" size={24} color="#fff" />
+                    </View>
+                    <View style={styles.unmatchedContent}>
+                        <Text style={styles.unmatchedTitle}>Unmatched Items</Text>
+                        <Text style={styles.unmatchedMeta}>{unmatchedCount} item{unmatchedCount !== 1 ? 's' : ''} need review</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color="#fff" />
+                </TouchableOpacity>
+            )}
 
             {/* Content */}
             {loading && !refreshing ? renderLoading() : filteredShelves.length === 0 && !searchQuery ? renderEmpty() : (
@@ -381,5 +404,38 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     skeletonList: {
         width: '100%',
         height: 72,
+    },
+    // Unmatched Entry
+    unmatchedEntry: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#ef4444',
+        marginHorizontal: spacing.md,
+        marginBottom: spacing.md,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        ...shadows.md,
+    },
+    unmatchedIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    unmatchedContent: {
+        flex: 1,
+    },
+    unmatchedTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#fff',
+    },
+    unmatchedMeta: {
+        fontSize: 13,
+        color: 'rgba(255,255,255,0.8)',
+        marginTop: 2,
     },
 });

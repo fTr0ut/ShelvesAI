@@ -134,3 +134,64 @@ When `USE_CATALOG_ROUTER=true`, catalog lookups use [apiContainers.json](file://
 1. Create adapter in `api/services/catalog/adapters/`
 2. Register in [CatalogRouter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/CatalogRouter.js)
 3. Add to container config in [apiContainers.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/apiContainers.json)
+
+---
+
+## Activity Feed Aggregation + Social
+
+This project now batches item-level feed events into time-window aggregates and exposes likes/comments on those aggregates.
+
+### Overview
+- **Item events** still write to `event_logs`.
+- **Aggregates** live in `event_aggregates` and are keyed by `(user_id, shelf_id, event_type)` with a fixed window.
+- **Social metadata** (likes, comments) references aggregates, not individual events.
+
+### Aggregation Workflow
+1. `logEvent()` selects or creates an **open aggregate** for the user/shelf/type.
+2. The new event is inserted into `event_logs` with `aggregate_id`.
+3. The aggregate updates:
+   - `item_count`
+   - `last_activity_at`
+   - `preview_payloads` (capped)
+
+**Window logic:**
+- Window starts at first event time and closes after `FEED_AGGREGATE_WINDOW_MINUTES`.
+- New events within the window attach to the same aggregate.
+- Events outside the window create a new aggregate.
+
+### Feed Read Path
+- `/api/feed` reads from `event_aggregates` (not `event_logs`).
+- `preview_payloads` drive the feed card preview list.
+- Social counts and `hasLiked` are attached per aggregate.
+- `/api/feed/:id` accepts **aggregate IDs** and returns all events in that aggregate (with title resolution from DB when payloads are missing).
+
+### Social Endpoints
+- `POST /api/feed/:eventId/like`
+- `POST /api/feed/:eventId/comments`
+- `GET /api/feed/:eventId/comments`
+- `DELETE /api/feed/:eventId/comments/:commentId`
+
+### Client Behavior
+- Feed list hides `shelf.created` entries (client-side).
+- Friends/Discover exclude the viewer's own events, while All includes them.
+- `readOnly` shelves hide edit/add actions in the UI.
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| [feed.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/feed.js) | Aggregate lookup + event logging |
+| [eventSocial.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/eventSocial.js) | Likes/comments queries |
+| [feedController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/feedController.js) | Feed list + aggregate detail |
+| [eventSocialController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/eventSocialController.js) | Social endpoints |
+| [SocialFeedScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/SocialFeedScreen.js) | Feed list UI + filtering |
+| [FeedDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/FeedDetailScreen.js) | Aggregate detail + likes/comments |
+
+### Backfill Scripts
+- `node api/scripts/backfill-event-aggregates.js`
+- `node api/scripts/backfill-event-payloads.js`
+
+### Feed Config
+| Env Variable | Default | Purpose |
+|--------------|---------|------------|
+| `FEED_AGGREGATE_WINDOW_MINUTES` | `15` | Time window for aggregates |
+| `FEED_AGGREGATE_PREVIEW_LIMIT` | `5` | Preview payload cap per aggregate |
