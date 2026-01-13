@@ -57,3 +57,8 @@ npx expo start
    - iOS: `eas build -p ios`
    - Android: `eas build -p android`
 3. **Submit**: Use `eas submit` to send to App Store / Play Store.
+
+## Feed Aggregation Rollout
+1. **Run migrations**: `cd api && npx knex migrate:latest`
+2. **Backfill aggregates**: `npm run backfill:feed-aggregates`
+3. **Verify**: open the feed and confirm recent activity shows grouped events.

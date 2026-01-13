@@ -14,7 +14,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId } = route.params || {};
+    const { item, shelfId, readOnly } = route.params || {};
     const { apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -138,7 +138,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Details</Text>
-                {isManual && (
+                {isManual && !readOnly && (
                     <TouchableOpacity
                         onPress={() => navigation.navigate('ManualEdit', { item, shelfId })}
                         style={styles.editButton}

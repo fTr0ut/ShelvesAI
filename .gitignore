@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 api/.env
+.env.example
 
 # Database
 *.db

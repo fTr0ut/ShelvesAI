@@ -150,6 +150,49 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
 }
 
 /**
+ * Get items on a shelf for viewing (no user_id filter)
+ */
+async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
+    const result = await query(
+        `SELECT uc.*, 
+            c.title as collectable_title,
+            c.subtitle as collectable_subtitle,
+            c.description as collectable_description,
+            c.primary_creator as collectable_creator,
+            c.publishers as collectable_publishers,
+            c.year as collectable_year,
+            c.tags as collectable_tags,
+            c.images as collectable_images,
+            c.identifiers as collectable_identifiers,
+            c.sources as collectable_sources,
+            c.fingerprint as collectable_fingerprint,
+            c.lightweight_fingerprint as collectable_lightweight_fingerprint,
+            c.external_id as collectable_external_id,
+            c.cover_url as collectable_cover,
+            c.cover_media_id as collectable_cover_media_id,
+            m.local_path as collectable_cover_media_path,
+            c.kind as collectable_kind,
+            um.name as manual_name,
+            um.type as manual_type,
+            um.description as manual_description,
+            um.author as manual_author,
+            um.publisher as manual_publisher,
+            um.format as manual_format,
+            um.year as manual_year,
+            um.tags as manual_tags
+     FROM user_collections uc
+     LEFT JOIN collectables c ON c.id = uc.collectable_id
+     LEFT JOIN user_manuals um ON um.id = uc.manual_id
+     LEFT JOIN media m ON m.id = c.cover_media_id
+     WHERE uc.shelf_id = $1
+     ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC
+     LIMIT $2 OFFSET $3`,
+        [shelfId, limit, offset]
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
  * Add a collectable to a shelf
  */
 async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }) {
@@ -259,6 +302,7 @@ module.exports = {
     update,
     remove,
     getItems,
+    getItemsForViewing,
     addCollectable,
     addManual,
     removeItem,

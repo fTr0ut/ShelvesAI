@@ -312,9 +312,13 @@ async function createShelf(req, res) {
 
 async function getShelf(req, res) {
   try {
-    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
-    res.json({ shelf });
+    const readOnly = shelf.ownerId !== req.user.id;
+    res.json({ shelf: { ...shelf, readOnly } });
   } catch (err) {
     console.error('getShelf error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -338,15 +342,21 @@ async function updateShelf(req, res) {
 
 async function listShelfItems(req, res) {
   try {
-    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
     const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 25, maxLimit: 200 });
-    const items = await hydrateShelfItems(req.user.id, shelf.id, { limit, skip });
+    const isOwner = shelf.ownerId === req.user.id;
+    const items = isOwner
+      ? await hydrateShelfItems(req.user.id, shelf.id, { limit, skip })
+      : (await shelvesQueries.getItemsForViewing(shelf.id, { limit, offset: skip })).map(formatShelfItem).filter(Boolean);
 
     const countResult = await query(
-      'SELECT COUNT(*) as total FROM user_collections WHERE user_id = $1 AND shelf_id = $2',
-      [req.user.id, shelf.id]
+      `SELECT COUNT(*) as total FROM user_collections WHERE shelf_id = $1${isOwner ? ' AND user_id = $2' : ''}`,
+      isOwner ? [shelf.id, req.user.id] : [shelf.id]
     );
     const total = parseInt(countResult.rows[0].total);
 

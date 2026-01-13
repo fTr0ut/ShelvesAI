@@ -50,9 +50,23 @@ function getItemPreview(entry) {
     return title;
 }
 
+function buildSummaryText(titles, totalCount) {
+    const safeTitles = Array.isArray(titles) ? titles.filter(Boolean) : [];
+    if (!totalCount || totalCount <= 0) return '';
+    if (safeTitles.length === 0) return `${totalCount} item${totalCount === 1 ? '' : 's'}`;
+    if (totalCount === 1) return safeTitles[0];
+    if (totalCount === 2 && safeTitles.length >= 2) return `${safeTitles[0]} and ${safeTitles[1]}`;
+    const remaining = Math.max(0, totalCount - safeTitles.length);
+    const shown = safeTitles.slice(0, 2);
+    if (remaining > 0) {
+        return `${shown.join(', ')}, and ${remaining} others`;
+    }
+    return shown.join(', ');
+}
+
 // --- Component ---
 export default function SocialFeedScreen({ navigation }) {
-    const { token, apiBase } = useContext(AuthContext);
+    const { token, apiBase, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, isDark } = useTheme();
 
     const [publicEntries, setPublicEntries] = useState([]);
@@ -100,27 +114,64 @@ export default function SocialFeedScreen({ navigation }) {
     };
 
     const combinedEntries = useMemo(() => {
+        const userId = user?.id ? String(user.id) : null;
+        const filterOwn = (entry) => {
+            if (!userId) return true;
+            const ownerId = entry?.owner?.id ? String(entry.owner.id) : null;
+            return !ownerId || ownerId !== userId;
+        };
+        const filterShelfCreated = (entry) => entry?.eventType !== 'shelf.created';
         const all = [
-            ...publicEntries.map(e => ({ ...e, __origin: 'public' })),
-            ...friendEntries.map(e => ({ ...e, __origin: 'friends' })),
+            ...publicEntries.filter(filterShelfCreated).map(e => ({ ...e, __origin: 'public' })),
+            ...friendEntries.filter(filterShelfCreated).map(e => ({ ...e, __origin: 'friends' })),
         ];
-        let filtered = activeFilter === 'all' ? all : all.filter(e => e.__origin === activeFilter);
-        return filtered.sort((a, b) => normalizeDate(b.shelf?.updatedAt) - normalizeDate(a.shelf?.updatedAt));
-    }, [publicEntries, friendEntries, activeFilter]);
+        let filtered = activeFilter === 'all'
+            ? all
+            : all.filter(e => e.__origin === activeFilter).filter(filterOwn);
+        const sorted = filtered.sort((a, b) => normalizeDate(b.shelf?.updatedAt) - normalizeDate(a.shelf?.updatedAt));
+        if (activeFilter !== 'all') return sorted;
+
+        const seen = new Set();
+        const deduped = [];
+        for (const entry of sorted) {
+            const key = entry.aggregateId || entry.id || `${entry.eventType}-${entry.shelf?.id || 'none'}-${entry.createdAt || ''}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(entry);
+        }
+        return deduped;
+    }, [publicEntries, friendEntries, activeFilter, user?.id]);
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
     const renderItem = ({ item }) => {
-        const { shelf, owner, items } = item;
+        const { shelf, owner, items, eventType } = item;
         const timeAgo = formatRelativeTime(shelf?.updatedAt);
         const displayName = owner?.name || owner?.username || 'Someone';
         const initial = displayName.charAt(0).toUpperCase();
         const previewItems = (items || []).slice(0, 3);
+        const totalItems = item?.eventItemCount || items?.length || 0;
+        const likeCount = item?.likeCount || 0;
+        const commentCount = item?.commentCount || 0;
+        const topComment = item?.topComment || null;
+        const summaryText = buildSummaryText(previewItems.map(getItemPreview), totalItems);
+
+        let actionText = 'updated';
+        if (eventType === 'shelf.created') actionText = 'created';
+        else if (eventType && eventType.includes('added')) actionText = 'added';
+
+        const handlePress = () => {
+            if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
+                navigation.navigate('FeedDetail', { entry: item });
+            } else {
+                navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
+            }
+        };
 
         return (
             <TouchableOpacity
                 activeOpacity={0.7}
-                onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name })}
+                onPress={handlePress}
                 style={styles.feedCard}
             >
                 {/* Thread-style header */}
@@ -134,7 +185,13 @@ export default function SocialFeedScreen({ navigation }) {
                             <Text style={styles.timestamp}>{timeAgo}</Text>
                         </View>
                         <Text style={styles.shelfAction}>
-                            updated <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text>
+                            {actionText}{' '}
+                            {actionText === 'added' && summaryText
+                                ? <Text style={styles.shelfName}>{summaryText}</Text>
+                                : <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text>}
+                            {actionText === 'added' && (
+                                <Text> to <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text></Text>
+                            )}
                         </Text>
                     </View>
                 </View>
@@ -153,9 +210,30 @@ export default function SocialFeedScreen({ navigation }) {
                                 <Text style={styles.itemTitle} numberOfLines={1}>{getItemPreview(entry)}</Text>
                             </View>
                         ))}
-                        {(items?.length || 0) > 3 && (
-                            <Text style={styles.moreItems}>+{items.length - 3} more</Text>
+                        {totalItems > previewItems.length && (
+                            <Text style={styles.moreItems}>+{totalItems - previewItems.length} more</Text>
                         )}
+                    </View>
+                )}
+
+                {(likeCount > 0 || commentCount > 0 || topComment?.content) && (
+                    <View style={styles.socialRow}>
+                        <View style={styles.socialStats}>
+                            <View style={styles.socialStat}>
+                                <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                <Text style={styles.socialText}>{likeCount}</Text>
+                            </View>
+                            <View style={styles.socialStat}>
+                                <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                <Text style={styles.socialText}>{commentCount}</Text>
+                            </View>
+                        </View>
+                        {topComment?.content ? (
+                            <Text style={styles.commentPreview} numberOfLines={1}>
+                                {topComment.username ? `${topComment.username}: ` : ''}
+                                {topComment.content}
+                            </Text>
+                        ) : null}
                     </View>
                 )}
 
@@ -247,7 +325,7 @@ export default function SocialFeedScreen({ navigation }) {
             ) : (
                 <FlatList
                     data={combinedEntries}
-                    keyExtractor={(item, idx) => item.shelf?.id ? `${item.shelf.id}-${item.__origin}` : `entry-${idx}`}
+                    keyExtractor={(item, idx) => item.id ? `${item.id}-${item.__origin}` : (item.shelf?.id ? `${item.shelf.id}-${item.__origin}` : `entry-${idx}`)}
                     renderItem={renderItem}
                     contentContainerStyle={styles.listContent}
                     refreshControl={
@@ -407,6 +485,33 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.primary,
         fontWeight: '500',
         alignSelf: 'center',
+    },
+    socialRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: spacing.sm,
+        gap: spacing.sm,
+    },
+    socialStats: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    socialStat: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    socialText: {
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    commentPreview: {
+        flex: 1,
+        fontSize: 12,
+        color: colors.textSecondary,
+        textAlign: 'right',
     },
     cardFooter: {
         flexDirection: 'row',

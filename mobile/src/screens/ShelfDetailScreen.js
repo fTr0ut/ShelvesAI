@@ -82,8 +82,8 @@ async function getBase64Payload(asset) {
 }
 
 export default function ShelfDetailScreen({ route, navigation }) {
-    const { id, title } = route.params || {};
-    const { token, apiBase, premiumEnabled } = useContext(AuthContext);
+    const { id, title, readOnly: readOnlyParam } = route.params || {};
+    const { token, apiBase, premiumEnabled, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [shelf, setShelf] = useState(null);
@@ -102,6 +102,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
+    const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
 
     const loadShelf = useCallback(async () => {
         try {
@@ -166,6 +167,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     };
 
     const handleDeleteItem = useCallback(async (itemId) => {
+        if (isReadOnly) return;
         Alert.alert('Remove Item', 'Remove this item from the shelf?', [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -181,7 +183,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 },
             },
         ]);
-    }, [apiBase, id, token]);
+    }, [apiBase, id, token, isReadOnly]);
 
     const visibleItems = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
@@ -345,7 +347,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return (
             <TouchableOpacity
                 style={styles.itemCard}
-                onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id })}
+                onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id, readOnly: isReadOnly })}
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>
@@ -365,9 +367,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
                     {info.subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
                 </View>
-                <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    <Ionicons name="close" size={18} color={colors.textMuted} />
-                </TouchableOpacity>
+                {!isReadOnly ? (
+                    <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <Ionicons name="close" size={18} color={colors.textMuted} />
+                    </TouchableOpacity>
+                ) : null}
             </TouchableOpacity>
         );
     };
@@ -376,7 +380,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         <View style={styles.emptyState}>
             <Ionicons name="cube-outline" size={56} color={colors.textMuted} />
             <Text style={styles.emptyTitle}>No items yet</Text>
-            <Text style={styles.emptyText}>Add items to this shelf using the camera or search</Text>
+            <Text style={styles.emptyText}>{isReadOnly ? 'No items are visible yet.' : 'Add items to this shelf using the camera or search'}</Text>
         </View>
     );
 
@@ -490,16 +494,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }, [apiBase, id, premiumEnabled, shelfType, token, visionLoading]);
 
     const handleOpenSearch = useCallback(() => {
+        if (isReadOnly) return;
         navigation.navigate('ItemSearch', { shelfId: id, shelfType });
-    }, [navigation, id, shelfType]);
+    }, [navigation, id, shelfType, isReadOnly]);
 
     const handleAddItem = useCallback(() => {
+        if (isReadOnly) return;
         Alert.alert('Add Item', 'Scan with camera or search catalog', [
             { text: 'Camera', onPress: handleCameraScan },
             { text: 'Search', onPress: handleOpenSearch },
             { text: 'Cancel', style: 'cancel' },
         ]);
-    }, [handleCameraScan, handleOpenSearch]);
+    }, [handleCameraScan, handleOpenSearch, isReadOnly]);
 
     const sortLabel = useMemo(() => {
         const match = SORT_OPTIONS.find(option => option.key === sortKey);
@@ -527,9 +533,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     <Text style={styles.headerTitle} numberOfLines={1}>{shelf?.name || title || 'Shelf'}</Text>
                     <Text style={styles.headerSubtitle}>{totalItems} item{totalItems !== 1 ? 's' : ''}{hasMore ? ` (${items.length} loaded)` : ''}</Text>
                 </View>
-                <TouchableOpacity onPress={() => navigation.navigate('ShelfEdit', { shelf })} style={styles.editButton}>
-                    <Ionicons name="settings-outline" size={22} color={colors.text} />
-                </TouchableOpacity>
+                {!isReadOnly ? (
+                    <TouchableOpacity onPress={() => navigation.navigate('ShelfEdit', { shelf })} style={styles.editButton}>
+                        <Ionicons name="settings-outline" size={22} color={colors.text} />
+                    </TouchableOpacity>
+                ) : (
+                    <View style={styles.editButtonPlaceholder} />
+                )}
             </View>
 
             {/* Search + Sort */}
@@ -585,17 +595,19 @@ export default function ShelfDetailScreen({ route, navigation }) {
             />
 
             {/* FAB for adding items */}
-            <TouchableOpacity
-                style={[styles.fab, visionLoading && styles.fabDisabled]}
-                onPress={handleAddItem}
-                disabled={visionLoading}
-            >
-                {visionLoading ? (
-                    <ActivityIndicator size="small" color={colors.textInverted} />
-                ) : (
-                    <Ionicons name="add" size={28} color={colors.textInverted} />
-                )}
-            </TouchableOpacity>
+            {!isReadOnly ? (
+                <TouchableOpacity
+                    style={[styles.fab, visionLoading && styles.fabDisabled]}
+                    onPress={handleAddItem}
+                    disabled={visionLoading}
+                >
+                    {visionLoading ? (
+                        <ActivityIndicator size="small" color={colors.textInverted} />
+                    ) : (
+                        <Ionicons name="add" size={28} color={colors.textInverted} />
+                    )}
+                </TouchableOpacity>
+            ) : null}
 
             <Modal
                 visible={sortOpen}

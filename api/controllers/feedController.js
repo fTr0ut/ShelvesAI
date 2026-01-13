@@ -1,6 +1,7 @@
 const feedQueries = require('../database/queries/feed');
 const shelvesQueries = require('../database/queries/shelves');
 const friendshipQueries = require('../database/queries/friendships');
+const eventSocialQueries = require('../database/queries/eventSocial');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
@@ -75,119 +76,89 @@ async function getFeed(req, res) {
     const ownerOverride = req.query.ownerId ? String(req.query.ownerId).trim() : null;
 
     const viewerId = req.user.id;
-    const friendIds = await friendshipQueries.getAcceptedFriendIds(viewerId);
+    // const friendIds = await friendshipQueries.getAcceptedFriendIds(viewerId); // Used in legacy, not needed here
 
-    let shelves = [];
+    let events = [];
 
     if (ownerOverride) {
-      // Specific user's shelves
-      const isOwner = ownerOverride === viewerId;
-      const isFriend = friendIds.includes(ownerOverride);
-
-      let visibilityFilter = ['public'];
-      if (isOwner) visibilityFilter = ['public', 'friends', 'private'];
-      else if (isFriend) visibilityFilter = ['public', 'friends'];
-
-      const result = await query(
-        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
-         FROM shelves s
-         JOIN users u ON u.id = s.owner_id
-         WHERE s.owner_id = $1
-         AND s.visibility = ANY($2)
-         ${typeFilter ? 'AND s.type = $3' : ''}
-         ORDER BY s.updated_at DESC
-         LIMIT $${typeFilter ? 4 : 3} OFFSET $${typeFilter ? 5 : 4}`,
-        typeFilter
-          ? [ownerOverride, visibilityFilter, typeFilter, limit, offset]
-          : [ownerOverride, visibilityFilter, limit, offset]
-      );
-      shelves = result.rows;
-
+      events = await feedQueries.getMyFeed(ownerOverride, { limit, offset, type: typeFilter });
     } else if (scope === 'friends') {
-      if (!friendIds.length) {
-        return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries: [] });
-      }
-
-      const result = await query(
-        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
-         FROM shelves s
-         JOIN users u ON u.id = s.owner_id
-         WHERE s.owner_id = ANY($1)
-         AND s.visibility IN ('public', 'friends')
-         ${typeFilter ? 'AND s.type = $2' : ''}
-         ORDER BY s.updated_at DESC
-         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
-        typeFilter
-          ? [friendIds, typeFilter, limit, offset]
-          : [friendIds, limit, offset]
-      );
-      shelves = result.rows;
-
+      events = await feedQueries.getFriendsFeed(viewerId, { limit, offset, type: typeFilter });
     } else if (scope === 'mine') {
-      const result = await query(
-        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
-         FROM shelves s
-         JOIN users u ON u.id = s.owner_id
-         WHERE s.owner_id = $1
-         ${typeFilter ? 'AND s.type = $2' : ''}
-         ORDER BY s.updated_at DESC
-         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
-        typeFilter
-          ? [viewerId, typeFilter, limit, offset]
-          : [viewerId, limit, offset]
-      );
-      shelves = result.rows;
-
+      events = await feedQueries.getMyFeed(viewerId, { limit, offset, type: typeFilter });
     } else {
-      // Global feed - public shelves only
-      const result = await query(
-        `SELECT s.*, u.username, u.picture as owner_picture, u.first_name, u.last_name, u.city, u.state, u.country
-         FROM shelves s
-         JOIN users u ON u.id = s.owner_id
-         WHERE s.visibility = 'public'
-         AND s.owner_id != $1
-         ${typeFilter ? 'AND s.type = $2' : ''}
-         ORDER BY s.updated_at DESC
-         LIMIT $${typeFilter ? 3 : 2} OFFSET $${typeFilter ? 4 : 3}`,
-        typeFilter
-          ? [viewerId, typeFilter, limit, offset]
-          : [viewerId, limit, offset]
-      );
-      shelves = result.rows;
+      events = await feedQueries.getPublicFeed({ limit, offset, type: typeFilter });
     }
 
-    if (!shelves.length) {
+    if (!events.length) {
       return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries: [] });
     }
 
-    const shelfIds = shelves.map(s => s.id);
-    const [itemMap, countMap] = await Promise.all([
-      summarizeItems(shelfIds),
-      getShelfCounts(shelfIds),
-    ]);
+    // Get shelf counts
+    const shelfIds = [...new Set(events.map(e => e.shelfId).filter(Boolean))];
+    const countMap = await getShelfCounts(shelfIds);
+    const aggregateIds = [...new Set(events.map(e => e.id).filter(Boolean))];
+    const socialMap = await eventSocialQueries.getSocialSummaries(aggregateIds, viewerId);
 
-    const entries = shelves.map(s => ({
-      shelf: {
-        id: s.id,
-        name: s.name,
-        type: s.type,
-        description: s.description,
-        visibility: s.visibility,
-        createdAt: s.created_at,
-        updatedAt: s.updated_at,
-        itemCount: countMap.get(String(s.id)) || 0,
-      },
-      owner: {
-        id: s.owner_id,
-        username: s.username,
-        name: [s.first_name, s.last_name].filter(Boolean).join(' ').trim() || undefined,
-        city: s.city,
-        state: s.state,
-        country: s.country,
-        picture: s.owner_picture,
-      },
-      items: itemMap.get(String(s.id)) || [],
-    }));
+    const entries = events.map(e => {
+      const payloads = Array.isArray(e.previewPayloads) ? e.previewPayloads : [];
+      let feedItems = [];
+
+      // Construct item previews from aggregate payloads if applicable
+      if (e.eventType === 'item.collectable_added') {
+        feedItems = payloads.map((payload) => ({
+          id: payload?.itemId,
+          collectable: {
+            title: payload?.title,
+            primaryCreator: payload?.primaryCreator,
+            coverUrl: payload?.coverUrl,
+            kind: payload?.type || payload?.kind,
+          }
+        }));
+      } else if (e.eventType === 'item.manual_added') {
+        feedItems = payloads.map((payload) => ({
+          id: payload?.itemId,
+          manual: {
+            name: payload?.name,
+            title: payload?.name,
+          }
+        }));
+      }
+
+      const social = socialMap.get(e.id) || {};
+
+      return {
+        id: e.id,
+        aggregateId: e.id,
+        eventType: e.eventType,
+        createdAt: e.createdAt,
+        eventItemCount: e.itemCount || 0,
+        likeCount: social.likeCount || 0,
+        commentCount: social.commentCount || 0,
+        hasLiked: !!social.hasLiked,
+        topComment: social.topComment || null,
+        shelf: {
+          id: e.shelfId,
+          name: e.shelfName,
+          type: e.shelfType,
+          description: e.shelfDescription,
+          visibility: 'public',
+          createdAt: e.createdAt, // aggregate start
+          updatedAt: e.lastActivityAt || e.createdAt, // use latest activity for display
+          itemCount: countMap.get(String(e.shelfId)) || 0,
+        },
+        owner: {
+          id: e.userId,
+          username: e.username,
+          name: [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || undefined,
+          city: e.city,
+          state: e.state,
+          country: e.country,
+          picture: e.userPicture,
+        },
+        items: feedItems,
+      };
+    });
 
     res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
   } catch (err) {
@@ -198,12 +169,157 @@ async function getFeed(req, res) {
 
 async function getFeedEntryDetails(req, res) {
   try {
-    const shelfId = parseInt(req.params.shelfId, 10);
-    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+    const rawId = String(req.params.shelfId || '').trim();
+    const shelfId = parseInt(rawId, 10);
+    const isNumeric = !Number.isNaN(shelfId);
+    const aggregateId = isNumeric ? null : rawId;
 
     const viewerId = req.user.id;
-    const shelf = await shelvesQueries.getForViewing(shelfId, viewerId);
+    if (!isNumeric && !aggregateId) return res.status(400).json({ error: 'Invalid feed entry id' });
 
+    if (!isNumeric) {
+      const aggregateResult = await query(
+        `SELECT a.*, 
+                u.username, u.first_name, u.last_name, u.picture, u.city, u.state, u.country,
+                s.id as shelf_id, s.owner_id as shelf_owner_id,
+                s.name as shelf_name, s.type as shelf_type, s.description as shelf_description, s.visibility as shelf_visibility
+         FROM event_aggregates a
+         LEFT JOIN users u ON u.id = a.user_id
+         LEFT JOIN shelves s ON s.id = a.shelf_id
+         WHERE a.id = $1`,
+        [aggregateId]
+      );
+
+      if (!aggregateResult.rows.length) return res.status(404).json({ error: 'Feed entry not found' });
+
+      const aggregate = rowToCamelCase(aggregateResult.rows[0]);
+      const resolvedShelfId = aggregate.shelfId;
+      let shelf = null;
+      if (resolvedShelfId) {
+        shelf = await shelvesQueries.getForViewing(resolvedShelfId, viewerId);
+        if (!shelf) return res.status(404).json({ error: 'Feed entry not found' });
+      }
+
+      const itemsResult = await query(
+        `SELECT e.id, e.event_type, e.payload, e.created_at,
+                c.title as collectable_title,
+                c.primary_creator as collectable_primary_creator,
+                c.cover_url as collectable_cover_url,
+                c.kind as collectable_kind,
+                um.name as manual_name,
+                um.author as manual_author
+         FROM event_logs e
+         LEFT JOIN user_collections uc
+           ON uc.id = CASE
+             WHEN (e.payload->>'itemId') ~ '^[0-9]+$'
+             THEN (e.payload->>'itemId')::int
+             ELSE NULL
+           END
+         LEFT JOIN collectables c
+           ON c.id = COALESCE(
+             uc.collectable_id,
+             CASE
+               WHEN (e.payload->>'collectableId') ~ '^[0-9]+$'
+               THEN (e.payload->>'collectableId')::int
+               ELSE NULL
+             END
+           )
+         LEFT JOIN user_manuals um
+           ON um.id = COALESCE(
+             uc.manual_id,
+             CASE
+               WHEN (e.payload->>'manualId') ~ '^[0-9]+$'
+               THEN (e.payload->>'manualId')::int
+               ELSE NULL
+             END
+           )
+         WHERE e.aggregate_id = $1
+         ORDER BY e.created_at ASC`,
+        [aggregateId]
+      );
+
+      const items = itemsResult.rows.map((row) => {
+        const payload = row.payload || {};
+        const resolvedTitle = payload.title || payload.name || row.collectable_title || row.manual_name || 'Unknown item';
+        if (row.event_type === 'item.collectable_added') {
+          return {
+            id: row.id,
+            collectable: {
+              title: resolvedTitle,
+              primaryCreator: payload.primaryCreator || row.collectable_primary_creator || null,
+              coverUrl: payload.coverUrl || row.collectable_cover_url || null,
+              kind: payload.type || payload.kind || row.collectable_kind || null,
+            },
+          };
+        }
+        if (row.event_type === 'item.manual_added') {
+          return {
+            id: row.id,
+            manual: {
+              name: resolvedTitle,
+              title: resolvedTitle,
+              author: payload.author || row.manual_author || null,
+            },
+          };
+        }
+        return {
+          id: row.id,
+          payload,
+        };
+      });
+
+      const entry = {
+        id: aggregate.id,
+        aggregateId: aggregate.id,
+        eventType: aggregate.eventType,
+        createdAt: aggregate.createdAt,
+        updatedAt: aggregate.lastActivityAt || aggregate.createdAt,
+        itemCount: aggregate.itemCount || items.length,
+        likeCount: 0,
+        commentCount: 0,
+        hasLiked: false,
+        shelf: shelf ? {
+          id: shelf.id,
+          name: shelf.name,
+          type: shelf.type,
+          description: shelf.description,
+          visibility: shelf.visibility,
+          createdAt: shelf.createdAt,
+          updatedAt: shelf.updatedAt,
+          itemCount: items.length,
+        } : {
+          id: aggregate.shelfId,
+          name: aggregate.shelfName,
+          type: aggregate.shelfType,
+          description: aggregate.shelfDescription,
+          visibility: aggregate.shelfVisibility,
+          createdAt: aggregate.createdAt,
+          updatedAt: aggregate.lastActivityAt || aggregate.createdAt,
+          itemCount: items.length,
+        },
+        owner: {
+          id: aggregate.userId,
+          username: aggregate.username,
+          name: [aggregate.firstName, aggregate.lastName].filter(Boolean).join(' ').trim() || undefined,
+          city: aggregate.city,
+          state: aggregate.state,
+          country: aggregate.country,
+          picture: aggregate.picture,
+        },
+        items,
+      };
+
+      const socialMap = await eventSocialQueries.getSocialSummaries([aggregate.id], viewerId);
+      const social = socialMap.get(aggregate.id) || {};
+      entry.likeCount = social.likeCount || 0;
+      entry.commentCount = social.commentCount || 0;
+      entry.hasLiked = !!social.hasLiked;
+      entry.topComment = social.topComment || null;
+
+      return res.json({ entry });
+    }
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, viewerId);
     if (!shelf) return res.status(404).json({ error: 'Feed entry not found' });
 
     // Get owner info

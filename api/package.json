@@ -5,10 +5,12 @@
     "main": "index.js",
     "scripts": {
         "start": "node index.js",
-        "dev": "nodemon index.js",
-        "test:backend": "jest --config jest.config.js",
-        "build-indexes": "node scripts/build-indexes.js",
-        "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000",
+    "dev": "nodemon index.js",
+    "test:backend": "jest --config jest.config.js",
+    "build-indexes": "node scripts/build-indexes.js",
+    "backfill:feed-aggregates": "node scripts/backfill-event-aggregates.js",
+    "backfill:feed-payloads": "node scripts/backfill-event-payloads.js",
+    "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000",
         "cache-covers": "node scripts/cache-collectable-covers.js",
         "test:tmdb": "node scripts/test-tmdb.js"
     },

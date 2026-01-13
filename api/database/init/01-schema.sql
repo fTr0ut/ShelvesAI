@@ -237,12 +237,35 @@ CREATE INDEX idx_friendships_addressee ON friendships(addressee_id);
 CREATE INDEX idx_friendships_status ON friendships(status);
 
 -- ============================================
--- EVENT LOGS (Activity feed)
+-- EVENT AGGREGATES (Activity feed batches)
+-- ============================================
+CREATE TABLE event_aggregates (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    shelf_id INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
+
+    event_type TEXT NOT NULL,
+    window_start_utc TIMESTAMPTZ NOT NULL,
+    window_end_utc TIMESTAMPTZ NOT NULL,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    preview_payloads JSONB NOT NULL DEFAULT '[]',
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ DEFAULT NOW(),
+    closed_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_event_aggregates_scope_window ON event_aggregates(user_id, shelf_id, event_type, window_end_utc);
+CREATE INDEX idx_event_aggregates_last_activity ON event_aggregates(last_activity_at DESC);
+
+-- ============================================
+-- EVENT LOGS (Activity feed items)
 -- ============================================
 CREATE TABLE event_logs (
     id SERIAL PRIMARY KEY,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     shelf_id INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
+    aggregate_id UUID REFERENCES event_aggregates(id) ON DELETE SET NULL,
     
     event_type TEXT NOT NULL,
     payload JSONB DEFAULT '{}',
@@ -253,7 +276,32 @@ CREATE TABLE event_logs (
 CREATE INDEX idx_event_logs_user ON event_logs(user_id);
 CREATE INDEX idx_event_logs_shelf ON event_logs(shelf_id);
 CREATE INDEX idx_event_logs_type ON event_logs(event_type);
+CREATE INDEX idx_event_logs_aggregate ON event_logs(aggregate_id);
 CREATE INDEX idx_event_logs_created ON event_logs(created_at DESC);
+
+-- ============================================
+-- EVENT SOCIAL (Likes + Comments)
+-- ============================================
+CREATE TABLE event_likes (
+    id SERIAL PRIMARY KEY,
+    event_id UUID NOT NULL REFERENCES event_aggregates(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (event_id, user_id)
+);
+
+CREATE INDEX idx_event_likes_event ON event_likes(event_id);
+
+CREATE TABLE event_comments (
+    id SERIAL PRIMARY KEY,
+    event_id UUID NOT NULL REFERENCES event_aggregates(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_event_comments_event ON event_comments(event_id);
+CREATE INDEX idx_event_comments_created ON event_comments(event_id, created_at DESC);
 
 -- ============================================
 -- HELPER FUNCTIONS
