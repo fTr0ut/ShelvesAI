@@ -9,7 +9,7 @@
  */
 
 const collectablesQueries = require('../database/queries/collectables');
-const { makeLightweightFingerprint } = require('./collectables/fingerprint');
+const { makeLightweightFingerprint, makeVisionOcrFingerprint } = require('./collectables/fingerprint');
 const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
@@ -73,7 +73,7 @@ class CollectableMatchingService {
         console.log('[CollectableMatchingService] Searching database for:', { title, creator, shelfType });
 
         // 1. Check lightweight fingerprint (exact match)
-        const lwf = makeLightweightFingerprint({ title, primaryCreator: creator });
+        const lwf = makeLightweightFingerprint({ title, primaryCreator: creator, kind: shelfType });
         const fingerprintMatch = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (fingerprintMatch) {
             console.log('[CollectableMatchingService] Fingerprint match:', fingerprintMatch.id, fingerprintMatch.title);
@@ -85,7 +85,14 @@ class CollectableMatchingService {
         }
 
         // 2. Check fuzzy fingerprint (OCR stored hashes)
-        const fuzzyFpMatch = await collectablesQueries.findByFuzzyFingerprint(lwf);
+        const ocrFingerprint = makeVisionOcrFingerprint(title, creator, shelfType);
+        let fuzzyFpMatch = null;
+        if (ocrFingerprint) {
+            fuzzyFpMatch = await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint);
+        }
+        if (!fuzzyFpMatch) {
+            fuzzyFpMatch = await collectablesQueries.findByFuzzyFingerprint(lwf);
+        }
         if (fuzzyFpMatch && !suggestions.some(s => s.id === fuzzyFpMatch.id)) {
             console.log('[CollectableMatchingService] Fuzzy fingerprint match:', fuzzyFpMatch.id, fuzzyFpMatch.title);
             suggestions.push({
@@ -228,14 +235,20 @@ class CollectableMatchingService {
         }
 
         // 1. Lightweight fingerprint
-        const lwf = makeLightweightFingerprint({ title, primaryCreator: creator });
+        const lwf = makeLightweightFingerprint({ title, primaryCreator: creator, kind: shelfType });
         let match = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (match) {
             return { match, source: 'fingerprint' };
         }
 
         // 2. Fuzzy fingerprint
-        match = await collectablesQueries.findByFuzzyFingerprint(lwf);
+        const ocrFingerprint = makeVisionOcrFingerprint(title, creator, shelfType);
+        match = ocrFingerprint
+            ? await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint)
+            : null;
+        if (!match) {
+            match = await collectablesQueries.findByFuzzyFingerprint(lwf);
+        }
         if (match) {
             return { match, source: 'fuzzy_fingerprint' };
         }

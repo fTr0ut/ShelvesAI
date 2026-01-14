@@ -1,0 +1,72 @@
+{
+  "intro": {
+    "pages": [
+      {
+        "key": "fun",
+        "title": "Meet ShelvesAI",
+        "subtitle": "Your collections, alive and social",
+        "body": "Scan, catalog, and show off the collections you love with a little magic.",
+        "icon": "sparkles"
+      },
+      {
+        "key": "discover",
+        "title": "Discover & Connect",
+        "subtitle": "Follow collectors like you",
+        "body": "See what friends add, trade recommendations, and build your collector circle.",
+        "icon": "people"
+      },
+      {
+        "key": "organize",
+        "title": "Organize Faster",
+        "subtitle": "Capture items in seconds",
+        "body": "Snap a photo or search to fill shelves without the manual work.",
+        "icon": "camera"
+      }
+    ],
+    "nextButtonLabel": "Next",
+    "startButtonLabel": "Get Started"
+  },
+  "required": {
+    "title": "Complete your profile",
+    "subtitle": "We need a few details to get you started.",
+    "errors": {
+      "emailInvalid": "Enter a valid email address",
+      "firstNameRequired": "First name is required",
+      "cityRequired": "City is required",
+      "stateRequired": "State is required"
+    },
+    "fields": {
+      "emailLabel": "Email",
+      "emailPlaceholder": "you@example.com",
+      "firstNameLabel": "First Name",
+      "firstNamePlaceholder": "First name",
+      "cityLabel": "City",
+      "cityPlaceholder": "City",
+      "stateLabel": "State",
+      "statePlaceholder": "State"
+    },
+    "buttonLabel": "Continue",
+    "savingLabel": "Saving..."
+  },
+  "optional": {
+    "title": "Add the finishing touches",
+    "subtitle": "Bio and photo are optional for now.",
+    "photoHint": "Add a profile photo (optional)",
+    "bioLabel": "Bio",
+    "bioPlaceholder": "Share what you collect...",
+    "continueLabel": "Continue",
+    "savingLabel": "Finishing...",
+    "skipLabel": "Skip for now",
+    "loadError": "Failed to load profile"
+  },
+  "username": {
+    "title": "Choose a Username",
+    "subtitle": "This is how other collectors will find you",
+    "placeholder": "username",
+    "atSymbol": "@",
+    "errorEmpty": "Please enter a username",
+    "errorShort": "Username must be at least 3 characters",
+    "buttonLabel": "Continue",
+    "loadingLabel": "Setting up..."
+  }
+}

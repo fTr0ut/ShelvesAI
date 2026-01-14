@@ -19,6 +19,7 @@ const favoritesRoutes = require('./routes/favorites');
 const listsRoutes = require('./routes/lists');
 const unmatchedRoutes = require('./routes/unmatched');
 const onboardingRoutes = require('./routes/onboarding');
+const configRoutes = require('./routes/config');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -158,5 +159,16 @@ app.use('/api/favorites', favoritesRoutes);
 app.use('/api/lists', listsRoutes);
 app.use('/api/unmatched', unmatchedRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/config', configRoutes);
+
+app.use((err, _req, res, next) => {
+  if (err && (err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large')) {
+    return res.status(413).json({
+      error: 'Image too large. Please try taking another photo or use a lower quality setting.',
+      code: 'image_too_large',
+    });
+  }
+  next(err);
+});
 
 module.exports = app;

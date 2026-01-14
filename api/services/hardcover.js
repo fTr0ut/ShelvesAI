@@ -450,6 +450,10 @@ class HardcoverClient {
     const expectedTitle = normalizeCompare(expected.title);
     const expectedAuthor = normalizeCompare(expected.author);
 
+    // Minimum score threshold - require at least some title or author match
+    // A score of 0 means no meaningful match was found
+    const MIN_ACCEPTABLE_SCORE = 0;
+
     let best = null;
     let bestScore = Number.NEGATIVE_INFINITY;
 
@@ -463,7 +467,15 @@ class HardcoverClient {
         else if (title && (title.includes(expectedTitle) || expectedTitle.includes(title))) {
           score += 60;
         } else {
-          score -= 5;
+          // Check for word-based partial match
+          const expectedWords = expectedTitle.split(/\s+/).filter(w => w.length > 2);
+          const titleWords = title.split(/\s+/).filter(w => w.length > 2);
+          const matchingWords = expectedWords.filter(w => titleWords.includes(w));
+          if (matchingWords.length > 0) {
+            score += Math.floor((matchingWords.length / expectedWords.length) * 40);
+          } else {
+            score -= 50; // Strong penalty for no title overlap at all
+          }
         }
       }
 
@@ -487,6 +499,17 @@ class HardcoverClient {
         bestScore = score;
         best = book;
       }
+    }
+
+    // Reject if best match score is below threshold (no meaningful match)
+    if (bestScore < MIN_ACCEPTABLE_SCORE) {
+      console.log('[HardcoverClient.pickBestBook] Rejecting best match - score too low', {
+        expectedTitle: expected.title,
+        bestTitle: best?.title,
+        bestScore,
+        minRequired: MIN_ACCEPTABLE_SCORE
+      });
+      return null;
     }
 
     return best;

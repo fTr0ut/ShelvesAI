@@ -18,7 +18,7 @@ import { apiRequest } from '../services/api';
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function OnboardingProfileRequiredScreen({ navigation }) {
-    const { token, apiBase, user, setUser } = useContext(AuthContext);
+    const { token, apiBase, user, setUser, onboardingConfig } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [email, setEmail] = useState('');
@@ -39,7 +39,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
         const hydrate = async () => {
             if (!token) return;
             try {
-                const data = await apiRequest({ apiBase, path: '/api/account', token });
+            const data = await apiRequest({ apiBase, path: '/api/account', token });
                 if (mounted && data.user) {
                     setUser(data.user);
                 }
@@ -69,19 +69,19 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
     const validate = useCallback(() => {
         const trimmedEmail = email.trim();
         if (!trimmedEmail || !emailPattern.test(trimmedEmail)) {
-            return 'Enter a valid email address';
+            return onboardingConfig.required.errors.emailInvalid;
         }
         if (!firstName.trim()) {
-            return 'First name is required';
+            return onboardingConfig.required.errors.firstNameRequired;
         }
         if (!city.trim()) {
-            return 'City is required';
+            return onboardingConfig.required.errors.cityRequired;
         }
         if (!state.trim()) {
-            return 'State is required';
+            return onboardingConfig.required.errors.stateRequired;
         }
         return '';
-    }, [email, firstName, city, state]);
+    }, [email, firstName, city, state, onboardingConfig]);
 
     const handleContinue = useCallback(async () => {
         const validationError = validate();
@@ -119,6 +119,17 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
         }
     }, [apiBase, city, email, firstName, navigation, state, token, validate, setUser]);
 
+    if (!onboardingConfig?.required?.fields) {
+        return (
+            <SafeAreaView style={styles.screen} edges={['top']}>
+                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+                <View style={styles.centerContainer}>
+                    <Text style={styles.loadingText}>Loading onboarding...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -127,8 +138,8 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             >
                 <View style={styles.header}>
-                    <Text style={styles.title}>Complete your profile</Text>
-                    <Text style={styles.subtitle}>We need a few details to get you started.</Text>
+                    <Text style={styles.title}>{onboardingConfig.required.title}</Text>
+                    <Text style={styles.subtitle}>{onboardingConfig.required.subtitle}</Text>
                 </View>
 
                 {error ? (
@@ -140,12 +151,12 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
 
                 <View style={styles.card}>
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Email</Text>
+                        <Text style={styles.label}>{onboardingConfig.required.fields.emailLabel}</Text>
                         <TextInput
                             style={styles.input}
                             value={email}
                             onChangeText={setEmail}
-                            placeholder="you@example.com"
+                            placeholder={onboardingConfig.required.fields.emailPlaceholder}
                             placeholderTextColor={colors.textMuted}
                             autoCapitalize="none"
                             keyboardType="email-address"
@@ -154,12 +165,12 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                     </View>
 
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>First Name</Text>
+                        <Text style={styles.label}>{onboardingConfig.required.fields.firstNameLabel}</Text>
                         <TextInput
                             style={styles.input}
                             value={firstName}
                             onChangeText={setFirstName}
-                            placeholder="First name"
+                            placeholder={onboardingConfig.required.fields.firstNamePlaceholder}
                             placeholderTextColor={colors.textMuted}
                             editable={!loading}
                         />
@@ -167,23 +178,23 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
 
                     <View style={styles.row}>
                         <View style={styles.inputHalf}>
-                            <Text style={styles.label}>City</Text>
+                            <Text style={styles.label}>{onboardingConfig.required.fields.cityLabel}</Text>
                             <TextInput
                                 style={styles.input}
                                 value={city}
                                 onChangeText={setCity}
-                                placeholder="City"
+                                placeholder={onboardingConfig.required.fields.cityPlaceholder}
                                 placeholderTextColor={colors.textMuted}
                                 editable={!loading}
                             />
                         </View>
                         <View style={styles.inputHalf}>
-                            <Text style={styles.label}>State</Text>
+                            <Text style={styles.label}>{onboardingConfig.required.fields.stateLabel}</Text>
                             <TextInput
                                 style={styles.input}
                                 value={state}
                                 onChangeText={setState}
-                                placeholder="State"
+                                placeholder={onboardingConfig.required.fields.statePlaceholder}
                                 placeholderTextColor={colors.textMuted}
                                 editable={!loading}
                             />
@@ -196,7 +207,9 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                     onPress={handleContinue}
                     disabled={loading}
                 >
-                    <Text style={styles.primaryButtonText}>{loading ? 'Saving...' : 'Continue'}</Text>
+                    <Text style={styles.primaryButtonText}>
+                        {loading ? onboardingConfig.required.savingLabel : onboardingConfig.required.buttonLabel}
+                    </Text>
                     <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
                 </TouchableOpacity>
             </KeyboardAvoidingView>
@@ -257,6 +270,15 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
         },
         inputHalf: {
             flex: 1,
+        },
+        centerContainer: {
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+        loadingText: {
+            fontSize: 14,
+            color: colors.textMuted,
         },
         errorBox: {
             flexDirection: 'row',

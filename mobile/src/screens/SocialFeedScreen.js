@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useState } from 're
 import {
     ActivityIndicator,
     FlatList,
+    Image,
     RefreshControl,
     StyleSheet,
     Text,
@@ -43,21 +44,30 @@ function formatRelativeTime(dateString) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function getItemPreview(entry) {
+function getItemPreview(entry, apiBase = '') {
     const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
     const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
     const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
-    return title;
+
+    // Extract cover URL with priority: local media path > external URL
+    let coverUrl = null;
+    if (collectable?.coverMediaPath && apiBase) {
+        coverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
+    } else if (collectable?.coverUrl) {
+        coverUrl = collectable.coverUrl;
+    }
+
+    return { title, coverUrl };
 }
 
-function buildSummaryText(titles, totalCount) {
-    const safeTitles = Array.isArray(titles) ? titles.filter(Boolean) : [];
+function buildSummaryText(items, totalCount) {
+    const titles = Array.isArray(items) ? items.map(i => i?.title).filter(Boolean) : [];
     if (!totalCount || totalCount <= 0) return '';
-    if (safeTitles.length === 0) return `${totalCount} item${totalCount === 1 ? '' : 's'}`;
-    if (totalCount === 1) return safeTitles[0];
-    if (totalCount === 2 && safeTitles.length >= 2) return `${safeTitles[0]} and ${safeTitles[1]}`;
-    const remaining = Math.max(0, totalCount - safeTitles.length);
-    const shown = safeTitles.slice(0, 2);
+    if (titles.length === 0) return `${totalCount} item${totalCount === 1 ? '' : 's'}`;
+    if (totalCount === 1) return titles[0];
+    if (totalCount === 2 && titles.length >= 2) return `${titles[0]} and ${titles[1]}`;
+    const remaining = Math.max(0, totalCount - titles.length);
+    const shown = titles.slice(0, 2);
     if (remaining > 0) {
         return `${shown.join(', ')}, and ${remaining} others`;
     }
@@ -69,8 +79,7 @@ export default function SocialFeedScreen({ navigation }) {
     const { token, apiBase, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, isDark } = useTheme();
 
-    const [publicEntries, setPublicEntries] = useState([]);
-    const [friendEntries, setFriendEntries] = useState([]);
+    const [entries, setEntries] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
@@ -78,33 +87,31 @@ export default function SocialFeedScreen({ navigation }) {
 
     const load = useCallback(async (opts = {}) => {
         if (!token) {
-            setPublicEntries([]);
-            setFriendEntries([]);
+            setEntries([]);
             setLoading(false);
             return;
         }
         if (!opts.silent) setLoading(true);
 
-        const requests = await Promise.allSettled([
-            apiRequest({ apiBase, path: '/api/feed?scope=global', token }),
-            apiRequest({ apiBase, path: '/api/feed?scope=friends', token }),
-        ]);
+        // Map tab key to backend scope
+        let scope = 'global';
+        if (activeFilter === 'friends') scope = 'friends';
+        else if (activeFilter === 'all') scope = 'all';
 
-        const [globalResult, friendsResult] = requests;
-        if (globalResult.status === 'fulfilled') {
-            setPublicEntries(globalResult.value.entries || []);
-        }
-        if (friendsResult.status === 'fulfilled') {
-            setFriendEntries(friendsResult.value.entries || []);
-        }
-        if (globalResult.status === 'rejected' && friendsResult.status === 'rejected') {
-            setError('Unable to load feed');
-        } else {
+        try {
+            const result = await apiRequest({ apiBase, path: `/api/feed?scope=${scope}`, token });
+            // Filter out shelf.created events as requested (legacy logic preserved)
+            const filtered = (result.entries || []).filter(e => e.eventType !== 'shelf.created');
+            setEntries(filtered);
             setError('');
+        } catch (err) {
+            console.error('Feed load error:', err);
+            setError('Unable to load feed');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
         }
-        setLoading(false);
-        setRefreshing(false);
-    }, [apiBase, token]);
+    }, [apiBase, token, activeFilter]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -112,35 +119,6 @@ export default function SocialFeedScreen({ navigation }) {
         setRefreshing(true);
         load({ silent: true });
     };
-
-    const combinedEntries = useMemo(() => {
-        const userId = user?.id ? String(user.id) : null;
-        const filterOwn = (entry) => {
-            if (!userId) return true;
-            const ownerId = entry?.owner?.id ? String(entry.owner.id) : null;
-            return !ownerId || ownerId !== userId;
-        };
-        const filterShelfCreated = (entry) => entry?.eventType !== 'shelf.created';
-        const all = [
-            ...publicEntries.filter(filterShelfCreated).map(e => ({ ...e, __origin: 'public' })),
-            ...friendEntries.filter(filterShelfCreated).map(e => ({ ...e, __origin: 'friends' })),
-        ];
-        let filtered = activeFilter === 'all'
-            ? all
-            : all.filter(e => e.__origin === activeFilter).filter(filterOwn);
-        const sorted = filtered.sort((a, b) => normalizeDate(b.shelf?.updatedAt) - normalizeDate(a.shelf?.updatedAt));
-        if (activeFilter !== 'all') return sorted;
-
-        const seen = new Set();
-        const deduped = [];
-        for (const entry of sorted) {
-            const key = entry.aggregateId || entry.id || `${entry.eventType}-${entry.shelf?.id || 'none'}-${entry.createdAt || ''}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(entry);
-        }
-        return deduped;
-    }, [publicEntries, friendEntries, activeFilter, user?.id]);
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
@@ -154,7 +132,16 @@ export default function SocialFeedScreen({ navigation }) {
         const likeCount = item?.likeCount || 0;
         const commentCount = item?.commentCount || 0;
         const topComment = item?.topComment || null;
-        const summaryText = buildSummaryText(previewItems.map(getItemPreview), totalItems);
+        const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
+        const summaryText = buildSummaryText(itemPreviews, totalItems);
+        const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
+
+        let avatarSource = null;
+        if (owner?.profileMediaPath) {
+            avatarSource = { uri: `${apiBase}/media/${owner.profileMediaPath}` };
+        } else if (owner?.picture) {
+            avatarSource = { uri: owner.picture };
+        }
 
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
@@ -177,7 +164,11 @@ export default function SocialFeedScreen({ navigation }) {
                 {/* Thread-style header */}
                 <View style={styles.cardHeader}>
                     <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{initial}</Text>
+                        {avatarSource ? (
+                            <Image source={avatarSource} style={styles.avatarImage} />
+                        ) : (
+                            <Text style={styles.avatarText}>{initial}</Text>
+                        )}
                     </View>
                     <View style={styles.headerContent}>
                         <View style={styles.headerTop}>
@@ -201,13 +192,35 @@ export default function SocialFeedScreen({ navigation }) {
                     <Text style={styles.description} numberOfLines={2}>{shelf.description}</Text>
                 ) : null}
 
-                {/* Items preview - Goodreads style */}
-                {previewItems.length > 0 && (
+                {/* Cover art thumbnails */}
+                {coverItems.length > 0 && (
+                    <View style={styles.coverRow}>
+                        {coverItems.map((item, idx) => (
+                            <Image
+                                key={idx}
+                                source={{ uri: item.coverUrl }}
+                                style={[
+                                    styles.coverThumb,
+                                    idx > 0 && { marginLeft: -8 },
+                                ]}
+                                resizeMode="cover"
+                            />
+                        ))}
+                        {totalItems > coverItems.length && (
+                            <View style={styles.moreCoversChip}>
+                                <Text style={styles.moreCoversText}>+{totalItems - coverItems.length}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+
+                {/* Items preview - text fallback when no covers */}
+                {coverItems.length === 0 && previewItems.length > 0 && (
                     <View style={styles.itemsPreview}>
                         {previewItems.map((entry, idx) => (
                             <View key={idx} style={styles.itemChip}>
                                 <Ionicons name="book" size={12} color={colors.primary} />
-                                <Text style={styles.itemTitle} numberOfLines={1}>{getItemPreview(entry)}</Text>
+                                <Text style={styles.itemTitle} numberOfLines={1}>{itemPreviews[idx]?.title || 'Untitled'}</Text>
                             </View>
                         ))}
                         {totalItems > previewItems.length && (
@@ -324,8 +337,8 @@ export default function SocialFeedScreen({ navigation }) {
                 </View>
             ) : (
                 <FlatList
-                    data={combinedEntries}
-                    keyExtractor={(item, idx) => item.id ? `${item.id}-${item.__origin}` : (item.shelf?.id ? `${item.shelf.id}-${item.__origin}` : `entry-${idx}`)}
+                    data={entries}
+                    keyExtractor={(item, idx) => item.id ? `${item.id}-${activeFilter}` : (item.shelf?.id ? `${item.shelf.id}-${activeFilter}` : `entry-${idx}`)}
                     renderItem={renderItem}
                     contentContainerStyle={styles.listContent}
                     refreshControl={
@@ -422,6 +435,11 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: spacing.sm,
+        overflow: 'hidden', // Ensure image clips to border radius
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
     },
     avatarText: {
         color: colors.textInverted,
@@ -485,6 +503,36 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.primary,
         fontWeight: '500',
         alignSelf: 'center',
+    },
+    coverRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: spacing.sm,
+        paddingLeft: 4,
+    },
+    coverThumb: {
+        width: 32,
+        height: 48,
+        borderRadius: 4,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    moreCoversChip: {
+        width: 32,
+        height: 48,
+        borderRadius: 4,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        marginLeft: -8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    moreCoversText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: colors.textMuted,
     },
     socialRow: {
         flexDirection: 'row',

@@ -16,32 +16,8 @@ import { apiRequest } from '../services/api';
 
 const { width: screenWidth } = Dimensions.get('window');
 
-const pages = [
-    {
-        key: 'fun',
-        title: 'Meet ShelvesAI',
-        subtitle: 'Your collections, alive and social',
-        body: 'Scan, catalog, and show off the shelves you love with a little AI magic.',
-        icon: 'sparkles',
-    },
-    {
-        key: 'discover',
-        title: 'Discover & Connect',
-        subtitle: 'Follow collectors like you',
-        body: 'See what friends add, trade recommendations, and build your collector circle.',
-        icon: 'people',
-    },
-    {
-        key: 'organize',
-        title: 'Organize Faster',
-        subtitle: 'Capture items in seconds',
-        body: 'Snap a photo or search to fill shelves without the manual work.',
-        icon: 'camera',
-    },
-];
-
 export default function OnboardingPagerScreen({ navigation }) {
-    const { token, apiBase, user, setUser } = useContext(AuthContext);
+    const { token, apiBase, user, setUser, onboardingConfig } = useContext(AuthContext);
     const { colors, spacing, typography, radius, shadows, isDark } = useTheme();
     const [index, setIndex] = useState(0);
     const listRef = useRef(null);
@@ -65,6 +41,8 @@ export default function OnboardingPagerScreen({ navigation }) {
         return null;
     }, [apiBase, setUser, token, user]);
 
+    const pages = onboardingConfig?.intro?.pages || [];
+
     const handleNext = useCallback(async () => {
         if (index < pages.length - 1) {
             listRef.current?.scrollToIndex({ index: index + 1, animated: true });
@@ -77,7 +55,19 @@ export default function OnboardingPagerScreen({ navigation }) {
             return;
         }
         navigation.navigate('OnboardingProfileRequired');
-    }, [index, navigation, resolveUser]);
+    }, [index, navigation, resolveUser, pages.length]);
+
+    if (!pages.length) {
+        return (
+            <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+                <View style={styles.loadingContainer}>
+                    <Ionicons name="hourglass" size={32} color={colors.primary} />
+                    <Text style={styles.loadingText}>Loading onboarding...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     const renderItem = ({ item }) => (
         <View style={[styles.page, { width: screenWidth }]}>
@@ -129,7 +119,9 @@ export default function OnboardingPagerScreen({ navigation }) {
 
                 <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
                     <Text style={styles.primaryButtonText}>
-                        {index === pages.length - 1 ? 'Get Started' : 'Next'}
+                        {index === pages.length - 1
+                            ? onboardingConfig.intro.startButtonLabel
+                            : onboardingConfig.intro.nextButtonLabel}
                     </Text>
                     <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
                 </TouchableOpacity>
@@ -183,6 +175,16 @@ const createStyles = ({ colors, spacing, typography, radius, shadows }) =>
             paddingHorizontal: spacing.xl,
             paddingBottom: spacing.lg,
             gap: spacing.md,
+        },
+        loadingContainer: {
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: spacing.sm,
+        },
+        loadingText: {
+            fontSize: 14,
+            color: colors.textMuted,
         },
         dots: {
             flexDirection: 'row',

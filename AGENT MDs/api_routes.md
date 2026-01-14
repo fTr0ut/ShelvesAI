@@ -12,6 +12,7 @@ This document maps the mobile application screens to the backend API endpoints t
 | `GET` | `/api/auth/me` | Validate session / Get basic info | Headers: `Authorization: Bearer <token>` |
 | `POST` | `/api/auth/username` | Set username if missing | `{ username }` |
 | `POST` | `/api/onboarding/complete` | Mark onboarding complete (requires email, first name, city/state) | - |
+| `GET` | `/api/config/onboarding` | Fetch onboarding screen copy | - |
 
 ## 1. Home Tab (Feed)
 **Screen**: SocialFeedScreen

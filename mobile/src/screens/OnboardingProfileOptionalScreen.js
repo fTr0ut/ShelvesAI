@@ -19,7 +19,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function OnboardingProfileOptionalScreen({ navigation }) {
-    const { token, apiBase, setNeedsOnboarding, setUser } = useContext(AuthContext);
+    const { token, apiBase, setNeedsOnboarding, setUser, onboardingConfig } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [profile, setProfile] = useState(null);
@@ -41,11 +41,11 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
             setProfile(data.profile || null);
             setBio(data.profile?.bio || '');
         } catch (err) {
-            setError('Failed to load profile');
+            setError(onboardingConfig?.optional?.loadError || 'Failed to load profile');
         } finally {
             setLoading(false);
         }
-    }, [apiBase, token]);
+    }, [apiBase, token, onboardingConfig]);
 
     useEffect(() => {
         loadProfile();
@@ -70,7 +70,7 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
             }
 
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                mediaTypes: ['images'],
                 allowsEditing: true,
                 aspect: [1, 1],
                 quality: 0.8,
@@ -172,6 +172,14 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         }
     }, [completeOnboarding]);
 
+    if (!onboardingConfig?.optional) {
+        return (
+            <View style={[styles.screen, styles.centerContainer]}>
+                <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+        );
+    }
+
     if (loading) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -188,8 +196,8 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
 
             <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
                 <View style={styles.header}>
-                    <Text style={styles.title}>Add the finishing touches</Text>
-                    <Text style={styles.subtitle}>Bio and photo are optional for now.</Text>
+                    <Text style={styles.title}>{onboardingConfig.optional.title}</Text>
+                    <Text style={styles.subtitle}>{onboardingConfig.optional.subtitle}</Text>
                 </View>
 
                 {error ? (
@@ -217,16 +225,16 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                                 )}
                             </View>
                         </TouchableOpacity>
-                        <Text style={styles.photoHint}>Add a profile photo (optional)</Text>
+                        <Text style={styles.photoHint}>{onboardingConfig.optional.photoHint}</Text>
                     </View>
 
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Bio</Text>
+                        <Text style={styles.label}>{onboardingConfig.optional.bioLabel}</Text>
                         <TextInput
                             style={[styles.input, styles.textArea]}
                             value={bio}
                             onChangeText={setBio}
-                            placeholder="Share what you collect..."
+                            placeholder={onboardingConfig.optional.bioPlaceholder}
                             placeholderTextColor={colors.textMuted}
                             multiline
                             numberOfLines={4}
@@ -242,13 +250,13 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                     disabled={saving}
                 >
                     <Text style={styles.primaryButtonText}>
-                        {saving ? 'Finishing...' : 'Continue'}
+                        {saving ? onboardingConfig.optional.savingLabel : onboardingConfig.optional.continueLabel}
                     </Text>
                     <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.skipButton} onPress={handleSkip} disabled={saving}>
-                    <Text style={styles.skipText}>Skip for now</Text>
+                    <Text style={styles.skipText}>{onboardingConfig.optional.skipLabel}</Text>
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>

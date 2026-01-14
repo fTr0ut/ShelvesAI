@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -85,7 +85,7 @@ async function getBase64Payload(asset) {
 }
 
 export default function ShelfDetailScreen({ route, navigation }) {
-    const { id, title, readOnly: readOnlyParam } = route.params || {};
+    const { id, title, readOnly: readOnlyParam, autoAddItem } = route.params || {};
     const { token, apiBase, premiumEnabled, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -98,6 +98,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [visionModalVisible, setVisionModalVisible] = useState(false);
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
+    const autoAddHandledRef = useRef(false);
 
     // Pagination state
     const [hasMore, setHasMore] = useState(false);
@@ -379,30 +380,36 @@ export default function ShelfDetailScreen({ route, navigation }) {
         }
     };
 
-    const resolveCoverPath = (item) => {
+    // Provider-agnostic cover resolution
+    const resolveCoverUri = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
         if (!collectable) return null;
 
-        // Prefer locally cached media path
-        if (collectable.coverMediaPath) {
-            return collectable.coverMediaPath;
-        }
-
-        // Check images array for cached paths
-        const images = Array.isArray(collectable.images) ? collectable.images : [];
-        for (const image of images) {
-            const cached = image?.cachedSmallPath || image?.cachedPath;
-            if (typeof cached === 'string' && cached.trim()) {
-                return cached.trim();
+        // Use new provider-agnostic fields if available
+        if (collectable.coverImageUrl) {
+            if (collectable.coverImageSource === 'external') {
+                // External URL, use directly
+                return collectable.coverImageUrl;
             }
+            // Local path, resolve via media endpoint
+            const trimmed = collectable.coverImageUrl.replace(/^\/+/, '');
+            const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+            return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
         }
 
-        // Fall back to cover URL
-        if (collectable.coverUrl) {
+        // Fallback to legacy fields
+        if (collectable.coverMediaPath) {
+            const trimmed = collectable.coverMediaPath.replace(/^\/+/, '');
+            const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+            return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+        }
+
+        if (collectable.coverUrl && /^https?:/i.test(collectable.coverUrl)) {
             return collectable.coverUrl;
         }
 
         // Check images array for URLs
+        const images = Array.isArray(collectable.images) ? collectable.images : [];
         for (const image of images) {
             const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
             if (typeof url === 'string' && url.trim()) {
@@ -431,8 +438,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
     const renderItem = ({ item }) => {
         const info = getItemInfo(item);
-        const coverPath = resolveCoverPath(item);
-        const coverUri = buildCoverUri(coverPath);
+        const coverUri = resolveCoverUri(item);
         const collectableId = item.collectable?.id;
         const isFavorited = collectableId ? favorites[collectableId] : false;
 
@@ -743,6 +749,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
             { text: 'Cancel', style: 'cancel' },
         ]);
     }, [handleCameraScan, handleOpenSearch, isReadOnly]);
+
+    useEffect(() => {
+        if (!autoAddItem || autoAddHandledRef.current) return;
+        autoAddHandledRef.current = true;
+        handleAddItem();
+        navigation.setParams({ autoAddItem: false });
+    }, [autoAddItem, handleAddItem, navigation]);
 
     const sortLabel = useMemo(() => {
         const match = SORT_OPTIONS.find(option => option.key === sortKey);

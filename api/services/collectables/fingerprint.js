@@ -29,6 +29,26 @@ function normalizeListForFingerprint(value) {
   return Array.from(seen).sort().join(',');
 }
 
+const MEDIA_TYPE_ALIASES = {
+  book: 'book',
+  books: 'book',
+  movie: 'movie',
+  movies: 'movie',
+  film: 'movie',
+  films: 'movie',
+  game: 'game',
+  games: 'game',
+  videogame: 'game',
+  videogames: 'game',
+};
+
+function normalizeMediaTypeForFingerprint(value) {
+  const normalized = normalizeForFingerprint(value);
+  if (!normalized) return '';
+  const compact = normalized.replace(/[^a-z0-9]+/g, '');
+  return MEDIA_TYPE_ALIASES[normalized] || MEDIA_TYPE_ALIASES[compact] || normalized;
+}
+
 function sha1FromString(input) {
   return crypto.createHash('sha1').update(String(input || '')).digest('hex');
 }
@@ -45,12 +65,14 @@ function makeCollectableFingerprint(input = {}) {
   }
 
   const title = normalizeForFingerprint(input.title);
-  const creator = normalizeForFingerprint(input.primaryCreator ?? input.creator);
+  const creator = normalizeForFingerprint(
+    input.primaryCreator ?? input.creator ?? input.author,
+  );
   const year = normalizeForFingerprint(input.releaseYear ?? input.year);
 
   const parts = [title, creator, year];
 
-  const mediaType = normalizeForFingerprint(input.mediaType ?? input.type ?? input.kind);
+  const mediaType = normalizeMediaTypeForFingerprint(input.mediaType ?? input.type ?? input.kind);
   if (mediaType) parts.push(mediaType);
 
   const platform = normalizeListForFingerprint(input.platforms ?? input.platform ?? input.platformGroup ?? input.system);
@@ -78,10 +100,12 @@ function makeLightweightFingerprint(options, maybeCreator) {
   }
 
   const title = normalizeForFingerprint(opts?.title);
-  const creator = normalizeForFingerprint(opts?.primaryCreator ?? opts?.creator);
+  const creator = normalizeForFingerprint(
+    opts?.primaryCreator ?? opts?.creator ?? opts?.author,
+  );
   const parts = [title, creator];
 
-  const mediaType = normalizeForFingerprint(opts?.mediaType ?? opts?.type ?? opts?.kind);
+  const mediaType = normalizeMediaTypeForFingerprint(opts?.mediaType ?? opts?.type ?? opts?.kind);
   if (mediaType) parts.push(mediaType);
 
   const platform = normalizeListForFingerprint(opts?.platforms ?? opts?.platform ?? opts?.system);
@@ -100,11 +124,14 @@ function normalizeFingerprintComponent(value) {
     .replace(/\s+/g, ' ');
 }
 
-function makeVisionOcrFingerprint(title, creator) {
+function makeVisionOcrFingerprint(title, creator, kind) {
   const normalizedTitle = normalizeFingerprintComponent(title);
   const normalizedCreator = normalizeFingerprintComponent(creator);
+  const normalizedKind = normalizeFingerprintComponent(normalizeMediaTypeForFingerprint(kind));
   if (!normalizedTitle || !normalizedCreator) return null;
-  return sha1FromString(`${normalizedTitle}|${normalizedCreator}`);
+  const parts = [normalizedTitle, normalizedCreator];
+  if (normalizedKind) parts.push(normalizedKind);
+  return sha1FromString(parts.join('|'));
 }
 
 module.exports = {

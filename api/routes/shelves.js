@@ -13,6 +13,7 @@ router.post('/', requireFields(['name', 'type']), ctrl.createShelf);
 
 router.get('/:shelfId', ctrl.getShelf);
 router.put('/:shelfId', ctrl.updateShelf);
+router.delete('/:shelfId', ctrl.deleteShelf);
 
 router.get('/:shelfId/items', ctrl.listShelfItems);
 router.post('/:shelfId/manual/search', ctrl.searchManualEntry);

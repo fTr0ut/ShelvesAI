@@ -74,7 +74,10 @@ class IgdbAdapter {
      */
     _toCollectable(result, originalItem) {
         const service = this._getService();
-        const lwf = makeLightweightFingerprint(originalItem);
+        const lwf = makeLightweightFingerprint({
+            ...originalItem,
+            kind: originalItem?.kind || originalItem?.type || 'game',
+        });
 
         const collectable = service.mapIgdbGameToCollectable(
             result.game,

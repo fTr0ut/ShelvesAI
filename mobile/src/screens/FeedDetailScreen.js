@@ -2,6 +2,10 @@
 import {
   ActivityIndicator,
   FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -130,21 +134,52 @@ export default function FeedDetailScreen({ route, navigation }) {
   const displayName = owner?.name || owner?.username || 'Someone';
   const isOwner = !!(user?.id && owner?.id && user.id === owner.id);
 
-  const getItemTitle = (item) => {
+  let avatarSource = null;
+  if (owner?.profileMediaPath) {
+    avatarSource = { uri: `${apiBase}/media/${owner.profileMediaPath}` };
+  } else if (owner?.picture) {
+    avatarSource = { uri: owner.picture };
+  }
+
+  const getItemInfo = (item) => {
     const c = item?.collectable || item?.collectableSnapshot;
     const m = item?.manual || item?.manualSnapshot;
     const payload = item?.payload || null;
-    return c?.title || m?.title || item?.title || payload?.title || payload?.name || 'Unknown item';
+    const title = c?.title || m?.title || item?.title || payload?.title || payload?.name || 'Unknown item';
+
+    // Extract cover URL with priority: local media path > external URL
+    let coverUrl = null;
+    if (c?.coverMediaPath && apiBase) {
+      coverUrl = `${apiBase}/media/${c.coverMediaPath}`;
+    } else if (c?.coverUrl) {
+      coverUrl = c.coverUrl;
+    }
+
+    return { title, coverUrl };
   };
 
-  const renderItem = ({ item, index }) => (
-    <View style={styles.itemRow}>
-      <Text style={styles.itemNumber}>{index + 1}</Text>
-      <View style={styles.itemContent}>
-        <Text style={styles.itemTitle} numberOfLines={1}>{getItemTitle(item)}</Text>
+  const renderItem = ({ item, index }) => {
+    const info = getItemInfo(item);
+    return (
+      <View style={styles.itemRow}>
+        <Text style={styles.itemNumber}>{index + 1}</Text>
+        {info.coverUrl ? (
+          <Image
+            source={{ uri: info.coverUrl }}
+            style={styles.itemCover}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.itemCoverPlaceholder}>
+            <Ionicons name="book" size={14} color={colors.textMuted} />
+          </View>
+        )}
+        <View style={styles.itemContent}>
+          <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderComment = (comment, idx) => {
     const author = comment?.user?.username || comment?.username || 'User';
@@ -155,48 +190,6 @@ export default function FeedDetailScreen({ route, navigation }) {
       </View>
     );
   };
-
-  const listFooter = (
-    <View style={styles.commentsSection}>
-      <View style={styles.socialActions}>
-        <TouchableOpacity
-          style={[styles.likeButton, hasLiked && styles.likeButtonActive]}
-          onPress={handleToggleLike}
-          disabled={likePending}
-        >
-          <Ionicons name={hasLiked ? 'heart' : 'heart-outline'} size={16} color={hasLiked ? colors.primary : colors.textMuted} />
-          <Text style={styles.likeText}>{likeCount} Likes</Text>
-        </TouchableOpacity>
-        <View style={styles.commentCount}>
-          <Ionicons name="chatbubble-outline" size={16} color={colors.textMuted} />
-          <Text style={styles.commentCountText}>{commentCount} Comments</Text>
-        </View>
-      </View>
-
-      <Text style={styles.sectionTitle}>Comments</Text>
-      {comments.length ? comments.map(renderComment) : (
-        <Text style={styles.emptyText}>No comments yet</Text>
-      )}
-
-      <View style={styles.commentInputRow}>
-        <TextInput
-          style={styles.commentInput}
-          value={commentText}
-          onChangeText={setCommentText}
-          placeholder="Add a comment"
-          placeholderTextColor={colors.textMuted}
-          multiline
-        />
-        <TouchableOpacity
-          style={[styles.commentSend, commentLoading && styles.commentSendDisabled]}
-          onPress={handleAddComment}
-          disabled={commentLoading}
-        >
-          <Ionicons name="send" size={16} color={colors.textInverted} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -211,78 +204,133 @@ export default function FeedDetailScreen({ route, navigation }) {
         <View style={{ width: 40 }} />
       </View>
 
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      ) : null}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : null}
 
-      {error ? (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
+          {error ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
 
-      {/* User Info */}
-      <View style={styles.userSection}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View>
-          <TouchableOpacity
-            onPress={() => {
-              if (owner?.username) {
-                navigation.navigate('Profile', { username: owner.username });
-              }
-            }}
-            disabled={!owner?.username}
-          >
-            <Text style={styles.userName}>{displayName}</Text>
-          </TouchableOpacity>
-          <Text style={styles.userMeta}>
-            {[owner?.city, owner?.country].filter(Boolean).join(', ') || 'Collector'}
-          </Text>
-        </View>
-      </View>
-
-      {/* Shelf Info */}
-      <View style={styles.shelfCard}>
-        <View style={styles.shelfHeader}>
-          <Text style={styles.shelfLabel}>Shelf</Text>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
-          >
-            <Text style={styles.viewLink}>View →</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
-        {shelf?.description ? (
-          <Text style={styles.shelfDescription}>{shelf.description}</Text>
-        ) : null}
-        <View style={styles.shelfMeta}>
-          <View style={styles.metaItem}>
-            <Ionicons name="library-outline" size={14} color={colors.textMuted} />
-            <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+          {/* User Info */}
+          <View style={styles.userSection}>
+            <View style={styles.avatar}>
+              {avatarSource ? (
+                <Image source={avatarSource} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+              )}
+            </View>
+            <View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (owner?.username) {
+                    navigation.navigate('Profile', { username: owner.username });
+                  }
+                }}
+                disabled={!owner?.username}
+              >
+                <Text style={styles.userName}>{displayName}</Text>
+              </TouchableOpacity>
+              <Text style={styles.userMeta}>
+                {[owner?.city, owner?.country].filter(Boolean).join(', ') || 'Collector'}
+              </Text>
+            </View>
           </View>
-          <View style={styles.metaItem}>
-            <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
-            <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
-          </View>
-        </View>
-      </View>
 
-      {/* Items */}
-      <Text style={styles.sectionTitle}>Items in this shelf</Text>
-      <FlatList
-        data={items || []}
-        keyExtractor={(item, idx) => item._id || `item-${idx}`}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No items to display</Text>
-        }
-        ListFooterComponent={listFooter}
-      />
+          {/* Shelf Info */}
+          <View style={styles.shelfCard}>
+            <View style={styles.shelfHeader}>
+              <Text style={styles.shelfLabel}>Shelf</Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
+              >
+                <Text style={styles.viewLink}>View →</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
+            {shelf?.description ? (
+              <Text style={styles.shelfDescription}>{shelf.description}</Text>
+            ) : null}
+            <View style={styles.shelfMeta}>
+              <View style={styles.metaItem}>
+                <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+              </View>
+              <View style={styles.metaItem}>
+                <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Items */}
+          <Text style={styles.sectionTitle}>Newly added collectibles</Text>
+          <View style={styles.itemsListContainer}>
+            <ScrollView nestedScrollEnabled={true}>
+              {(items || []).length > 0 ? (
+                items.map((item, idx) => (
+                  <View key={item._id || `item-${idx}`}>
+                    {renderItem({ item, index: idx })}
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No items to display</Text>
+              )}
+            </ScrollView>
+          </View>
+
+          {/* Actions & Comments - Now outside the list */}
+          <View style={styles.commentsSection}>
+            <View style={styles.socialActions}>
+              <TouchableOpacity
+                style={[styles.likeButton, hasLiked && styles.likeButtonActive]}
+                onPress={handleToggleLike}
+                disabled={likePending}
+              >
+                <Ionicons name={hasLiked ? 'heart' : 'heart-outline'} size={16} color={hasLiked ? colors.primary : colors.textMuted} />
+                <Text style={styles.likeText}>{likeCount} Likes</Text>
+              </TouchableOpacity>
+              <View style={styles.commentCount}>
+                <Ionicons name="chatbubble-outline" size={16} color={colors.textMuted} />
+                <Text style={styles.commentCountText}>{commentCount} Comments</Text>
+              </View>
+            </View>
+
+            <Text style={styles.sectionTitle}>Comments</Text>
+            {comments.length ? comments.map(renderComment) : (
+              <Text style={styles.emptyText}>No comments yet</Text>
+            )}
+
+            <View style={styles.commentInputRow}>
+              <TextInput
+                style={styles.commentInput}
+                value={commentText}
+                onChangeText={setCommentText}
+                placeholder="Add a comment"
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+              <TouchableOpacity
+                style={[styles.commentSend, commentLoading && styles.commentSendDisabled]}
+                onPress={handleAddComment}
+                disabled={commentLoading}
+              >
+                <Ionicons name="send" size={16} color={colors.textInverted} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -328,6 +376,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarText: {
     fontSize: 20,
@@ -521,6 +574,25 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   itemTitle: {
     fontSize: 14,
     color: colors.text,
+  },
+  itemCover: {
+    width: 28,
+    height: 42,
+    borderRadius: 3,
+    backgroundColor: colors.surfaceElevated,
+    marginRight: spacing.sm,
+  },
+  itemCoverPlaceholder: {
+    width: 28,
+    height: 42,
+    borderRadius: 3,
+    backgroundColor: colors.surfaceElevated,
+    marginRight: spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  itemsListContainer: {
+    maxHeight: 300,
   },
   emptyText: {
     fontSize: 14,

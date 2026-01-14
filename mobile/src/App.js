@@ -21,6 +21,7 @@ import ShelvesScreen from './screens/ShelvesScreen'
 import ShelfDetailScreen from './screens/ShelfDetailScreen'
 import ShelfCreateScreen from './screens/ShelfCreateScreen'
 import ShelfEditScreen from './screens/ShelfEditScreen'
+import ShelfSelectScreen from './screens/ShelfSelectScreen'
 import ItemSearchScreen from './screens/ItemSearchScreen'
 import FriendSearchScreen from './screens/FriendSearchScreen'
 import UsernameSetupScreen from './screens/UsernameSetupScreen'
@@ -42,10 +43,12 @@ import ListCreateScreen from './screens/ListCreateScreen'
 import ListDetailScreen from './screens/ListDetailScreen'
 import UnmatchedScreen from './screens/UnmatchedScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
+import CheckInScreen from './screens/CheckInScreen'
 
 
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
+import { apiRequest } from './services/api'
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
 
@@ -113,6 +116,7 @@ export default function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
   const [user, setUser] = useState(null)
   const [premiumEnabled, setPremiumEnabledState] = useState(false)
+  const [onboardingConfig, setOnboardingConfig] = useState(null)
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
 
@@ -134,6 +138,29 @@ export default function App() {
       }
     })()
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadOnboardingConfig = async () => {
+      try {
+        const data = await apiRequest({ apiBase, path: '/api/config/onboarding' })
+        if (!cancelled) {
+          setOnboardingConfig(data)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setOnboardingConfig(null)
+        }
+      }
+    }
+
+    loadOnboardingConfig()
+
+    return () => {
+      cancelled = true
+    }
+  }, [apiBase])
 
   const setPremiumEnabled = useCallback(async (value) => {
     setPremiumEnabledState(value)
@@ -191,7 +218,9 @@ export default function App() {
     setNeedsOnboarding,
     premiumEnabled,
     setPremiumEnabled,
-  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled])
+    onboardingConfig,
+    setOnboardingConfig,
+  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled, onboardingConfig])
 
   if (!ready || !fontsLoaded) return null
 
@@ -252,6 +281,16 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="FriendSearch" component={FriendSearchScreen} />
             <Stack.Screen name="ShelfCreate" component={ShelfCreateScreen} />
             <Stack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} />
+            <Stack.Screen name="ShelfSelect" component={ShelfSelectScreen} />
+            <Stack.Screen
+              name="CheckIn"
+              component={CheckInScreen}
+              options={{
+                presentation: 'transparentModal',
+                animation: 'fade',
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            />
             <Stack.Screen name="ShelfDetail" component={ShelfDetailScreen} />
             <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} />
             <Stack.Screen name="ItemSearch" component={ItemSearchScreen} />

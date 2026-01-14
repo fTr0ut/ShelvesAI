@@ -97,7 +97,8 @@ router.put('/:id', async (req, res) => {
         const shelfType = shelf?.type || reviewItem.shelfType || 'item';
 
         // 1. Check for existing collectable by fingerprint
-        const lwf = makeLightweightFingerprint(completedData);
+        const fingerprintData = { ...completedData, kind: shelfType };
+        const lwf = makeLightweightFingerprint(fingerprintData);
         let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (collectable) {
             matchSource = 'fingerprint';
@@ -123,11 +124,12 @@ router.put('/:id', async (req, res) => {
                 const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
                 if (apiResult) {
                     // API returned a result - upsert it to our database
+                    const apiFingerprintData = { ...apiResult, kind: shelfType };
                     collectable = await collectablesQueries.upsert({
                         ...apiResult,
                         kind: shelfType,
-                        fingerprint: makeCollectableFingerprint(apiResult),
-                        lightweightFingerprint: makeLightweightFingerprint(apiResult),
+                        fingerprint: makeCollectableFingerprint(apiFingerprintData),
+                        lightweightFingerprint: makeLightweightFingerprint(apiFingerprintData),
                     });
                     matchSource = 'api';
                 }
@@ -142,7 +144,7 @@ router.put('/:id', async (req, res) => {
             collectable = await collectablesQueries.upsert({
                 ...completedData,
                 kind: shelfType,
-                fingerprint: makeCollectableFingerprint(completedData),
+                fingerprint: makeCollectableFingerprint(fingerprintData),
                 lightweightFingerprint: lwf,
             });
             matchSource = 'new';

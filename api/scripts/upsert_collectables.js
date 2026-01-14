@@ -44,11 +44,21 @@ function argMap(argv) {
 /* ----------------------- Fingerprint helpers ---------------------- */
 
 function ensureFingerprints(doc) {
+  const kind = doc.kind || doc.type || doc.mediaType || '';
   if (!doc.lightweightFingerprint) {
-    doc.lightweightFingerprint = makeLightweightFingerprint({ title: doc.title || '', primaryCreator: doc.primaryCreator || '' });
+    doc.lightweightFingerprint = makeLightweightFingerprint({
+      title: doc.title || '',
+      primaryCreator: doc.primaryCreator || '',
+      kind,
+    });
   }
   if (!doc.fingerprint) {
-    doc.fingerprint = makeCollectableFingerprint({ title: doc.title || '', primaryCreator: doc.primaryCreator || '', releaseYear: doc.year || '' });
+    doc.fingerprint = makeCollectableFingerprint({
+      title: doc.title || '',
+      primaryCreator: doc.primaryCreator || '',
+      releaseYear: doc.year || '',
+      mediaType: kind,
+    });
   }
   return doc;
 }

@@ -237,7 +237,7 @@ function hardcoverToCollectable(enrichment, options = {}) {
 
   const lwf =
     options.lightweightFingerprint ||
-    makeLightweightFingerprint({ title: book.title, primaryCreator });
+    makeLightweightFingerprint({ title: book.title, primaryCreator, kind: 'book' });
 
   const fingerprint = makeCollectableFingerprint({
     title: book.title,
@@ -295,6 +295,13 @@ function hardcoverToCollectable(enrichment, options = {}) {
     sources,
     fingerprint: fingerprint || null,
     extras: {},
+
+    // Provider-agnostic cover fields (Hardcover allows caching, null means 'needs resolution')
+    coverImageUrl: coverVariants?.urlLarge || coverVariants?.urlMedium || coverVariants?.urlSmall || null,
+    coverImageSource: null,
+
+    // Provider-agnostic attribution (Hardcover has no attribution requirement)
+    attribution: null,
   };
 }
 

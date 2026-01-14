@@ -109,7 +109,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                 method: 'DELETE',
                                 token,
                             });
-                            navigation.navigate('Shelves');
+                            navigation.navigate('Main', { screen: 'Shelves' });
                         } catch (e) {
                             Alert.alert('Error', e.message);
                             setDeleting(false);

@@ -797,7 +797,7 @@ class GameCatalogService {
 
     const lwf =
       lightweightFingerprint ||
-      makeLightweightFingerprint({ title: game.name, primaryCreator });
+      makeLightweightFingerprint({ title: game.name, primaryCreator, kind: 'game' });
     const fingerprint =
       makeCollectableFingerprint({ uniqueKey: `igdb:${game.id}` }) ||
       makeCollectableFingerprint({
@@ -1172,6 +1172,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
         makeLightweightFingerprint({
           title: collectable.title,
           primaryCreator: collectable.primaryCreator,
+          kind: 'game',
         }) || null;
       collectable.lightweightFingerprint = lwf;
       collectable.fingerprint =

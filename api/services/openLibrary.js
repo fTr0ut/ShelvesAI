@@ -138,9 +138,65 @@ function coverUrlFromId(coverId, size = 'L') {
   return `https://covers.openlibrary.org/b/id/${coverId}-${size}.jpg`;
 }
 
+/**
+ * Calculate word-based similarity between two titles.
+ * Returns a score between 0 and 1.
+ */
+function titleSimilarity(searchTitle, docTitle) {
+  if (!searchTitle || !docTitle) return 0;
+
+  const normalize = (s) => String(s).toLowerCase().replace(/[^\w\s]/g, '').trim();
+  const getWords = (s) => normalize(s).split(/\s+/).filter(w => w.length > 1);
+
+  const searchWords = getWords(searchTitle);
+  const docWords = getWords(docTitle);
+
+  if (searchWords.length === 0 || docWords.length === 0) return 0;
+
+  // Count matching words
+  const docWordSet = new Set(docWords);
+  const matchingWords = searchWords.filter(w => docWordSet.has(w));
+
+  // Return the proportion of search words that matched
+  return matchingWords.length / searchWords.length;
+}
+
+/**
+ * Check if a result title is a reasonable match for the search title.
+ * Requires either:
+ * - At least 25% word overlap, OR
+ * - The doc title contains a significant portion of the search title, OR
+ * - The search title contains a significant portion of the doc title
+ */
+function isTitleMatch(searchTitle, docTitle, minSimilarity = 0.25) {
+  if (!searchTitle || !docTitle) return false;
+
+  const searchLower = String(searchTitle).toLowerCase();
+  const docLower = String(docTitle).toLowerCase();
+
+  // Exact match
+  if (searchLower === docLower) return true;
+
+  // One contains the other (for subtitle variations)
+  if (docLower.includes(searchLower) || searchLower.includes(docLower)) return true;
+
+  // Word-based similarity
+  const similarity = titleSimilarity(searchTitle, docTitle);
+  return similarity >= minSimilarity;
+}
+
 function scoreDoc(doc, { title, author }) {
   let score = 0;
   if (!doc) return score;
+
+  // CRITICAL: Check for minimum title match before scoring
+  // If there's no meaningful title overlap, return a very negative score
+  if (title && doc.title) {
+    if (!isTitleMatch(title, doc.title)) {
+      return -1000; // No match at all
+    }
+  }
+
   if (doc.edition_count) score += doc.edition_count;
   if (doc.has_fulltext) score += 5;
   if (title && doc.title) {
@@ -148,6 +204,11 @@ function scoreDoc(doc, { title, author }) {
     const docTitle = String(doc.title).toLowerCase();
     if (docTitle === titleLower) score += 10;
     else if (docTitle.includes(titleLower)) score += 6;
+    else {
+      // Partial word match bonus based on similarity
+      const similarity = titleSimilarity(title, doc.title);
+      score += Math.floor(similarity * 8);
+    }
   }
   if (author && Array.isArray(doc.author_name)) {
     const authorLower = author.toLowerCase();
@@ -355,10 +416,15 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return [];
 
-    // Score + pick best `limit`
+    // Score + pick best `limit` (filter out non-matching results first)
     const scored = docs.map((d) => ({ d, s: scoreDoc(d, { title, author }) }));
-    scored.sort((a, b) => b.s - a.s);
-    const selected = scored.slice(0, Math.max(1, limit)).map((x) => x.d);
+    const validScored = scored.filter(x => x.s >= 0); // Only keep results with title match
+    if (!validScored.length) {
+      console.log('[openLibrary.searchAndHydrateBooks] No matching titles found');
+      return [];
+    }
+    validScored.sort((a, b) => b.s - a.s);
+    const selected = validScored.slice(0, Math.max(1, limit)).map((x) => x.d);
 
     // Hydrate with controlled concurrency
     const hydrated = await mapWithConcurrency(selected, getConcurrency(), hydrateDoc);
@@ -392,7 +458,18 @@ async function lookupWorkBookMetadata({ title, author }) {
         bestScore = score;
       }
     }
-    // NEW: hydrate the best match for richer fields while preserving original shape
+
+    // Reject results with no meaningful title match (score < 0 means no match found)
+    if (bestScore < 0) {
+      console.log('[openLibrary.lookupWorkBookMetadata] No matching title found', {
+        searchTitle: title,
+        bestResultTitle: best?.title,
+        bestScore
+      });
+      return null;
+    }
+
+    // Hydrate the best match for richer fields while preserving original shape
     return await hydrateDoc(best);
   } catch (err) {
     console.warn('OpenLibrary lookup failed', err.message);
@@ -495,7 +572,7 @@ function toCollectionDoc(h) {
     // Stable refs
     workId: h.workId,                     // "OL1892617W"
     editionId: h.edition?.id || null,     // e.g., "OL12345M"
-    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator: primaryAuthor, releaseYear: publishYear }),
+    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator: primaryAuthor, releaseYear: publishYear, mediaType: 'book' }),
 
     // Canonical bibliographic fields
     title: h.title || null,
@@ -519,6 +596,18 @@ function toCollectionDoc(h) {
     physical,
 
     identifiers,
+
+    // Provider-agnostic cover fields (OpenLibrary requires hot-linking)
+    coverImageUrl: h.coverUrls?.large || h.coverUrls?.medium || h.coverUrls?.small || null,
+    coverImageSource: 'external',
+
+    // Provider-agnostic attribution
+    attribution: h.workId ? {
+      linkUrl: `https://openlibrary.org/works/${h.workId}`,
+      linkText: 'View on Open Library',
+      logoPath: null,
+      disclaimerText: null,
+    } : null,
 
     // Source + links
     source: {

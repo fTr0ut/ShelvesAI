@@ -30,9 +30,10 @@ const SHELF_TYPES = [
   { value: 'other', label: 'Other', icon: 'library' },
 ];
 
-export default function ShelfCreateScreen({ navigation }) {
+export default function ShelfCreateScreen({ navigation, route }) {
   const { token, apiBase } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
+  const autoAddItem = route?.params?.autoAddItem;
 
   const [name, setName] = useState('');
   const [type, setType] = useState('');
@@ -60,13 +61,17 @@ export default function ShelfCreateScreen({ navigation }) {
         visibility,
       };
       const data = await apiRequest({ apiBase, path: '/api/shelves', method: 'POST', token, body: payload });
-      navigation.replace('ShelfDetail', { id: data.shelf.id, title: data.shelf.name });
+      navigation.replace('ShelfDetail', {
+        id: data.shelf.id,
+        title: data.shelf.name,
+        autoAddItem: !!autoAddItem,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
       setSaving(false);
     }
-  }, [apiBase, name, type, description, visibility, navigation, token]);
+  }, [apiBase, name, type, description, visibility, navigation, token, autoAddItem]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>

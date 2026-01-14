@@ -11,4 +11,6 @@ export const AuthContext = createContext({
     setNeedsOnboarding: () => { },
     user: null,
     setUser: () => { },
+    onboardingConfig: null,
+    setOnboardingConfig: () => { },
 });

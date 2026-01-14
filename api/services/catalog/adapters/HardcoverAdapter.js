@@ -125,7 +125,10 @@ class HardcoverAdapter {
      * Convert Hardcover API response to standard collectable format
      */
     _toCollectable(result, originalItem) {
-        const lwf = makeLightweightFingerprint(originalItem);
+        const lwf = makeLightweightFingerprint({
+            ...originalItem,
+            kind: originalItem?.kind || originalItem?.type || 'book',
+        });
 
         // Use the existing hardcoverToCollectable adapter
         const collectable = hardcoverToCollectable(result, {

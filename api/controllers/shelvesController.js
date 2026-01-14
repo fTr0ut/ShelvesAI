@@ -123,6 +123,9 @@ function formatShelfItem(row) {
       : {},
     sources: Array.isArray(row.collectableSources) ? row.collectableSources : [],
     coverUrl: row.collectableCover || null,
+    coverImageUrl: row.collectableCoverImageUrl || null,
+    coverImageSource: row.collectableCoverImageSource || null,
+    attribution: row.collectableAttribution || null,
     coverMediaId: row.collectableCoverMediaId || null,
     coverMediaPath: row.collectableCoverMediaPath || null,
     type: row.collectableKind || null,
@@ -338,6 +341,21 @@ async function updateShelf(req, res) {
     res.json({ shelf });
   } catch (err) {
     console.error('updateShelf error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function deleteShelf(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
+
+    const deleted = await shelvesQueries.remove(shelfId, req.user.id);
+    if (!deleted) return res.status(404).json({ error: "Shelf not found" });
+
+    res.json({ deleted: true, id: shelfId });
+  } catch (err) {
+    console.error('deleteShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -810,7 +828,8 @@ async function completeReviewItem(req, res) {
     // RE-MATCH: Run fingerprint + fuzzy match to prevent duplicates
     // makeLightweightFingerprint(item) helper from existing imports? 
     // shelvesController imports `makeLightweightFingerprint` at the top (line 1).
-    const lwf = makeLightweightFingerprint(completedData);
+    const fingerprintData = { ...completedData, kind: shelf.type };
+    const lwf = makeLightweightFingerprint(fingerprintData);
     let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
 
     if (!collectable) {
@@ -826,7 +845,7 @@ async function completeReviewItem(req, res) {
       collectable = await collectablesQueries.upsert({
         ...completedData,
         kind: shelf.type,
-        fingerprint: makeCollectableFingerprint(completedData), // Imported/Available?
+        fingerprint: makeCollectableFingerprint(fingerprintData), // Imported/Available?
         lightweightFingerprint: lwf,
       });
     }
@@ -940,6 +959,7 @@ module.exports = {
   createShelf,
   getShelf,
   updateShelf,
+  deleteShelf,
   listShelfItems,
   searchManualEntry,
   addManualEntry,

@@ -47,20 +47,39 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
 }
 
 /**
- * Get public feed (all public shelves and activity)
+ * Get global feed (friends' posts + public posts, EXCLUDING self)
  */
-async function getPublicFeed({ limit = 20, offset = 0, type = null }) {
+async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
+    WITH friend_ids AS (
+      SELECT 
+        CASE 
+          WHEN requester_id = $1 THEN addressee_id
+          ELSE requester_id
+        END as friend_id
+      FROM friendships
+      WHERE status = 'accepted'
+      AND (requester_id = $1 OR addressee_id = $1)
+    )
     SELECT a.*, 
            u.username, u.picture as user_picture,
+           pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
+    LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
-    WHERE (s.visibility = 'public' OR s.id IS NULL)
+    WHERE a.user_id != $1 -- Exclude self
+    AND (
+      -- Public stuff
+      (s.visibility = 'public' OR s.id IS NULL)
+      OR
+      -- Friend stuff (if visibility is 'friends')
+      (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends')
+    )
   `;
-  const params = [];
+  const params = [userId];
 
   if (type) {
     params.push(type);
@@ -75,7 +94,53 @@ async function getPublicFeed({ limit = 20, offset = 0, type = null }) {
 }
 
 /**
- * Get friends feed (activity from friends and own)
+ * Get ALL feed (User + Friends + Public)
+ */
+async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
+  let sql = `
+    WITH friend_ids AS (
+      SELECT 
+        CASE 
+          WHEN requester_id = $1 THEN addressee_id
+          ELSE requester_id
+        END as friend_id
+      FROM friendships
+      WHERE status = 'accepted'
+      AND (requester_id = $1 OR addressee_id = $1)
+    )
+    SELECT a.*, 
+           u.username, u.picture as user_picture,
+           pm.local_path as profile_media_path,
+           u.first_name, u.last_name, u.city, u.state, u.country,
+           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
+    FROM event_aggregates a
+    LEFT JOIN users u ON u.id = a.user_id
+    LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
+    LEFT JOIN shelves s ON s.id = a.shelf_id
+    WHERE (
+      a.user_id = $1 -- Include self
+      OR
+      (s.visibility = 'public' OR s.id IS NULL) -- Public stuff
+      OR
+      (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends') -- Friend stuff
+    )
+  `;
+  const params = [userId];
+
+  if (type) {
+    params.push(type);
+    sql += ` AND a.event_type = $${params.length}`;
+  }
+
+  sql += ` ORDER BY a.last_activity_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+  params.push(limit, offset);
+
+  const result = await query(sql, params);
+  return result.rows.map(rowToCamelCase);
+}
+
+/**
+ * Get friends feed (activity from friends ONLY)
  */
 async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
@@ -91,18 +156,16 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
     )
     SELECT a.*, 
            u.username, u.picture as user_picture,
+           pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
+    LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
-    WHERE (
-      a.user_id = $1
-      OR a.user_id IN (SELECT friend_id FROM friend_ids)
-    )
+    WHERE a.user_id IN (SELECT friend_id FROM friend_ids) -- Friends only, no self
     AND (
       s.visibility IN ('public', 'friends')
-      OR s.owner_id = $1
       OR s.id IS NULL
     )
   `;
@@ -127,10 +190,12 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
     SELECT a.*, 
            u.username, u.picture as user_picture,
+           pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
+    LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
     WHERE a.user_id = $1
   `;
@@ -203,7 +268,8 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
 }
 
 module.exports = {
-  getPublicFeed,
+  getGlobalFeed,
+  getAllFeed,
   getFriendsFeed,
   getMyFeed,
   logEvent,

@@ -344,6 +344,16 @@ components:
           $ref: '#/components/schemas/Shelf'
       required:
         - shelf
+    ShelfDeleteResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: integer
+      required:
+        - deleted
+        - id
     ShelfSlot:
       type: object
       properties:
@@ -1538,6 +1548,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/config/onboarding:
+    get:
+      tags:
+        - Config
+      summary: Fetch onboarding screen copy
+      security: []
+      responses:
+        '200':
+          description: Onboarding configuration
+          content:
+            application/json:
+              schema:
+                type: object
   /api/account:
     get:
       tags:
@@ -1680,6 +1703,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Shelf not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Shelves
+      summary: Delete a shelf owned by the caller
+      responses:
+        '200':
+          description: Shelf deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShelfDeleteResponse'
         '404':
           description: Shelf not found
           content:

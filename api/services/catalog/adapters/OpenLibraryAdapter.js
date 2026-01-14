@@ -116,7 +116,10 @@ class OpenLibraryAdapter {
      * Normalize OpenLibrary result to standard collectable format
      */
     _normalizeResult(result, originalItem) {
-        const lwf = makeLightweightFingerprint(originalItem);
+        const lwf = makeLightweightFingerprint({
+            ...originalItem,
+            kind: originalItem?.kind || originalItem?.type || 'book',
+        });
 
         // Use existing adapter if result is already in collectable format
         if (result.__collectable || result.kind === 'book') {

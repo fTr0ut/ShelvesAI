@@ -4,7 +4,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
-const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./collectables/fingerprint');
+const { makeCollectableFingerprint, makeLightweightFingerprint, makeVisionOcrFingerprint } = require('./collectables/fingerprint');
 const processingStatus = require('./processingStatus');
 const path = require('path');
 const fs = require('fs');
@@ -232,8 +232,14 @@ class VisionPipelineService {
 
             const rawOcrFingerprints = new Map();
             for (const item of catalogResults.unresolved) {
-                const rawFp = makeLightweightFingerprint(item);
-                rawOcrFingerprints.set(item.title || item.name, rawFp);
+                const rawFp = makeVisionOcrFingerprint(
+                    item.title || item.name,
+                    item.author || item.primaryCreator || item.creator,
+                    item.kind || item.type || shelfType,
+                );
+                if (rawFp) {
+                    rawOcrFingerprints.set(item.title || item.name, rawFp);
+                }
             }
 
             const enrichResult = await this.enrichUnresolved(catalogResults.unresolved, shelf.type);
@@ -282,8 +288,14 @@ class VisionPipelineService {
             if (mediumUnmatched.length > 0) {
                 const rawOcrFingerprints = new Map();
                 for (const item of mediumUnmatched) {
-                    const rawFp = makeLightweightFingerprint(item);
-                    rawOcrFingerprints.set(item.title || item.name, rawFp);
+                    const rawFp = makeVisionOcrFingerprint(
+                        item.title || item.name,
+                        item.author || item.primaryCreator || item.creator,
+                        item.kind || item.type || shelfType,
+                    );
+                    if (rawFp) {
+                        rawOcrFingerprints.set(item.title || item.name, rawFp);
+                    }
                 }
 
                 // Use special uncertain prompt for medium confidence
@@ -587,10 +599,23 @@ class VisionPipelineService {
 
         // 3. Fuzzy fingerprints array (raw OCR hashes stored from previous enrichments)
         if (collectablesQueries.findByFuzzyFingerprint) {
-            console.log('[VisionPipeline.matchCollectable] Checking fuzzy fingerprints array:', lwf);
+            const ocrFingerprint = makeVisionOcrFingerprint(
+                itemTitle,
+                item.author || item.primaryCreator || item.creator,
+                item.kind || item.type || shelfType,
+            );
+            if (ocrFingerprint) {
+                console.log('[VisionPipeline.matchCollectable] Checking fuzzy OCR fingerprint:', ocrFingerprint);
+                collectable = await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint);
+                if (collectable) {
+                    console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy OCR fingerprint:', collectable.id, collectable.title);
+                    return collectable;
+                }
+            }
+            console.log('[VisionPipeline.matchCollectable] Checking legacy fuzzy fingerprints array:', lwf);
             collectable = await collectablesQueries.findByFuzzyFingerprint(lwf);
             if (collectable) {
-                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy fingerprint:', collectable.id, collectable.title);
+                console.log('[VisionPipeline.matchCollectable] ✓ Found via legacy fuzzy fingerprint:', collectable.id, collectable.title);
                 return collectable;
             }
         }
@@ -684,6 +709,10 @@ class VisionPipelineService {
                             ...normalizeArray(item.fuzzyFingerprints),
                             ...(item.rawOcrFingerprint ? [item.rawOcrFingerprint] : [])
                         ].filter(Boolean),
+                        // Provider-agnostic cover and attribution fields
+                        coverImageUrl: item.coverImageUrl || null,
+                        coverImageSource: item.coverImageSource || null,
+                        attribution: item.attribution || null,
                     });
                     console.log('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
                 } else {

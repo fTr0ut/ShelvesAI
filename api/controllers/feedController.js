@@ -175,8 +175,10 @@ async function getFeed(req, res) {
       events = await feedQueries.getFriendsFeed(viewerId, { limit, offset, type: typeFilter });
     } else if (scope === 'mine') {
       events = await feedQueries.getMyFeed(viewerId, { limit, offset, type: typeFilter });
+    } else if (scope === 'all') {
+      events = await feedQueries.getAllFeed(viewerId, { limit, offset, type: typeFilter });
     } else {
-      events = await feedQueries.getPublicFeed({ limit, offset, type: typeFilter });
+      events = await feedQueries.getGlobalFeed(viewerId, { limit, offset, type: typeFilter });
     }
 
     if (!events.length) {
@@ -226,6 +228,7 @@ async function getFeed(req, res) {
           state: e.state,
           country: e.country,
           picture: e.userPicture,
+          profileMediaPath: e.profileMediaPath,
         },
         items: feedItems,
       };
@@ -252,10 +255,12 @@ async function getFeedEntryDetails(req, res) {
       const aggregateResult = await query(
         `SELECT a.*, 
                 u.username, u.first_name, u.last_name, u.picture, u.city, u.state, u.country,
+                pm.local_path as profile_media_path,
                 s.id as shelf_id, s.owner_id as shelf_owner_id,
                 s.name as shelf_name, s.type as shelf_type, s.description as shelf_description, s.visibility as shelf_visibility
          FROM event_aggregates a
          LEFT JOIN users u ON u.id = a.user_id
+         LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
          LEFT JOIN shelves s ON s.id = a.shelf_id
          WHERE a.id = $1`,
         [aggregateId]
@@ -363,6 +368,7 @@ async function getFeedEntryDetails(req, res) {
           state: aggregate.state,
           country: aggregate.country,
           picture: aggregate.picture,
+          profileMediaPath: aggregate.profileMediaPath,
         },
         items,
       };
@@ -382,8 +388,11 @@ async function getFeedEntryDetails(req, res) {
 
     // Get owner info
     const ownerResult = await query(
-      `SELECT id, username, first_name, last_name, picture, city, state, country 
-       FROM users WHERE id = $1`,
+      `SELECT u.id, u.username, u.first_name, u.last_name, u.picture, u.city, u.state, u.country,
+              pm.local_path as profile_media_path
+       FROM users u
+       LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
+       WHERE u.id = $1`,
       [shelf.ownerId]
     );
     const owner = ownerResult.rows[0];
@@ -423,6 +432,7 @@ async function getFeedEntryDetails(req, res) {
         state: owner.state,
         country: owner.country,
         picture: owner.picture,
+        profileMediaPath: owner.profile_media_path,
       },
       items: itemsResult.rows.map(row => ({
         id: row.id,

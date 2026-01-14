@@ -85,7 +85,7 @@ function openLibraryToCollectable(h) {
     });
   }
 
-  const lwf = h.lightweightFingerprint || makeLightweightFingerprint({ title: h.title, primaryCreator });
+  const lwf = h.lightweightFingerprint || makeLightweightFingerprint({ title: h.title, primaryCreator, kind: 'book' });
 
   const doc = {
     kind: 'book',
@@ -118,7 +118,7 @@ function openLibraryToCollectable(h) {
     editions,
     sources,
 
-    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator, releaseYear: year }),
+    fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator, releaseYear: year, mediaType: 'book' }),
     extras: {},
   };
 

@@ -1,6 +1,7 @@
-import React, { useContext, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
     Image,
+    Linking,
     ScrollView,
     StyleSheet,
     Text,
@@ -13,18 +14,53 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage } from '../components/ui';
+import { apiRequest } from '../services/api';
+
+// Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
+import TmdbLogo from '../assets/tmdb-logo.svg';
 
 export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId, readOnly } = route.params || {};
-    const { apiBase } = useContext(AuthContext);
+    const { apiBase, token } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
-    const collectable = item?.collectable || item?.collectableSnapshot || {};
+    const [resolvedCollectable, setResolvedCollectable] = useState(null);
+
+    const baseCollectable = item?.collectable || item?.collectableSnapshot || {};
+    const collectable = resolvedCollectable || baseCollectable;
     const manual = item?.manual || item?.manualSnapshot || {};
     const isManual = !collectable?.title && manual?.title;
     const source = isManual ? manual : collectable;
+
+    useEffect(() => {
+        let isActive = true;
+        const collectableId = baseCollectable?.id;
+        if (!collectableId || baseCollectable?.attribution || !apiBase || !token) {
+            return () => {
+                isActive = false;
+            };
+        }
+
+        (async () => {
+            try {
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/collectables/${collectableId}`,
+                    token,
+                });
+                if (!isActive || !data?.collectable) return;
+                setResolvedCollectable(data.collectable);
+            } catch (err) {
+                console.warn('Failed to refresh collectable details:', err?.message || err);
+            }
+        })();
+
+        return () => {
+            isActive = false;
+        };
+    }, [apiBase, token, baseCollectable?.id, baseCollectable?.attribution]);
 
     const normalizeList = (value) => {
         if (!value) return [];
@@ -76,58 +112,63 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     };
 
-    const resolveCoverPath = () => {
+    // Provider-agnostic cover resolution
+    const resolveCoverUri = () => {
         const c = collectable;
-        if (!c) return null;
-
-        // Prefer locally cached media path
-        if (c.coverMediaPath) {
-            return c.coverMediaPath;
-        }
-
-        // Check images array for cached paths
-        const images = Array.isArray(c.images) ? c.images : [];
-        for (const image of images) {
-            const cached = image?.cachedSmallPath || image?.cachedPath;
-            if (typeof cached === 'string' && cached.trim()) {
-                return cached.trim();
+        if (!c?.coverImageUrl) {
+            // Fallback to legacy fields
+            if (c?.coverMediaPath) {
+                const trimmed = c.coverMediaPath.replace(/^\/+/, '');
+                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
             }
-        }
-
-        // Fall back to cover URL
-        if (c.coverUrl) {
-            return c.coverUrl;
-        }
-
-        // Check images array for URLs
-        for (const image of images) {
-            const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
-            if (typeof url === 'string' && url.trim()) {
-                return url.trim();
+            if (c?.coverUrl && /^https?:/i.test(c.coverUrl)) {
+                return c.coverUrl;
             }
+            return null;
         }
 
-        return null;
-    };
-
-    const buildCoverUri = (pathOrUrl) => {
-        if (!pathOrUrl) return null;
-        // If it's already an http URL, use it directly
-        if (/^https?:/i.test(pathOrUrl)) {
-            return pathOrUrl;
+        // Use new provider-agnostic fields
+        if (c.coverImageSource === 'external') {
+            // External URL, use directly
+            return c.coverImageUrl;
         }
-        // Build URI from local path via media endpoint
-        const trimmed = pathOrUrl.replace(/^\/+/, '');
+
+        // Local path, resolve via media endpoint
+        const trimmed = c.coverImageUrl.replace(/^\/+/, '');
         const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-        if (!apiBase) {
-            return `/${resource}`;
-        }
-        const normalizedBase = apiBase.replace(/\/+$/, '');
-        return `${normalizedBase}/${resource}`;
+        return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
     };
 
-    const coverPath = resolveCoverPath();
-    const coverUri = buildCoverUri(coverPath);
+    const coverUri = resolveCoverUri();
+
+    // Provider-agnostic attribution rendering
+    const renderAttribution = () => {
+        const attr = collectable?.attribution;
+        if (!attr) return null;
+
+        return (
+            <View style={styles.attributionSection}>
+                {attr.logoKey === 'tmdb' && (
+                    <TmdbLogo width={100} height={24} style={styles.attributionLogo} />
+                )}
+                {attr.linkUrl && (
+                    <TouchableOpacity
+                        onPress={() => Linking.openURL(attr.linkUrl)}
+                        style={styles.attributionLink}
+                    >
+                        <Ionicons name="open-outline" size={14} color={colors.primary} />
+                        <Text style={styles.attributionLinkText}>
+                            {attr.linkText || 'View Source'}
+                        </Text>
+                    </TouchableOpacity>
+                )}
+                {attr.disclaimerText && (
+                    <Text style={styles.disclaimerText}>{attr.disclaimerText}</Text>
+                )}
+            </View>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
@@ -206,6 +247,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <Ionicons name={isManual ? 'create-outline' : 'cloud-outline'} size={14} color={colors.textMuted} />
                     <Text style={styles.sourceText}>{isManual ? 'Manual entry' : 'From catalog'}</Text>
                 </View>
+
+                {/* Provider attribution */}
+                {renderAttribution()}
             </ScrollView>
         </SafeAreaView>
     );
@@ -348,5 +392,34 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     sourceText: {
         fontSize: 12,
         color: colors.textMuted,
+    },
+    attributionSection: {
+        marginTop: spacing.lg,
+        paddingTop: spacing.md,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        alignItems: 'center',
+    },
+    attributionLogo: {
+        width: 100,
+        height: 24,
+        marginBottom: spacing.sm,
+    },
+    attributionLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: spacing.sm,
+    },
+    attributionLinkText: {
+        fontSize: 14,
+        color: colors.primary,
+    },
+    disclaimerText: {
+        fontSize: 11,
+        color: colors.textMuted,
+        textAlign: 'center',
+        marginTop: spacing.sm,
+        lineHeight: 16,
     },
 });

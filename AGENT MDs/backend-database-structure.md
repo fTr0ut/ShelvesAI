@@ -71,8 +71,11 @@ The trusted global catalog of items (movies, games, books, etc.).
 | tags | TEXT[] | `DEFAULT {}` | Genres/Tags |
 | identifiers | JSONB | `DEFAULT {}` | ISBN, IMDB ID, IGDB ID, etc. |
 | images | JSONB | `DEFAULT []` | Array of image URLs |
-| cover_url | TEXT | | Primary cover image |
+| cover_url | TEXT | | Primary cover image (legacy) |
+| cover_image_url | TEXT | | Resolved cover URL or local path |
+| cover_image_source | TEXT | | `'external'` (hot-linked) or `'local'` (cached) |
 | cover_media_id | INTEGER | `FK -> media(id)` | Linked cached media entry |
+| attribution | JSONB | | API compliance attribution data |
 | sources | JSONB | `DEFAULT []` | Provenance metadata |
 | external_id | TEXT | | Primary external ID reference |
 | fuzzy_fingerprints | JSONB | `DEFAULT []` | For OCR matching |

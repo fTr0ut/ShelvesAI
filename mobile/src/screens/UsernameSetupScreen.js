@@ -15,7 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function UsernameSetupScreen({ navigation, route }) {
-    const { token, apiBase, setUser } = useContext(AuthContext);
+    const { token, apiBase, setUser, onboardingConfig } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [username, setUsername] = useState('');
@@ -27,11 +27,11 @@ export default function UsernameSetupScreen({ navigation, route }) {
     const handleSubmit = async () => {
         const trimmed = username.trim();
         if (!trimmed) {
-            setError('Please enter a username');
+            setError(onboardingConfig?.username?.errorEmpty || 'Please enter a username');
             return;
         }
         if (trimmed.length < 3) {
-            setError('Username must be at least 3 characters');
+            setError(onboardingConfig?.username?.errorShort || 'Username must be at least 3 characters');
             return;
         }
 
@@ -57,6 +57,14 @@ export default function UsernameSetupScreen({ navigation, route }) {
         }
     };
 
+    if (!onboardingConfig?.username) {
+        return (
+            <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading onboarding...</Text>
+            </View>
+        );
+    }
+
     return (
         <KeyboardAvoidingView
             style={styles.screen}
@@ -69,8 +77,8 @@ export default function UsernameSetupScreen({ navigation, route }) {
                     <Ionicons name="person-add" size={40} color={colors.primary} />
                 </View>
 
-                <Text style={styles.title}>Choose a Username</Text>
-                <Text style={styles.subtitle}>This is how other collectors will find you</Text>
+                <Text style={styles.title}>{onboardingConfig.username.title}</Text>
+                <Text style={styles.subtitle}>{onboardingConfig.username.subtitle}</Text>
 
                 {error ? (
                     <View style={styles.errorBox}>
@@ -79,12 +87,12 @@ export default function UsernameSetupScreen({ navigation, route }) {
                 ) : null}
 
                 <View style={styles.inputContainer}>
-                    <Text style={styles.atSign}>@</Text>
+                    <Text style={styles.atSign}>{onboardingConfig.username.atSymbol}</Text>
                     <TextInput
                         style={styles.input}
                         value={username}
                         onChangeText={setUsername}
-                        placeholder="username"
+                        placeholder={onboardingConfig.username.placeholder}
                         placeholderTextColor={colors.textMuted}
                         autoCapitalize="none"
                         autoCorrect={false}
@@ -99,7 +107,7 @@ export default function UsernameSetupScreen({ navigation, route }) {
                     disabled={loading}
                 >
                     <Text style={styles.continueButtonText}>
-                        {loading ? 'Setting up...' : 'Continue'}
+                        {loading ? onboardingConfig.username.loadingLabel : onboardingConfig.username.buttonLabel}
                     </Text>
                     <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
                 </TouchableOpacity>
@@ -112,6 +120,17 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     screen: {
         flex: 1,
         backgroundColor: colors.background,
+    },
+    loadingContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.background,
+        padding: spacing.lg,
+    },
+    loadingText: {
+        fontSize: 14,
+        color: colors.textMuted,
     },
     container: {
         flex: 1,

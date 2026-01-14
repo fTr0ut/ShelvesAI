@@ -46,7 +46,11 @@ async function main() {
       continue;
     }
 
-    const fingerprint = makeLightweightFingerprint(title, primary);
+    const fingerprint = makeLightweightFingerprint({
+      title,
+      primaryCreator: primary,
+      kind: doc.kind || doc.type || doc.mediaType,
+    });
 
     if (!fingerprint) {
       skipped += 1;

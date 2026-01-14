@@ -221,7 +221,14 @@ async function ensureCoverMediaForCollectable({
   coverUrl,
   kind,
   title,
+  coverImageSource,
 } = {}) {
+  // Skip local caching for external-only sources (e.g., OpenLibrary requires hot-linking)
+  if (coverImageSource === 'external') {
+    console.log('[media] Skipping local cache for external source (hot-link required)');
+    return null;
+  }
+
   if (!collectableId) return null;
   const candidate = pickCoverCandidate(images, coverUrl);
   if (!candidate || !candidate.url || !isHttpUrl(candidate.url)) return null;
@@ -309,9 +316,14 @@ async function ensureCoverMediaForCollectable({
     const mediaId = mediaRow?.id || null;
     const mediaPath = mediaRow?.local_path || localPath;
     if (mediaId) {
+      // Update both cover_media_id and the provider-agnostic cover fields
       await query(
-        'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
-        [mediaId, collectableId],
+        `UPDATE collectables 
+         SET cover_media_id = $1,
+             cover_image_url = $2,
+             cover_image_source = 'local'
+         WHERE id = $3 AND (cover_media_id IS NULL OR cover_media_id <> $1)`,
+        [mediaId, mediaPath, collectableId],
       );
       return { id: mediaId, localPath: mediaPath };
     }

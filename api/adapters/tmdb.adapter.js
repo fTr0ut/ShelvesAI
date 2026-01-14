@@ -83,8 +83,8 @@ function tmdbMovieToCollectable(movie, options = {}) {
   const keywords = Array.isArray(movie.keywords?.keywords)
     ? movie.keywords.keywords
     : Array.isArray(movie.keywords?.results)
-    ? movie.keywords.results
-    : [];
+      ? movie.keywords.results
+      : [];
   const keywordNames = uniqueStrings(keywords.map((keyword) => keyword?.name));
 
   const identifiers = {
@@ -194,7 +194,7 @@ function tmdbMovieToCollectable(movie, options = {}) {
 
   const lightweightFingerprint = options.lightweightFingerprint
     ? options.lightweightFingerprint
-    : makeLightweightFingerprint({ title, primaryCreator });
+    : makeLightweightFingerprint({ title, primaryCreator, kind: 'movie' });
 
   const fingerprint = makeCollectableFingerprint({
     title,
@@ -221,6 +221,18 @@ function tmdbMovieToCollectable(movie, options = {}) {
     sources,
     extras,
     physical: Object.keys(physical).length ? physical : undefined,
+
+    // Provider-agnostic cover fields (TMDB allows caching, null means 'needs resolution')
+    coverImageUrl: poster?.urlLarge || poster?.urlMedium || null,
+    coverImageSource: null,
+
+    // Provider-agnostic attribution (TMDB requires logo + disclaimer)
+    attribution: {
+      linkUrl: `https://www.themoviedb.org/movie/${movie.id}`,
+      linkText: 'View on TMDB',
+      logoKey: 'tmdb',
+      disclaimerText: 'This product uses the TMDB API but is not endorsed or certified by TMDB.',
+    },
   };
 }
 

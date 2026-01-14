@@ -244,3 +244,115 @@ flowchart LR
 | [collectableMatchingService.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/collectableMatchingService.js) | Centralized fingerprint + API matching |
 | [shelvesController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/shelvesController.js) | `searchManualEntry` for /manual/search |
 | [unmatched.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/routes/unmatched.js) | PUT /:id with API fallback |
+
+---
+
+## Onboarding Workflow
+
+New users are required to complete onboarding before accessing the main app. The flow enforces required fields (email, first name, city, state) and allows optional bio/photo with a skip option.
+
+### Flow Overview
+
+```mermaid
+flowchart TD
+    Start((Start)) --> Intro[OnboardingPagerScreen]
+    Intro -->|Missing username| Username[UsernameSetupScreen]
+    Intro -->|Has username| Required[OnboardingProfileRequiredScreen]
+    Username --> Required
+    Required --> Optional[OnboardingProfileOptionalScreen]
+    Optional -->|Complete or Skip| ShelfCreate[ShelfCreateScreen]
+```
+
+### Required Fields
+- **Email**
+- **First name**
+- **City**
+- **State**
+
+### Optional Fields
+- **Bio**
+- **Profile photo**
+
+### API Endpoints
+- `POST /api/auth/register` (requires email)
+- `PUT /api/profile` (updates email, name, city/state, bio)
+- `POST /api/profile/photo` (optional photo upload)
+- `POST /api/onboarding/complete` (marks onboarding complete after required fields)
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| [OnboardingPagerScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/OnboardingPagerScreen.js) | Intro swipe flow (fun product page first) |
+| [OnboardingProfileRequiredScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/OnboardingProfileRequiredScreen.js) | Required profile fields |
+| [OnboardingProfileOptionalScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/OnboardingProfileOptionalScreen.js) | Optional bio + photo, skip allowed |
+| [UsernameSetupScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/UsernameSetupScreen.js) | Username setup when missing |
+| [onboardingController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/onboardingController.js) | Onboarding completion gate |
+| [onboardingScreen.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/onboardingScreen.json) | Onboarding copy configuration (served via `/api/config/onboarding`) |
+
+---
+
+## API Compliance: Cover Art & Attribution
+
+To comply with API Terms of Service, cover art and attribution are handled per-provider. The system uses a **provider-agnostic design** where all logic is in backend adapters, and the mobile UI simply renders what's in the database.
+
+### Database Fields (collectables table)
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `cover_image_url` | TEXT | Resolved URL or local path for cover |
+| `cover_image_source` | TEXT | `'external'` (hot-linked) or `'local'` (cached) |
+| `attribution` | JSONB | Provider-specific attribution data |
+
+### Provider Policies
+
+| Provider | Cover Policy | Attribution Required |
+|----------|-------------|---------------------|
+| **OpenLibrary** | `'external'` - Must hot-link from `covers.openlibrary.org` | Courtesy link to book page |
+| **TMDB** | `null` → cached locally | Logo + disclaimer + link |
+| **Hardcover** | `null` → cached locally | None |
+
+### Attribution JSONB Structure
+
+```json
+{
+  "linkUrl": "https://provider.com/item/123",
+  "linkText": "View on Provider",
+  "logoKey": "tmdb",
+  "disclaimerText": "Required disclaimer text here"
+}
+```
+
+- `logoKey` maps to bundled SVG in mobile app (e.g., `tmdb` → `tmdb-logo.svg`)
+- Mobile renders what's present; no provider-specific conditionals
+
+### Caching Logic (media.js)
+
+```mermaid
+flowchart LR
+    A[ensureCoverMediaForCollectable] --> B{coverImageSource?}
+    B -->|'external'| C[Skip caching]
+    B -->|null| D[Download & cache]
+    D --> E[Update cover_image_url, set source='local']
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| [openLibrary.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/openLibrary.js) | Sets `coverImageSource: 'external'`, attribution link |
+| [tmdb.adapter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/adapters/tmdb.adapter.js) | Sets `coverImageSource: null`, logo + disclaimer |
+| [hardcover.adapter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/adapters/hardcover.adapter.js) | Sets `coverImageSource: null`, no attribution |
+| [media.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/media.js) | `ensureCoverMediaForCollectable` respects source |
+| [collectables.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/collectables.js) | `upsert` includes cover + attribution fields |
+| [visionPipeline.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/visionPipeline.js) | `saveToShelf` passes cover/attribution to upsert |
+| [CollectableDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/CollectableDetailScreen.js) | Renders attribution (logo, link, disclaimer) |
+
+### Adding a New Provider
+
+1. Create adapter in `api/adapters/` or `api/services/catalog/adapters/`
+2. Set `coverImageUrl`, `coverImageSource`, and `attribution` in adapter output
+3. If logo required:
+   - Add SVG to `mobile/src/assets/`
+   - Import in `CollectableDetailScreen.js`
+   - Add `logoKey` condition in `renderAttribution()`
+
