@@ -56,7 +56,9 @@ export default function ShelvesScreen({ navigation }) {
     }, [loadShelves]);
 
     const filteredShelves = useMemo(() => {
-        if (!searchQuery.trim()) return shelves;
+        if (!searchQuery.trim()) {
+            return [...shelves, { id: 'create-shelf', type: 'special-create', name: 'New Shelf' }];
+        }
         const q = searchQuery.toLowerCase();
         return shelves.filter(s => s.name?.toLowerCase().includes(q));
     }, [shelves, searchQuery]);
@@ -75,52 +77,88 @@ export default function ShelvesScreen({ navigation }) {
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
     const handleOpenShelf = (shelf) => {
-        navigation.navigate('ShelfDetail', { id: shelf.id, title: shelf.name });
+        if (shelf.type === 'special-create') {
+            navigation.navigate('ShelfCreateScreen');
+        } else {
+            navigation.navigate('ShelfDetail', { id: shelf.id, title: shelf.name });
+        }
     };
 
-    const renderGridItem = ({ item }) => (
-        <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => handleOpenShelf(item)}
-            activeOpacity={0.8}
-        >
-            <View style={styles.gridIconBox}>
-                <Ionicons name={getIconForType(item.type)} size={28} color={colors.primary} />
-            </View>
-            <Text style={styles.gridTitle} numberOfLines={2}>{item.name}</Text>
-            <Text style={styles.gridMeta}>{item.itemCount || 0} items</Text>
-        </TouchableOpacity>
-    );
+    const renderGridItem = ({ item }) => {
+        if (item.type === 'special-create') {
+            return (
+                <TouchableOpacity
+                    style={[styles.gridCard, styles.createCard]}
+                    onPress={() => handleOpenShelf(item)}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.createIconBox}>
+                        <Ionicons name="add" size={32} color={colors.primary} />
+                    </View>
+                    <Text style={styles.createTitle}>New Shelf</Text>
+                    <Text style={styles.createMeta}>Create collection</Text>
+                </TouchableOpacity>
+            );
+        }
 
-    const renderListItem = ({ item }) => (
-        <TouchableOpacity
-            style={styles.listCard}
-            onPress={() => handleOpenShelf(item)}
-            activeOpacity={0.8}
-        >
-            <View style={styles.listIcon}>
-                <Ionicons name={getIconForType(item.type)} size={22} color={colors.primary} />
-            </View>
-            <View style={styles.listContent}>
-                <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>
-                <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </TouchableOpacity>
-    );
+        return (
+            <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => handleOpenShelf(item)}
+                activeOpacity={0.8}
+            >
+                <View style={styles.gridIconBox}>
+                    <Ionicons name={getIconForType(item.type)} size={28} color={colors.primary} />
+                </View>
+                <Text style={styles.gridTitle} numberOfLines={2}>{item.name}</Text>
+                <Text style={styles.gridMeta}>{item.itemCount || 0} items</Text>
+            </TouchableOpacity>
+        );
+    };
+
+    const renderListItem = ({ item }) => {
+        if (item.type === 'special-create') {
+            return (
+                <TouchableOpacity
+                    style={[styles.listCard, styles.createCard]}
+                    onPress={() => handleOpenShelf(item)}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.createIconBoxList}>
+                        <Ionicons name="add" size={24} color={colors.primary} />
+                    </View>
+                    <View style={styles.listContent}>
+                        <Text style={styles.createTitleList}>New Shelf</Text>
+                        <Text style={styles.createMetaList}>Create a new collection</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+            );
+        }
+
+        return (
+            <TouchableOpacity
+                style={styles.listCard}
+                onPress={() => handleOpenShelf(item)}
+                activeOpacity={0.8}
+            >
+                <View style={styles.listIcon}>
+                    <Ionicons name={getIconForType(item.type)} size={22} color={colors.primary} />
+                </View>
+                <View style={styles.listContent}>
+                    <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+        );
+    };
 
     const renderEmpty = () => (
         <View style={styles.emptyState}>
             <Ionicons name="library-outline" size={56} color={colors.textMuted} />
-            <Text style={styles.emptyTitle}>No shelves yet</Text>
-            <Text style={styles.emptyText}>Create your first shelf to start organizing your collection</Text>
-            <TouchableOpacity
-                style={styles.emptyButton}
-                onPress={() => navigation.navigate('ShelfCreateScreen')}
-            >
-                <Ionicons name="add" size={18} color={colors.textInverted} />
-                <Text style={styles.emptyButtonText}>Create Shelf</Text>
-            </TouchableOpacity>
+            <Text style={styles.emptyTitle}>No shelves found</Text>
+            <Text style={styles.emptyText}>Try adjusting your search criteria</Text>
         </View>
     );
 
@@ -193,7 +231,7 @@ export default function ShelvesScreen({ navigation }) {
             )}
 
             {/* Content */}
-            {loading && !refreshing ? renderLoading() : filteredShelves.length === 0 && !searchQuery ? renderEmpty() : (
+            {loading && !refreshing ? renderLoading() : (
                 <FlatList
                     data={filteredShelves}
                     keyExtractor={(item) => String(item.id)}
@@ -211,15 +249,7 @@ export default function ShelvesScreen({ navigation }) {
                         />
                     }
                     showsVerticalScrollIndicator={false}
-                    ListEmptyComponent={
-                        searchQuery ? (
-                            <View style={styles.emptyState}>
-                                <Ionicons name="search-outline" size={48} color={colors.textMuted} />
-                                <Text style={styles.emptyTitle}>No results</Text>
-                                <Text style={styles.emptyText}>Try a different search term</Text>
-                            </View>
-                        ) : null
-                    }
+                    ListEmptyComponent={renderEmpty}
                 />
             )}
         </SafeAreaView>
@@ -300,6 +330,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginBottom: spacing.md,
         ...shadows.sm,
     },
+    createCard: {
+        borderStyle: 'dashed',
+        borderWidth: 2,
+        borderColor: colors.border,
+        backgroundColor: 'transparent',
+        shadowOpacity: 0,
+        elevation: 0,
+    },
     gridIconBox: {
         width: 48,
         height: 48,
@@ -309,15 +347,57 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         marginBottom: spacing.sm,
     },
+    createIconBox: {
+        width: 48,
+        height: 48,
+        borderRadius: radius.md,
+        backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.sm,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    createIconBoxList: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
+        backgroundColor: colors.surface,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
     gridTitle: {
         fontSize: 15,
         fontWeight: '600',
         color: colors.text,
         marginBottom: 4,
     },
+    createTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.primary,
+        marginBottom: 4,
+    },
+    createTitleList: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.primary,
+    },
     gridMeta: {
         fontSize: 12,
         color: colors.textMuted,
+    },
+    createMeta: {
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    createMetaList: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
     },
     // List View
     listCard: {

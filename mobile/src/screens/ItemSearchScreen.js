@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -33,6 +34,10 @@ export default function ItemSearchScreen({ route, navigation }) {
   const [manualAuthor, setManualAuthor] = useState('');
   const [manualDescription, setManualDescription] = useState('');
   const [manualSaving, setManualSaving] = useState(false);
+
+  // State for suggestion modal
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestionModal, setShowSuggestionModal] = useState(false);
 
   const styles = useMemo(
     () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -80,13 +85,9 @@ export default function ItemSearchScreen({ route, navigation }) {
     }
   }, [apiBase, shelfId, token, navigation]);
 
-  const handleAddManual = useCallback(async () => {
+  // Actually perform the manual add (called after user decides to add anyway)
+  const performManualAdd = useCallback(async () => {
     const title = manualTitle.trim();
-    if (!title) {
-      Alert.alert('Error', 'Title is required.');
-      return;
-    }
-
     const type = (manualType || shelfType || 'Item').trim();
     try {
       setManualSaving(true);
@@ -110,6 +111,83 @@ export default function ItemSearchScreen({ route, navigation }) {
       setManualSaving(false);
     }
   }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualDescription, shelfType, navigation]);
+
+  // Add a collectable from suggestions
+  const addSuggestion = useCallback(async (suggestion) => {
+    setShowSuggestionModal(false);
+    try {
+      setManualSaving(true);
+      if (suggestion.id) {
+        // Existing collectable in database
+        await apiRequest({
+          apiBase,
+          path: `/api/shelves/${shelfId}/items`,
+          method: 'POST',
+          token,
+          body: { collectableId: suggestion.id },
+        });
+      } else if (suggestion.fromApi) {
+        // API result - create collectable via manual endpoint with API data
+        await apiRequest({
+          apiBase,
+          path: `/api/shelves/${shelfId}/manual`,
+          method: 'POST',
+          token,
+          body: {
+            name: suggestion.title || manualTitle.trim(),
+            type: manualType || shelfType || 'Item',
+            author: suggestion.primaryCreator || manualAuthor.trim() || undefined,
+            description: suggestion.description || manualDescription.trim() || undefined,
+          },
+        });
+      }
+      Alert.alert('Added', 'Item added to your shelf.');
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setManualSaving(false);
+    }
+  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualDescription, shelfType, navigation]);
+
+  // Main handler - search first, show suggestions if found
+  const handleAddManual = useCallback(async () => {
+    const title = manualTitle.trim();
+    if (!title) {
+      Alert.alert('Error', 'Title is required.');
+      return;
+    }
+
+    try {
+      setManualSaving(true);
+      // Search for existing matches
+      const data = await apiRequest({
+        apiBase,
+        path: `/api/shelves/${shelfId}/manual/search`,
+        method: 'POST',
+        token,
+        body: {
+          title,
+          author: manualAuthor.trim() || undefined,
+        },
+      });
+
+      const foundSuggestions = data?.suggestions || [];
+      if (foundSuggestions.length > 0) {
+        // Show suggestions modal
+        setSuggestions(foundSuggestions);
+        setShowSuggestionModal(true);
+        setManualSaving(false);
+      } else {
+        // No suggestions - add directly
+        await performManualAdd();
+      }
+    } catch (e) {
+      // If search fails, just add manually
+      console.warn('Manual search failed, adding directly:', e.message);
+      await performManualAdd();
+    }
+  }, [apiBase, shelfId, token, manualTitle, manualAuthor, performManualAdd]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -241,11 +319,63 @@ export default function ItemSearchScreen({ route, navigation }) {
               onPress={handleAddManual}
               disabled={manualSaving}
             >
-              <Text style={styles.saveButtonText}>{manualSaving ? 'Adding...' : 'Add Manual Item'}</Text>
+              <Text style={styles.saveButtonText}>{manualSaving ? 'Searching...' : 'Add Manual Item'}</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Suggestion Picker Modal */}
+      <Modal
+        visible={showSuggestionModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowSuggestionModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>We found some matches</Text>
+              <TouchableOpacity onPress={() => setShowSuggestionModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Select one below or add as a new item
+            </Text>
+
+            <ScrollView style={styles.suggestionList}>
+              {suggestions.map((suggestion, index) => {
+                const title = suggestion.title || suggestion.name || 'Untitled';
+                const creator = suggestion.primaryCreator || '';
+                return (
+                  <TouchableOpacity
+                    key={suggestion.id || index}
+                    style={styles.suggestionItem}
+                    onPress={() => addSuggestion(suggestion)}
+                  >
+                    <View style={styles.suggestionText}>
+                      <Text style={styles.suggestionTitle} numberOfLines={1}>{title}</Text>
+                      {creator ? <Text style={styles.suggestionSubtitle} numberOfLines={1}>{creator}</Text> : null}
+                    </View>
+                    <Ionicons name="add-circle" size={24} color={colors.primary} />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.addAnywayButton}
+              onPress={() => {
+                setShowSuggestionModal(false);
+                performManualAdd();
+              }}
+            >
+              <Text style={styles.addAnywayText}>Add as new item anyway</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -399,5 +529,71 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     color: colors.textInverted,
     fontWeight: '600',
     fontSize: 15,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    padding: spacing.lg,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  suggestionList: {
+    maxHeight: 300,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.background,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    marginBottom: spacing.sm,
+  },
+  suggestionText: {
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  suggestionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  suggestionSubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  addAnywayButton: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    marginTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  addAnywayText: {
+    fontSize: 14,
+    color: colors.textMuted,
   },
 });

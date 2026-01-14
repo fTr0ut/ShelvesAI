@@ -94,8 +94,20 @@ components:
         - username
         - password
     RegisterRequest:
-      allOf:
-        - $ref: '#/components/schemas/LoginRequest'
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        email:
+          type: string
+          format: email
+      required:
+        - username
+        - password
+        - email
     BasicUser:
       type: object
       properties:
@@ -131,9 +143,12 @@ components:
         token:
           type: string
           description: Signed JWT bearer token
+        onboardingCompleted:
+          type: boolean
       required:
         - user
         - token
+        - onboardingCompleted
     RegisterResponse:
       type: object
       properties:
@@ -141,9 +156,15 @@ components:
           type: string
         user:
           $ref: '#/components/schemas/BasicUser'
+        token:
+          type: string
+        onboardingCompleted:
+          type: boolean
       required:
         - message
         - user
+        - token
+        - onboardingCompleted
     UserProfile:
       allOf:
         - $ref: '#/components/schemas/DetailedUser'
@@ -167,6 +188,9 @@ components:
             city:
               type: string
               nullable: true
+            onboardingCompleted:
+              type: boolean
+              default: false
             isPrivate:
               type: boolean
               default: false
@@ -1477,6 +1501,39 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Username already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/onboarding/complete:
+    post:
+      tags:
+        - Auth
+      summary: Mark onboarding as complete
+      description: Requires email, first name, city, and state to be present on the user profile.
+      responses:
+        '200':
+          description: Onboarding completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  onboardingCompleted:
+                    type: boolean
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                  - onboardingCompleted
+                  - user
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid bearer token
           content:
             application/json:
               schema:

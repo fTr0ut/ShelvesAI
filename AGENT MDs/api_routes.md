@@ -8,9 +8,10 @@ This document maps the mobile application screens to the backend API endpoints t
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/auth/login` | Authenticate user | `{ username, password }` |
-| `POST` | `/api/auth/register` | Create new account | `{ username, password }` |
+| `POST` | `/api/auth/register` | Create new account | `{ username, password, email }` |
 | `GET` | `/api/auth/me` | Validate session / Get basic info | Headers: `Authorization: Bearer <token>` |
 | `POST` | `/api/auth/username` | Set username if missing | `{ username }` |
+| `POST` | `/api/onboarding/complete` | Mark onboarding complete (requires email, first name, city/state) | - |
 
 ## 1. Home Tab (Feed)
 **Screen**: SocialFeedScreen

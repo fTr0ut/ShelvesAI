@@ -17,6 +17,7 @@ const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const needsReviewQueries = require('../database/queries/needsReview');
 const { makeCollectableFingerprint } = require('../services/collectables/fingerprint');
+const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 
 
 
@@ -371,6 +372,41 @@ async function listShelfItems(req, res) {
   }
 }
 
+/**
+ * Search for existing collectables before adding a manual entry
+ * Returns suggestions for the user to choose from
+ */
+async function searchManualEntry(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const { name, title, author, primaryCreator } = req.body ?? {};
+    const searchTitle = title || name;
+    const searchCreator = primaryCreator || author;
+
+    if (!searchTitle) {
+      return res.status(400).json({ error: "title or name is required" });
+    }
+
+    const matchingService = getCollectableMatchingService();
+    const result = await matchingService.search(
+      { title: searchTitle, primaryCreator: searchCreator, name: searchTitle, author: searchCreator },
+      shelf.type,
+      { includeApi: true }
+    );
+
+    res.json({
+      suggestions: result.suggestions,
+      searched: result.searched,
+      query: { title: searchTitle, creator: searchCreator, shelfType: shelf.type },
+    });
+  } catch (err) {
+    console.error('searchManualEntry error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 async function addManualEntry(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
@@ -463,12 +499,13 @@ async function removeShelfItem(req, res) {
     );
     if (!removed) return res.status(404).json({ error: "Item not found" });
 
-    await logShelfEvent({
-      userId: req.user.id,
-      shelfId: shelf.id,
-      type: "item.removed",
-      payload: { itemId: req.params.itemId },
-    });
+    // Event logging removed for item removal request per user request
+    // await logShelfEvent({
+    //   userId: req.user.id,
+    //   shelfId: shelf.id,
+    //   type: "item.removed",
+    //   payload: { itemId: req.params.itemId },
+    // });
 
     const items = await hydrateShelfItems(req.user.id, shelf.id);
     res.json({ removedId: req.params.itemId, items });
@@ -904,6 +941,7 @@ module.exports = {
   getShelf,
   updateShelf,
   listShelfItems,
+  searchManualEntry,
   addManualEntry,
   addCollectable,
   searchCollectablesForShelf,

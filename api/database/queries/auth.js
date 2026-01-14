@@ -47,7 +47,7 @@ async function register({ username, password, email }) {
         `INSERT INTO users (username, email, password_hash)
      VALUES ($1, $2, $3)
      RETURNING id, username, email, created_at`,
-        [username.toLowerCase(), email?.toLowerCase() || `${username.toLowerCase()}@temp.local`, passwordHash]
+        [username.toLowerCase(), email.toLowerCase(), passwordHash]
     );
 
     const user = result.rows[0];
@@ -57,7 +57,7 @@ async function register({ username, password, email }) {
         { expiresIn: '7d' }
     );
 
-    return { user: rowToCamelCase(user), token };
+    return { user: rowToCamelCase(user), token, onboardingCompleted: false };
 }
 
 /**
@@ -80,6 +80,7 @@ async function login({ username, password }) {
     return {
         user: { id: user.id, username: user.username },
         token,
+        onboardingCompleted: !!user.onboarding_completed,
     };
 }
 
@@ -117,6 +118,7 @@ async function findOrCreateByAuth0(claims) {
         user: formatUserForResponse(user),
         token,
         needsUsername: !user.username,
+        onboardingCompleted: !!user.onboarding_completed,
     };
 }
 

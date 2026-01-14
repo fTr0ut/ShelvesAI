@@ -8,7 +8,7 @@
         "categorizing": {
             "step": "categorizing",
             "progress": 20,
-            "messageTemplate": "Found {count} items, categorizing by confidence..."
+            "messageTemplate": "Found {count} items, categorizing..."
         },
         "matching": {
             "step": "matching",
@@ -23,12 +23,12 @@
         "enriching": {
             "step": "enriching",
             "progress": 65,
-            "messageTemplate": "Enriching {count} unresolved items with AI..."
+            "messageTemplate": "Yelling at AI louder for {count} unresolved items..."
         },
         "enrichingMedium": {
             "step": "enriching-medium",
             "progress": 75,
-            "messageTemplate": "Processing {count} medium-confidence items..."
+            "messageTemplate": "Searching harder for {count} medium-confidence items..."
         },
         "saving": {
             "step": "saving",

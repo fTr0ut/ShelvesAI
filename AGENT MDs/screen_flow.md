@@ -12,8 +12,10 @@ The application uses a Hybrid navigation strategy:
 
 ### 1. Startup & Authentication
 - **LoginScreen**: Initial screen if no user token is found.
-- **UsernameSetupScreen**: Shown after login if the user profile is incomplete.
-- **AccountScreen**: Shown during onboarding to complete profile.
+- **OnboardingPagerScreen**: Intro swipe flow (fun product page first).
+- **UsernameSetupScreen**: Shown during onboarding if username is missing.
+- **OnboardingProfileRequiredScreen**: Collect required fields (email, first name, city/state).
+- **OnboardingProfileOptionalScreen**: Optional bio + photo, with skip.
 
 ### 2. Main Navigation (Bottom Tabs)
 Once authenticated, the user lands on the **Main** navigator which contains:
@@ -45,7 +47,10 @@ These screens can be accessed from multiple points in the app and overlay the cu
 graph TD
     %% Nodes
     Login[Login Screen]
-    Onboarding[Username/Account Setup]
+    OnboardingIntro[Intro Pager]
+    OnboardingRequired[Required Profile]
+    OnboardingOptional[Optional Bio + Photo]
+    Username[Username Setup]
     
     subgraph Tabs [Bottom Tab Navigator]
         Home[Home / SocialFeedScreen]
@@ -66,11 +71,16 @@ graph TD
 
     %% Startup Flow
     Start((Start)) -->|No Token| Login
-    Start -->|Token + Incomplete| Onboarding
+    Start -->|Token + Incomplete| OnboardingIntro
     Start -->|Token + Complete| Home
 
     Login -->|Success| Home
-    Onboarding -->|Complete| Home
+    OnboardingIntro --> OnboardingRequired
+    OnboardingIntro --> Username
+    Username --> OnboardingRequired
+    OnboardingRequired --> OnboardingOptional
+    OnboardingOptional -->|Complete| Home
+    OnboardingOptional -->|Skip| Home
 
     %% Tab Navigation
     Home <--> Shelves

@@ -9,6 +9,12 @@ const shelvesQueries = require('../database/queries/shelves');
 const profileMediaQueries = require('../database/queries/profileMedia');
 const { rowToCamelCase } = require('../database/queries/utils');
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
 /**
  * GET /profile - Get current user's full profile
  */
@@ -39,6 +45,7 @@ async function getMyProfile(req, res) {
  */
 async function updateMyProfile(req, res) {
     try {
+        const body = req.body || {};
         const updates = {};
         const allowedFields = [
             'first_name', 'last_name', 'bio', 'city', 'state',
@@ -53,7 +60,20 @@ async function updateMyProfile(req, res) {
             isPrivate: 'is_private',
         };
 
-        for (const [key, value] of Object.entries(req.body)) {
+        if (Object.prototype.hasOwnProperty.call(body, 'email')) {
+            const normalizedEmail = normalizeEmail(body.email);
+            if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
+                return res.status(400).json({ error: 'Invalid email address' });
+            }
+            const existing = await usersQueries.findByEmail(normalizedEmail);
+            if (existing && existing.id !== req.user.id) {
+                return res.status(409).json({ error: 'Email taken' });
+            }
+            updates.email = normalizedEmail;
+        }
+
+        for (const [key, value] of Object.entries(body)) {
+            if (key === 'email') continue;
             const snakeKey = fieldMap[key] || key;
             if (allowedFields.includes(snakeKey)) {
                 updates[snakeKey] = value;

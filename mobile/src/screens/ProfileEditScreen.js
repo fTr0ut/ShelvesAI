@@ -34,6 +34,7 @@ export default function ProfileEditScreen({ navigation }) {
     const [city, setCity] = useState('');
     const [state, setState] = useState('');
     const [country, setCountry] = useState('');
+    const [email, setEmail] = useState('');
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -55,6 +56,7 @@ export default function ProfileEditScreen({ navigation }) {
             setCity(data.profile?.city || '');
             setState(data.profile?.state || '');
             setCountry(data.profile?.country || '');
+            setEmail(data.profile?.email || '');
         } catch (e) {
             Alert.alert('Error', 'Failed to load profile');
         } finally {
@@ -70,7 +72,7 @@ export default function ProfileEditScreen({ navigation }) {
                 path: '/api/profile',
                 method: 'PUT',
                 token,
-                body: { firstName, lastName, bio, city, state, country },
+                body: { firstName, lastName, bio, city, state, country, email },
             });
             Alert.alert('Saved', 'Your profile has been updated', [
                 { text: 'OK', onPress: () => navigation.goBack() }
@@ -80,7 +82,7 @@ export default function ProfileEditScreen({ navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, token, firstName, lastName, bio, city, state, country, navigation]);
+    }, [apiBase, token, firstName, lastName, bio, city, state, country, email, navigation]);
 
     const handlePickPhoto = async () => {
         try {
@@ -200,6 +202,19 @@ export default function ProfileEditScreen({ navigation }) {
 
                 {/* Form */}
                 <View style={styles.card}>
+                    <View style={styles.inputFull}>
+                        <Text style={styles.label}>Email</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={email}
+                            onChangeText={setEmail}
+                            placeholder="Email"
+                            placeholderTextColor={colors.textMuted}
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                        />
+                    </View>
+
                     <View style={styles.row}>
                         <View style={styles.inputHalf}>
                             <Text style={styles.label}>First Name</Text>

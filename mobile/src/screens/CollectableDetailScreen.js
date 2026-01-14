@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { CachedImage } from '../components/ui';
 
 export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId, readOnly } = route.params || {};
@@ -154,10 +155,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 <View style={styles.hero}>
                     <View style={styles.coverBox}>
                         {coverUri ? (
-                            <Image
+                            <CachedImage
                                 source={{ uri: coverUri }}
                                 style={styles.coverImage}
-                                resizeMode="cover"
+                                contentFit="cover"
                             />
                         ) : (
                             <View style={styles.coverFallback}>

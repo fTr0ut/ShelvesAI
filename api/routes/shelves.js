@@ -15,6 +15,7 @@ router.get('/:shelfId', ctrl.getShelf);
 router.put('/:shelfId', ctrl.updateShelf);
 
 router.get('/:shelfId/items', ctrl.listShelfItems);
+router.post('/:shelfId/manual/search', ctrl.searchManualEntry);
 router.post('/:shelfId/manual', requireFields(['name']), ctrl.addManualEntry);
 router.post('/:shelfId/items', requireFields(['collectableId']), ctrl.addCollectable);
 router.delete('/:shelfId/items/:itemId', ctrl.removeShelfItem);

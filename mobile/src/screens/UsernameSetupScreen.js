@@ -14,8 +14,8 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
-export default function UsernameSetupScreen({ navigation }) {
-    const { token, apiBase, setNeedsOnboarding } = useContext(AuthContext);
+export default function UsernameSetupScreen({ navigation, route }) {
+    const { token, apiBase, setUser } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [username, setUsername] = useState('');
@@ -38,14 +38,18 @@ export default function UsernameSetupScreen({ navigation }) {
         try {
             setLoading(true);
             setError('');
-            await apiRequest({
+            const data = await apiRequest({
                 apiBase,
                 path: '/api/auth/username',
                 method: 'POST',
                 token,
                 body: { username: trimmed },
             });
-            setNeedsOnboarding(false);
+            if (data?.user) {
+                setUser(data.user);
+            }
+            const nextRoute = route?.params?.nextRoute || 'OnboardingProfileRequired';
+            navigation.replace(nextRoute);
         } catch (e) {
             setError(e.message);
         } finally {

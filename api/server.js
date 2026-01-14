@@ -18,6 +18,7 @@ const wishlistsRoutes = require('./routes/wishlists');
 const favoritesRoutes = require('./routes/favorites');
 const listsRoutes = require('./routes/lists');
 const unmatchedRoutes = require('./routes/unmatched');
+const onboardingRoutes = require('./routes/onboarding');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -135,7 +136,10 @@ try {
   if (!fs.existsSync(mediaRoot)) {
     fs.mkdirSync(mediaRoot, { recursive: true });
   }
-  app.use('/media', express.static(mediaRoot));
+  app.use('/media', express.static(mediaRoot, {
+    maxAge: '1y',
+    immutable: true
+  }));
 } catch (err) {
   console.warn('Failed to initialize media cache directory:', err.message);
 }
@@ -153,5 +157,6 @@ app.use('/api/wishlists', wishlistsRoutes);
 app.use('/api/favorites', favoritesRoutes);
 app.use('/api/lists', listsRoutes);
 app.use('/api/unmatched', unmatchedRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 module.exports = app;

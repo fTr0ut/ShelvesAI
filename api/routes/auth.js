@@ -6,7 +6,7 @@ const { requireFields } = require('../middleware/validate');
 const router = express.Router();
 
 router.post('/login', requireFields(['username', 'password']), login);
-router.post('/register', requireFields(['username', 'password']), register);
+router.post('/register', requireFields(['username', 'password', 'email']), register);
 router.get('/me', auth, me);
 router.post('/username', auth, setUsername);
 

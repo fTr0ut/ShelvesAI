@@ -1,5 +1,11 @@
 const authQueries = require('../database/queries/auth');
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(value) {
+  return emailPattern.test(value);
+}
+
 // POST /api/login
 async function login(req, res) {
   try {
@@ -23,20 +29,29 @@ async function login(req, res) {
 // POST /api/register
 async function register(req, res) {
   try {
-    const { username, password } = req.body ?? {};
-    if (!username || !password) {
+    const { username, password, email } = req.body ?? {};
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!username || !password || !normalizedEmail) {
       return res.status(400).json({ error: 'Missing credentials' });
     }
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
 
-    const result = await authQueries.register({ username, password });
+    const result = await authQueries.register({ username, password, email: normalizedEmail });
     return res.status(201).json({
       message: 'User created',
       user: result.user,
-      token: result.token
+      token: result.token,
+      onboardingCompleted: result.onboardingCompleted,
     });
   } catch (err) {
     // Unique constraint violation (username taken)
     if (err?.code === '23505') {
+      const detail = String(err?.detail || '');
+      if (detail.includes('email')) {
+        return res.status(400).json({ error: 'Email taken' });
+      }
       return res.status(400).json({ error: 'Username taken' });
     }
     console.error('Register error:', err);
@@ -60,6 +75,7 @@ async function me(req, res) {
         firstName: user.first_name,
         lastName: user.last_name,
         picture: user.picture,
+        onboardingCompleted: !!user.onboarding_completed,
       }
     });
   } catch (err) {

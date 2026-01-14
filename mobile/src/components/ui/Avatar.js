@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, View, Text, Image } from 'react-native';
+import { StyleSheet, View, Text } from 'react-native';
+import CachedImage from './CachedImage';
 import { colors, radius, typography } from '../../theme';
 
 export default function Avatar({ uri, name = 'User', size = 'md', style }) {
@@ -17,7 +18,7 @@ export default function Avatar({ uri, name = 'User', size = 'md', style }) {
     return (
         <View style={[styles.container, { width: d, height: d, borderRadius: d / 2 }, style]}>
             {uri ? (
-                <Image source={{ uri }} style={{ width: d, height: d, borderRadius: d / 2 }} />
+                <CachedImage source={{ uri }} style={{ width: d, height: d, borderRadius: d / 2 }} contentFit="cover" />
             ) : (
                 <View style={[styles.fallback, { width: d, height: d, borderRadius: d / 2 }]}>
                     <Text style={[styles.initials, { fontSize }]}>{initials}</Text>

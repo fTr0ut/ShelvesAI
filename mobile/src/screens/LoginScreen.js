@@ -15,13 +15,14 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest, saveToken } from '../services/api';
 
 export default function LoginScreen() {
-    const { setToken, apiBase, setNeedsOnboarding } = useContext(AuthContext);
+    const { setToken, apiBase, setNeedsOnboarding, setUser } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [isRegister, setIsRegister] = useState(false);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [email, setEmail] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -29,8 +30,14 @@ export default function LoginScreen() {
 
     const handleSubmit = async () => {
         setError('');
-        if (!username.trim() || !password) {
+        const trimmedUsername = username.trim();
+        const trimmedEmail = email.trim();
+        if (!trimmedUsername || !password) {
             setError('Please enter username and password');
+            return;
+        }
+        if (isRegister && !trimmedEmail) {
+            setError('Please enter your email');
             return;
         }
         if (isRegister && password !== confirmPassword) {
@@ -45,12 +52,21 @@ export default function LoginScreen() {
                 apiBase,
                 path: endpoint,
                 method: 'POST',
-                body: { username: username.trim(), password },
+                body: isRegister
+                    ? { username: trimmedUsername, password, email: trimmedEmail }
+                    : { username: trimmedUsername, password },
             });
 
             if (data.token) {
                 await saveToken(data.token);
-                setNeedsOnboarding(!!data.needsOnboarding);
+                if (data.user) {
+                    setUser(data.user);
+                }
+                if (typeof data.onboardingCompleted === 'boolean') {
+                    setNeedsOnboarding(!data.onboardingCompleted);
+                } else {
+                    setNeedsOnboarding(!!data.needsOnboarding);
+                }
                 setToken(data.token);
             } else {
                 setError('Authentication failed');
@@ -116,6 +132,23 @@ export default function LoginScreen() {
                             editable={!loading}
                         />
                     </View>
+
+                    {isRegister && (
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Email</Text>
+                            <TextInput
+                                style={styles.input}
+                                value={email}
+                                onChangeText={setEmail}
+                                placeholder="Enter email"
+                                placeholderTextColor={colors.textMuted}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                keyboardType="email-address"
+                                editable={!loading}
+                            />
+                        </View>
+                    )}
 
                     {isRegister && (
                         <View style={styles.inputGroup}>

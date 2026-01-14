@@ -24,6 +24,9 @@ import ShelfEditScreen from './screens/ShelfEditScreen'
 import ItemSearchScreen from './screens/ItemSearchScreen'
 import FriendSearchScreen from './screens/FriendSearchScreen'
 import UsernameSetupScreen from './screens/UsernameSetupScreen'
+import OnboardingPagerScreen from './screens/OnboardingPagerScreen'
+import OnboardingProfileRequiredScreen from './screens/OnboardingProfileRequiredScreen'
+import OnboardingProfileOptionalScreen from './screens/OnboardingProfileOptionalScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
@@ -158,8 +161,9 @@ export default function App() {
         if (!res.ok) return
         const data = await res.json()
         if (!cancelled) {
-          const missing = !data?.user?.username
-          setNeedsOnboarding(missing)
+          const missingRequired = !data?.user?.email || !data?.user?.firstName || !data?.user?.city || !data?.user?.state
+          const onboardingCompleted = !!data?.user?.onboardingCompleted
+          setNeedsOnboarding(!onboardingCompleted || missingRequired)
           setUser(data.user || null)
           if (typeof data?.user?.isPremium === 'boolean') {
             setPremiumEnabled(data.user.isPremium)
@@ -236,8 +240,10 @@ function AppNavigator({ token, needsOnboarding }) {
           <Stack.Screen name="Login" component={LoginScreen} />
         ) : needsOnboarding ? (
           <>
+            <Stack.Screen name="OnboardingIntro" component={OnboardingPagerScreen} />
             <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} />
-            <Stack.Screen name="Account" component={AccountScreen} />
+            <Stack.Screen name="OnboardingProfileRequired" component={OnboardingProfileRequiredScreen} />
+            <Stack.Screen name="OnboardingProfileOptional" component={OnboardingProfileOptionalScreen} />
           </>
         ) : (
           <>

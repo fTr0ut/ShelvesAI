@@ -56,7 +56,7 @@ async function updateProfile(id, updates) {
 
     const allowedFields = [
         'username', 'first_name', 'last_name', 'phone_number',
-        'picture', 'country', 'state', 'city', 'is_private', 'bio'
+        'picture', 'country', 'state', 'city', 'is_private', 'bio', 'email'
     ];
 
     for (const [key, value] of Object.entries(updates)) {
@@ -75,6 +75,17 @@ async function updateProfile(id, updates) {
         values
     );
     return result.rows[0];
+}
+
+/**
+ * Update onboarding completion flag
+ */
+async function setOnboardingCompleted(id, value) {
+    const result = await query(
+        `UPDATE users SET onboarding_completed = $1 WHERE id = $2 RETURNING *`,
+        [value, id]
+    );
+    return result.rows[0] || null;
 }
 
 /**
@@ -183,7 +194,10 @@ async function getPublicProfile(username, viewerId = null) {
  */
 async function getFullProfile(userId) {
     const result = await query(
-        `SELECT u.*, pm.local_path as profile_media_path
+        `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone_number,
+                u.picture, u.country, u.state, u.city, u.is_private, u.bio,
+                u.onboarding_completed, u.created_at, u.updated_at,
+                pm.local_path as profile_media_path
          FROM users u
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
          WHERE u.id = $1`,
@@ -198,6 +212,7 @@ module.exports = {
     findByUsername,
     create,
     updateProfile,
+    setOnboardingCompleted,
     getPublicProfile,
     getFullProfile,
 };

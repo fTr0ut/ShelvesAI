@@ -21,7 +21,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
-import { StarRating } from '../components/ui';
+import { CachedImage, StarRating } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
 import { useVisionProcessing } from '../hooks/useVisionProcessing';
 
@@ -444,10 +444,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
             >
                 <View style={styles.itemCover}>
                     {coverUri ? (
-                        <Image
+                        <CachedImage
                             source={{ uri: coverUri }}
                             style={styles.itemCoverImage}
-                            resizeMode="cover"
+                            contentFit="cover"
                         />
                     ) : (
                         <View style={styles.itemCoverFallback}>

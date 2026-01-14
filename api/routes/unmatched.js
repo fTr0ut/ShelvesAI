@@ -74,6 +74,12 @@ router.get('/:id', async (req, res) => {
 /**
  * PUT /api/unmatched/:id
  * Complete a review item - add it to the shelf with user-provided edits
+ * 
+ * Matching order:
+ * 1. Fingerprint lookup (exact hash match)
+ * 2. Fuzzy match (pg_trgm similarity)
+ * 3. Catalog API lookup (external APIs)
+ * 4. Create new collectable (if all above fail)
  */
 router.put('/:id', async (req, res) => {
     try {
@@ -84,31 +90,62 @@ router.put('/:id', async (req, res) => {
 
         // Merge user edits with raw data (user edits take priority)
         const completedData = { ...reviewItem.rawData, ...req.body };
-
-        // Check for existing collectable by fingerprint
-        const lwf = makeLightweightFingerprint(completedData);
-        let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-
-        if (!collectable && collectablesQueries.fuzzyMatch) {
-            collectable = await collectablesQueries.fuzzyMatch(
-                completedData.title,
-                completedData.primaryCreator,
-                reviewItem.shelfType
-            );
-        }
+        let matchSource = null;
 
         // Get shelf for type info
         const shelf = await shelvesQueries.getById(reviewItem.shelfId, req.user.id);
         const shelfType = shelf?.type || reviewItem.shelfType || 'item';
 
+        // 1. Check for existing collectable by fingerprint
+        const lwf = makeLightweightFingerprint(completedData);
+        let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+        if (collectable) {
+            matchSource = 'fingerprint';
+        }
+
+        // 2. Fuzzy match
+        if (!collectable && collectablesQueries.fuzzyMatch) {
+            collectable = await collectablesQueries.fuzzyMatch(
+                completedData.title,
+                completedData.primaryCreator,
+                shelfType
+            );
+            if (collectable) {
+                matchSource = 'fuzzy';
+            }
+        }
+
+        // 3. Catalog API lookup (new fallback)
         if (!collectable) {
-            // Create new collectable
+            try {
+                const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+                const matchingService = getCollectableMatchingService();
+                const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
+                if (apiResult) {
+                    // API returned a result - upsert it to our database
+                    collectable = await collectablesQueries.upsert({
+                        ...apiResult,
+                        kind: shelfType,
+                        fingerprint: makeCollectableFingerprint(apiResult),
+                        lightweightFingerprint: makeLightweightFingerprint(apiResult),
+                    });
+                    matchSource = 'api';
+                }
+            } catch (apiErr) {
+                console.warn('[PUT /api/unmatched/:id] API lookup failed:', apiErr?.message);
+                // Continue to create new collectable
+            }
+        }
+
+        // 4. Create new collectable if no match found
+        if (!collectable) {
             collectable = await collectablesQueries.upsert({
                 ...completedData,
                 kind: shelfType,
                 fingerprint: makeCollectableFingerprint(completedData),
                 lightweightFingerprint: lwf,
             });
+            matchSource = 'new';
         }
 
         // Add to user's shelf
@@ -123,6 +160,7 @@ router.put('/:id', async (req, res) => {
 
         res.json({
             success: true,
+            matchSource,
             item: {
                 id: shelfItem.id,
                 collectable,

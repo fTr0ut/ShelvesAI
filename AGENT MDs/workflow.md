@@ -195,3 +195,52 @@ This project now batches item-level feed events into time-window aggregates and 
 |--------------|---------|------------|
 | `FEED_AGGREGATE_WINDOW_MINUTES` | `15` | Time window for aggregates |
 | `FEED_AGGREGATE_PREVIEW_LIMIT` | `5` | Preview payload cap per aggregate |
+
+---
+
+## Manual Add & Needs Review Deduplication
+
+Both manual add and needs_review flows now use a centralized [CollectableMatchingService](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/collectableMatchingService.js) to prevent database duplicates.
+
+### Manual Add (2-Step Flow)
+
+```mermaid
+flowchart LR
+    A[User fills form] --> B[POST /manual/search]
+    B --> C{Suggestions?}
+    C -->|Yes| D[Show picker]
+    D -->|Pick one| E[Link existing]
+    D -->|Add anyway| F[Create manual]
+    C -->|No| F
+```
+
+**Endpoint:** `POST /api/shelves/:shelfId/manual/search`
+
+Searches database and external APIs, returns suggestions for user to choose from.
+
+### Needs Review Completion
+
+```mermaid
+flowchart LR
+    A[PUT /unmatched/:id] --> B[Fingerprint]
+    B -->|Match| F[Link]
+    B -->|No match| C[Fuzzy match]
+    C -->|Match| F
+    C -->|No match| D[Catalog API]
+    D -->|Match| F
+    D -->|No match| E[Create new]
+```
+
+**Matching order:**
+1. Lightweight fingerprint (exact hash)
+2. Fuzzy match (pg_trgm similarity)
+3. Catalog API lookup
+4. Create new collectable
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| [collectableMatchingService.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/collectableMatchingService.js) | Centralized fingerprint + API matching |
+| [shelvesController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/shelvesController.js) | `searchManualEntry` for /manual/search |
+| [unmatched.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/routes/unmatched.js) | PUT /:id with API fallback |
