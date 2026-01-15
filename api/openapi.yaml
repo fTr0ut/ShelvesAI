@@ -2150,6 +2150,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/checkin:
+    post:
+      tags:
+        - Feed
+      summary: Create a check-in event
+      description: |
+        Create a social feed event indicating the user is starting, continuing, or
+        has completed a collectable (book, movie, game, etc.).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                collectableId:
+                  type: integer
+                  description: ID of the collectable being checked in
+                status:
+                  type: string
+                  enum: [starting, continuing, completed]
+                  description: User's progress status with the collectable
+                visibility:
+                  type: string
+                  enum: [public, friends]
+                  default: public
+                  description: Who can see this check-in
+                note:
+                  type: string
+                  maxLength: 280
+                  description: Optional note or comment
+              required: [collectableId, status]
+      responses:
+        '201':
+          description: Check-in created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      eventType:
+                        type: string
+                      status:
+                        type: string
+                      visibility:
+                        type: string
+                      note:
+                        type: string
+                        nullable: true
+                      createdAt:
+                        type: string
+                        format: date-time
+                      collectable:
+                        $ref: '#/components/schemas/Collectable'
+        '400':
+          description: Invalid request
+        '404':
+          description: Collectable not found
   /api/friends/search:
     get:
       tags:

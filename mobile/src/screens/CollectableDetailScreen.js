@@ -20,7 +20,7 @@ import { apiRequest } from '../services/api';
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId, readOnly } = route.params || {};
+    const { item, shelfId, readOnly, id, collectableId } = route.params || {};
     const { apiBase, token } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -28,7 +28,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const [resolvedCollectable, setResolvedCollectable] = useState(null);
 
-    const baseCollectable = item?.collectable || item?.collectableSnapshot || {};
+    const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
+    const baseCollectable = item?.collectable
+        || item?.collectableSnapshot
+        || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
     const collectable = resolvedCollectable || baseCollectable;
     const manual = item?.manual || item?.manualSnapshot || {};
     const isManual = !collectable?.title && manual?.title;

@@ -21,7 +21,7 @@ import { apiRequest } from '../services/api';
 import { addComment, getComments, toggleLike } from '../services/feedApi';
 
 export default function FeedDetailScreen({ route, navigation }) {
-  const { entry } = route.params || {};
+  const { entry, id, feedId } = route.params || {};
   const { token, apiBase, user } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -38,7 +38,7 @@ export default function FeedDetailScreen({ route, navigation }) {
   const [hasLiked, setHasLiked] = useState(entry?.hasLiked || false);
   const [likePending, setLikePending] = useState(false);
 
-  const targetId = entry?.aggregateId || entry?.id || entry?.shelf?.id;
+  const targetId = feedId || id || entry?.aggregateId || entry?.id || entry?.shelf?.id;
 
   useEffect(() => {
     let isMounted = true;
@@ -50,7 +50,7 @@ export default function FeedDetailScreen({ route, navigation }) {
       try {
         const response = await apiRequest({ apiBase, path: `/api/feed/${targetId}`, token });
         if (isMounted && response?.entry) {
-          setDetailEntry(response.entry);
+          setDetailEntry((prev) => ({ ...(prev || {}), ...response.entry }));
           setError('');
         }
       } catch (err) {
@@ -64,9 +64,9 @@ export default function FeedDetailScreen({ route, navigation }) {
   }, [apiBase, token, targetId]);
 
   useEffect(() => {
-    setCommentCount(detailEntry?.commentCount || entry?.commentCount || 0);
-    setLikeCount(detailEntry?.likeCount || entry?.likeCount || 0);
-    setHasLiked(detailEntry?.hasLiked || entry?.hasLiked || false);
+    setCommentCount(detailEntry?.commentCount ?? entry?.commentCount ?? 0);
+    setLikeCount(detailEntry?.likeCount ?? entry?.likeCount ?? 0);
+    setHasLiked(detailEntry?.hasLiked ?? entry?.hasLiked ?? false);
   }, [detailEntry, entry]);
 
   const loadComments = useCallback(async () => {
@@ -130,7 +130,9 @@ export default function FeedDetailScreen({ route, navigation }) {
     }
   }, [apiBase, token, targetId, commentText, commentLoading, loadComments]);
 
-  const { shelf, owner, items } = detailEntry || entry || {};
+  const resolvedEntry = detailEntry || entry || {};
+  const { shelf, owner, items, eventType, collectable, checkinStatus, note } = resolvedEntry;
+  const isCheckIn = eventType === 'checkin.activity';
   const displayName = owner?.name || owner?.username || 'Someone';
   const isOwner = !!(user?.id && owner?.id && user.id === owner.id);
 
@@ -139,6 +141,29 @@ export default function FeedDetailScreen({ route, navigation }) {
     avatarSource = { uri: `${apiBase}/media/${owner.profileMediaPath}` };
   } else if (owner?.picture) {
     avatarSource = { uri: owner.picture };
+  }
+
+  const statusLabels = {
+    starting: 'Started',
+    continuing: 'Continuing',
+    completed: 'Finished',
+  };
+  const statusIcons = {
+    starting: 'play-circle-outline',
+    continuing: 'refresh-outline',
+    completed: 'checkmark-circle-outline',
+  };
+  const statusFallback = checkinStatus
+    ? `${checkinStatus.charAt(0).toUpperCase()}${checkinStatus.slice(1)}`
+    : 'Update';
+  const statusLabel = statusLabels[checkinStatus] || statusFallback;
+  const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
+
+  let collectableCoverUrl = null;
+  if (collectable?.coverMediaPath && apiBase) {
+    collectableCoverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
+  } else if (collectable?.coverUrl) {
+    collectableCoverUrl = collectable.coverUrl;
   }
 
   const getItemInfo = (item) => {
@@ -160,8 +185,35 @@ export default function FeedDetailScreen({ route, navigation }) {
 
   const renderItem = ({ item, index }) => {
     const info = getItemInfo(item);
+    const payloadCollectableId = item?.payload?.collectableId ?? item?.payload?.collectable_id ?? null;
+    const directCollectableId = item?.collectableId ?? null;
+    const itemCollectableId = item?.collectable?.id ?? item?.collectableSnapshot?.id ?? null;
+    const hasDetailTarget = !!(
+      payloadCollectableId ||
+      directCollectableId ||
+      itemCollectableId ||
+      item?.collectable ||
+      item?.collectableSnapshot ||
+      item?.manual ||
+      item?.manualSnapshot
+    );
+    const targetCollectableId = payloadCollectableId ?? directCollectableId ?? itemCollectableId;
+    const resolvedCollectableId = targetCollectableId != null ? String(targetCollectableId) : null;
     return (
-      <View style={styles.itemRow}>
+      <TouchableOpacity
+        style={styles.itemRow}
+        activeOpacity={hasDetailTarget ? 0.7 : 1}
+        disabled={!hasDetailTarget}
+        onPress={() => {
+          if (hasDetailTarget) {
+            if (resolvedCollectableId) {
+              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId });
+            } else {
+              navigation.navigate('CollectableDetail', { item });
+            }
+          }
+        }}
+      >
         <Text style={styles.itemNumber}>{index + 1}</Text>
         {info.coverUrl ? (
           <Image
@@ -177,7 +229,7 @@ export default function FeedDetailScreen({ route, navigation }) {
         <View style={styles.itemContent}>
           <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -247,47 +299,105 @@ export default function FeedDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          {/* Shelf Info */}
-          <View style={styles.shelfCard}>
-            <View style={styles.shelfHeader}>
-              <Text style={styles.shelfLabel}>Shelf</Text>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
-              >
-                <Text style={styles.viewLink}>View →</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
-            {shelf?.description ? (
-              <Text style={styles.shelfDescription}>{shelf.description}</Text>
-            ) : null}
-            <View style={styles.shelfMeta}>
-              <View style={styles.metaItem}>
-                <Ionicons name="library-outline" size={14} color={colors.textMuted} />
-                <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
-              </View>
-              <View style={styles.metaItem}>
-                <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
-                <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Items */}
-          <Text style={styles.sectionTitle}>Newly added collectibles</Text>
-          <View style={styles.itemsListContainer}>
-            <ScrollView nestedScrollEnabled={true}>
-              {(items || []).length > 0 ? (
-                items.map((item, idx) => (
-                  <View key={item._id || `item-${idx}`}>
-                    {renderItem({ item, index: idx })}
+          {isCheckIn ? (
+            <View style={styles.checkinCard}>
+              <View style={styles.checkinHeader}>
+                <Text style={styles.checkinLabel}>Check-in</Text>
+                {checkinStatus ? (
+                  <View style={styles.checkinStatusBadge}>
+                    <Ionicons name={statusIcon} size={14} color={colors.primary} />
+                    <Text style={styles.checkinStatusText}>{statusLabel}</Text>
                   </View>
-                ))
-              ) : (
-                <Text style={styles.emptyText}>No items to display</Text>
-              )}
-            </ScrollView>
-          </View>
+                ) : null}
+              </View>
+              <TouchableOpacity
+                style={styles.checkinBody}
+                onPress={() => {
+                  if (collectable?.id) {
+                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                  }
+                }}
+                activeOpacity={collectable?.id ? 0.7 : 1}
+                disabled={!collectable?.id}
+              >
+                {collectableCoverUrl ? (
+                  <Image
+                    source={{ uri: collectableCoverUrl }}
+                    style={styles.checkinCover}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.checkinCoverFallback}>
+                    <Ionicons name="book" size={18} color={colors.textMuted} />
+                  </View>
+                )}
+                <View style={styles.checkinInfo}>
+                  <Text style={styles.checkinTitle} numberOfLines={2}>
+                    {collectable?.title || 'Untitled item'}
+                  </Text>
+                  {collectable?.primaryCreator ? (
+                    <Text style={styles.checkinCreator} numberOfLines={1}>
+                      {collectable.primaryCreator}
+                    </Text>
+                  ) : null}
+                  {collectable?.kind ? (
+                    <View style={styles.checkinKindBadge}>
+                      <Text style={styles.checkinKindText}>{collectable.kind}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
+              {note ? (
+                <Text style={styles.checkinNote} numberOfLines={4}>
+                  {note}
+                </Text>
+              ) : null}
+            </View>
+          ) : (
+            <>
+            {/* Shelf Info */}
+            <View style={styles.shelfCard}>
+              <View style={styles.shelfHeader}>
+                <Text style={styles.shelfLabel}>Shelf</Text>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
+                >
+                  <Text style={styles.viewLink}>View →</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
+              {shelf?.description ? (
+                <Text style={styles.shelfDescription}>{shelf.description}</Text>
+              ) : null}
+              <View style={styles.shelfMeta}>
+                <View style={styles.metaItem}>
+                  <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                  <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                  <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+                </View>
+              </View>
+            </View>
+  
+            {/* Items */}
+            <Text style={styles.sectionTitle}>Newly added collectibles</Text>
+            <View style={styles.itemsListContainer}>
+              <ScrollView nestedScrollEnabled={true}>
+                {(items || []).length > 0 ? (
+                  items.map((item, idx) => (
+                    <View key={item._id || `item-${idx}`}>
+                      {renderItem({ item, index: idx })}
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>No items to display</Text>
+                )}
+              </ScrollView>
+            </View>
+            </>
+          )}
 
           {/* Actions & Comments - Now outside the list */}
           <View style={styles.commentsSection}>
@@ -446,6 +556,92 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   metaText: {
     fontSize: 13,
     color: colors.textMuted,
+  },
+  checkinCard: {
+    backgroundColor: colors.surface,
+    marginHorizontal: spacing.md,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    ...shadows.sm,
+  },
+  checkinHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  checkinLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  checkinStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  checkinStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  checkinBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  checkinCover: {
+    width: 64,
+    height: 96,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceElevated,
+  },
+  checkinCoverFallback: {
+    width: 64,
+    height: 96,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkinInfo: {
+    flex: 1,
+  },
+  checkinTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  checkinCreator: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  checkinKindBadge: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  checkinKindText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    textTransform: 'capitalize',
+  },
+  checkinNote: {
+    marginTop: spacing.sm,
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    fontStyle: 'italic',
   },
   sectionTitle: {
     fontSize: 14,

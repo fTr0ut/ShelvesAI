@@ -56,6 +56,62 @@ async function getForViewing(wishlistId, viewerId) {
 }
 
 /**
+ * List wishlists for a user that are viewable by the viewer
+ * Returns wishlists based on visibility settings and friendship status
+ */
+async function listViewableForUser(targetUserId, viewerId) {
+    const result = await query(
+        `SELECT w.*, 
+            COUNT(wi.id) as item_count,
+            u.username as owner_username,
+            u.first_name as owner_first_name
+         FROM wishlists w
+         LEFT JOIN wishlist_items wi ON wi.wishlist_id = w.id
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE w.user_id = $1
+         AND (
+           w.user_id = $2
+           OR w.visibility = 'public'
+           OR (w.visibility = 'friends' AND EXISTS (
+             SELECT 1 FROM friendships f
+             WHERE f.status = 'accepted'
+             AND ((f.requester_id = w.user_id AND f.addressee_id = $2)
+                  OR (f.requester_id = $2 AND f.addressee_id = w.user_id))
+           ))
+         )
+         GROUP BY w.id, u.username, u.first_name
+         ORDER BY w.created_at DESC`,
+        [targetUserId, viewerId]
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
+ * Check if a user has any wishlists viewable by the viewer
+ * Used to determine whether to show "View Wishlists" button
+ */
+async function hasViewableWishlists(targetUserId, viewerId) {
+    const result = await query(
+        `SELECT EXISTS (
+           SELECT 1 FROM wishlists w
+           WHERE w.user_id = $1
+           AND (
+             w.user_id = $2
+             OR w.visibility = 'public'
+             OR (w.visibility = 'friends' AND EXISTS (
+               SELECT 1 FROM friendships f
+               WHERE f.status = 'accepted'
+               AND ((f.requester_id = w.user_id AND f.addressee_id = $2)
+                    OR (f.requester_id = $2 AND f.addressee_id = w.user_id))
+             ))
+           )
+         ) as has_wishlists`,
+        [targetUserId, viewerId]
+    );
+    return result.rows[0]?.has_wishlists || false;
+}
+
+/**
  * Create a new wishlist
  */
 async function create({ userId, name, description, visibility = 'private' }) {
@@ -195,6 +251,8 @@ async function removeItem(itemId, wishlistId) {
 
 module.exports = {
     listForUser,
+    listViewableForUser,
+    hasViewableWishlists,
     getById,
     getForViewing,
     create,

@@ -1,0 +1,63 @@
+[
+  {
+    "name": "Feed list",
+    "url": "shelvesai://feed",
+    "expectNames": ["Main", "Home"]
+  },
+  {
+    "name": "Shelves list",
+    "url": "shelvesai://shelves",
+    "expectNames": ["Main", "Shelves"]
+  },
+  {
+    "name": "Feed detail",
+    "url": "shelvesai://feed/evt_123",
+    "expectNames": ["FeedDetail"],
+    "expectParams": { "id": "evt_123" }
+  },
+  {
+    "name": "Shelf detail",
+    "url": "shelvesai://shelf/42",
+    "expectNames": ["ShelfDetail"],
+    "expectParams": { "id": "42" }
+  },
+  {
+    "name": "Collectable detail",
+    "url": "shelvesai://collectable/99",
+    "expectNames": ["CollectableDetail"],
+    "expectParams": { "id": "99" }
+  },
+  {
+    "name": "Profile",
+    "url": "shelvesai://profile/johna",
+    "expectNames": ["Profile"],
+    "expectParams": { "username": "johna" }
+  },
+  {
+    "name": "Wishlist",
+    "url": "shelvesai://wishlist/7",
+    "expectNames": ["Wishlist"],
+    "expectParams": { "id": "7" }
+  },
+  {
+    "name": "List detail",
+    "url": "shelvesai://list/12",
+    "expectNames": ["ListDetail"],
+    "expectParams": { "id": "12" }
+  },
+  {
+    "name": "Favorites",
+    "url": "shelvesai://favorites",
+    "expectNames": ["Favorites"]
+  },
+  {
+    "name": "Account",
+    "url": "shelvesai://account",
+    "expectNames": ["Account"]
+  },
+  {
+    "name": "Friend search",
+    "url": "shelvesai://friends/search",
+    "expectNames": ["FriendSearch"]
+  }
+]

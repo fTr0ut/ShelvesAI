@@ -19,6 +19,47 @@ async function listWishlists(req, res) {
 }
 
 /**
+ * GET /wishlists/user/:userId - List wishlists for a specific user (with visibility filtering)
+ */
+async function listUserWishlists(req, res) {
+    try {
+        const { userId } = req.params;
+        const targetUserId = parseInt(userId);
+
+        if (isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        // Get wishlists visible to the current user
+        const wishlists = await wishlistsQueries.listViewableForUser(targetUserId, req.user.id);
+        res.json({ wishlists });
+    } catch (err) {
+        console.error('listUserWishlists error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+/**
+ * GET /wishlists/user/:userId/check - Check if a user has any viewable wishlists
+ */
+async function checkUserHasWishlists(req, res) {
+    try {
+        const { userId } = req.params;
+        const targetUserId = parseInt(userId);
+
+        if (isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        const hasWishlists = await wishlistsQueries.hasViewableWishlists(targetUserId, req.user.id);
+        res.json({ hasWishlists });
+    } catch (err) {
+        console.error('checkUserHasWishlists error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+/**
  * POST /wishlists - Create a new wishlist
  */
 async function createWishlist(req, res) {
@@ -204,6 +245,8 @@ async function removeItem(req, res) {
 
 module.exports = {
     listWishlists,
+    listUserWishlists,
+    checkUserHasWishlists,
     createWishlist,
     getWishlist,
     updateWishlist,

@@ -44,6 +44,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [lists, setLists] = useState([]);
     const [listsLoading, setListsLoading] = useState(false);
     const [listsLoaded, setListsLoaded] = useState(false);
+    const [hasViewableWishlists, setHasViewableWishlists] = useState(false);
 
     // Editable fields
     const [firstName, setFirstName] = useState('');
@@ -113,6 +114,21 @@ export default function ProfileScreen({ navigation, route }) {
                     setPosts([]);
                 } finally {
                     setPostsLoading(false);
+                }
+
+                // Check if this user has viewable wishlists (for friends)
+                if (profileData.profile.isFriend && profileData.profile.id) {
+                    try {
+                        const wishlistCheck = await apiRequest({
+                            apiBase,
+                            path: `/api/wishlists/user/${profileData.profile.id}/check`,
+                            token
+                        });
+                        setHasViewableWishlists(wishlistCheck.hasWishlists || false);
+                    } catch (e) {
+                        console.warn('Failed to check wishlists:', e);
+                        setHasViewableWishlists(false);
+                    }
                 }
             }
         } catch (e) {
@@ -636,9 +652,15 @@ export default function ProfileScreen({ navigation, route }) {
                                     <Text style={styles.statLabel}>Shelves</Text>
                                 </View>
                                 {profile.isFriend && (
-                                    <View style={styles.friendBadge}>
-                                        <Ionicons name="people" size={14} color={colors.success} />
-                                        <Text style={styles.friendBadgeText}>Friends</Text>
+                                    <View style={styles.friendBadgeContainer}>
+                                        <View style={styles.friendBadge}>
+                                            <Ionicons name="people" size={14} color={colors.success} />
+                                            <Text style={styles.friendBadgeText}>Friends</Text>
+                                        </View>
+                                        <TouchableOpacity style={styles.removeFriendBadge} onPress={handleRemoveFriend}>
+                                            <Ionicons name="person-remove-outline" size={12} color={colors.error} />
+                                            <Text style={styles.removeFriendBadgeText}>Remove</Text>
+                                        </TouchableOpacity>
                                     </View>
                                 )}
                             </View>
@@ -650,12 +672,7 @@ export default function ProfileScreen({ navigation, route }) {
                                 </TouchableOpacity>
                             )}
 
-                            {!isOwnProfile && profile.isFriend && (
-                                <TouchableOpacity style={styles.removeFriendButton} onPress={handleRemoveFriend}>
-                                    <Ionicons name="person-remove-outline" size={18} color={colors.error} />
-                                    <Text style={styles.removeFriendText}>Remove Friend</Text>
-                                </TouchableOpacity>
-                            )}
+
 
                             {isOwnProfile && (
                                 <View style={styles.profileButtonsRow}>
@@ -674,6 +691,17 @@ export default function ProfileScreen({ navigation, route }) {
                                         <Text style={styles.wishlistButtonText}>My Favorites</Text>
                                     </TouchableOpacity>
                                 </View>
+                            )}
+
+                            {/* Wishlist button for friends - only show if they have viewable wishlists */}
+                            {!isOwnProfile && profile.isFriend && hasViewableWishlists && (
+                                <TouchableOpacity
+                                    style={styles.wishlistButton}
+                                    onPress={() => navigation.navigate('Wishlists', { username: profile.username, userId: profile.id, firstName: profile.firstName })}
+                                >
+                                    <Ionicons name="gift-outline" size={18} color={colors.primary} />
+                                    <Text style={styles.wishlistButtonText}>{profile.firstName || profile.username}'s Wishlists</Text>
+                                </TouchableOpacity>
                             )}
                         </>
                     )}
@@ -1037,6 +1065,25 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
         friendBadgeText: {
             fontSize: 13,
             color: colors.success,
+            fontWeight: '500',
+        },
+        friendBadgeContainer: {
+            alignItems: 'center',
+            gap: spacing.xs,
+        },
+        removeFriendBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            backgroundColor: colors.error + '15',
+            paddingHorizontal: spacing.sm,
+            paddingVertical: 4,
+            borderRadius: radius.full,
+            marginTop: 4,
+        },
+        removeFriendBadgeText: {
+            fontSize: 11,
+            color: colors.error,
             fontWeight: '500',
         },
         addFriendButton: {

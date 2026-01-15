@@ -25,6 +25,7 @@ export default function ShelvesScreen({ navigation }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState('grid');
     const [unmatchedCount, setUnmatchedCount] = useState(0);
+    const [unreadCount, setUnreadCount] = useState(0);
 
     const loadShelves = useCallback(async () => {
         try {
@@ -43,17 +44,38 @@ export default function ShelvesScreen({ navigation }) {
         }
     }, [apiBase, token, refreshing]);
 
-    useEffect(() => { loadShelves(); }, []);
+    const loadUnreadCount = useCallback(async () => {
+        if (!token) {
+            setUnreadCount(0);
+            return;
+        }
+        try {
+            const result = await apiRequest({ apiBase, path: '/api/notifications/unread-count', token });
+            const count = result?.unreadCount ?? result?.count ?? 0;
+            setUnreadCount(Number(count) || 0);
+        } catch (err) {
+            setUnreadCount(0);
+        }
+    }, [apiBase, token]);
 
     useEffect(() => {
-        const unsubscribe = navigation.addListener('focus', loadShelves);
+        loadShelves();
+        loadUnreadCount();
+    }, [loadShelves, loadUnreadCount]);
+
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', () => {
+            loadShelves();
+            loadUnreadCount();
+        });
         return unsubscribe;
-    }, [navigation, loadShelves]);
+    }, [navigation, loadShelves, loadUnreadCount]);
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
         loadShelves();
-    }, [loadShelves]);
+        loadUnreadCount();
+    }, [loadShelves, loadUnreadCount]);
 
     const filteredShelves = useMemo(() => {
         if (!searchQuery.trim()) {
@@ -187,6 +209,19 @@ export default function ShelvesScreen({ navigation }) {
                     >
                         <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
                     </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.headerIconButton}
+                        onPress={() => navigation.navigate('Notifications')}
+                    >
+                        <Ionicons name="notifications-outline" size={22} color={colors.text} />
+                        {unreadCount > 0 && (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
                     <TouchableOpacity onPress={() => navigation.navigate('Account')}>
                         <Ionicons name="person-circle-outline" size={28} color={colors.text} />
                     </TouchableOpacity>
@@ -284,6 +319,10 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         gap: spacing.sm,
     },
+    headerIconButton: {
+        padding: spacing.xs,
+        position: 'relative',
+    },
     viewToggle: {
         width: 40,
         height: 40,
@@ -292,6 +331,23 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.sm,
+    },
+    badge: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: colors.error,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    badgeText: {
+        color: colors.textInverted,
+        fontSize: 10,
+        fontWeight: '700',
     },
     searchContainer: {
         paddingHorizontal: spacing.md,

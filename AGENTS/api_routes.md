@@ -15,13 +15,14 @@ This document maps the mobile application screens to the backend API endpoints t
 | `GET` | `/api/config/onboarding` | Fetch onboarding screen copy | - |
 
 ## 1. Home Tab (Feed)
-**Screen**: SocialFeedScreen
+**Screen**: SocialFeedScreen, CheckInScreen
 
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/feed` | Fetch activity feed (friends' updates) | `?limit=20&skip=0` |
-| `POST` | `/api/feed/:activityId/like` | Like a feed item | - |
-| `POST` | `/api/feed/:activityId/comment` | Comment on activity | `{ text }` |
+| `GET` | `/api/feed` | Fetch activity feed (friends' updates) | `?scope=all&limit=20&offset=0` |
+| `POST` | `/api/feed/:eventId/like` | Like a feed item | - |
+| `POST` | `/api/feed/:eventId/comment` | Comment on activity | `{ text }` |
+| `POST` | `/api/checkin` | Create check-in event | `{ collectableId, status, visibility?, note? }` |
 
 ## 2. Shelves Tab (Library)
 **Screen**: ShelvesScreen

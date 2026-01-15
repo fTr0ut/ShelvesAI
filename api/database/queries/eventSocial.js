@@ -6,6 +6,14 @@ async function ensureEventExists(eventId) {
   return result.rowCount > 0;
 }
 
+async function getEventOwner(eventId) {
+  const result = await query(
+    'SELECT user_id FROM event_aggregates WHERE id = $1',
+    [eventId]
+  );
+  return result.rows[0]?.user_id || null;
+}
+
 async function toggleLike(eventId, userId) {
   return transaction(async (client) => {
     const existing = await client.query(
@@ -176,6 +184,7 @@ async function getSocialSummaries(eventIds, userId) {
 
 module.exports = {
   ensureEventExists,
+  getEventOwner,
   toggleLike,
   addComment,
   getComments,

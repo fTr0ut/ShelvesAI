@@ -1,4 +1,5 @@
 const friendshipQueries = require('../database/queries/friendships');
+const notificationsQueries = require('../database/queries/notifications');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
@@ -228,6 +229,18 @@ async function sendFriendRequest(req, res) {
           [message, reverse.id]
         );
         const updated = await query('SELECT * FROM friendships WHERE id = $1', [reverse.id]);
+        try {
+          await notificationsQueries.create({
+            userId: reverse.requester_id,
+            actorId: req.user.id,
+            type: 'friend_accept',
+            entityId: reverse.id,
+            entityType: 'friendship',
+            metadata: {},
+          });
+        } catch (err) {
+          console.warn('sendFriendRequest auto-accept notification error:', err.message);
+        }
         return res.json({ friendship: rowToCamelCase(updated.rows[0]), autoAccepted: true });
       }
       if (reverse.status === 'accepted') {
@@ -247,6 +260,18 @@ async function sendFriendRequest(req, res) {
         [message, existingResult.rows[0].id]
       );
       const updated = await query('SELECT * FROM friendships WHERE id = $1', [existingResult.rows[0].id]);
+      try {
+        await notificationsQueries.create({
+          userId: targetUserId,
+          actorId: req.user.id,
+          type: 'friend_request',
+          entityId: existingResult.rows[0].id,
+          entityType: 'friendship',
+          metadata: message ? { message } : {},
+        });
+      } catch (err) {
+        console.warn('sendFriendRequest refresh notification error:', err.message);
+      }
       return res.json({ friendship: rowToCamelCase(updated.rows[0]), refreshed: true });
     }
 
@@ -257,6 +282,19 @@ async function sendFriendRequest(req, res) {
        RETURNING *`,
       [req.user.id, targetUserId, message]
     );
+
+    try {
+      await notificationsQueries.create({
+        userId: targetUserId,
+        actorId: req.user.id,
+        type: 'friend_request',
+        entityId: result.rows[0].id,
+        entityType: 'friendship',
+        metadata: message ? { message } : {},
+      });
+    } catch (err) {
+      console.warn('sendFriendRequest notification error:', err.message);
+    }
 
     res.status(201).json({ friendship: rowToCamelCase(result.rows[0]) });
   } catch (err) {
@@ -281,6 +319,21 @@ async function respondToRequest(req, res) {
 
     if (result.deleted) {
       return res.json({ removed: true });
+    }
+
+    if (action === 'accept' && result.friendship?.requesterId) {
+      try {
+        await notificationsQueries.create({
+          userId: result.friendship.requesterId,
+          actorId: req.user.id,
+          type: 'friend_accept',
+          entityId: result.friendship.id,
+          entityType: 'friendship',
+          metadata: {},
+        });
+      } catch (err) {
+        console.warn('respondToRequest notification error:', err.message);
+      }
     }
 
     res.json({ friendship: result.friendship });

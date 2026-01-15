@@ -42,8 +42,10 @@ import FavoritesScreen from './screens/FavoritesScreen'
 import ListCreateScreen from './screens/ListCreateScreen'
 import ListDetailScreen from './screens/ListDetailScreen'
 import UnmatchedScreen from './screens/UnmatchedScreen'
+import NotificationScreen from './screens/NotificationScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 import CheckInScreen from './screens/CheckInScreen'
+import linkingConfig from './navigation/linkingConfig'
 
 
 import { AuthContext } from './context/AuthContext'
@@ -268,7 +270,7 @@ function AppNavigator({ token, needsOnboarding }) {
   }
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} linking={linkingConfig}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!token ? (
           <Stack.Screen name="Login" component={LoginScreen} />
@@ -313,6 +315,7 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="ListCreate" component={ListCreateScreen} />
             <Stack.Screen name="ListDetail" component={ListDetailScreen} />
             <Stack.Screen name="Unmatched" component={UnmatchedScreen} />
+            <Stack.Screen name="Notifications" component={NotificationScreen} />
           </>
         )}
       </Stack.Navigator>

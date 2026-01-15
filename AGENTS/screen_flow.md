@@ -23,10 +23,10 @@ Once authenticated, the user lands on the **Main** navigator which contains:
 | Tab Name | Icon | Screen Component | Description |
 | :--- | :--- | :--- | :--- |
 | **Home** | `home` | `SocialFeedScreen` | The landing screen showing activity feed. |
-| **Add** | `add` | `ShelfCreateScreen` | (Button) Opens the "New Shelf" screen directly (Modal-like behavior). |
+| **Add** | `add` | Speed Dial | Opens speed dial with options: "Add to Shelf" and "Check In". |
 | **Shelves** | `library` | `ShelvesScreen` | Users' personal collection of shelves. |
 
-*Note: The "Add" tab is a custom button that intercepts the press to navigate to `ShelfCreateScreen` instead of switching tabs.*
+*Note: The "Add" tab is a custom speed dial button that reveals "Add to Shelf" (navigates to `ShelfSelectScreen`) and "Check In" (opens `CheckInScreen` modal).*
 
 ### 3. Stack Screens (Global)
 These screens can be accessed from multiple points in the app and overlay the current context:
@@ -38,6 +38,7 @@ These screens can be accessed from multiple points in the app and overlay the cu
 *   **ShelfEdit**: Modify shelf settings.
 *   **CollectableDetail**: View details of an item in a shelf.
 *   **ManualEdit**: Manually edit item metadata.
+*   **CheckIn**: Modal to post a check-in event (status + collectable + note).
 *   **Account**: User settings and profile management.
 *   **About**: App information.
 
@@ -94,8 +95,10 @@ graph TD
     Shelves -- Select Shelf --> ShelfDetail
     Shelves -- Header Icon --> Account
 
-    %% Global Actions (e.g. Add Button)
-    Tabs -- + Button --> ShelfCreate
+    %% Global Actions (Speed Dial)
+    Tabs -- + Button --> SpeedDial
+    SpeedDial -- Add to Shelf --> ShelfSelect
+    SpeedDial -- Check In --> CheckIn
 
     %% Shelf Flows
     ShelfCreate -->|Created| ShelfDetail
@@ -116,6 +119,7 @@ graph TD
 
 ### From Home (Feed)
 - **Tap Feed Item** -> `FeedDetail`
+- **Tap Check-in Event** -> `CollectableDetail`
 - **Tap Profile Icon (Header)** -> `Account`
 
 ### From Shelves
@@ -123,7 +127,9 @@ graph TD
 - **Tap Profile Icon (Header)** -> `Account`
 
 ### From Global Add Button (Center Tab)
-- **Tap (+)** -> `ShelfCreateScreen`
+- **Tap (+)** -> Speed dial expands
+  - "Add to Shelf" -> `ShelfSelectScreen` -> `ItemSearchScreen`
+  - "Check In" -> `CheckInScreen` (modal)
 
 ### From Details
 - **ShelfDetail**

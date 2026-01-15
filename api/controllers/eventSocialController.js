@@ -1,4 +1,5 @@
 const eventSocialQueries = require('../database/queries/eventSocial');
+const notificationsQueries = require('../database/queries/notifications');
 const { parsePagination } = require('../database/queries/utils');
 
 async function toggleLike(req, res) {
@@ -10,6 +11,30 @@ async function toggleLike(req, res) {
     if (!exists) return res.status(404).json({ error: 'Feed entry not found' });
 
     const result = await eventSocialQueries.toggleLike(eventId, req.user.id);
+
+    try {
+      const ownerId = await eventSocialQueries.getEventOwner(eventId);
+      if (ownerId && ownerId !== req.user.id) {
+        if (result?.liked) {
+          await notificationsQueries.create({
+            userId: ownerId,
+            actorId: req.user.id,
+            type: 'like',
+            entityId: eventId,
+            entityType: 'event',
+            metadata: {},
+          });
+        } else {
+          await notificationsQueries.softDeleteLike({
+            userId: ownerId,
+            actorId: req.user.id,
+            entityId: eventId,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('toggleLike notification error:', err.message);
+    }
     res.json(result);
   } catch (err) {
     console.error('toggleLike error:', err);
@@ -29,6 +54,25 @@ async function addComment(req, res) {
 
     const comment = await eventSocialQueries.addComment(eventId, req.user.id, content);
     const { commentCount } = await eventSocialQueries.getComments(eventId, { limit: 1, offset: 0 });
+
+    try {
+      const ownerId = await eventSocialQueries.getEventOwner(eventId);
+      if (ownerId && ownerId !== req.user.id) {
+        await notificationsQueries.create({
+          userId: ownerId,
+          actorId: req.user.id,
+          type: 'comment',
+          entityId: eventId,
+          entityType: 'event',
+          metadata: {
+            commentId: comment?.id || null,
+            preview: comment?.content ? String(comment.content).slice(0, 140) : null,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('addComment notification error:', err.message);
+    }
 
     res.status(201).json({ comment, commentCount });
   } catch (err) {

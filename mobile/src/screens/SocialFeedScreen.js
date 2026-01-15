@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { toggleLike } from '../services/feedApi';
 
 const FILTERS = [
     { key: 'all', label: 'All' },
@@ -87,6 +88,8 @@ export default function SocialFeedScreen({ navigation }) {
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
     const [activeFilter, setActiveFilter] = useState('all');
+    const [pendingLikes, setPendingLikes] = useState({});
+    const [unreadCount, setUnreadCount] = useState(0);
 
     // Inline search state
     const [searchQuery, setSearchQuery] = useState('');
@@ -125,9 +128,31 @@ export default function SocialFeedScreen({ navigation }) {
 
     useEffect(() => { load(); }, [load]);
 
+    const loadUnreadCount = useCallback(async () => {
+        if (!token) {
+            setUnreadCount(0);
+            return;
+        }
+        try {
+            const result = await apiRequest({ apiBase, path: '/api/notifications/unread-count', token });
+            const count = result?.unreadCount ?? result?.count ?? 0;
+            setUnreadCount(Number(count) || 0);
+        } catch (err) {
+            setUnreadCount(0);
+        }
+    }, [apiBase, token]);
+
+    useEffect(() => { loadUnreadCount(); }, [loadUnreadCount]);
+
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', loadUnreadCount);
+        return unsubscribe;
+    }, [navigation, loadUnreadCount]);
+
     const onRefresh = () => {
         setRefreshing(true);
         load({ silent: true });
+        loadUnreadCount();
     };
 
     // Debounced search handler
@@ -191,15 +216,116 @@ export default function SocialFeedScreen({ navigation }) {
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
+    const updateEntrySocial = useCallback((targetId, updates) => {
+        if (!targetId) return;
+        setEntries((prevEntries) => prevEntries.map((entry) => {
+            const entryId = entry?.aggregateId || entry?.id;
+            if (entryId !== targetId) return entry;
+            return { ...entry, ...updates };
+        }));
+    }, []);
+
+    const setPendingLike = useCallback((targetId, isPending) => {
+        if (!targetId) return;
+        setPendingLikes((prev) => {
+            const next = { ...prev };
+            if (isPending) {
+                next[targetId] = true;
+            } else {
+                delete next[targetId];
+            }
+            return next;
+        });
+    }, []);
+
+    const handleToggleLike = useCallback(async (entry) => {
+        const targetId = entry?.aggregateId || entry?.id;
+        if (!token || !targetId || pendingLikes[targetId]) return;
+
+        const previous = {
+            hasLiked: !!entry?.hasLiked,
+            likeCount: entry?.likeCount || 0,
+        };
+        const optimisticLiked = !previous.hasLiked;
+        const optimisticCount = Math.max(0, previous.likeCount + (optimisticLiked ? 1 : -1));
+
+        updateEntrySocial(targetId, { hasLiked: optimisticLiked, likeCount: optimisticCount });
+        setPendingLike(targetId, true);
+
+        try {
+            const response = await toggleLike({ apiBase, token, eventId: targetId });
+            const resolvedLiked = typeof response?.liked === 'boolean' ? response.liked : optimisticLiked;
+            const resolvedCount = typeof response?.likeCount === 'number' ? response.likeCount : optimisticCount;
+            updateEntrySocial(targetId, { hasLiked: resolvedLiked, likeCount: resolvedCount });
+        } catch (err) {
+            updateEntrySocial(targetId, previous);
+        } finally {
+            setPendingLike(targetId, false);
+        }
+    }, [apiBase, token, pendingLikes, setPendingLike, updateEntrySocial]);
+
+    const handleCommentPress = useCallback((entry) => {
+        const targetId = entry?.aggregateId || entry?.id;
+        if (!targetId) return;
+        navigation.navigate('FeedDetail', { entry });
+    }, [navigation]);
+
+    const renderSocialActions = (entry) => {
+        const targetId = entry?.aggregateId || entry?.id;
+        const hasLiked = !!entry?.hasLiked;
+        const likeCount = entry?.likeCount || 0;
+        const commentCount = entry?.commentCount || 0;
+        const topComment = entry?.topComment || null;
+        const likeLabel = likeCount > 0 ? `${likeCount} Like${likeCount === 1 ? '' : 's'}` : 'Like';
+        const commentLabel = commentCount > 0 ? `${commentCount} Comment${commentCount === 1 ? '' : 's'}` : 'Comment';
+        const isPending = !!(targetId && pendingLikes[targetId]);
+
+        return (
+            <View style={styles.socialRow}>
+                <View style={styles.socialActions}>
+                    <TouchableOpacity
+                        style={[
+                            styles.socialButton,
+                            hasLiked && styles.socialButtonActive,
+                            isPending && styles.socialButtonDisabled,
+                        ]}
+                        onPress={() => handleToggleLike(entry)}
+                        disabled={isPending || !targetId}
+                    >
+                        <Ionicons
+                            name={hasLiked ? 'heart' : 'heart-outline'}
+                            size={16}
+                            color={hasLiked ? colors.primary : colors.textMuted}
+                        />
+                        <Text style={[styles.socialButtonText, hasLiked && styles.socialButtonTextActive]}>
+                            {likeLabel}
+                        </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.socialButton}
+                        onPress={() => handleCommentPress(entry)}
+                        disabled={!targetId}
+                    >
+                        <Ionicons name="chatbubble-outline" size={16} color={colors.textMuted} />
+                        <Text style={styles.socialButtonText}>{commentLabel}</Text>
+                    </TouchableOpacity>
+                </View>
+                {topComment?.content ? (
+                    <Text style={styles.commentPreview} numberOfLines={1}>
+                        {topComment.username ? `${topComment.username}: ` : ''}
+                        {topComment.content}
+                    </Text>
+                ) : null}
+            </View>
+        );
+    };
+
     const renderItem = ({ item }) => {
         const { shelf, owner, items, eventType, collectable, checkinStatus, note } = item;
         const isCheckIn = eventType === 'checkin.activity';
         const timeAgo = formatRelativeTime(isCheckIn ? item.createdAt : shelf?.updatedAt);
         const displayName = owner?.name || owner?.username || 'Someone';
         const initial = displayName.charAt(0).toUpperCase();
-        const likeCount = item?.likeCount || 0;
-        const commentCount = item?.commentCount || 0;
-        const topComment = item?.topComment || null;
 
         let avatarSource = null;
         if (owner?.profileMediaPath) {
@@ -210,10 +336,9 @@ export default function SocialFeedScreen({ navigation }) {
 
         const handlePress = () => {
             if (isCheckIn) {
-                // Check-in events navigate to collectable detail
-                if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable } });
-                }
+                // Check-in events now navigate to FeedDetail (event details)
+                // The item preview inside handles navigation to the collectable
+                navigation.navigate('FeedDetail', { entry: item });
             } else if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
@@ -242,6 +367,12 @@ export default function SocialFeedScreen({ navigation }) {
             } else if (collectable?.coverUrl) {
                 collectableCoverUrl = collectable.coverUrl;
             }
+
+            const handleCheckinCollectablePress = () => {
+                if (collectable?.id) {
+                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                }
+            };
 
             return (
                 <TouchableOpacity
@@ -274,7 +405,11 @@ export default function SocialFeedScreen({ navigation }) {
                     </View>
 
                     {/* Collectable preview */}
-                    <View style={styles.checkinPreview}>
+                    <TouchableOpacity
+                        style={styles.checkinPreview}
+                        onPress={handleCheckinCollectablePress}
+                        activeOpacity={0.9}
+                    >
                         {collectableCoverUrl ? (
                             <Image
                                 source={{ uri: collectableCoverUrl }}
@@ -297,34 +432,14 @@ export default function SocialFeedScreen({ navigation }) {
                                 </View>
                             )}
                         </View>
-                    </View>
+                    </TouchableOpacity>
 
                     {/* Note if present */}
                     {note ? (
                         <Text style={styles.checkinNote} numberOfLines={3}>{note}</Text>
                     ) : null}
 
-                    {/* Social row */}
-                    {(likeCount > 0 || commentCount > 0 || topComment?.content) && (
-                        <View style={styles.socialRow}>
-                            <View style={styles.socialStats}>
-                                <View style={styles.socialStat}>
-                                    <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
-                                    <Text style={styles.socialText}>{likeCount}</Text>
-                                </View>
-                                <View style={styles.socialStat}>
-                                    <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
-                                    <Text style={styles.socialText}>{commentCount}</Text>
-                                </View>
-                            </View>
-                            {topComment?.content ? (
-                                <Text style={styles.commentPreview} numberOfLines={1}>
-                                    {topComment.username ? `${topComment.username}: ` : ''}
-                                    {topComment.content}
-                                </Text>
-                            ) : null}
-                        </View>
-                    )}
+                    {renderSocialActions(item)}
                 </TouchableOpacity>
             );
         }
@@ -414,26 +529,7 @@ export default function SocialFeedScreen({ navigation }) {
                     </View>
                 )}
 
-                {(likeCount > 0 || commentCount > 0 || topComment?.content) && (
-                    <View style={styles.socialRow}>
-                        <View style={styles.socialStats}>
-                            <View style={styles.socialStat}>
-                                <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
-                                <Text style={styles.socialText}>{likeCount}</Text>
-                            </View>
-                            <View style={styles.socialStat}>
-                                <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
-                                <Text style={styles.socialText}>{commentCount}</Text>
-                            </View>
-                        </View>
-                        {topComment?.content ? (
-                            <Text style={styles.commentPreview} numberOfLines={1}>
-                                {topComment.username ? `${topComment.username}: ` : ''}
-                                {topComment.content}
-                            </Text>
-                        ) : null}
-                    </View>
-                )}
+                {renderSocialActions(item)}
 
                 {/* Footer */}
                 <View style={styles.cardFooter}>
@@ -496,9 +592,24 @@ export default function SocialFeedScreen({ navigation }) {
                         </TouchableOpacity>
                     )}
                 </View>
-                <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
-                    <Ionicons name="person-circle-outline" size={26} color={colors.text} />
-                </TouchableOpacity>
+                <View style={styles.headerRight}>
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('Notifications')}
+                        style={styles.headerButton}
+                    >
+                        <Ionicons name="notifications-outline" size={24} color={colors.text} />
+                        {unreadCount > 0 && (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
+                        <Ionicons name="person-circle-outline" size={26} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Floating search results dropdown */}
@@ -679,6 +790,24 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     headerButton: {
         padding: spacing.xs,
+        position: 'relative',
+    },
+    badge: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        minWidth: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: colors.error,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 3,
+    },
+    badgeText: {
+        color: colors.textInverted,
+        fontSize: 10,
+        fontWeight: '700',
     },
     filterBar: {
         flexDirection: 'row',
@@ -830,31 +959,40 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.textMuted,
     },
     socialRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         marginBottom: spacing.sm,
-        gap: spacing.sm,
+        gap: spacing.xs,
     },
-    socialStats: {
+    socialActions: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: spacing.sm,
     },
-    socialStat: {
+    socialButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: 6,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 6,
+        borderRadius: 16,
+        backgroundColor: colors.surfaceElevated,
     },
-    socialText: {
+    socialButtonActive: {
+        backgroundColor: colors.primary + '15',
+    },
+    socialButtonDisabled: {
+        opacity: 0.6,
+    },
+    socialButtonText: {
         fontSize: 12,
         color: colors.textMuted,
+        fontWeight: '500',
+    },
+    socialButtonTextActive: {
+        color: colors.primary,
     },
     commentPreview: {
-        flex: 1,
         fontSize: 12,
         color: colors.textSecondary,
-        textAlign: 'right',
     },
     cardFooter: {
         flexDirection: 'row',

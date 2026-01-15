@@ -13,6 +13,11 @@ router.use(auth);
 
 router.get('/', wishlistController.listWishlists);
 router.post('/', wishlistController.createWishlist);
+
+// User-specific routes (must be before /:id routes)
+router.get('/user/:userId', wishlistController.listUserWishlists);
+router.get('/user/:userId/check', wishlistController.checkUserHasWishlists);
+
 router.get('/:id', wishlistController.getWishlist);
 router.put('/:id', wishlistController.updateWishlist);
 router.delete('/:id', wishlistController.deleteWishlist);

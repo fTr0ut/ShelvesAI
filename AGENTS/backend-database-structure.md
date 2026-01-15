@@ -191,6 +191,30 @@ Activity feed system.
 
 ---
 
+### 9. **event_aggregates**
+Aggregated feed events for efficient feed display.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | UUID | `PK` | Unique aggregate ID |
+| user_id | UUID | `FK -> users(id)` | Actor |
+| shelf_id | INTEGER | `FK -> shelves(id)` | Related shelf (null for check-ins) |
+| collectable_id | INTEGER | `FK -> collectables(id)` | For check-in events |
+| event_type | TEXT | `NOT NULL` | e.g., 'item.collectable_added', 'checkin.activity' |
+| checkin_status | TEXT | | 'starting', 'continuing', 'completed' |
+| visibility | TEXT | `DEFAULT 'public'` | 'public' or 'friends' |
+| note | TEXT | | Optional user message |
+| item_count | INTEGER | `DEFAULT 0` | Number of items in aggregate |
+| preview_payloads | JSONB | `DEFAULT []` | Preview data for feed display |
+| window_start_utc | TIMESTAMPTZ | | Aggregation window start |
+| window_end_utc | TIMESTAMPTZ | | Aggregation window end |
+| last_activity_at | TIMESTAMPTZ | | Last update timestamp |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+
+**Indexes:** `user_id+shelf_id+event_type+window_end_utc`, `last_activity_at`, `collectable_id`
+
+---
+
 ## Entity Relationship Diagram
 
 ```mermaid

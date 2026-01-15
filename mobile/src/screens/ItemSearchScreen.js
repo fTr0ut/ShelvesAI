@@ -24,10 +24,7 @@ export default function ItemSearchScreen({ route, navigation }) {
   const { token, apiBase } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [searched, setSearched] = useState(false);
+
 
   const [manualTitle, setManualTitle] = useState('');
   const [manualType, setManualType] = useState(shelfType || '');
@@ -44,46 +41,7 @@ export default function ItemSearchScreen({ route, navigation }) {
     [colors, spacing, typography, shadows, radius]
   );
 
-  const handleSearch = useCallback(async () => {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setResults([]);
-      setSearched(false);
-      return;
-    }
 
-    try {
-      setSearching(true);
-      setSearched(true);
-      const data = await apiRequest({
-        apiBase,
-        path: `/api/shelves/${shelfId}/search?q=${encodeURIComponent(trimmed)}`,
-        token,
-      });
-      setResults(Array.isArray(data?.results) ? data.results : []);
-    } catch (e) {
-      Alert.alert('Error', e.message);
-    } finally {
-      setSearching(false);
-    }
-  }, [apiBase, query, shelfId, token]);
-
-  const handleAddCollectable = useCallback(async (collectableId) => {
-    if (!collectableId) return;
-    try {
-      await apiRequest({
-        apiBase,
-        path: `/api/shelves/${shelfId}/items`,
-        method: 'POST',
-        token,
-        body: { collectableId },
-      });
-      Alert.alert('Added', 'Item added to your shelf.');
-      navigation.goBack();
-    } catch (e) {
-      Alert.alert('Error', e.message);
-    }
-  }, [apiBase, shelfId, token, navigation]);
 
   // Actually perform the manual add (called after user decides to add anyway)
   const performManualAdd = useCallback(async () => {
@@ -204,75 +162,14 @@ export default function ItemSearchScreen({ route, navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Add Items</Text>
+          <Text style={styles.headerTitle}>Add to Shelf</Text>
           <View style={{ width: 40 }} />
         </View>
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Search Catalog</Text>
-            <View style={styles.searchRow}>
-              <Ionicons name="search" size={18} color={colors.textMuted} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search items..."
-                placeholderTextColor={colors.textMuted}
-                value={query}
-                onChangeText={(value) => {
-                  setQuery(value);
-                  if (!value.trim()) {
-                    setResults([]);
-                    setSearched(false);
-                  }
-                }}
-                returnKeyType="search"
-                onSubmitEditing={handleSearch}
-              />
-              <TouchableOpacity
-                style={[styles.searchButton, searching && styles.searchButtonDisabled]}
-                onPress={handleSearch}
-                disabled={searching}
-              >
-                {searching ? (
-                  <ActivityIndicator size="small" color={colors.textInverted} />
-                ) : (
-                  <Text style={styles.searchButtonText}>Go</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {results.length > 0 ? (
-              <View style={styles.resultsList}>
-                {results.map((result) => {
-                  const collectableId = result?.id ?? result?._id;
-                  const title = result?.title || result?.name || 'Untitled';
-                  const subtitle = [result?.primaryCreator, result?.year].filter(Boolean).join(' • ');
-                  return (
-                    <TouchableOpacity
-                      key={collectableId}
-                      style={styles.resultItem}
-                      onPress={() => handleAddCollectable(collectableId)}
-                    >
-                      <View style={styles.resultText}>
-                        <Text style={styles.resultTitle} numberOfLines={1}>{title}</Text>
-                        {subtitle ? <Text style={styles.resultSubtitle} numberOfLines={1}>{subtitle}</Text> : null}
-                      </View>
-                      <Ionicons name="add-circle" size={22} color={colors.primary} />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            ) : searched ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="search-outline" size={40} color={colors.textMuted} />
-                <Text style={styles.emptyTitle}>No results found</Text>
-                <Text style={styles.emptyText}>Try a different search term.</Text>
-              </View>
-            ) : null}
-          </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Manual Entry</Text>
+            <Text style={styles.cardTitle}>Search & Add</Text>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title</Text>
@@ -326,7 +223,7 @@ export default function ItemSearchScreen({ route, navigation }) {
               onPress={handleAddManual}
               disabled={manualSaving}
             >
-              <Text style={styles.saveButtonText}>{manualSaving ? 'Searching...' : 'Add Manual Item'}</Text>
+              <Text style={styles.saveButtonText}>{manualSaving ? 'Searching...' : 'Search & Add'}</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -433,75 +330,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     letterSpacing: 0.5,
     marginBottom: spacing.md,
   },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    height: 42,
-    gap: spacing.sm,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.text,
-  },
-  searchButton: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-  },
-  searchButtonDisabled: {
-    opacity: 0.6,
-  },
-  searchButtonText: {
-    color: colors.textInverted,
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  resultsList: {
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
-  resultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceElevated,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-  },
-  resultText: {
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  resultTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.text,
-  },
-  resultSubtitle: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  emptyState: {
-    alignItems: 'center',
-    marginTop: spacing.lg,
-  },
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.text,
-    marginTop: spacing.sm,
-  },
-  emptyText: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: spacing.xs,
-  },
+
   inputGroup: {
     marginBottom: spacing.sm,
   },

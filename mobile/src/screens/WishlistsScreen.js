@@ -15,13 +15,20 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
-export default function WishlistsScreen({ navigation }) {
-    const { token, apiBase } = useContext(AuthContext);
+export default function WishlistsScreen({ navigation, route }) {
+    const { token, apiBase, user: currentUser } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
+
+    // Determine if viewing own or another user's wishlists
+    const targetUserId = route.params?.userId;
+    const targetUsername = route.params?.username;
+    const targetFirstName = route.params?.firstName;
+    const isOwnProfile = !targetUserId && !targetUsername;
 
     const [wishlists, setWishlists] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [targetUser, setTargetUser] = useState(null);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -30,14 +37,30 @@ export default function WishlistsScreen({ navigation }) {
 
     useEffect(() => {
         loadWishlists();
-    }, []);
+    }, [targetUserId, targetUsername]);
 
     const loadWishlists = async (isRefresh = false) => {
         try {
             if (isRefresh) setRefreshing(true);
             else setLoading(true);
 
-            const data = await apiRequest({ apiBase, path: '/api/wishlists', token });
+            let data;
+            if (targetUserId) {
+                // Viewing another user's wishlists by userId
+                data = await apiRequest({ apiBase, path: `/api/wishlists/user/${targetUserId}`, token });
+            } else if (targetUsername) {
+                // Need to get user ID from username first
+                const profileData = await apiRequest({ apiBase, path: `/api/profile/${targetUsername}`, token });
+                setTargetUser(profileData.profile);
+                if (profileData.profile?.id) {
+                    data = await apiRequest({ apiBase, path: `/api/wishlists/user/${profileData.profile.id}`, token });
+                } else {
+                    data = { wishlists: [] };
+                }
+            } else {
+                // Own wishlists
+                data = await apiRequest({ apiBase, path: '/api/wishlists', token });
+            }
             setWishlists(data.wishlists || []);
         } catch (e) {
             if (!isRefresh) Alert.alert('Error', 'Failed to load wishlists');
@@ -48,6 +71,7 @@ export default function WishlistsScreen({ navigation }) {
     };
 
     const handleRefresh = () => loadWishlists(true);
+
 
     const handleDelete = useCallback(async (wishlistId) => {
         Alert.alert('Delete Wishlist', 'Are you sure you want to delete this wishlist?', [
@@ -87,7 +111,7 @@ export default function WishlistsScreen({ navigation }) {
         <TouchableOpacity
             style={styles.wishlistCard}
             onPress={() => navigation.navigate('Wishlist', { wishlistId: item.id })}
-            onLongPress={() => handleDelete(item.id)}
+            onLongPress={isOwnProfile ? () => handleDelete(item.id) : undefined}
         >
             <View style={styles.wishlistIcon}>
                 <Ionicons name="heart" size={24} color={colors.primary} />
@@ -100,14 +124,16 @@ export default function WishlistsScreen({ navigation }) {
                     <Text style={styles.wishlistMetaText}>
                         {item.itemCount || 0} items
                     </Text>
-                    <View style={styles.visibilityBadge}>
-                        <Ionicons
-                            name={getVisibilityIcon(item.visibility)}
-                            size={12}
-                            color={colors.textMuted}
-                        />
-                        <Text style={styles.visibilityText}>{item.visibility}</Text>
-                    </View>
+                    {isOwnProfile && (
+                        <View style={styles.visibilityBadge}>
+                            <Ionicons
+                                name={getVisibilityIcon(item.visibility)}
+                                size={12}
+                                color={colors.textMuted}
+                            />
+                            <Text style={styles.visibilityText}>{item.visibility}</Text>
+                        </View>
+                    )}
                 </View>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -131,27 +157,41 @@ export default function WishlistsScreen({ navigation }) {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>My Wishlists</Text>
-                <TouchableOpacity
-                    onPress={() => navigation.navigate('WishlistCreate')}
-                    style={styles.addButton}
-                >
-                    <Ionicons name="add" size={24} color={colors.primary} />
-                </TouchableOpacity>
+                <Text style={styles.headerTitle}>
+                    {isOwnProfile
+                        ? 'My Wishlists'
+                        : `${targetUser?.firstName || targetFirstName || targetUsername || 'User'}'s Wishlists`}
+                </Text>
+                {isOwnProfile ? (
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('WishlistCreate')}
+                        style={styles.addButton}
+                    >
+                        <Ionicons name="add" size={24} color={colors.primary} />
+                    </TouchableOpacity>
+                ) : (
+                    <View style={{ width: 40 }} />
+                )}
             </View>
 
             {wishlists.length === 0 ? (
                 <View style={styles.emptyState}>
                     <Ionicons name="heart-outline" size={48} color={colors.textMuted} />
                     <Text style={styles.emptyTitle}>No wishlists yet</Text>
-                    <Text style={styles.emptySubtitle}>Create a wishlist to track items you want</Text>
-                    <TouchableOpacity
-                        style={styles.createButton}
-                        onPress={() => navigation.navigate('WishlistCreate')}
-                    >
-                        <Ionicons name="add" size={20} color={colors.textInverted} />
-                        <Text style={styles.createButtonText}>Create Wishlist</Text>
-                    </TouchableOpacity>
+                    <Text style={styles.emptySubtitle}>
+                        {isOwnProfile
+                            ? 'Create a wishlist to track items you want'
+                            : 'This user has no public wishlists'}
+                    </Text>
+                    {isOwnProfile && (
+                        <TouchableOpacity
+                            style={styles.createButton}
+                            onPress={() => navigation.navigate('WishlistCreate')}
+                        >
+                            <Ionicons name="add" size={20} color={colors.textInverted} />
+                            <Text style={styles.createButtonText}>Create Wishlist</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             ) : (
                 <FlatList
