@@ -1,12 +1,15 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Dimensions,
     FlatList,
     Image,
     RefreshControl,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     View,
     StatusBar,
 } from 'react-native';
@@ -85,6 +88,13 @@ export default function SocialFeedScreen({ navigation }) {
     const [error, setError] = useState('');
     const [activeFilter, setActiveFilter] = useState('all');
 
+    // Inline search state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState({ friends: [], collectables: [] });
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [showResults, setShowResults] = useState(false);
+    const searchTimeoutRef = useRef(null);
+
     const load = useCallback(async (opts = {}) => {
         if (!token) {
             setEntries([]);
@@ -120,21 +130,76 @@ export default function SocialFeedScreen({ navigation }) {
         load({ silent: true });
     };
 
+    // Debounced search handler
+    const handleSearchChange = useCallback((text) => {
+        setSearchQuery(text);
+
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+
+        if (!text.trim()) {
+            setSearchResults({ friends: [], collectables: [] });
+            setShowResults(false);
+            return;
+        }
+
+        searchTimeoutRef.current = setTimeout(async () => {
+            setSearchLoading(true);
+            setShowResults(true);
+
+            try {
+                // Parallel API calls for friends and collectables
+                const [friendsRes, collectablesRes] = await Promise.all([
+                    apiRequest({ apiBase, path: `/api/friends/search?q=${encodeURIComponent(text)}&limit=3&wildcard=true`, token }),
+                    apiRequest({ apiBase, path: `/api/collectables?q=${encodeURIComponent(text)}&limit=3&wildcard=true`, token }),
+                ]);
+
+                setSearchResults({
+                    friends: friendsRes?.users || [],
+                    collectables: collectablesRes?.results || [],
+                });
+            } catch (err) {
+                console.error('Search error:', err);
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 300);
+    }, [apiBase, token]);
+
+    const handleFriendPress = (friend) => {
+        setShowResults(false);
+        setSearchQuery('');
+        navigation.navigate('Profile', { username: friend.username });
+    };
+
+    const handleCollectablePress = (collectable) => {
+        setShowResults(false);
+        setSearchQuery('');
+        navigation.navigate('CollectableDetail', { item: { collectable } });
+    };
+
+    const handleSeeMore = () => {
+        setShowResults(false);
+        navigation.navigate('FriendSearch', { initialQuery: searchQuery });
+        setSearchQuery('');
+    };
+
+    const dismissSearch = () => {
+        setShowResults(false);
+    };
+
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
     const renderItem = ({ item }) => {
-        const { shelf, owner, items, eventType } = item;
-        const timeAgo = formatRelativeTime(shelf?.updatedAt);
+        const { shelf, owner, items, eventType, collectable, checkinStatus, note } = item;
+        const isCheckIn = eventType === 'checkin.activity';
+        const timeAgo = formatRelativeTime(isCheckIn ? item.createdAt : shelf?.updatedAt);
         const displayName = owner?.name || owner?.username || 'Someone';
         const initial = displayName.charAt(0).toUpperCase();
-        const previewItems = (items || []).slice(0, 3);
-        const totalItems = item?.eventItemCount || items?.length || 0;
         const likeCount = item?.likeCount || 0;
         const commentCount = item?.commentCount || 0;
         const topComment = item?.topComment || null;
-        const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
-        const summaryText = buildSummaryText(itemPreviews, totalItems);
-        const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
 
         let avatarSource = null;
         if (owner?.profileMediaPath) {
@@ -143,17 +208,137 @@ export default function SocialFeedScreen({ navigation }) {
             avatarSource = { uri: owner.picture };
         }
 
-        let actionText = 'updated';
-        if (eventType === 'shelf.created') actionText = 'created';
-        else if (eventType && eventType.includes('added')) actionText = 'added';
-
         const handlePress = () => {
-            if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
+            if (isCheckIn) {
+                // Check-in events navigate to collectable detail
+                if (collectable?.id) {
+                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                }
+            } else if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
                 navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
             }
         };
+
+        // Check-in event rendering
+        if (isCheckIn) {
+            const statusLabels = {
+                starting: 'started',
+                continuing: 'is continuing',
+                completed: 'finished',
+            };
+            const statusIcons = {
+                starting: 'play-circle-outline',
+                continuing: 'refresh-outline',
+                completed: 'checkmark-circle-outline',
+            };
+            const statusLabel = statusLabels[checkinStatus] || checkinStatus;
+            const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
+
+            let collectableCoverUrl = null;
+            if (collectable?.coverMediaPath) {
+                collectableCoverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
+            } else if (collectable?.coverUrl) {
+                collectableCoverUrl = collectable.coverUrl;
+            }
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePress}
+                    style={styles.feedCard}
+                >
+                    {/* Header */}
+                    <View style={styles.cardHeader}>
+                        <View style={styles.avatar}>
+                            {avatarSource ? (
+                                <Image source={avatarSource} style={styles.avatarImage} />
+                            ) : (
+                                <Text style={styles.avatarText}>{initial}</Text>
+                            )}
+                        </View>
+                        <View style={styles.headerContent}>
+                            <View style={styles.headerTop}>
+                                <Text style={styles.username}>{displayName}</Text>
+                                <Text style={styles.timestamp}>{timeAgo}</Text>
+                            </View>
+                            <View style={styles.checkinAction}>
+                                <Ionicons name={statusIcon} size={14} color={colors.primary} />
+                                <Text style={styles.shelfAction}>
+                                    {statusLabel}{' '}
+                                    <Text style={styles.shelfName}>{collectable?.title || 'something'}</Text>
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* Collectable preview */}
+                    <View style={styles.checkinPreview}>
+                        {collectableCoverUrl ? (
+                            <Image
+                                source={{ uri: collectableCoverUrl }}
+                                style={styles.checkinCover}
+                                resizeMode="cover"
+                            />
+                        ) : (
+                            <View style={[styles.checkinCover, styles.checkinCoverFallback]}>
+                                <Ionicons name="book" size={24} color={colors.primary} />
+                            </View>
+                        )}
+                        <View style={styles.checkinInfo}>
+                            <Text style={styles.checkinTitle} numberOfLines={2}>{collectable?.title}</Text>
+                            {collectable?.primaryCreator && (
+                                <Text style={styles.checkinCreator} numberOfLines={1}>{collectable.primaryCreator}</Text>
+                            )}
+                            {collectable?.kind && (
+                                <View style={styles.kindBadge}>
+                                    <Text style={styles.kindText}>{collectable.kind}</Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Note if present */}
+                    {note ? (
+                        <Text style={styles.checkinNote} numberOfLines={3}>{note}</Text>
+                    ) : null}
+
+                    {/* Social row */}
+                    {(likeCount > 0 || commentCount > 0 || topComment?.content) && (
+                        <View style={styles.socialRow}>
+                            <View style={styles.socialStats}>
+                                <View style={styles.socialStat}>
+                                    <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.socialText}>{likeCount}</Text>
+                                </View>
+                                <View style={styles.socialStat}>
+                                    <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.socialText}>{commentCount}</Text>
+                                </View>
+                            </View>
+                            {topComment?.content ? (
+                                <Text style={styles.commentPreview} numberOfLines={1}>
+                                    {topComment.username ? `${topComment.username}: ` : ''}
+                                    {topComment.content}
+                                </Text>
+                            ) : null}
+                        </View>
+                    )}
+                </TouchableOpacity>
+            );
+        }
+
+        // Regular shelf-based event rendering
+        const previewItems = (items || []).slice(0, 3);
+        const totalItems = item?.eventItemCount || items?.length || 0;
+        const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
+        const summaryText = buildSummaryText(itemPreviews, totalItems);
+        const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
+
+        let actionText = 'updated';
+        if (eventType === 'shelf.created') actionText = 'created';
+        else if (eventType && eventType.includes('added')) actionText = 'added';
 
         return (
             <TouchableOpacity
@@ -292,18 +477,128 @@ export default function SocialFeedScreen({ navigation }) {
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            {/* Header */}
+            {/* Header with inline search */}
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Feed</Text>
-                <View style={styles.headerRight}>
-                    <TouchableOpacity onPress={() => navigation.navigate('FriendSearch')} style={styles.headerButton}>
-                        <Ionicons name="search" size={22} color={colors.text} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
-                        <Ionicons name="person-circle-outline" size={26} color={colors.text} />
-                    </TouchableOpacity>
+                <View style={styles.searchInputContainer}>
+                    <Ionicons name="search" size={16} color={colors.textMuted} />
+                    <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search Titles, Creators, or Friends"
+                        placeholderTextColor={colors.textMuted}
+                        value={searchQuery}
+                        onChangeText={handleSearchChange}
+                        onFocus={() => searchQuery.trim() && setShowResults(true)}
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => { setSearchQuery(''); setShowResults(false); }}>
+                            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                        </TouchableOpacity>
+                    )}
                 </View>
+                <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
+                    <Ionicons name="person-circle-outline" size={26} color={colors.text} />
+                </TouchableOpacity>
             </View>
+
+            {/* Floating search results dropdown */}
+            {showResults && (
+                <TouchableWithoutFeedback onPress={dismissSearch}>
+                    <View style={styles.searchOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={styles.searchDropdown}>
+                                {searchLoading ? (
+                                    <View style={styles.searchLoadingContainer}>
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                    </View>
+                                ) : (
+                                    <>
+                                        {/* Friends section */}
+                                        {searchResults.friends.length > 0 && (
+                                            <View style={styles.searchSection}>
+                                                <Text style={styles.searchSectionTitle}>Friends</Text>
+                                                {searchResults.friends.map((friend) => {
+                                                    const displayName = friend.firstName && friend.lastName
+                                                        ? `${friend.firstName} ${friend.lastName}`
+                                                        : friend.name || friend.username;
+                                                    return (
+                                                        <TouchableOpacity
+                                                            key={friend.id}
+                                                            style={styles.searchResultItem}
+                                                            onPress={() => handleFriendPress(friend)}
+                                                        >
+                                                            <View style={styles.searchResultAvatar}>
+                                                                <Text style={styles.searchResultAvatarText}>
+                                                                    {(displayName || '?').charAt(0).toUpperCase()}
+                                                                </Text>
+                                                            </View>
+                                                            <View style={styles.searchResultInfo}>
+                                                                <Text style={styles.searchResultTitle} numberOfLines={1}>{displayName}</Text>
+                                                                <Text style={styles.searchResultSubtitle} numberOfLines={1}>@{friend.username}</Text>
+                                                            </View>
+                                                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                                                        </TouchableOpacity>
+                                                    );
+                                                })}
+                                            </View>
+                                        )}
+
+                                        {/* Collectables section */}
+                                        {searchResults.collectables.length > 0 && (
+                                            <View style={styles.searchSection}>
+                                                <Text style={styles.searchSectionTitle}>Items</Text>
+                                                {searchResults.collectables.map((item) => {
+                                                    const coverUrl = item.coverMediaPath
+                                                        ? `${apiBase}/media/${item.coverMediaPath}`
+                                                        : item.coverUrl;
+                                                    return (
+                                                        <TouchableOpacity
+                                                            key={item.id}
+                                                            style={styles.searchResultItem}
+                                                            onPress={() => handleCollectablePress(item)}
+                                                        >
+                                                            {coverUrl ? (
+                                                                <Image source={{ uri: coverUrl }} style={styles.searchResultCover} />
+                                                            ) : (
+                                                                <View style={[styles.searchResultCover, styles.searchResultCoverFallback]}>
+                                                                    <Ionicons name="book" size={16} color={colors.primary} />
+                                                                </View>
+                                                            )}
+                                                            <View style={styles.searchResultInfo}>
+                                                                <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title || 'Untitled'}</Text>
+                                                                {item.primaryCreator && (
+                                                                    <Text style={styles.searchResultSubtitle} numberOfLines={1}>{item.primaryCreator}</Text>
+                                                                )}
+                                                            </View>
+                                                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                                                        </TouchableOpacity>
+                                                    );
+                                                })}
+                                            </View>
+                                        )}
+
+                                        {/* Empty state */}
+                                        {searchResults.friends.length === 0 && searchResults.collectables.length === 0 && (
+                                            <View style={styles.searchEmptyState}>
+                                                <Ionicons name="search-outline" size={24} color={colors.textMuted} />
+                                                <Text style={styles.searchEmptyText}>No results found</Text>
+                                            </View>
+                                        )}
+
+                                        {/* See more button */}
+                                        {(searchResults.friends.length > 0 || searchResults.collectables.length > 0) && (
+                                            <TouchableOpacity style={styles.seeMoreButton} onPress={handleSeeMore}>
+                                                <Text style={styles.seeMoreText}>See more results</Text>
+                                                <Ionicons name="arrow-forward" size={14} color={colors.primary} />
+                                            </TouchableOpacity>
+                                        )}
+                                    </>
+                                )}
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            )}
 
             {/* Filter Tabs - Threads style */}
             <View style={styles.filterBar}>
@@ -622,5 +917,183 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.error,
         textAlign: 'center',
         fontSize: 14,
+    },
+    // Inline search styles
+    searchInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: 20,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 6,
+        width: Dimensions.get('window').width * 0.60,  // 45% of screen width
+        gap: 6,
+        ...shadows.sm,
+    },
+    searchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: colors.text,
+        paddingVertical: 0,
+    },
+    searchOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        zIndex: 100,
+    },
+    searchDropdown: {
+        position: 'absolute',
+        top: 120,
+        left: spacing.md,
+        right: spacing.md,
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        ...shadows.lg,
+        maxHeight: 400,
+        overflow: 'hidden',
+    },
+    searchLoadingContainer: {
+        padding: spacing.lg,
+        alignItems: 'center',
+    },
+    searchSection: {
+        paddingBottom: spacing.sm,
+    },
+    searchSectionTitle: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: colors.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.md,
+        paddingBottom: spacing.xs,
+    },
+    searchResultItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        gap: spacing.sm,
+    },
+    searchResultAvatar: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    searchResultAvatarText: {
+        color: colors.textInverted,
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    searchResultCover: {
+        width: 36,
+        height: 48,
+        borderRadius: 4,
+        backgroundColor: colors.surfaceElevated,
+    },
+    searchResultCoverFallback: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    searchResultInfo: {
+        flex: 1,
+    },
+    searchResultTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    searchResultSubtitle: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginTop: 1,
+    },
+    searchEmptyState: {
+        alignItems: 'center',
+        padding: spacing.lg,
+        gap: spacing.sm,
+    },
+    searchEmptyText: {
+        fontSize: 14,
+        color: colors.textMuted,
+    },
+    seeMoreButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: spacing.md,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    seeMoreText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: colors.primary,
+    },
+    // Check-in event styles
+    checkinAction: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 2,
+    },
+    checkinPreview: {
+        flexDirection: 'row',
+        gap: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    checkinCover: {
+        width: 56,
+        height: 76,
+        borderRadius: 6,
+        backgroundColor: colors.surfaceElevated,
+    },
+    checkinCoverFallback: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkinInfo: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    checkinTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    checkinCreator: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    kindBadge: {
+        alignSelf: 'flex-start',
+        backgroundColor: colors.primary + '15',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: 10,
+        marginTop: 6,
+    },
+    kindText: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: colors.primary,
+        textTransform: 'capitalize',
+    },
+    checkinNote: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        lineHeight: 20,
+        marginBottom: spacing.sm,
+        fontStyle: 'italic',
     },
 });

@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     View,
     StatusBar,
+    Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { prepareProfilePhotoAsset } from '../services/imageUpload';
 
 export default function OnboardingProfileOptionalScreen({ navigation }) {
     const { token, apiBase, setNeedsOnboarding, setUser, onboardingConfig } = useContext(AuthContext);
@@ -70,10 +72,10 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
             }
 
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: true,
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: Platform.OS === 'ios',
                 aspect: [1, 1],
-                quality: 0.8,
+                quality: 1,
             });
 
             if (!result.canceled && result.assets?.[0]) {
@@ -88,12 +90,13 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         try {
             setUploadingPhoto(true);
 
+            const prepared = await prepareProfilePhotoAsset(asset, { forceSquare: Platform.OS === 'android' });
+            if (!prepared) {
+                throw new Error('Invalid photo selection');
+            }
+
             const formData = new FormData();
-            formData.append('photo', {
-                uri: asset.uri,
-                type: asset.type || 'image/jpeg',
-                name: asset.fileName || 'profile.jpg',
-            });
+            formData.append('photo', prepared);
 
             const res = await fetch(`${apiBase}/api/profile/photo`, {
                 method: 'POST',

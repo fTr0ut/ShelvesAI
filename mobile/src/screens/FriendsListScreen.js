@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useState } from 're
 import {
     ActivityIndicator,
     FlatList,
+    Image,
     StyleSheet,
     Text,
     TextInput,
@@ -127,6 +128,14 @@ export default function FriendsListScreen({ navigation }) {
         const friend = getFriend(item);
         const initial = (friend.name?.[0] || friend.username?.[0] || '?').toUpperCase();
 
+        // Build avatar source from profile media path or picture
+        let avatarSource = null;
+        if (friend.profileMediaPath) {
+            avatarSource = { uri: `${apiBase}/media/${friend.profileMediaPath}` };
+        } else if (friend.picture) {
+            avatarSource = { uri: friend.picture };
+        }
+
         return (
             <TouchableOpacity
                 style={styles.friendCard}
@@ -134,7 +143,11 @@ export default function FriendsListScreen({ navigation }) {
                 onLongPress={() => handleRemoveFriend(item.id, friend.name || friend.username)}
             >
                 <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{initial}</Text>
+                    {avatarSource ? (
+                        <Image source={avatarSource} style={styles.avatarImage} />
+                    ) : (
+                        <Text style={styles.avatarText}>{initial}</Text>
+                    )}
                 </View>
                 <View style={styles.friendInfo}>
                     <Text style={styles.friendName}>{friend.name || friend.username}</Text>
@@ -154,10 +167,22 @@ export default function FriendsListScreen({ navigation }) {
         const friend = getFriend(item);
         const initial = (friend.name?.[0] || friend.username?.[0] || '?').toUpperCase();
 
+        // Build avatar source from profile media path or picture
+        let avatarSource = null;
+        if (friend.profileMediaPath) {
+            avatarSource = { uri: `${apiBase}/media/${friend.profileMediaPath}` };
+        } else if (friend.picture) {
+            avatarSource = { uri: friend.picture };
+        }
+
         return (
             <View style={styles.requestCard}>
                 <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{initial}</Text>
+                    {avatarSource ? (
+                        <Image source={avatarSource} style={styles.avatarImage} />
+                    ) : (
+                        <Text style={styles.avatarText}>{initial}</Text>
+                    )}
                 </View>
                 <View style={styles.friendInfo}>
                     <Text style={styles.friendName}>{friend.name || friend.username}</Text>
@@ -380,6 +405,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             justifyContent: 'center',
             alignItems: 'center',
             marginRight: spacing.md,
+            overflow: 'hidden',
+        },
+        avatarImage: {
+            width: '100%',
+            height: '100%',
         },
         avatarText: {
             fontSize: 18,

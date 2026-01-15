@@ -127,17 +127,24 @@ export default function ItemSearchScreen({ route, navigation }) {
           body: { collectableId: suggestion.id },
         });
       } else if (suggestion.fromApi) {
-        // API result - create collectable via manual endpoint with API data
+        // API result - create collectable with full metadata
+        const fallbackTitle = suggestion.title || suggestion.name || manualTitle.trim();
+        const fallbackType = suggestion.kind || suggestion.type || manualType || shelfType || 'Item';
         await apiRequest({
           apiBase,
-          path: `/api/shelves/${shelfId}/manual`,
+          path: `/api/shelves/${shelfId}/items/from-api`,
           method: 'POST',
           token,
           body: {
-            name: suggestion.title || manualTitle.trim(),
-            type: manualType || shelfType || 'Item',
-            author: suggestion.primaryCreator || manualAuthor.trim() || undefined,
-            description: suggestion.description || manualDescription.trim() || undefined,
+            collectable: {
+              ...suggestion,
+              title: fallbackTitle,
+              name: fallbackTitle,
+              kind: fallbackType,
+              type: fallbackType,
+              primaryCreator: suggestion.primaryCreator || manualAuthor.trim() || undefined,
+              description: suggestion.description || manualDescription.trim() || undefined,
+            },
           },
         });
       }

@@ -69,6 +69,131 @@ function coerceNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function normalizeString(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
+function normalizeStringArray(...values) {
+  const out = [];
+  values.forEach((value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => out.push(entry));
+    } else {
+      out.push(value);
+    }
+  });
+  const normalized = out.map((entry) => normalizeString(entry)).filter(Boolean);
+  const seen = new Set();
+  const deduped = [];
+  for (const entry of normalized) {
+    const key = entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped;
+}
+
+function normalizeArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return [value];
+}
+
+function normalizeIdentifiers(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function buildCollectableUpsertPayload(input, shelfType) {
+  const title = normalizeString(input?.title || input?.name);
+  if (!title) return null;
+
+  const kind = normalizeString(input?.kind || input?.type || shelfType || 'item') || 'item';
+  const primaryCreator = normalizeString(
+    input?.primaryCreator || input?.author || input?.creator,
+  );
+  const creators = normalizeStringArray(input?.creators, primaryCreator);
+  const publishers = normalizeStringArray(input?.publishers, input?.publisher);
+  const tags = normalizeStringArray(input?.tags, input?.genre);
+  const identifiers = normalizeIdentifiers(input?.identifiers);
+  const images = normalizeArray(input?.images);
+  const sources = normalizeArray(input?.sources);
+  const coverUrl = normalizeString(
+    input?.coverUrl ||
+    input?.coverImage ||
+    input?.image ||
+    input?.urlCoverFront ||
+    input?.urlCoverBack,
+  );
+  const coverImageUrl = normalizeString(input?.coverImageUrl);
+  const coverImageSource =
+    typeof input?.coverImageSource === 'string' ? input.coverImageSource : null;
+  const attribution =
+    input?.attribution && typeof input.attribution === 'object'
+      ? input.attribution
+      : null;
+  const externalId = normalizeString(input?.externalId || input?.catalogId);
+  const fuzzyFingerprints = normalizeArray(input?.fuzzyFingerprints);
+  const year = normalizeString(
+    input?.year || input?.releaseYear || input?.publishYear,
+  );
+  const subtitle = normalizeString(input?.subtitle);
+  const description = normalizeString(input?.description);
+  const platforms = normalizeStringArray(
+    input?.platforms,
+    input?.platform,
+    input?.systemName,
+  );
+  const format = normalizeString(input?.format);
+
+  const fingerprint =
+    input?.fingerprint ||
+    makeCollectableFingerprint({
+      title,
+      primaryCreator: primaryCreator || null,
+      releaseYear: year || null,
+      mediaType: kind,
+      format: format || null,
+      platforms: platforms.length ? platforms : undefined,
+    });
+
+  const lightweightFingerprint =
+    input?.lightweightFingerprint ||
+    makeLightweightFingerprint({
+      title,
+      primaryCreator: primaryCreator || null,
+      kind,
+      platforms: platforms.length ? platforms : undefined,
+    });
+
+  return {
+    fingerprint,
+    lightweightFingerprint,
+    kind,
+    title,
+    subtitle,
+    description,
+    primaryCreator,
+    creators,
+    publishers,
+    year,
+    tags,
+    identifiers,
+    images,
+    coverUrl,
+    sources,
+    externalId,
+    fuzzyFingerprints,
+    coverImageUrl,
+    coverImageSource,
+    attribution,
+  };
+}
+
 function parsePaginationParams(reqQuery, { defaultLimit = 20, maxLimit = 100 } = {}) {
   const rawLimit = reqQuery?.limit ?? defaultLimit;
   let limit = parseInt(rawLimit, 10);
@@ -501,6 +626,66 @@ async function addCollectable(req, res) {
     res.status(201).json({ item: { id: item.id, collectable, position: item.position, format: item.format, notes: item.notes, rating: item.rating } });
   } catch (err) {
     console.error('addCollectable error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function addCollectableFromApi(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const input = req.body?.collectable || req.body?.suggestion || null;
+    if (!input) return res.status(400).json({ error: "collectable is required" });
+
+    let resolvedInput = input;
+    try {
+      const matchingService = getCollectableMatchingService();
+      const apiResult = await matchingService.searchCatalogAPI(input, shelf.type);
+      if (apiResult) {
+        resolvedInput = { ...input, ...apiResult };
+      }
+    } catch (err) {
+      console.warn('[addCollectableFromApi] API enrichment failed:', err?.message || err);
+    }
+
+    const payload = buildCollectableUpsertPayload(resolvedInput, shelf.type);
+    if (!payload) return res.status(400).json({ error: "collectable title is required" });
+
+    const collectable = await collectablesQueries.upsert(payload);
+    const item = await shelvesQueries.addCollectable({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      collectableId: collectable.id,
+    });
+
+    await logShelfEvent({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      type: "item.collectable_added",
+      payload: {
+        itemId: item.id,
+        collectableId: collectable.id,
+        title: collectable.title,
+        primaryCreator: collectable.primaryCreator,
+        coverUrl: collectable.coverUrl || "",
+        type: collectable.kind,
+        source: "user",
+      },
+    });
+
+    res.status(201).json({
+      item: {
+        id: item.id,
+        collectable,
+        position: item.position,
+        format: item.format,
+        notes: item.notes,
+        rating: item.rating,
+      },
+    });
+  } catch (err) {
+    console.error('addCollectableFromApi error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -976,4 +1161,5 @@ module.exports = {
   rateShelfItem,
   getVisionStatus,
   abortVision,
+  addCollectableFromApi,
 };

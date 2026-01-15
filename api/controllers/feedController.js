@@ -192,34 +192,19 @@ async function getFeed(req, res) {
     const socialMap = await eventSocialQueries.getSocialSummaries(aggregateIds, viewerId);
 
     const entries = events.map(e => {
-      const payloads = Array.isArray(e.previewPayloads) ? e.previewPayloads : [];
-      const feedItems = buildFeedItemsFromPayloads(payloads, e.eventType, PREVIEW_PAYLOAD_LIMIT);
-      const payloadItemCount = getPayloadItemCount(payloads);
-      const counts = [e.itemCount, payloadItemCount].filter((value) => Number.isFinite(value) && value > 0);
-      const eventItemCount = counts.length ? Math.max(...counts) : feedItems.length;
-
       const social = socialMap.get(e.id) || {};
+      const isCheckIn = e.eventType === 'checkin.activity';
 
-      return {
+      // Base entry properties
+      const entry = {
         id: e.id,
         aggregateId: e.id,
         eventType: e.eventType,
         createdAt: e.createdAt,
-        eventItemCount: eventItemCount || 0,
         likeCount: social.likeCount || 0,
         commentCount: social.commentCount || 0,
         hasLiked: !!social.hasLiked,
         topComment: social.topComment || null,
-        shelf: {
-          id: e.shelfId,
-          name: e.shelfName,
-          type: e.shelfType,
-          description: e.shelfDescription,
-          visibility: 'public',
-          createdAt: e.createdAt, // aggregate start
-          updatedAt: e.lastActivityAt || e.createdAt, // use latest activity for display
-          itemCount: countMap.get(String(e.shelfId)) || 0,
-        },
         owner: {
           id: e.userId,
           username: e.username,
@@ -230,8 +215,44 @@ async function getFeed(req, res) {
           picture: e.userPicture,
           profileMediaPath: e.profileMediaPath,
         },
-        items: feedItems,
       };
+
+      if (isCheckIn) {
+        // Check-in event: include collectable info and check-in specific fields
+        entry.checkinStatus = e.checkinStatus;
+        entry.visibility = e.visibility;
+        entry.note = e.note;
+        entry.collectable = {
+          id: e.collectableId,
+          title: e.collectableTitle,
+          primaryCreator: e.collectableCreator,
+          coverUrl: e.collectableCoverUrl,
+          coverMediaPath: e.collectableCoverMediaPath,
+          kind: e.collectableKind,
+        };
+      } else {
+        // Shelf-based event: include shelf and items info
+        const payloads = Array.isArray(e.previewPayloads) ? e.previewPayloads : [];
+        const feedItems = buildFeedItemsFromPayloads(payloads, e.eventType, PREVIEW_PAYLOAD_LIMIT);
+        const payloadItemCount = getPayloadItemCount(payloads);
+        const counts = [e.itemCount, payloadItemCount].filter((value) => Number.isFinite(value) && value > 0);
+        const eventItemCount = counts.length ? Math.max(...counts) : feedItems.length;
+
+        entry.eventItemCount = eventItemCount || 0;
+        entry.shelf = {
+          id: e.shelfId,
+          name: e.shelfName,
+          type: e.shelfType,
+          description: e.shelfDescription,
+          visibility: 'public',
+          createdAt: e.createdAt,
+          updatedAt: e.lastActivityAt || e.createdAt,
+          itemCount: countMap.get(String(e.shelfId)) || 0,
+        };
+        entry.items = feedItems;
+      }
+
+      return entry;
     });
 
     res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });

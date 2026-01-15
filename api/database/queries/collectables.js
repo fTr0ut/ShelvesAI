@@ -206,6 +206,35 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
 }
 
 /**
+ * Search in global catalog using wildcard ILIKE patterns
+ * Use * as wildcard character (converted to % for SQL)
+ */
+async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
+    // Convert * to % for SQL ILIKE
+    const sqlPattern = pattern.replace(/\*/g, '%');
+
+    let sql = `
+    SELECT c.*, m.local_path as cover_media_path
+    FROM collectables c
+    LEFT JOIN media m ON m.id = c.cover_media_id
+    WHERE c.title ILIKE $1 OR c.primary_creator ILIKE $1
+  `;
+    const params = [sqlPattern];
+
+    if (kind) {
+        sql += ` AND c.kind = $${params.length + 1}`;
+        params.push(kind);
+    }
+
+    sql += ` ORDER BY c.title ASC`;
+    sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limit, offset);
+
+    const result = await query(sql, params);
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
  * Find a collectable using fuzzy matching on title and creator.
  * Uses PostgreSQL pg_trgm extension for similarity matching.
  * 
@@ -289,6 +318,7 @@ module.exports = {
     searchByTitle,
     upsert,
     searchGlobal,
+    searchGlobalWildcard,
     fuzzyMatch,
     addFuzzyFingerprint,
 };

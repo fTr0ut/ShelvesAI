@@ -23,6 +23,76 @@ const FUZZY_MATCH_THRESHOLD = (() => {
     return DEFAULT_FUZZY_THRESHOLD;
 })();
 
+const DEFAULT_API_SUGGESTION_LIMIT = 5;
+const API_SUGGESTION_LIMIT = (() => {
+    const raw = parseInt(process.env.MANUAL_SEARCH_API_LIMIT || '', 10);
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return DEFAULT_API_SUGGESTION_LIMIT;
+})();
+
+function normalizeType(value) {
+    if (!value) return '';
+    return String(value).trim().toLowerCase();
+}
+
+function buildLookupInput(itemData) {
+    return {
+        ...itemData,
+        title: itemData.title || itemData.name,
+        name: itemData.name || itemData.title,
+        author: itemData.author || itemData.primaryCreator,
+        primaryCreator: itemData.primaryCreator || itemData.author,
+        identifiers: itemData.identifiers || {},
+    };
+}
+
+function normalizeApiCollectable({ result, shelfType, catalogService, lookupInput, lightweightFingerprint }) {
+    if (!result) return null;
+    let collectable = null;
+    if (isCollectablePayload(result, shelfType)) {
+        collectable = { ...result };
+    } else if (typeof catalogService.buildCollectablePayload === 'function') {
+        collectable = catalogService.buildCollectablePayload(
+            { status: 'resolved', enrichment: result, input: lookupInput },
+            lookupInput,
+            lightweightFingerprint,
+        );
+    }
+
+    if (!collectable && (result.title || result.name)) {
+        collectable = { ...result, title: result.title || result.name };
+    }
+
+    if (!collectable) {
+        return null;
+    }
+
+    const resolvedTitle = collectable.title || collectable.name;
+    if (!resolvedTitle) return null;
+
+    return {
+        ...collectable,
+        title: resolvedTitle,
+        matchSource: 'api',
+        fromApi: true,
+    };
+}
+
+function isCollectablePayload(candidate, shelfType) {
+    if (!candidate || typeof candidate !== 'object') return false;
+    if (typeof candidate.title !== 'string' || !candidate.title.trim()) return false;
+
+    const kind = normalizeType(candidate.kind);
+    const type = normalizeType(candidate.type);
+    const media = kind || type;
+    if (!media) return false;
+
+    const normalizedShelfType = normalizeType(shelfType);
+    if (!normalizedShelfType) return true;
+
+    return normalizedShelfType.includes(media) || media.includes(normalizedShelfType);
+}
+
 class CollectableMatchingService {
     constructor() {
         this.bookCatalogService = new BookCatalogService();
@@ -140,32 +210,34 @@ class CollectableMatchingService {
 
         try {
             console.log('[CollectableMatchingService] Calling API for:', shelfType);
-            const result = await catalogService.safeLookup({
-                title: itemData.title || itemData.name,
-                name: itemData.name || itemData.title,
-                author: itemData.author || itemData.primaryCreator,
-                primaryCreator: itemData.primaryCreator || itemData.author,
-                identifiers: itemData.identifiers || {},
-            });
+            const lookupInput = buildLookupInput(itemData);
+            const result = await catalogService.safeLookup(lookupInput);
 
             if (result) {
-                console.log('[CollectableMatchingService] API result:', {
-                    title: result.title,
-                    primaryCreator: result.primaryCreator,
-                    id: result.id
+                const lwf = makeLightweightFingerprint({
+                    ...lookupInput,
+                    kind: shelfType,
                 });
-
-                // Validate the API result has required fields
-                if (!result.title) {
-                    console.warn('[CollectableMatchingService] API result missing title, skipping');
+                const collectable = normalizeApiCollectable({
+                    result,
+                    shelfType,
+                    catalogService,
+                    lookupInput,
+                    lightweightFingerprint: lwf,
+                });
+                if (!collectable) {
+                    console.warn('[CollectableMatchingService] API result could not be normalized, skipping');
                     return null;
                 }
 
-                return {
-                    ...result,
-                    matchSource: 'api',
-                    fromApi: true,
-                };
+                const resolvedTitle = collectable.title || collectable.name;
+                console.log('[CollectableMatchingService] API result:', {
+                    title: resolvedTitle,
+                    primaryCreator: collectable.primaryCreator || collectable.author,
+                    id: collectable.id
+                });
+
+                return collectable;
             } else {
                 console.log('[CollectableMatchingService] API returned no result');
             }
@@ -174,6 +246,61 @@ class CollectableMatchingService {
         }
 
         return null;
+    }
+
+    /**
+     * Search catalog APIs for multiple matches
+     *
+     * @param {Object} itemData - { title, primaryCreator, author, name }
+     * @param {string} shelfType - 'book', 'movie', 'game', etc.
+     * @param {Object} options - { limit }
+     * @returns {Promise<Array>} API results as collectables
+     */
+    async searchCatalogAPIMultiple(itemData, shelfType, options = {}) {
+        const catalogService = this.resolveCatalogService(shelfType);
+        if (!catalogService) {
+            console.log('[CollectableMatchingService] No catalog service for type:', shelfType);
+            return [];
+        }
+
+        const limit = Number.isFinite(options.limit) && options.limit > 0
+            ? options.limit
+            : API_SUGGESTION_LIMIT;
+        const lookupInput = buildLookupInput(itemData);
+
+        try {
+            console.log('[CollectableMatchingService] Calling API for:', shelfType, '(limit', limit + ')');
+            let results = [];
+            if (typeof catalogService.safeLookupMany === 'function') {
+                results = await catalogService.safeLookupMany(lookupInput, limit);
+            } else if (typeof catalogService.safeLookup === 'function') {
+                const single = await catalogService.safeLookup(lookupInput);
+                if (single) results = [single];
+            } else {
+                console.warn('[CollectableMatchingService] Catalog service missing lookup method');
+                return [];
+            }
+
+            const candidates = Array.isArray(results) ? results : results ? [results] : [];
+            const suggestions = [];
+            for (const result of candidates) {
+                const collectable = normalizeApiCollectable({
+                    result,
+                    shelfType,
+                    catalogService,
+                    lookupInput,
+                    lightweightFingerprint: null,
+                });
+                if (!collectable) continue;
+                suggestions.push(collectable);
+            }
+
+            console.log('[CollectableMatchingService] API suggestions:', suggestions.length);
+            return suggestions.slice(0, limit);
+        } catch (err) {
+            console.error('[CollectableMatchingService] API lookup failed:', err?.message);
+            return [];
+        }
     }
 
     /**
@@ -203,10 +330,12 @@ class CollectableMatchingService {
         // If no DB results and API search enabled, try API
         if (includeApi) {
             searched.api = true;
-            const apiResult = await this.searchCatalogAPI(itemData, shelfType);
-            if (apiResult) {
+            const apiResults = await this.searchCatalogAPIMultiple(itemData, shelfType, {
+                limit: API_SUGGESTION_LIMIT,
+            });
+            if (apiResults.length > 0) {
                 return {
-                    suggestions: [apiResult],
+                    suggestions: apiResults,
                     searched,
                 };
             }

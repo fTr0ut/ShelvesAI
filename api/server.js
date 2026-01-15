@@ -20,6 +20,7 @@ const listsRoutes = require('./routes/lists');
 const unmatchedRoutes = require('./routes/unmatched');
 const onboardingRoutes = require('./routes/onboarding');
 const configRoutes = require('./routes/config');
+const checkinRoutes = require('./routes/checkin');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -160,6 +161,7 @@ app.use('/api/lists', listsRoutes);
 app.use('/api/unmatched', unmatchedRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/checkin', checkinRoutes);
 
 app.use((err, _req, res, next) => {
   if (err && (err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large')) {

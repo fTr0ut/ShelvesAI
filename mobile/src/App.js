@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { Appearance, Platform } from 'react-native'
+import { Appearance, KeyboardAvoidingView, Platform } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import Constants from 'expo-constants'
 import {
@@ -229,8 +229,13 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           <AuthContext.Provider value={authValue}>
-            <AppNavigator token={token} needsOnboarding={needsOnboarding} />
-            <ToastContainer />
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'android' ? 'height' : undefined}
+            >
+              <AppNavigator token={token} needsOnboarding={needsOnboarding} />
+              <ToastContainer />
+            </KeyboardAvoidingView>
           </AuthContext.Provider>
         </ToastProvider>
       </ThemeProvider>

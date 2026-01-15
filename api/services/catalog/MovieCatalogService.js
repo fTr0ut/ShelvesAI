@@ -231,6 +231,119 @@ class MovieCatalogService {
     return null;
   }
 
+  async safeLookupMany(item, limit = 5, retries = this.retries) {
+    const title = normalizeString(item?.name || item?.title);
+    const director = normalizeString(item?.author || item?.primaryCreator);
+    const year = extractYear(item?.year);
+    const format = normalizeString(item?.format);
+    if (!title) {
+      return [];
+    }
+
+    const queryLogContext = pruneObject({ title, director, year, format });
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const search = await this.searchMovie({ title, year });
+        if (!search || !Array.isArray(search.results) || !search.results.length) {
+          return [];
+        }
+
+        const ranked = this.rankMatches(search.results, { title, year });
+        const topMatches = ranked.slice(0, Math.max(1, limit || 1));
+        const results = [];
+
+        for (const match of topMatches) {
+          if (!match?.id) continue;
+          let details = null;
+
+          for (let detailsAttempt = 0; detailsAttempt <= retries; detailsAttempt++) {
+            try {
+              details = await this.fetchMovieDetails(match.id);
+              break;
+            } catch (err) {
+              const message = String(err?.message || err);
+              if ((message.includes('429') || message.includes('rate limit')) && detailsAttempt < retries) {
+                const backoff = 500 * Math.pow(2, detailsAttempt);
+                console.warn('[MovieCatalogService.safeLookupMany] rate limited', {
+                  attempt: detailsAttempt,
+                  backoff,
+                  query: queryLogContext,
+                });
+                await this.delayFn(backoff);
+                continue;
+              }
+              if (message.includes('abort') && detailsAttempt < retries) {
+                const backoff = 500 * (detailsAttempt + 1);
+                console.warn('[MovieCatalogService.safeLookupMany] request aborted', {
+                  attempt: detailsAttempt,
+                  backoff,
+                  query: queryLogContext,
+                });
+                await this.delayFn(backoff);
+                continue;
+              }
+              if (message.includes('404')) {
+                console.warn('[MovieCatalogService.safeLookupMany] details not found', {
+                  query: queryLogContext,
+                  attempt: detailsAttempt,
+                });
+                break;
+              }
+              if (message.includes('401')) {
+                console.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
+                return [];
+              }
+              throw err;
+            }
+          }
+
+          if (!details) continue;
+          results.push({
+            provider: 'tmdb',
+            score: match._score || null,
+            movie: details,
+            search: {
+              query: queryLogContext,
+              totalResults: search.total_results ?? search.results.length,
+            },
+          });
+        }
+
+        return results;
+      } catch (err) {
+        const message = String(err?.message || err);
+        if ((message.includes('429') || message.includes('rate limit')) && attempt < retries) {
+          const backoff = 500 * Math.pow(2, attempt);
+          console.warn('[MovieCatalogService.safeLookupMany] rate limited', {
+            attempt,
+            backoff,
+            query: queryLogContext,
+          });
+          await this.delayFn(backoff);
+          continue;
+        }
+        if (message.includes('abort') && attempt < retries) {
+          const backoff = 500 * (attempt + 1);
+          console.warn('[MovieCatalogService.safeLookupMany] request aborted', {
+            attempt,
+            backoff,
+            query: queryLogContext,
+          });
+          await this.delayFn(backoff);
+          continue;
+        }
+        if (message.includes('401')) {
+          console.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
+          return [];
+        }
+        throw err;
+      }
+    }
+
+    return [];
+  }
+
   async enrichWithOpenAI(unresolved = [], openaiClient) {
     if (!Array.isArray(unresolved) || unresolved.length === 0) return [];
     if (!openaiClient) return unresolved.map((entry) => ({ status: 'unresolved', input: entry.input }));
@@ -327,6 +440,11 @@ class MovieCatalogService {
   }
 
   pickBestMatch(results, { title, year }) {
+    const ranked = this.rankMatches(results, { title, year });
+    return ranked[0] || null;
+  }
+
+  rankMatches(results, { title, year }) {
     const normalizedTitle = normalizeCompare(title);
     const candidates = [];
     for (const result of results) {
@@ -357,7 +475,7 @@ class MovieCatalogService {
       candidates.push({ ...result, _score: score });
     }
     candidates.sort((a, b) => (b._score || 0) - (a._score || 0));
-    return candidates[0] || null;
+    return candidates;
   }
 
   async fetchJson(url) {

@@ -19,6 +19,7 @@ router.get('/:shelfId/items', ctrl.listShelfItems);
 router.post('/:shelfId/manual/search', ctrl.searchManualEntry);
 router.post('/:shelfId/manual', requireFields(['name']), ctrl.addManualEntry);
 router.post('/:shelfId/items', requireFields(['collectableId']), ctrl.addCollectable);
+router.post('/:shelfId/items/from-api', ctrl.addCollectableFromApi);
 router.delete('/:shelfId/items/:itemId', ctrl.removeShelfItem);
 router.put('/:shelfId/items/:itemId/rating', ctrl.rateShelfItem);
 router.put('/:shelfId/manual/:itemId', ctrl.updateManualEntry);

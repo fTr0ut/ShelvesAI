@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { View, Pressable, StyleSheet, Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
@@ -10,6 +10,9 @@ import Animated, {
     useSharedValue,
     withSpring,
     withTiming,
+    withRepeat,
+    withSequence,
+    Easing,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -79,9 +82,12 @@ export default function BottomTabNavigator() {
     const insets = useSafeAreaInsets();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuProgress = useSharedValue(0);
+    const addItemPulse = useSharedValue(1);
 
     const overlayColor = isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)';
-    const actionBottom = TAB_BAR_HEIGHT + insets.bottom + spacing.lg;
+    const tabBarHeight = TAB_BAR_HEIGHT + insets.bottom;
+    const tabBarPaddingBottom = spacing.sm + insets.bottom;
+    const actionBottom = tabBarHeight + spacing.lg;
 
     const overlayAnimatedStyle = useAnimatedStyle(() => ({
         opacity: interpolate(menuProgress.value, [0, 1], [0, 1], Extrapolate.CLAMP),
@@ -95,6 +101,14 @@ export default function BottomTabNavigator() {
         ],
     }));
 
+    const addItemGlowStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(menuProgress.value, [0, 1], [0, 0.5], Extrapolate.CLAMP) *
+            interpolate(addItemPulse.value, [1, 1.25], [0.7, 0], Extrapolate.CLAMP),
+        transform: [
+            { scale: addItemPulse.value },
+        ],
+    }));
+
     const checkInStyle = useAnimatedStyle(() => ({
         opacity: interpolate(menuProgress.value, [0, 1], [0, 1], Extrapolate.CLAMP),
         transform: [
@@ -103,8 +117,16 @@ export default function BottomTabNavigator() {
         ],
     }));
 
+    const searchStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(menuProgress.value, [0, 1], [0, 1], Extrapolate.CLAMP),
+        transform: [
+            { translateY: interpolate(menuProgress.value, [0, 1], [34, 0], Extrapolate.CLAMP) },
+            { scale: interpolate(menuProgress.value, [0, 1], [0.92, 1], Extrapolate.CLAMP) },
+        ],
+    }));
+
     const triggerHaptic = useCallback((style) => {
-        Haptics.impactAsync(style).catch(() => {});
+        Haptics.impactAsync(style).catch(() => { });
     }, []);
 
     const closeMenu = useCallback(() => {
@@ -130,6 +152,22 @@ export default function BottomTabNavigator() {
         });
     }, [menuProgress]);
 
+    // Start/stop the pulse animation when menu opens/closes
+    useEffect(() => {
+        if (isMenuOpen) {
+            addItemPulse.value = withRepeat(
+                withSequence(
+                    withTiming(1.25, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+                    withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
+                ),
+                -1,
+                false
+            );
+        } else {
+            addItemPulse.value = withTiming(1, { duration: 150 });
+        }
+    }, [isMenuOpen, addItemPulse]);
+
     const handleAddItem = useCallback(() => {
         closeMenu();
         navigation.navigate('ShelfSelect');
@@ -138,6 +176,11 @@ export default function BottomTabNavigator() {
     const handleCheckIn = useCallback(() => {
         closeMenu();
         navigation.navigate('CheckIn');
+    }, [closeMenu, navigation]);
+
+    const handleSearch = useCallback(() => {
+        closeMenu();
+        navigation.navigate('FriendSearch');
     }, [closeMenu, navigation]);
 
     return (
@@ -149,8 +192,8 @@ export default function BottomTabNavigator() {
                         backgroundColor: colors.surface,
                         borderTopColor: colors.border,
                         borderTopWidth: 1,
-                        height: TAB_BAR_HEIGHT,
-                        paddingBottom: spacing.sm,
+                        height: tabBarHeight,
+                        paddingBottom: tabBarPaddingBottom,
                         paddingTop: spacing.xs,
                         ...shadows.sm,
                     },
@@ -254,6 +297,15 @@ export default function BottomTabNavigator() {
                 </Animated.View>
 
                 <Animated.View style={[styles.actionItem, styles.actionItemSpacer, addItemStyle]}>
+                    {/* Pulse glow ring behind the button */}
+                    <Animated.View
+                        style={[
+                            styles.addItemGlow,
+                            { backgroundColor: colors.primary },
+                            addItemGlowStyle,
+                        ]}
+                        pointerEvents="none"
+                    />
                     <Pressable
                         onPress={handleAddItem}
                         onPressIn={handleActionPressIn}
@@ -261,7 +313,7 @@ export default function BottomTabNavigator() {
                             styles.actionButton,
                             {
                                 backgroundColor: colors.surface,
-                                borderColor: colors.border,
+                                borderColor: colors.primary,
                                 borderRadius: radius.full,
                                 ...shadows.md,
                             },
@@ -275,7 +327,34 @@ export default function BottomTabNavigator() {
                                 { color: colors.text, fontFamily: typography.medium },
                             ]}
                         >
-                            Add Item
+                            Add to your shelf
+                        </Text>
+                    </Pressable>
+                </Animated.View>
+
+                <Animated.View style={[styles.actionItem, styles.actionItemSpacer, searchStyle]}>
+                    <Pressable
+                        onPress={handleSearch}
+                        onPressIn={handleActionPressIn}
+                        style={({ pressed }) => [
+                            styles.actionButton,
+                            {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.border,
+                                borderRadius: radius.full,
+                                ...shadows.md,
+                            },
+                            pressed && styles.actionButtonPressed,
+                        ]}
+                    >
+                        <Ionicons name="search-outline" size={18} color={colors.primary} />
+                        <Text
+                            style={[
+                                styles.actionLabel,
+                                { color: colors.text, fontFamily: typography.medium },
+                            ]}
+                        >
+                            Search
                         </Text>
                     </Pressable>
                 </Animated.View>
@@ -329,6 +408,14 @@ const styles = StyleSheet.create({
     actionButtonPressed: {
         opacity: 0.9,
         transform: [{ scale: 0.98 }],
+    },
+    addItemGlow: {
+        position: 'absolute',
+        top: -6,
+        left: -6,
+        right: -6,
+        bottom: -6,
+        borderRadius: 999,
     },
     actionLabel: {
         fontSize: 14,

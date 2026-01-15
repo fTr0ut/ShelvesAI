@@ -1,7 +1,8 @@
-import React, { useCallback, useContext, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
+    Image,
     StyleSheet,
     Text,
     TextInput,
@@ -16,17 +17,27 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
-export default function FriendSearchScreen({ navigation }) {
+export default function FriendSearchScreen({ route, navigation }) {
+    const { initialQuery } = route.params || {};
     const { token, apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState([]);
+    const [query, setQuery] = useState(initialQuery || '');
+    const [activeTab, setActiveTab] = useState('friends'); // 'friends' or 'items'
+    const [friendResults, setFriendResults] = useState([]);
+    const [itemResults, setItemResults] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searched, setSearched] = useState(false);
     const [sending, setSending] = useState({});
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
+
+    // Auto-search if initial query provided
+    useEffect(() => {
+        if (initialQuery?.trim()) {
+            handleSearch();
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleSearch = useCallback(async () => {
         const q = query.trim();
@@ -35,12 +46,23 @@ export default function FriendSearchScreen({ navigation }) {
         try {
             setLoading(true);
             setSearched(true);
-            const data = await apiRequest({
-                apiBase,
-                path: `/api/friends/search?q=${encodeURIComponent(q)}`,
-                token,
-            });
-            setResults(Array.isArray(data.users) ? data.users : []);
+
+            // Parallel search for both friends and items
+            const [friendsRes, itemsRes] = await Promise.all([
+                apiRequest({
+                    apiBase,
+                    path: `/api/friends/search?q=${encodeURIComponent(q)}&wildcard=true`,
+                    token,
+                }),
+                apiRequest({
+                    apiBase,
+                    path: `/api/collectables?q=${encodeURIComponent(q)}&wildcard=true&limit=20`,
+                    token,
+                }),
+            ]);
+
+            setFriendResults(Array.isArray(friendsRes?.users) ? friendsRes.users : []);
+            setItemResults(Array.isArray(itemsRes?.results) ? itemsRes.results : []);
         } catch (e) {
             Alert.alert('Error', e.message);
         } finally {
@@ -117,6 +139,37 @@ export default function FriendSearchScreen({ navigation }) {
         );
     };
 
+    const renderItem = ({ item }) => {
+        const coverUrl = item.coverMediaPath
+            ? `${apiBase}/media/${item.coverMediaPath}`
+            : item.coverUrl;
+
+        return (
+            <TouchableOpacity
+                style={styles.itemCard}
+                onPress={() => navigation.navigate('CollectableDetail', { item: { collectable: item } })}
+            >
+                {coverUrl ? (
+                    <Image source={{ uri: coverUrl }} style={styles.itemCover} />
+                ) : (
+                    <View style={[styles.itemCover, styles.itemCoverFallback]}>
+                        <Ionicons name="book" size={24} color={colors.primary} />
+                    </View>
+                )}
+                <View style={styles.itemInfo}>
+                    <Text style={styles.itemTitle} numberOfLines={2}>{item.title || 'Untitled'}</Text>
+                    {item.primaryCreator && (
+                        <Text style={styles.itemCreator} numberOfLines={1}>{item.primaryCreator}</Text>
+                    )}
+                    {item.kind && (
+                        <Text style={styles.itemKind}>{item.kind}</Text>
+                    )}
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+        );
+    };
+
 
     return (
         <SafeAreaView style={styles.screen}>
@@ -127,7 +180,7 @@ export default function FriendSearchScreen({ navigation }) {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Find Friends</Text>
+                <Text style={styles.headerTitle}>Search</Text>
                 <View style={{ width: 40 }} />
             </View>
 
@@ -139,7 +192,7 @@ export default function FriendSearchScreen({ navigation }) {
                         style={styles.searchInput}
                         value={query}
                         onChangeText={setQuery}
-                        placeholder="Search by username..."
+                        placeholder="Search friends & items..."
                         placeholderTextColor={colors.textMuted}
                         autoCapitalize="none"
                         autoCorrect={false}
@@ -147,7 +200,7 @@ export default function FriendSearchScreen({ navigation }) {
                         onSubmitEditing={handleSearch}
                     />
                     {query.length > 0 && (
-                        <TouchableOpacity onPress={() => { setQuery(''); setResults([]); setSearched(false); }}>
+                        <TouchableOpacity onPress={() => { setQuery(''); setFriendResults([]); setItemResults([]); setSearched(false); }}>
                             <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                         </TouchableOpacity>
                     )}
@@ -157,14 +210,36 @@ export default function FriendSearchScreen({ navigation }) {
                 </TouchableOpacity>
             </View>
 
+            {/* Tabs */}
+            <View style={styles.tabBar}>
+                <TouchableOpacity
+                    style={[styles.tab, activeTab === 'friends' && styles.tabActive]}
+                    onPress={() => setActiveTab('friends')}
+                >
+                    <Ionicons name="people" size={18} color={activeTab === 'friends' ? colors.primary : colors.textMuted} />
+                    <Text style={[styles.tabText, activeTab === 'friends' && styles.tabTextActive]}>
+                        Friends {searched && `(${friendResults.length})`}
+                    </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.tab, activeTab === 'items' && styles.tabActive]}
+                    onPress={() => setActiveTab('items')}
+                >
+                    <Ionicons name="library" size={18} color={activeTab === 'items' ? colors.primary : colors.textMuted} />
+                    <Text style={[styles.tabText, activeTab === 'items' && styles.tabTextActive]}>
+                        Items {searched && `(${itemResults.length})`}
+                    </Text>
+                </TouchableOpacity>
+            </View>
+
             {/* Results */}
             {loading ? (
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color={colors.primary} />
                 </View>
-            ) : (
+            ) : activeTab === 'friends' ? (
                 <FlatList
-                    data={results}
+                    data={friendResults}
                     keyExtractor={(item) => String(item.id)}
                     renderItem={renderUser}
                     contentContainerStyle={styles.listContent}
@@ -173,13 +248,35 @@ export default function FriendSearchScreen({ navigation }) {
                             <View style={styles.emptyState}>
                                 <Ionicons name="people-outline" size={48} color={colors.textMuted} />
                                 <Text style={styles.emptyTitle}>No users found</Text>
-                                <Text style={styles.emptyText}>Try a different username</Text>
+                                <Text style={styles.emptyText}>Try a different search term</Text>
                             </View>
                         ) : (
                             <View style={styles.emptyState}>
                                 <Ionicons name="search-outline" size={48} color={colors.textMuted} />
                                 <Text style={styles.emptyTitle}>Search for collectors</Text>
                                 <Text style={styles.emptyText}>Find friends to share your shelves with</Text>
+                            </View>
+                        )
+                    }
+                />
+            ) : (
+                <FlatList
+                    data={itemResults}
+                    keyExtractor={(item) => String(item.id)}
+                    renderItem={renderItem}
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        searched ? (
+                            <View style={styles.emptyState}>
+                                <Ionicons name="library-outline" size={48} color={colors.textMuted} />
+                                <Text style={styles.emptyTitle}>No items found</Text>
+                                <Text style={styles.emptyText}>Try a different search term</Text>
+                            </View>
+                        ) : (
+                            <View style={styles.emptyState}>
+                                <Ionicons name="search-outline" size={48} color={colors.textMuted} />
+                                <Text style={styles.emptyTitle}>Search the catalog</Text>
+                                <Text style={styles.emptyText}>Find books, movies, games, and more</Text>
                             </View>
                         )
                     }
@@ -343,5 +440,76 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 14,
         color: colors.textMuted,
         marginTop: spacing.xs,
+    },
+    // Tab styles
+    tabBar: {
+        flexDirection: 'row',
+        marginHorizontal: spacing.md,
+        marginBottom: spacing.sm,
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: 4,
+        ...shadows.sm,
+    },
+    tab: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: spacing.sm,
+        borderRadius: radius.lg - 2,
+    },
+    tabActive: {
+        backgroundColor: colors.background,
+    },
+    tabText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: colors.textMuted,
+    },
+    tabTextActive: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    // Item card styles
+    itemCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.sm,
+        gap: spacing.md,
+        ...shadows.sm,
+    },
+    itemCover: {
+        width: 50,
+        height: 70,
+        borderRadius: 6,
+        backgroundColor: colors.surfaceElevated,
+    },
+    itemCoverFallback: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    itemInfo: {
+        flex: 1,
+    },
+    itemTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    itemCreator: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    itemKind: {
+        fontSize: 11,
+        color: colors.primary,
+        textTransform: 'capitalize',
+        marginTop: 4,
     },
 });

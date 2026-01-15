@@ -22,6 +22,7 @@ async function searchUsers(req, res) {
     const rawQuery = req.query.q !== undefined ? req.query.q : req.query.query;
     const searchTerm = String(rawQuery || '').trim();
     const { limit } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 50 });
+    const useWildcard = String(req.query.wildcard || '').toLowerCase() === 'true';
 
     if (!searchTerm) {
       return res.json({ users: [] });
@@ -29,26 +30,48 @@ async function searchUsers(req, res) {
 
     const viewerId = req.user.id;
 
-    // Search users using trigram similarity
-    const usersResult = await query(
-      `SELECT id, username, first_name, last_name, picture, city, state, country,
-              similarity(username, $1) as username_sim,
-              similarity(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''), $1) as name_sim
-       FROM users
-       WHERE id != $2
-       AND (
-         username % $1
-         OR first_name % $1
-         OR last_name % $1
-         OR email ILIKE $3
-       )
-       ORDER BY GREATEST(
-         similarity(username, $1),
-         similarity(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''), $1)
-       ) DESC
-       LIMIT $4`,
-      [searchTerm, viewerId, `%${searchTerm}%`, limit]
-    );
+    let usersResult;
+
+    if (useWildcard && searchTerm.includes('*')) {
+      // Wildcard mode: convert * to % for ILIKE matching
+      const pattern = searchTerm.replace(/\*/g, '%');
+      usersResult = await query(
+        `SELECT id, username, first_name, last_name, picture, city, state, country
+         FROM users
+         WHERE id != $1
+         AND (
+           username ILIKE $2
+           OR first_name ILIKE $2
+           OR last_name ILIKE $2
+           OR (COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) ILIKE $2
+           OR email ILIKE $2
+         )
+         ORDER BY username ASC
+         LIMIT $3`,
+        [viewerId, pattern, limit]
+      );
+    } else {
+      // Default: trigram similarity search
+      usersResult = await query(
+        `SELECT id, username, first_name, last_name, picture, city, state, country,
+                similarity(username, $1) as username_sim,
+                similarity(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''), $1) as name_sim
+         FROM users
+         WHERE id != $2
+         AND (
+           username % $1
+           OR first_name % $1
+           OR last_name % $1
+           OR email ILIKE $3
+         )
+         ORDER BY GREATEST(
+           similarity(username, $1),
+           similarity(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''), $1)
+         ) DESC
+         LIMIT $4`,
+        [searchTerm, viewerId, `%${searchTerm}%`, limit]
+      );
+    }
 
     if (!usersResult.rows.length) {
       return res.json({ users: [] });
@@ -116,11 +139,15 @@ async function listFriendships(req, res) {
       `SELECT f.*,
               u_req.id as req_id, u_req.username as req_username, 
               u_req.first_name as req_first_name, u_req.last_name as req_last_name, u_req.picture as req_picture,
+              pm_req.local_path as req_profile_media_path,
               u_addr.id as addr_id, u_addr.username as addr_username,
-              u_addr.first_name as addr_first_name, u_addr.last_name as addr_last_name, u_addr.picture as addr_picture
+              u_addr.first_name as addr_first_name, u_addr.last_name as addr_last_name, u_addr.picture as addr_picture,
+              pm_addr.local_path as addr_profile_media_path
        FROM friendships f
        JOIN users u_req ON u_req.id = f.requester_id
+       LEFT JOIN profile_media pm_req ON pm_req.id = u_req.profile_media_id
        JOIN users u_addr ON u_addr.id = f.addressee_id
+       LEFT JOIN profile_media pm_addr ON pm_addr.id = u_addr.profile_media_id
        WHERE f.requester_id = $1 OR f.addressee_id = $1
        ORDER BY f.updated_at DESC
        LIMIT $2 OFFSET $3`,
@@ -142,12 +169,14 @@ async function listFriendships(req, res) {
         username: row.req_username,
         name: [row.req_first_name, row.req_last_name].filter(Boolean).join(' ').trim() || undefined,
         picture: row.req_picture,
+        profileMediaPath: row.req_profile_media_path,
       },
       addressee: {
         id: row.addr_id,
         username: row.addr_username,
         name: [row.addr_first_name, row.addr_last_name].filter(Boolean).join(' ').trim() || undefined,
         picture: row.addr_picture,
+        profileMediaPath: row.addr_profile_media_path,
       },
       isRequester: row.requester_id === req.user.id,
       createdAt: row.created_at,

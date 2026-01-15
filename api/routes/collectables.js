@@ -83,6 +83,7 @@ router.get("/", async (req, res) => {
     const q = String(req.query.q || "").trim();
     const type = String(req.query.type || "").trim();
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+    const useWildcard = String(req.query.wildcard || '').toLowerCase() === 'true';
 
     if (!q) {
       // Return paginated list without search
@@ -112,15 +113,28 @@ router.get("/", async (req, res) => {
       });
     }
 
-    // Search with trigram similarity
-    const results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
+    let results;
+    let countSql;
+    let countParams;
 
-    const countResult = await query(
-      `SELECT COUNT(*) as total FROM collectables 
+    if (useWildcard && q.includes('*')) {
+      // Wildcard mode: use ILIKE pattern matching
+      results = await collectablesQueries.searchGlobalWildcard({ pattern: q, kind: type || null, limit, offset });
+      const sqlPattern = q.replace(/\*/g, '%');
+      countSql = `SELECT COUNT(*) as total FROM collectables 
+       WHERE (title ILIKE $1 OR primary_creator ILIKE $1)
+       ${type ? 'AND kind = $2' : ''}`;
+      countParams = type ? [sqlPattern, type] : [sqlPattern];
+    } else {
+      // Default: trigram similarity search
+      results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
+      countSql = `SELECT COUNT(*) as total FROM collectables 
        WHERE (title % $1 OR primary_creator % $1)
-       ${type ? 'AND kind = $2' : ''}`,
-      type ? [q, type] : [q]
-    );
+       ${type ? 'AND kind = $2' : ''}`;
+      countParams = type ? [q, type] : [q];
+    }
+
+    const countResult = await query(countSql, countParams);
     const total = parseInt(countResult.rows[0].total);
 
     res.json({

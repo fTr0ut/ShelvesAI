@@ -65,18 +65,29 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
-           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
+           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
+           c.title as collectable_title, c.primary_creator as collectable_creator,
+           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
+    LEFT JOIN collectables c ON c.id = a.collectable_id
+    LEFT JOIN media cm ON cm.id = c.cover_media_id
     WHERE a.user_id != $1 -- Exclude self
     AND (
-      -- Public stuff
-      (s.visibility = 'public' OR s.id IS NULL)
+      -- Shelf-based events: check shelf visibility
+      (a.shelf_id IS NOT NULL AND (
+        s.visibility = 'public'
+        OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends')
+      ))
       OR
-      -- Friend stuff (if visibility is 'friends')
-      (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends')
+      -- Check-in events: check event visibility
+      (a.event_type = 'checkin.activity' AND (
+        a.visibility = 'public'
+        OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
+      ))
     )
   `;
   const params = [userId];
@@ -92,6 +103,7 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
   const result = await query(sql, params);
   return result.rows.map(rowToCamelCase);
 }
+
 
 /**
  * Get ALL feed (User + Friends + Public)
@@ -112,17 +124,30 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
-           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
+           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
+           c.title as collectable_title, c.primary_creator as collectable_creator,
+           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
+    LEFT JOIN collectables c ON c.id = a.collectable_id
+    LEFT JOIN media cm ON cm.id = c.cover_media_id
     WHERE (
-      a.user_id = $1 -- Include self
+      a.user_id = $1 -- Include self (all own events)
       OR
-      (s.visibility = 'public' OR s.id IS NULL) -- Public stuff
+      -- Shelf-based events from others
+      (a.shelf_id IS NOT NULL AND (
+        s.visibility = 'public'
+        OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends')
+      ))
       OR
-      (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends') -- Friend stuff
+      -- Check-in events from others
+      (a.event_type = 'checkin.activity' AND a.user_id != $1 AND (
+        a.visibility = 'public'
+        OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
+      ))
     )
   `;
   const params = [userId];
@@ -158,15 +183,23 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
-           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
+           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
+           c.title as collectable_title, c.primary_creator as collectable_creator,
+           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
+    LEFT JOIN collectables c ON c.id = a.collectable_id
+    LEFT JOIN media cm ON cm.id = c.cover_media_id
     WHERE a.user_id IN (SELECT friend_id FROM friend_ids) -- Friends only, no self
     AND (
-      s.visibility IN ('public', 'friends')
-      OR s.id IS NULL
+      -- Shelf-based events
+      (a.shelf_id IS NOT NULL AND s.visibility IN ('public', 'friends'))
+      OR
+      -- Check-in events
+      (a.event_type = 'checkin.activity' AND a.visibility IN ('public', 'friends'))
     )
   `;
   const params = [userId];
@@ -192,11 +225,16 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
-           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description
+           s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
+           c.title as collectable_title, c.primary_creator as collectable_creator,
+           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
+    LEFT JOIN collectables c ON c.id = a.collectable_id
+    LEFT JOIN media cm ON cm.id = c.cover_media_id
     WHERE a.user_id = $1
   `;
   const params = [userId];
@@ -267,10 +305,53 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
   });
 }
 
+/**
+ * Log a check-in event (user is starting/continuing/completed with a collectable)
+ */
+async function logCheckIn({ userId, collectableId, status, visibility = 'public', note = null }) {
+  if (!userId || !collectableId || !status) {
+    throw new Error('userId, collectableId, and status are required for check-in');
+  }
+
+  const validStatuses = ['starting', 'continuing', 'completed'];
+  if (!validStatuses.includes(status)) {
+    throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+  }
+
+  const validVisibilities = ['public', 'friends'];
+  if (!validVisibilities.includes(visibility)) {
+    throw new Error(`Invalid visibility: ${visibility}. Must be one of: ${validVisibilities.join(', ')}`);
+  }
+
+  // Check-in events don't aggregate like shelf events - each is unique
+  const result = await query(
+    `INSERT INTO event_aggregates (
+      user_id, event_type, collectable_id, checkin_status, visibility, note,
+      window_start_utc, window_end_utc, item_count
+    )
+    VALUES ($1, 'checkin.activity', $2, $3, $4, $5, NOW(), NOW(), 1)
+    RETURNING *`,
+    [userId, collectableId, status, visibility, note]
+  );
+
+  if (FEED_AGGREGATE_DEBUG) {
+    console.log('[feed.checkin] created', {
+      aggregateId: result.rows[0]?.id,
+      userId,
+      collectableId,
+      status,
+      visibility,
+    });
+  }
+
+  return rowToCamelCase(result.rows[0]);
+}
+
 module.exports = {
   getGlobalFeed,
   getAllFeed,
   getFriendsFeed,
   getMyFeed,
   logEvent,
+  logCheckIn,
 };
