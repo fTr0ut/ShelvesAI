@@ -134,9 +134,24 @@ function makeVisionOcrFingerprint(title, creator, kind) {
   return sha1FromString(parts.join('|'));
 }
 
+function makeManualFingerprint(input = {}, namespace = 'manual') {
+  if (typeof input !== 'object' || input === null) return null;
+  const title = normalizeForFingerprint(input.title || input.name);
+  const creator = normalizeForFingerprint(
+    input.primaryCreator ?? input.creator ?? input.author ?? input.brand ?? input.publisher ?? input.manufacturer,
+  );
+  if (!title || !creator) return null;
+  const ns = normalizeForFingerprint(namespace || 'manual');
+  const parts = [ns, title, creator];
+  const mediaType = normalizeMediaTypeForFingerprint(input.mediaType ?? input.type ?? input.kind);
+  if (mediaType) parts.push(mediaType);
+  return sha1FromString(parts.join('|'));
+}
+
 module.exports = {
   makeCollectableFingerprint,
   makeLightweightFingerprint,
   makeVisionOcrFingerprint,
+  makeManualFingerprint,
   normalizeFingerprintComponent,
 };

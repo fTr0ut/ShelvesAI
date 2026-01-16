@@ -150,6 +150,13 @@ CREATE TABLE user_manuals (
     publisher TEXT,
     format TEXT,
     year TEXT,
+    age_statement TEXT,
+    special_markings TEXT,
+    label_color TEXT,
+    regional_item TEXT,
+    edition TEXT,
+    barcode TEXT,
+    manual_fingerprint TEXT,
     tags TEXT[] DEFAULT '{}',
     
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -157,6 +164,7 @@ CREATE TABLE user_manuals (
 
 CREATE INDEX idx_user_manuals_user ON user_manuals(user_id);
 CREATE INDEX idx_user_manuals_shelf ON user_manuals(shelf_id);
+CREATE INDEX idx_user_manuals_manual_fingerprint ON user_manuals(user_id, shelf_id, manual_fingerprint) WHERE manual_fingerprint IS NOT NULL;
 
 -- ============================================
 -- USER COLLECTIONS (Items on shelves)

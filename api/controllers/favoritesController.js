@@ -6,6 +6,8 @@
 const favoritesQueries = require('../database/queries/favorites');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
+const usersQueries = require('../database/queries/users');
+const friendshipsQueries = require('../database/queries/friendships');
 
 /**
  * GET /favorites - List all favorites for current user
@@ -133,8 +135,90 @@ async function checkFavoritesBatch(req, res) {
     }
 }
 
+/**
+ * GET /favorites/user/:userId - List favorites for a specific user (filters private users)
+ */
+async function listUserFavorites(req, res) {
+    try {
+        const { userId } = req.params;
+        const targetUserId = parseInt(userId);
+        const viewerId = req.user.id;
+
+        if (isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        // Check if viewing own profile
+        const isOwner = targetUserId === viewerId;
+
+        if (!isOwner) {
+            // Check privacy settings
+            const user = await usersQueries.findById(targetUserId);
+            if (!user) {
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            // If private, must be friends
+            if (user.is_private) {
+                const areFriends = await friendshipsQueries.areFriends(viewerId, targetUserId);
+                if (!areFriends) {
+                    return res.status(403).json({ error: 'This profile is private' });
+                }
+            }
+        }
+
+        const favorites = await favoritesQueries.listForUser(targetUserId);
+        res.json({ favorites });
+    } catch (err) {
+        console.error('listUserFavorites error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+/**
+ * GET /favorites/user/:userId/check - Check if a user has any favorites (for profile button visibility)
+ */
+async function checkUserHasFavorites(req, res) {
+    try {
+        const { userId } = req.params;
+        const targetUserId = parseInt(userId);
+        const viewerId = req.user.id;
+
+        if (isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
+        // Check availability (same logic as list)
+        // We only show the button if the user would be allowed to see the list
+        const isOwner = targetUserId === viewerId;
+
+        if (!isOwner) {
+            const user = await usersQueries.findById(targetUserId);
+            if (!user) {
+                return res.json({ hasFavorites: false }); // Or 404, but false is safer for UI checks
+            }
+            if (user.is_private) {
+                const areFriends = await friendshipsQueries.areFriends(viewerId, targetUserId);
+                if (!areFriends) {
+                    return res.json({ hasFavorites: false }); // Not viewable -> pretend empty
+                }
+            }
+        }
+
+        // For efficiency, we just get the list and check length. 
+        // Optimization: Could add a COUNT query if lists become massive.
+        const favorites = await favoritesQueries.listForUser(targetUserId);
+        res.json({ hasFavorites: favorites.length > 0 });
+    } catch (err) {
+        console.error('checkUserHasFavorites error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
 module.exports = {
     listFavorites,
+    listUserFavorites,
+    checkUserHasFavorites,
     addFavorite,
     removeFavorite,
     checkFavorite,

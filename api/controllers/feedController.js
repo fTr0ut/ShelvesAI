@@ -51,6 +51,14 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
           name,
           title: name,
           author: payload.author || null,
+          ageStatement: payload.ageStatement || null,
+          year: payload.year || null,
+          specialMarkings: payload.specialMarkings || null,
+          labelColor: payload.labelColor || null,
+          regionalItem: payload.regionalItem || null,
+          edition: payload.edition || null,
+          description: payload.description || null,
+          barcode: payload.barcode || null,
         },
       });
     }
@@ -331,7 +339,15 @@ async function getFeedEntryDetails(req, res) {
                     c.cover_url as collectable_cover_url,
                     c.kind as collectable_kind,
                     um.name as manual_name,
-                    um.author as manual_author
+                    um.author as manual_author,
+                    um.description as manual_description,
+                    um.year as manual_year,
+                    um.age_statement as manual_age_statement,
+                    um.special_markings as manual_special_markings,
+                    um.label_color as manual_label_color,
+                    um.regional_item as manual_regional_item,
+                    um.edition as manual_edition,
+                    um.barcode as manual_barcode
              FROM user_collections uc
              LEFT JOIN collectables c ON c.id = uc.collectable_id
              LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -356,6 +372,14 @@ async function getFeedEntryDetails(req, res) {
                 name: resolvedTitle,
                 title: resolvedTitle,
                 author: row.manual_author || null,
+                description: row.manual_description || null,
+                year: row.manual_year || null,
+                ageStatement: row.manual_age_statement || null,
+                specialMarkings: row.manual_special_markings || null,
+                labelColor: row.manual_label_color || null,
+                regionalItem: row.manual_regional_item || null,
+                edition: row.manual_edition || null,
+                barcode: row.manual_barcode || null,
               } : null,
             };
           });
@@ -459,7 +483,14 @@ async function getFeedEntryDetails(req, res) {
               c.title as collectable_title, c.primary_creator, c.cover_url, c.cover_media_id, c.kind,
               m.local_path as cover_media_path,
               c.description as collectable_description, c.year, c.tags,
-              um.name as manual_name, um.author as manual_author, um.description as manual_description
+              um.name as manual_name, um.author as manual_author, um.description as manual_description,
+              um.year as manual_year,
+              um.age_statement as manual_age_statement,
+              um.special_markings as manual_special_markings,
+              um.label_color as manual_label_color,
+              um.regional_item as manual_regional_item,
+              um.edition as manual_edition,
+              um.barcode as manual_barcode
        FROM user_collections uc
        LEFT JOIN collectables c ON c.id = uc.collectable_id
        LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -509,6 +540,13 @@ async function getFeedEntryDetails(req, res) {
           name: row.manual_name,
           author: row.manual_author,
           description: row.manual_description,
+          year: row.manual_year,
+          ageStatement: row.manual_age_statement,
+          specialMarkings: row.manual_special_markings,
+          labelColor: row.manual_label_color,
+          regionalItem: row.manual_regional_item,
+          edition: row.manual_edition,
+          barcode: row.manual_barcode,
         } : null,
         position: row.position,
         notes: row.notes,

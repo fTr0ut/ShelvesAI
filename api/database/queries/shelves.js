@@ -139,6 +139,13 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             um.publisher as manual_publisher,
             um.format as manual_format,
             um.year as manual_year,
+            um.age_statement as manual_age_statement,
+            um.special_markings as manual_special_markings,
+            um.label_color as manual_label_color,
+            um.regional_item as manual_regional_item,
+            um.edition as manual_edition,
+            um.barcode as manual_barcode,
+            um.manual_fingerprint as manual_fingerprint,
             um.tags as manual_tags
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
@@ -185,6 +192,13 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             um.publisher as manual_publisher,
             um.format as manual_format,
             um.year as manual_year,
+            um.age_statement as manual_age_statement,
+            um.special_markings as manual_special_markings,
+            um.label_color as manual_label_color,
+            um.regional_item as manual_regional_item,
+            um.edition as manual_edition,
+            um.barcode as manual_barcode,
+            um.manual_fingerprint as manual_fingerprint,
             um.tags as manual_tags
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
@@ -218,14 +232,53 @@ async function addCollectable({ userId, shelfId, collectableId, format, notes, r
 /**
  * Add a manual entry to a shelf
  */
-async function addManual({ userId, shelfId, name, type, description, author, publisher, format, year, tags }) {
+async function addManual({
+    userId,
+    shelfId,
+    name,
+    type,
+    description,
+    author,
+    publisher,
+    format,
+    year,
+    ageStatement,
+    specialMarkings,
+    labelColor,
+    regionalItem,
+    edition,
+    barcode,
+    manualFingerprint,
+    tags,
+}) {
     return transaction(async (client) => {
         // Create manual entry
         const manualResult = await client.query(
-            `INSERT INTO user_manuals (user_id, shelf_id, name, type, description, author, publisher, format, year, tags)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `INSERT INTO user_manuals (
+        user_id, shelf_id, name, type, description, author, publisher, format, year,
+        age_statement, special_markings, label_color, regional_item, edition, barcode, manual_fingerprint, tags
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
-            [userId, shelfId, name, type, description, author, publisher, format, year, tags || []]
+            [
+                userId,
+                shelfId,
+                name,
+                type,
+                description,
+                author,
+                publisher,
+                format,
+                year,
+                ageStatement,
+                specialMarkings,
+                labelColor,
+                regionalItem,
+                edition,
+                barcode,
+                manualFingerprint,
+                tags || [],
+            ]
         );
         const manual = manualResult.rows[0];
 
@@ -242,6 +295,37 @@ async function addManual({ userId, shelfId, name, type, description, author, pub
             manual: rowToCamelCase(manual),
         };
     });
+}
+
+async function findManualByFingerprint({ userId, shelfId, manualFingerprint }) {
+    if (!manualFingerprint) return null;
+    const result = await query(
+        `SELECT * FROM user_manuals
+     WHERE user_id = $1 AND shelf_id = $2 AND manual_fingerprint = $3
+     LIMIT 1`,
+        [userId, shelfId, manualFingerprint]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function findManualCollection({ userId, shelfId, manualId }) {
+    const result = await query(
+        `SELECT * FROM user_collections
+     WHERE user_id = $1 AND shelf_id = $2 AND manual_id = $3
+     LIMIT 1`,
+        [userId, shelfId, manualId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function addManualCollection({ userId, shelfId, manualId }) {
+    const result = await query(
+        `INSERT INTO user_collections (user_id, shelf_id, manual_id)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+        [userId, shelfId, manualId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
 /**
@@ -351,6 +435,9 @@ module.exports = {
     getItemsForViewing,
     addCollectable,
     addManual,
+    findManualByFingerprint,
+    findManualCollection,
+    addManualCollection,
     removeItem,
     listVisibleForUser,
     updateItemRating,

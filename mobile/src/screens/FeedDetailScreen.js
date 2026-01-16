@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+﻿import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -37,6 +37,15 @@ export default function FeedDetailScreen({ route, navigation }) {
   const [likeCount, setLikeCount] = useState(entry?.likeCount || 0);
   const [hasLiked, setHasLiked] = useState(entry?.hasLiked || false);
   const [likePending, setLikePending] = useState(false);
+
+  const scrollViewRef = useRef(null);
+
+  const handleCommentFocus = useCallback(() => {
+    // Delay to allow keyboard to start appearing
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }, []);
 
   const targetId = feedId || id || entry?.aggregateId || entry?.id || entry?.shelf?.id;
 
@@ -166,6 +175,21 @@ export default function FeedDetailScreen({ route, navigation }) {
     collectableCoverUrl = collectable.coverUrl;
   }
 
+  const formatRelativeTime = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffMins < 1) return 'now';
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays < 7) return `${diffDays}d`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
   const getItemInfo = (item) => {
     const c = item?.collectable || item?.collectableSnapshot;
     const m = item?.manual || item?.manualSnapshot;
@@ -235,9 +259,42 @@ export default function FeedDetailScreen({ route, navigation }) {
 
   const renderComment = (comment, idx) => {
     const author = comment?.user?.username || comment?.username || 'User';
+    const picture = comment?.user?.picture || comment?.picture;
+    const profilePath = comment?.user?.profileMediaPath || comment?.profileMediaPath;
+
+    let commentAvatarSource = null;
+    if (profilePath && apiBase) {
+      commentAvatarSource = { uri: `${apiBase}/media/${profilePath}` };
+    } else if (picture) {
+      commentAvatarSource = { uri: picture };
+    }
+    const initial = author.charAt(0).toUpperCase();
+    const timeAgo = formatRelativeTime(comment?.createdAt);
+
+    const handleProfilePress = () => {
+      const username = comment?.user?.username || comment?.username;
+      if (username) {
+        navigation.navigate('Profile', { username });
+      }
+    };
+
     return (
       <View key={comment?.id || `comment-${idx}`} style={styles.commentRow}>
-        <Text style={styles.commentAuthor}>{author}</Text>
+        <View style={styles.commentHeader}>
+          <TouchableOpacity onPress={handleProfilePress}>
+            <View style={styles.commentAvatar}>
+              {commentAvatarSource ? (
+                <Image source={commentAvatarSource} style={styles.commentAvatarImage} />
+              ) : (
+                <Text style={styles.commentAvatarText}>{initial}</Text>
+              )}
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleProfilePress}>
+            <Text style={styles.commentAuthor}>{author}</Text>
+          </TouchableOpacity>
+          <Text style={styles.commentTime}>{timeAgo}</Text>
+        </View>
         <Text style={styles.commentContent}>{comment?.content || ''}</Text>
       </View>
     );
@@ -259,8 +316,13 @@ export default function FeedDetailScreen({ route, navigation }) {
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
       >
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView
+          ref={scrollViewRef}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          keyboardShouldPersistTaps="handled"
+        >
           {loading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
@@ -355,47 +417,47 @@ export default function FeedDetailScreen({ route, navigation }) {
             </View>
           ) : (
             <>
-            {/* Shelf Info */}
-            <View style={styles.shelfCard}>
-              <View style={styles.shelfHeader}>
-                <Text style={styles.shelfLabel}>Shelf</Text>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
-                >
-                  <Text style={styles.viewLink}>View →</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
-              {shelf?.description ? (
-                <Text style={styles.shelfDescription}>{shelf.description}</Text>
-              ) : null}
-              <View style={styles.shelfMeta}>
-                <View style={styles.metaItem}>
-                  <Ionicons name="library-outline" size={14} color={colors.textMuted} />
-                  <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+              {/* Shelf Info */}
+              <View style={styles.shelfCard}>
+                <View style={styles.shelfHeader}>
+                  <Text style={styles.shelfLabel}>Shelf</Text>
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
+                  >
+                    <Text style={styles.viewLink}>View →</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={styles.metaItem}>
-                  <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
-                  <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+                <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
+                {shelf?.description ? (
+                  <Text style={styles.shelfDescription}>{shelf.description}</Text>
+                ) : null}
+                <View style={styles.shelfMeta}>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-  
-            {/* Items */}
-            <Text style={styles.sectionTitle}>Newly added collectibles</Text>
-            <View style={styles.itemsListContainer}>
-              <ScrollView nestedScrollEnabled={true}>
-                {(items || []).length > 0 ? (
-                  items.map((item, idx) => (
-                    <View key={item._id || `item-${idx}`}>
-                      {renderItem({ item, index: idx })}
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.emptyText}>No items to display</Text>
-                )}
-              </ScrollView>
-            </View>
+
+              {/* Items */}
+              <Text style={styles.sectionTitle}>Newly added collectibles</Text>
+              <View style={styles.itemsListContainer}>
+                <ScrollView nestedScrollEnabled={true}>
+                  {(items || []).length > 0 ? (
+                    items.map((item, idx) => (
+                      <View key={item._id || `item-${idx}`}>
+                        {renderItem({ item, index: idx })}
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyText}>No items to display</Text>
+                  )}
+                </ScrollView>
+              </View>
             </>
           )}
 
@@ -429,6 +491,7 @@ export default function FeedDetailScreen({ route, navigation }) {
                 placeholder="Add a comment"
                 placeholderTextColor={colors.textMuted}
                 multiline
+                onFocus={handleCommentFocus}
               />
               <TouchableOpacity
                 style={[styles.commentSend, commentLoading && styles.commentSendDisabled]}
@@ -689,7 +752,8 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   },
   commentsSection: {
     paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.xl * 2,
+    paddingHorizontal: spacing.md,
   },
   commentRow: {
     backgroundColor: colors.surface,
@@ -697,15 +761,44 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     padding: spacing.sm,
     marginBottom: spacing.xs,
   },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  commentAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+    marginRight: 8,
+  },
+  commentAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  commentAvatarText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
   commentAuthor: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.text,
-    marginBottom: 2,
+  },
+  commentTime: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginLeft: 8,
   },
   commentContent: {
     fontSize: 13,
     color: colors.textSecondary,
+    marginLeft: 28, // Indent content under name (20 avatar + 8 margin)
   },
   commentInputRow: {
     flexDirection: 'row',

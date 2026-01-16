@@ -79,6 +79,20 @@ function getNotificationIsRead(notification) {
   return getValue(notification, ['is_read', 'isRead']);
 }
 
+function summarizeNotification(notification) {
+  return {
+    id: getNotificationId(notification),
+    type: getNotificationType(notification),
+    actorId: getNotificationActorId(notification),
+    entityId: getNotificationEntityId(notification),
+    isRead: getNotificationIsRead(notification),
+  };
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function registerUser(label) {
   const username = `${label}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   const email = `${username}@example.com`;
@@ -133,10 +147,24 @@ function filterNotifications(notifications, criteria) {
 }
 
 async function expectSingleNotification(token, criteria) {
-  const notifications = await fetchNotifications(token);
-  const matches = filterNotifications(notifications, criteria);
-  assert(matches.length === 1, `Expected 1 notification, found ${matches.length} (${criteria.type})`);
-  return matches[0];
+  const retries = 4;
+  const delayMs = 300;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const notifications = await fetchNotifications(token);
+    const matches = filterNotifications(notifications, criteria);
+    if (matches.length === 1) {
+      return matches[0];
+    }
+    if (attempt < retries) {
+      await wait(delayMs);
+      continue;
+    }
+
+    const summary = notifications.map(summarizeNotification);
+    console.warn('Notification list snapshot:', summary);
+    assert(matches.length === 1, `Expected 1 notification, found ${matches.length} (${criteria.type})`);
+  }
 }
 
 async function expectNoNotification(token, criteria) {

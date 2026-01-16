@@ -51,9 +51,10 @@ async function addComment(eventId, userId, content) {
         VALUES ($1, $2, $3)
         RETURNING id, event_id, user_id, content, created_at
      )
-     SELECT inserted.*, u.username, u.picture
+     SELECT inserted.*, u.username, u.picture, pm.local_path as profile_media_path
      FROM inserted
-     LEFT JOIN users u ON u.id = inserted.user_id`,
+     LEFT JOIN users u ON u.id = inserted.user_id
+     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id`,
     [eventId, userId, content]
   );
 
@@ -66,6 +67,7 @@ async function addComment(eventId, userId, content) {
       id: row.userId,
       username: row.username,
       picture: row.picture,
+      profileMediaPath: row.profileMediaPath,
     },
   };
 }
@@ -73,9 +75,10 @@ async function addComment(eventId, userId, content) {
 async function getComments(eventId, { limit = 20, offset = 0 } = {}) {
   const result = await query(
     `SELECT ec.id, ec.content, ec.created_at, ec.user_id,
-            u.username, u.picture
+            u.username, u.picture, pm.local_path as profile_media_path
      FROM event_comments ec
      LEFT JOIN users u ON u.id = ec.user_id
+     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
      WHERE ec.event_id = $1
      ORDER BY ec.created_at DESC
      LIMIT $2 OFFSET $3`,
@@ -97,6 +100,7 @@ async function getComments(eventId, { limit = 20, offset = 0 } = {}) {
         id: item.userId,
         username: item.username,
         picture: item.picture,
+        profileMediaPath: item.profileMediaPath,
       },
     };
   });
@@ -151,12 +155,15 @@ async function getSocialSummaries(eventIds, userId) {
             top_comments.id AS top_comment_id,
             top_comments.content AS top_comment_content,
             top_comments.created_at AS top_comment_created_at,
-            u.username AS top_comment_username
+            u.username AS top_comment_username,
+            u.picture AS top_comment_picture,
+            pm.local_path AS top_comment_profile_media_path
      FROM ids
      LEFT JOIN like_counts ON like_counts.event_id = ids.event_id
      LEFT JOIN comment_counts ON comment_counts.event_id = ids.event_id
      LEFT JOIN top_comments ON top_comments.event_id = ids.event_id
      LEFT JOIN users u ON u.id = top_comments.user_id
+     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
      LEFT JOIN user_likes ON user_likes.event_id = ids.event_id`,
     [eventIds, userId || null]
   );
@@ -169,6 +176,8 @@ async function getSocialSummaries(eventIds, userId) {
       content: item.topCommentContent,
       username: item.topCommentUsername,
       createdAt: item.topCommentCreatedAt,
+      picture: item.topCommentPicture,
+      profileMediaPath: item.topCommentProfileMediaPath,
     } : null;
 
     map.set(item.eventId, {

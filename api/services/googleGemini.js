@@ -135,13 +135,22 @@ class GoogleGeminiService {
         return null;
     }
 
-    buildVisionPrompt(shelfType) {
+    buildVisionPrompt(shelfType, shelfDescription = null) {
         const normalizedShelf = normalizeString(shelfType || 'collection');
+        const normalizedDescription = normalizeString(shelfDescription);
         const settings = getVisionSettingsForType(normalizedShelf);
+        const descriptionToken = '{shelfDescription}';
 
         // Use type-specific prompt from config if available
         if (settings.prompt) {
-            return settings.prompt.replace(/{shelfType}/g, normalizedShelf);
+            let prompt = settings.prompt.replace(/{shelfType}/g, normalizedShelf);
+            if (prompt.includes(descriptionToken)) {
+                prompt = prompt.replace(
+                    new RegExp(descriptionToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                    normalizedDescription || '',
+                );
+            }
+            return prompt;
         }
 
         // Fallback to generic prompt
@@ -432,13 +441,13 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
      * @param {string} shelfType
      * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>}>}
      */
-    async detectShelfItemsFromImage(base64Image, shelfType) {
+    async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null) {
         if (!this.visionModel) {
             throw new Error('Google Gemini vision model not initialized.');
         }
 
         const { data, mimeType } = parseInlineImage(base64Image);
-        const prompt = this.buildVisionPrompt(shelfType);
+        const prompt = this.buildVisionPrompt(shelfType, shelfDescription);
 
         try {
             const result = await this.visionModel.generateContent([
@@ -471,15 +480,23 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             }
 
             const items = parsed.map(item => {
-                const title = normalizeString(item?.title || item?.name);
+                const raw = item && typeof item === 'object' ? item : {};
+                const title = normalizeString(raw.title || raw.name || raw.itemName);
                 if (!title) return null;
-                const author = normalizeString(item?.author || item?.primaryCreator);
+                const author = normalizeString(
+                    raw.author || raw.primaryCreator || raw.creator || raw.brand || raw.publisher || raw.manufacturer,
+                );
+                const primaryCreator = normalizeString(
+                    raw.primaryCreator || raw.author || raw.creator || raw.brand || raw.publisher || raw.manufacturer,
+                );
                 return {
+                    ...raw,
                     name: title,
                     title,
                     author: author || null,
+                    primaryCreator: primaryCreator || null,
                     type: shelfType,
-                    confidence: coerceConfidence(item?.confidence),
+                    confidence: coerceConfidence(raw.confidence),
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
 

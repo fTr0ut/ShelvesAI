@@ -17,9 +17,18 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
-export default function FavoritesScreen({ navigation }) {
+export default function FavoritesScreen({ navigation, route }) {
     const { token, apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
+
+    const targetUserId = route.params?.userId;
+    const targetUsername = route.params?.username;
+    // We can pass firstName for better UI
+    const targetFirstName = route.params?.firstName;
+
+    // Valid if we are targeting someone else
+    const isViewingOther = !!(targetUserId || targetUsername);
+    const displayName = targetFirstName || targetUsername || 'User';
 
     const [favorites, setFavorites] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -30,23 +39,40 @@ export default function FavoritesScreen({ navigation }) {
         [colors, spacing, typography, shadows, radius]
     );
 
-    const loadFavorites = useCallback(async () => {
+    const loadFavorites = useCallback(async (isRefresh = false) => {
         try {
-            if (!refreshing) setLoading(true);
+            if (!refreshing && !isRefresh) setLoading(true);
+
+            let path = '/api/favorites';
+
+            if (targetUserId) {
+                path = `/api/favorites/user/${targetUserId}`;
+            } else if (targetUsername) {
+                // Determine ID if only username provided - similar logic to WishlistsScreen could apply, 
+                // but simpler to rely on ProfileScreen passing userId. 
+                // If we must support username-only deep links later, we'd need a profile lookup here first.
+                // For now, let's assume specific navigation from Profile passes userId or handle username lookup if critical.
+                // Re-using logic from WishlistsScreen for robustness:
+                const profileData = await apiRequest({ apiBase, path: `/api/profile/${targetUsername}`, token });
+                if (profileData.profile?.id) {
+                    path = `/api/favorites/user/${profileData.profile.id}`;
+                }
+            }
+
             const data = await apiRequest({
                 apiBase,
-                path: '/api/favorites',
+                path,
                 token,
             });
             setFavorites(data.favorites || []);
         } catch (e) {
             console.warn('Failed to load favorites:', e);
-            Alert.alert('Error', 'Failed to load favorites');
+            if (!isRefresh) Alert.alert('Error', 'Failed to load favorites');
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [apiBase, token, refreshing]);
+    }, [apiBase, token, refreshing, targetUserId, targetUsername]);
 
     useEffect(() => {
         loadFavorites();
@@ -132,12 +158,14 @@ export default function FavoritesScreen({ navigation }) {
                         <Text style={styles.itemMetaText}>Favorited</Text>
                     </View>
                 </View>
-                <TouchableOpacity
-                    onPress={() => handleRemoveFavorite(collectable.id)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                    <Ionicons name="close" size={18} color={colors.textMuted} />
-                </TouchableOpacity>
+                {!isViewingOther && (
+                    <TouchableOpacity
+                        onPress={() => handleRemoveFavorite(collectable.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <Ionicons name="close" size={18} color={colors.textMuted} />
+                    </TouchableOpacity>
+                )}
             </TouchableOpacity>
         );
     };
@@ -147,7 +175,9 @@ export default function FavoritesScreen({ navigation }) {
             <Ionicons name="heart-outline" size={56} color={colors.textMuted} />
             <Text style={styles.emptyTitle}>No favorites yet</Text>
             <Text style={styles.emptyText}>
-                Tap the heart icon on any item in your shelves to add it here
+                {isViewingOther
+                    ? `${displayName} hasn't favorited any items yet`
+                    : 'Tap the heart icon on any item in your shelves to add it here'}
             </Text>
         </View>
     );
@@ -170,7 +200,9 @@ export default function FavoritesScreen({ navigation }) {
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
                 <View style={styles.headerCenter}>
-                    <Text style={styles.headerTitle}>My Favorites</Text>
+                    <Text style={styles.headerTitle}>
+                        {isViewingOther ? `${displayName}'s Favorites` : 'My Favorites'}
+                    </Text>
                     <Text style={styles.headerSubtitle}>{favorites.length} item{favorites.length !== 1 ? 's' : ''}</Text>
                 </View>
                 <View style={{ width: 40 }} />

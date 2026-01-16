@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
-import { toggleLike } from '../services/feedApi';
+import { toggleLike, addComment } from '../services/feedApi';
 
 const FILTERS = [
     { key: 'all', label: 'All' },
@@ -97,6 +97,10 @@ export default function SocialFeedScreen({ navigation }) {
     const [searchLoading, setSearchLoading] = useState(false);
     const [showResults, setShowResults] = useState(false);
     const searchTimeoutRef = useRef(null);
+
+    // Inline comment state
+    const [commentTexts, setCommentTexts] = useState({});
+    const [pendingComments, setPendingComments] = useState({});
 
     const load = useCallback(async (opts = {}) => {
         if (!token) {
@@ -270,6 +274,54 @@ export default function SocialFeedScreen({ navigation }) {
         navigation.navigate('FeedDetail', { entry });
     }, [navigation]);
 
+    const handleAddInlineComment = useCallback(async (entry) => {
+        const targetId = entry?.aggregateId || entry?.id;
+        const content = commentTexts[targetId]?.trim();
+
+        if (!token || !targetId || !content || pendingComments[targetId]) return;
+
+        setPendingComments(prev => ({ ...prev, [targetId]: true }));
+
+        try {
+            const response = await addComment({ apiBase, token, eventId: targetId, content });
+
+            // Clear input on success
+            setCommentTexts(prev => {
+                const next = { ...prev };
+                delete next[targetId];
+                return next;
+            });
+
+            // Optimistic updates
+            const previousCount = entry?.commentCount || 0;
+            const newComment = response?.comment || {
+                content,
+                username: user?.username || 'You',
+                id: 'optimistic-' + Date.now()
+            };
+
+            // If this is the first comment, set it as topComment so it appears immediately
+            const updates = {
+                commentCount: (typeof response?.commentCount === 'number') ? response.commentCount : previousCount + 1
+            };
+
+            if (!entry?.topComment) {
+                updates.topComment = newComment;
+            }
+
+            updateEntrySocial(targetId, updates);
+
+        } catch (err) {
+            console.error('Failed to add comment:', err);
+        } finally {
+            setPendingComments(prev => {
+                const next = { ...prev };
+                delete next[targetId];
+                return next;
+            });
+        }
+    }, [apiBase, token, commentTexts, pendingComments, updateEntrySocial, user]);
+
     const renderSocialActions = (entry) => {
         const targetId = entry?.aggregateId || entry?.id;
         const hasLiked = !!entry?.hasLiked;
@@ -280,8 +332,32 @@ export default function SocialFeedScreen({ navigation }) {
         const commentLabel = commentCount > 0 ? `${commentCount} Comment${commentCount === 1 ? '' : 's'}` : 'Comment';
         const isPending = !!(targetId && pendingLikes[targetId]);
 
+        const commentText = commentTexts[targetId] || '';
+        const isSending = !!pendingComments[targetId];
+
+        // Prepare comment avatar
+        let commentAvatarSource = null;
+        if (topComment) {
+            const commentUser = topComment.user || {}; // backend might nest user info
+            // Fallbacks if user info is at top level or nested
+            const profilePath = commentUser.profileMediaPath || topComment.profileMediaPath;
+            const pictureUrl = commentUser.picture || topComment.picture || topComment.userPicture;
+
+            if (profilePath) {
+                commentAvatarSource = { uri: `${apiBase}/media/${profilePath}` };
+            } else if (pictureUrl) {
+                commentAvatarSource = { uri: pictureUrl };
+            }
+        }
+
+        // Fallback initial
+        const commentUsername = topComment?.username || topComment?.user?.username || 'User';
+        const commentInitial = commentUsername.charAt(0).toUpperCase();
+        const commentTime = formatRelativeTime(topComment?.createdAt);
+
         return (
             <View style={styles.socialRow}>
+                {/* Stats & Actions Row */}
                 <View style={styles.socialActions}>
                     <TouchableOpacity
                         style={[
@@ -310,12 +386,56 @@ export default function SocialFeedScreen({ navigation }) {
                         <Text style={styles.socialButtonText}>{commentLabel}</Text>
                     </TouchableOpacity>
                 </View>
+
+                {/* Top Comment Preview */}
                 {topComment?.content ? (
-                    <Text style={styles.commentPreview} numberOfLines={1}>
-                        {topComment.username ? `${topComment.username}: ` : ''}
-                        {topComment.content}
-                    </Text>
+                    <TouchableOpacity
+                        style={styles.commentPreviewContainer}
+                        onPress={() => handleCommentPress(entry)}
+                        activeOpacity={0.8}
+                    >
+                        <View style={styles.commentPreviewRow}>
+                            <View style={styles.commentAvatar}>
+                                {commentAvatarSource ? (
+                                    <Image source={commentAvatarSource} style={styles.commentAvatarImage} />
+                                ) : (
+                                    <Text style={styles.commentAvatarText}>{commentInitial}</Text>
+                                )}
+                            </View>
+                            <Text style={styles.commentPreview} numberOfLines={2}>
+                                <Text style={styles.commentUsername}>{commentUsername ? `${commentUsername} ` : ''}</Text>
+                                <Text style={styles.commentContent}>{topComment.content}</Text>
+                            </Text>
+                            <Text style={styles.commentTimestamp}>{commentTime}</Text>
+                        </View>
+                    </TouchableOpacity>
                 ) : null}
+
+                {/* Inline Comment Input */}
+                <View style={styles.inlineCommentRow}>
+                    <TextInput
+                        style={styles.inlineCommentInput}
+                        placeholder="Add a comment..."
+                        placeholderTextColor={colors.textMuted}
+                        value={commentText}
+                        onChangeText={(text) => setCommentTexts(prev => ({ ...prev, [targetId]: text }))}
+                        multiline
+                    />
+                    <TouchableOpacity
+                        style={[
+                            styles.inlineCommentSend,
+                            (!commentText.trim() || isSending) && styles.inlineCommentSendDisabled
+                        ]}
+                        onPress={() => handleAddInlineComment(entry)}
+                        disabled={!commentText.trim() || isSending}
+                    >
+                        {isSending ? (
+                            <ActivityIndicator size="small" color={colors.textInverted} />
+                        ) : (
+                            <Ionicons name="arrow-up" size={16} color={colors.textInverted} />
+                        )}
+                    </TouchableOpacity>
+                </View>
             </View>
         );
     };
@@ -1000,6 +1120,80 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         paddingTop: spacing.sm,
         borderTopWidth: 1,
         borderTopColor: colors.border,
+    },
+    // Inline comment styles
+    commentPreviewContainer: {
+        marginBottom: spacing.sm,
+    },
+    commentPreviewRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    commentAvatar: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: colors.surfaceElevated,
+        justifyContent: 'center',
+        alignItems: 'center',
+        overflow: 'hidden',
+    },
+    commentAvatarImage: {
+        width: '100%',
+        height: '100%',
+    },
+    commentAvatarText: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: colors.textMuted,
+    },
+    commentPreview: {
+        flex: 1,
+        fontSize: 13,
+        color: colors.textSecondary,
+        lineHeight: 18,
+    },
+    commentContent: {
+        color: colors.textSecondary,
+    },
+    commentTimestamp: {
+        fontSize: 11,
+        color: colors.textMuted,
+        marginLeft: 4,
+    },
+    commentUsername: {
+        fontWeight: '600',
+        color: colors.text,
+    },
+    inlineCommentRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginTop: 4,
+    },
+    inlineCommentInput: {
+        flex: 1,
+        fontSize: 13,
+        paddingVertical: 4,
+        paddingHorizontal: spacing.sm,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 16,
+        color: colors.text,
+        minHeight: 32,
+        maxHeight: 80,
+    },
+    inlineCommentSend: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    inlineCommentSendDisabled: {
+        opacity: 0.5,
+        backgroundColor: colors.textMuted,
     },
     footerStat: {
         flexDirection: 'row',

@@ -3,7 +3,16 @@ const { auth } = require('../middleware/auth');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
-const { makeLightweightFingerprint, makeCollectableFingerprint } = require('../services/collectables/fingerprint');
+const {
+    makeLightweightFingerprint,
+    makeCollectableFingerprint,
+    makeManualFingerprint,
+} = require('../services/collectables/fingerprint');
+const {
+    normalizeOtherManualItem,
+    buildOtherManualPayload,
+    hasRequiredOtherFields,
+} = require('../services/manuals/otherManual');
 
 const router = express.Router();
 
@@ -95,6 +104,102 @@ router.put('/:id', async (req, res) => {
         // Get shelf for type info
         const shelf = await shelvesQueries.getById(reviewItem.shelfId, req.user.id);
         const shelfType = shelf?.type || reviewItem.shelfType || 'item';
+
+        const isOtherShelf = String(shelfType || '').toLowerCase() === 'other';
+
+        if (isOtherShelf) {
+            const normalized = normalizeOtherManualItem(completedData, shelfType);
+            if (!hasRequiredOtherFields(normalized)) {
+                return res.status(400).json({ error: 'title and primaryCreator are required' });
+            }
+
+            const fingerprintData = { ...normalized, kind: shelfType };
+            const lwf = makeLightweightFingerprint(fingerprintData);
+            let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+            if (collectable) {
+                matchSource = 'fingerprint';
+
+                const shelfItem = await shelvesQueries.addCollectable({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    collectableId: collectable.id,
+                });
+
+                await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
+
+                return res.json({
+                    success: true,
+                    matchSource,
+                    item: {
+                        id: shelfItem.id,
+                        collectable,
+                        position: shelfItem.position,
+                    },
+                });
+            }
+
+            const manualFingerprint = makeManualFingerprint({
+                title: normalized.title,
+                primaryCreator: normalized.primaryCreator,
+                kind: shelfType,
+            }, 'manual-other');
+
+            let manualResult = null;
+            let alreadyOnShelf = false;
+
+            if (manualFingerprint) {
+                const existingManual = await shelvesQueries.findManualByFingerprint({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    manualFingerprint,
+                });
+
+                if (existingManual) {
+                    const existingCollection = await shelvesQueries.findManualCollection({
+                        userId: req.user.id,
+                        shelfId: reviewItem.shelfId,
+                        manualId: existingManual.id,
+                    });
+
+                    if (existingCollection) {
+                        manualResult = { collection: existingCollection, manual: existingManual };
+                        alreadyOnShelf = true;
+                    } else {
+                        const collection = await shelvesQueries.addManualCollection({
+                            userId: req.user.id,
+                            shelfId: reviewItem.shelfId,
+                            manualId: existingManual.id,
+                        });
+                        manualResult = { collection, manual: existingManual };
+                    }
+                }
+            }
+
+            if (!manualResult) {
+                const payload = buildOtherManualPayload(normalized, shelfType, manualFingerprint);
+                manualResult = await shelvesQueries.addManual({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    ...payload,
+                    tags: completedData.tags,
+                });
+                matchSource = 'manual';
+            } else {
+                matchSource = alreadyOnShelf ? 'manual-existing' : 'manual-fingerprint';
+            }
+
+            await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
+
+            return res.json({
+                success: true,
+                matchSource,
+                item: {
+                    id: manualResult.collection.id,
+                    manual: manualResult.manual,
+                    position: manualResult.collection.position,
+                },
+            });
+        }
 
         // 1. Check for existing collectable by fingerprint
         const fingerprintData = { ...completedData, kind: shelfType };

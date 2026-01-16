@@ -1,4 +1,10 @@
-const { makeLightweightFingerprint, makeVisionOcrFingerprint, normalizeFingerprintComponent } = require('../services/collectables/fingerprint');
+const {
+  makeLightweightFingerprint,
+  makeVisionOcrFingerprint,
+  normalizeFingerprintComponent,
+  makeCollectableFingerprint,
+  makeManualFingerprint,
+} = require('../services/collectables/fingerprint');
 const OpenAI = require("openai");
 
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
@@ -16,8 +22,12 @@ const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const needsReviewQueries = require('../database/queries/needsReview');
-const { makeCollectableFingerprint } = require('../services/collectables/fingerprint');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+const {
+  normalizeOtherManualItem,
+  buildOtherManualPayload,
+  hasRequiredOtherFields,
+} = require('../services/manuals/otherManual');
 
 
 
@@ -270,6 +280,13 @@ function formatShelfItem(row) {
     publisher: row.manualPublisher || null,
     format: row.manualFormat || null,
     year: row.manualYear || null,
+    ageStatement: row.manualAgeStatement || null,
+    specialMarkings: row.manualSpecialMarkings || null,
+    labelColor: row.manualLabelColor || null,
+    regionalItem: row.manualRegionalItem || null,
+    edition: row.manualEdition || null,
+    barcode: row.manualBarcode || null,
+    manualFingerprint: row.manualFingerprint || null,
     tags: Array.isArray(row.manualTags) ? row.manualTags : [],
   } : null;
 
@@ -555,7 +572,23 @@ async function addManualEntry(req, res) {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { name, type, description, author, publisher, format, year, tags } = req.body ?? {};
+    const {
+      name,
+      type,
+      description,
+      author,
+      primaryCreator,
+      publisher,
+      format,
+      year,
+      ageStatement,
+      specialMarkings,
+      labelColor,
+      regionalItem,
+      edition,
+      barcode,
+      tags,
+    } = req.body ?? {};
     if (!name) return res.status(400).json({ error: "name is required" });
 
     const result = await shelvesQueries.addManual({
@@ -564,10 +597,16 @@ async function addManualEntry(req, res) {
       name: String(name).trim(),
       type,
       description,
-      author,
+      author: author || primaryCreator || null,
       publisher,
       format,
       year,
+      ageStatement,
+      specialMarkings,
+      labelColor,
+      regionalItem,
+      edition,
+      barcode,
       tags,
     });
 
@@ -742,12 +781,38 @@ async function updateManualEntry(req, res) {
 
     const body = req.body ?? {};
     const updates = {};
-    const allowedFields = ['name', 'type', 'description', 'author', 'publisher', 'format', 'year'];
+    const fieldMap = {
+      ageStatement: 'age_statement',
+      specialMarkings: 'special_markings',
+      labelColor: 'label_color',
+      regionalItem: 'regional_item',
+    };
+
+    const allowedFields = [
+      'name',
+      'type',
+      'description',
+      'author',
+      'publisher',
+      'format',
+      'year',
+      'ageStatement',
+      'specialMarkings',
+      'labelColor',
+      'regionalItem',
+      'edition',
+      'barcode',
+    ];
 
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
-        updates[field] = String(body[field]).trim();
+        const dbField = fieldMap[field] || field;
+        updates[dbField] = String(body[field]).trim();
       }
+    }
+
+    if (body.primaryCreator !== undefined && updates.author === undefined) {
+      updates.author = String(body.primaryCreator).trim();
     }
 
     if (Object.keys(updates).length === 0) {
@@ -1009,10 +1074,115 @@ async function completeReviewItem(req, res) {
     // Merge user edits with raw data
     // Prioritize user body over rawData
     const completedData = { ...reviewItem.rawData, ...req.body };
+    const isOtherShelf = String(shelf.type || '').toLowerCase() === 'other';
+
+    if (isOtherShelf) {
+      const normalized = normalizeOtherManualItem(completedData, shelf.type);
+      if (!hasRequiredOtherFields(normalized)) {
+        return res.status(400).json({ error: 'title and primaryCreator are required' });
+      }
+
+      const fingerprintData = { ...normalized, kind: shelf.type };
+      const lwf = makeLightweightFingerprint(fingerprintData);
+      let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+
+      if (collectable) {
+        const item = await shelvesQueries.addCollectable({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          collectableId: collectable.id,
+        });
+
+        await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
+
+        await logShelfEvent({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          type: "item.collectable_added",
+          payload: { source: "review", reviewItemId: reviewItem.id },
+        });
+
+        return res.json({ item: { id: item.id, collectable, position: item.position, notes: item.notes, rating: item.rating } });
+      }
+
+      const manualFingerprint = makeManualFingerprint({
+        title: normalized.title,
+        primaryCreator: normalized.primaryCreator,
+        kind: shelf.type,
+      }, 'manual-other');
+
+      let manualResult = null;
+      let alreadyOnShelf = false;
+
+      if (manualFingerprint) {
+        const existingManual = await shelvesQueries.findManualByFingerprint({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          manualFingerprint,
+        });
+
+        if (existingManual) {
+          const existingCollection = await shelvesQueries.findManualCollection({
+            userId: req.user.id,
+            shelfId: shelf.id,
+            manualId: existingManual.id,
+          });
+
+          if (existingCollection) {
+            manualResult = { collection: existingCollection, manual: existingManual };
+            alreadyOnShelf = true;
+          } else {
+            const collection = await shelvesQueries.addManualCollection({
+              userId: req.user.id,
+              shelfId: shelf.id,
+              manualId: existingManual.id,
+            });
+            manualResult = { collection, manual: existingManual };
+          }
+        }
+      }
+
+      if (!manualResult) {
+        const payload = buildOtherManualPayload(normalized, shelf.type, manualFingerprint);
+        manualResult = await shelvesQueries.addManual({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          ...payload,
+          tags: completedData.tags,
+        });
+      }
+
+      await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
+
+      if (!alreadyOnShelf) {
+        await logShelfEvent({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          type: "item.manual_added",
+          payload: {
+            source: "review",
+            reviewItemId: reviewItem.id,
+            itemId: manualResult.collection.id,
+            manualId: manualResult.manual.id,
+            name: manualResult.manual.name,
+            author: manualResult.manual.author,
+          },
+        });
+      }
+
+      return res.json({
+        item: {
+          id: manualResult.collection.id,
+          manual: manualResult.manual,
+          position: manualResult.collection.position ?? null,
+          format: manualResult.collection.format ?? null,
+          notes: manualResult.collection.notes ?? null,
+          rating: manualResult.collection.rating ?? null,
+        },
+      });
+    }
 
     // RE-MATCH: Run fingerprint + fuzzy match to prevent duplicates
-    // makeLightweightFingerprint(item) helper from existing imports? 
-    // shelvesController imports `makeLightweightFingerprint` at the top (line 1).
     const fingerprintData = { ...completedData, kind: shelf.type };
     const lwf = makeLightweightFingerprint(fingerprintData);
     let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
@@ -1030,7 +1200,7 @@ async function completeReviewItem(req, res) {
       collectable = await collectablesQueries.upsert({
         ...completedData,
         kind: shelf.type,
-        fingerprint: makeCollectableFingerprint(fingerprintData), // Imported/Available?
+        fingerprint: makeCollectableFingerprint(fingerprintData),
         lightweightFingerprint: lwf,
       });
     }

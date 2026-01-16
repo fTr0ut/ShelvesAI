@@ -224,7 +224,7 @@ function tmdbMovieToCollectable(movie, options = {}) {
 
     // Provider-agnostic cover fields (TMDB allows caching, null means 'needs resolution')
     coverImageUrl: poster?.urlLarge || poster?.urlMedium || null,
-    coverImageSource: null,
+    coverImageSource: 'external',
 
     // Provider-agnostic attribution (TMDB requires logo + disclaimer)
     attribution: {

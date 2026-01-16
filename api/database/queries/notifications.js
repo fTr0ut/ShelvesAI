@@ -17,11 +17,26 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
         normalizedMetadata,
     ];
 
-    if (type === 'like' || type === 'friend_request') {
+    if (type === 'like') {
         const result = await query(
             `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
              VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (user_id, actor_id, entity_id, type) DO NOTHING
+             ON CONFLICT (user_id, actor_id, entity_id, type)
+             WHERE deleted_at IS NULL AND type = 'like'
+             DO NOTHING
+             RETURNING *`,
+            values
+        );
+        return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    }
+
+    if (type === 'friend_request') {
+        const result = await query(
+            `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, actor_id, entity_id, type)
+             WHERE deleted_at IS NULL AND type = 'friend_request'
+             DO NOTHING
              RETURNING *`,
             values
         );

@@ -45,6 +45,7 @@ class CatalogRouter {
             openLibrary: () => this._loadAdapter('OpenLibraryAdapter'),
             igdb: () => this._loadAdapter('IgdbAdapter'),
             tmdb: () => this._loadAdapter('TmdbAdapter'),
+            tmdbTv: () => this._loadAdapter('TmdbTvAdapter'),
             discogs: () => this._loadAdapter('DiscogsAdapter'),
         };
     }
@@ -93,6 +94,10 @@ class CatalogRouter {
             dvd: 'movies',
             bluray: 'movies',
             'blu-ray': 'movies',
+            'tv show': 'tv',
+            'tv shows': 'tv',
+            series: 'tv',
+            television: 'tv',
             record: 'vinyl',
             album: 'vinyl',
             music: 'vinyl',

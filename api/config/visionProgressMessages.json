@@ -39,6 +39,11 @@
             "step": "complete",
             "progress": 100,
             "message": "Processing complete!"
+        },
+        "preparingOther": {
+            "step": "preparing-other",
+            "progress": 50,
+            "messageTemplate": "Gathering details for {count} other items..."
         }
     }
 }

@@ -2,7 +2,6 @@
     "books": {
         "mode": "fallback",
         "apis": [
-
             {
                 "name": "openLibrary",
                 "enabled": true,
@@ -36,6 +35,17 @@
                 "enabled": true,
                 "priority": 1,
                 "envDisableKey": "DISABLE_TMDB"
+            }
+        ]
+    },
+    "tv": {
+        "mode": "fallback",
+        "apis": [
+            {
+                "name": "tmdbTv",
+                "enabled": true,
+                "priority": 1,
+                "envDisableKey": "DISABLE_TMDB_TV"
             }
         ]
     },

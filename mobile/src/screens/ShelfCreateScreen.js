@@ -24,6 +24,7 @@ const VISIBILITY_OPTIONS = [
 const SHELF_TYPES = [
   { value: 'books', label: 'Books', icon: 'book' },
   { value: 'movies', label: 'Movies', icon: 'film' },
+  { value: 'tv', label: 'TV', icon: 'tv' },
   { value: 'games', label: 'Games', icon: 'game-controller' },
   { value: 'music', label: 'Music', icon: 'musical-notes' },
   { value: 'vinyl', label: 'Vinyl', icon: 'disc' },

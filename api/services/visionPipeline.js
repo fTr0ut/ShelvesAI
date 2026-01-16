@@ -4,10 +4,20 @@ const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
-const { makeCollectableFingerprint, makeLightweightFingerprint, makeVisionOcrFingerprint } = require('./collectables/fingerprint');
+const {
+    makeCollectableFingerprint,
+    makeLightweightFingerprint,
+    makeVisionOcrFingerprint,
+    makeManualFingerprint,
+} = require('./collectables/fingerprint');
 const processingStatus = require('./processingStatus');
 const path = require('path');
 const fs = require('fs');
+const {
+    normalizeOtherManualItem,
+    buildOtherManualPayload,
+    hasRequiredOtherFields,
+} = require('./manuals/otherManual');
 
 // Catalog Services
 const { BookCatalogService } = require('./catalog/BookCatalogService');
@@ -49,6 +59,11 @@ function getProgressMessage(key, vars = {}) {
 const DEFAULT_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
 const DEFAULT_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
 const FEED_EVENT_ITEM_ID_CAP = parseInt(process.env.FEED_EVENT_ITEM_ID_CAP || '250', 10);
+const OTHER_SHELF_TYPE = 'other';
+
+function isOtherShelfType(value) {
+    return String(value || '').toLowerCase() === OTHER_SHELF_TYPE;
+}
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -178,19 +193,119 @@ class VisionPipelineService {
         checkAborted();
         updateProgress('extracting');
         console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
-        const rawItems = await this.extractItems(imageBase64, shelf.type);
+        const rawItems = await this.extractItems(imageBase64, shelf.type, shelf.description);
         console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
+        const isOtherShelf = isOtherShelfType(shelf.type);
+        const normalizedItems = isOtherShelf
+            ? rawItems.map(item => normalizeOtherManualItem(item, shelf.type))
+            : rawItems;
 
         // Step 1b: Categorize into three tiers using per-type thresholds
         checkAborted();
-        updateProgress('categorizing', { count: rawItems.length });
+        updateProgress('categorizing', { count: normalizedItems.length });
         console.log('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
-        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(rawItems, confidenceMax, confidenceMin);
+        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
+            normalizedItems,
+            confidenceMax,
+            confidenceMin,
+        );
 
         // Low confidence items go directly to needs_review
         if (lowConfidence.length > 0) {
             console.log('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
             await this.saveToReviewQueue(lowConfidence, userId, shelf.id);
+        }
+
+        if (isOtherShelf) {
+            checkAborted();
+            updateProgress('matching', { count: highConfidence.length });
+            const highWithFingerprint = highConfidence.map((item) => ({
+                ...item,
+                manualFingerprint: makeManualFingerprint(
+                    {
+                        title: item.title || item.name,
+                        primaryCreator: item.primaryCreator || item.author || item.creator,
+                        kind: shelf.type,
+                    },
+                    'manual-other',
+                ),
+            }));
+
+            const candidates = [...highWithFingerprint, ...mediumConfidence];
+            const itemsToSave = [];
+            const itemsToReview = [];
+
+            for (const item of candidates) {
+                if (hasRequiredOtherFields(item)) {
+                    itemsToSave.push(item);
+                } else {
+                    itemsToReview.push(item);
+                }
+            }
+
+            if (itemsToReview.length > 0) {
+                console.log('[VisionPipeline] Sending', itemsToReview.length, 'incomplete items to review queue...');
+                await this.saveToReviewQueue(itemsToReview, userId, shelf.id);
+            }
+
+            checkAborted();
+            updateProgress('preparingOther', { count: itemsToSave.length });
+            console.log('[VisionPipeline] Saving', itemsToSave.length, 'other items to shelf...');
+            updateProgress('saving', { count: itemsToSave.length });
+            const manualResult = await this.saveManualToShelf(itemsToSave, userId, shelf.id, shelf.type);
+            const addedItems = manualResult.added || [];
+            const matchedItems = manualResult.matched || [];
+            const allResolvedItems = [...addedItems, ...matchedItems];
+
+            if (addedItems.length > 0) {
+                const previewLimit = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
+                const summaryItems = addedItems.map((item) => ({
+                    itemId: item.itemId,
+                    manualId: item.manualId,
+                    name: item.title || item.name || null,
+                    author: item.primaryCreator || item.author || null,
+                    ageStatement: item.ageStatement || null,
+                    year: item.year || null,
+                    specialMarkings: item.specialMarkings || null,
+                    labelColor: item.labelColor || null,
+                    regionalItem: item.regionalItem || null,
+                    edition: item.edition || null,
+                    description: item.description || null,
+                    barcode: item.barcode || null,
+                    type: item.type || item.kind || shelf.type,
+                }));
+                const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
+                const cappedItemIds = Number.isFinite(FEED_EVENT_ITEM_ID_CAP) && FEED_EVENT_ITEM_ID_CAP > 0
+                    ? itemIds.slice(0, FEED_EVENT_ITEM_ID_CAP)
+                    : itemIds;
+
+                try {
+                    await feedQueries.logEvent({
+                        userId,
+                        shelfId: shelf.id,
+                        eventType: 'item.manual_added',
+                        payload: {
+                            source: 'vision',
+                            itemCount: summaryItems.length,
+                            itemIds: cappedItemIds,
+                            items: summaryItems.slice(0, previewLimit),
+                        },
+                    });
+                } catch (err) {
+                    console.warn('[VisionPipeline] Event log failed', err?.message || err);
+                }
+            }
+
+            const totalNeedsReview = lowConfidence.length + itemsToReview.length;
+            console.log('[VisionPipeline] === processImage Complete (other) ===', { added: addedItems.length, needsReview: totalNeedsReview });
+
+            return {
+                analysis: { shelfConfirmed: true, items: allResolvedItems },
+                results: { added: addedItems.length, needsReview: totalNeedsReview },
+                addedItems,
+                needsReview: [...lowConfidence, ...itemsToReview],
+                warnings: warnings.length > 0 ? warnings : undefined,
+            };
         }
 
         // ===== HIGH CONFIDENCE WORKFLOW (≥ max threshold) =====
@@ -395,9 +510,13 @@ class VisionPipelineService {
         };
     }
 
-    async extractItems(imageBase64, shelfType) {
+    async extractItems(imageBase64, shelfType, shelfDescription = null) {
         // Gemini Vision Detect (Cloud Vision temporarily disabled)
-        const detectionResult = await this.geminiService.detectShelfItemsFromImage(imageBase64, shelfType);
+        const detectionResult = await this.geminiService.detectShelfItemsFromImage(
+            imageBase64,
+            shelfType,
+            shelfDescription,
+        );
         return detectionResult.items || [];
     }
 
@@ -744,6 +863,92 @@ class VisionPipelineService {
             }
         }
         return added;
+    }
+
+    async saveManualToShelf(items, userId, shelfId, shelfType) {
+        console.log('[VisionPipeline.saveManualToShelf] Processing', items.length, 'items for shelf', shelfId);
+        const added = [];
+        const matched = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const title = normalizeString(item.title || item.name);
+            const primaryCreator = normalizeString(
+                item.primaryCreator || item.author || item.creator || item.brand || item.publisher || item.manufacturer,
+            );
+            if (!title || !primaryCreator) {
+                console.warn('[VisionPipeline.saveManualToShelf] Skipping - missing title or primaryCreator', { item });
+                continue;
+            }
+
+            const manualFingerprint = item.manualFingerprint || makeManualFingerprint({
+                title,
+                primaryCreator,
+                kind: shelfType,
+            }, 'manual-other');
+
+            if (manualFingerprint) {
+                const existingManual = await shelvesQueries.findManualByFingerprint({
+                    userId,
+                    shelfId,
+                    manualFingerprint,
+                });
+                if (existingManual) {
+                    const existingCollection = await shelvesQueries.findManualCollection({
+                        userId,
+                        shelfId,
+                        manualId: existingManual.id,
+                    });
+                    if (existingCollection) {
+                        matched.push({
+                            ...item,
+                            itemId: existingCollection.id,
+                            manualId: existingManual.id,
+                            manual: existingManual,
+                            title: existingManual.name || title,
+                            primaryCreator: existingManual.author || primaryCreator,
+                            type: shelfType,
+                        });
+                        continue;
+                    }
+                    const collection = await shelvesQueries.addManualCollection({
+                        userId,
+                        shelfId,
+                        manualId: existingManual.id,
+                    });
+                    added.push({
+                        ...item,
+                        itemId: collection.id,
+                        manualId: existingManual.id,
+                        manual: existingManual,
+                        title: existingManual.name || title,
+                        primaryCreator: existingManual.author || primaryCreator,
+                        type: shelfType,
+                    });
+                    continue;
+                }
+            }
+
+            const payload = buildOtherManualPayload(item, shelfType, manualFingerprint);
+            const result = await shelvesQueries.addManual({
+                userId,
+                shelfId,
+                ...payload,
+                tags: item.tags,
+            });
+
+            added.push({
+                ...item,
+                itemId: result.collection.id,
+                manualId: result.manual.id,
+                manual: result.manual,
+                title: result.manual.name || title,
+                primaryCreator: result.manual.author || primaryCreator,
+                type: shelfType,
+            });
+        }
+
+        return { added, matched };
     }
 
     async saveToReviewQueue(items, userId, shelfId) {

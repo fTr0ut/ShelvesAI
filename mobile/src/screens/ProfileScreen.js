@@ -45,6 +45,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [listsLoading, setListsLoading] = useState(false);
     const [listsLoaded, setListsLoaded] = useState(false);
     const [hasViewableWishlists, setHasViewableWishlists] = useState(false);
+    const [hasViewableFavorites, setHasViewableFavorites] = useState(false);
 
     // Editable fields
     const [firstName, setFirstName] = useState('');
@@ -128,6 +129,19 @@ export default function ProfileScreen({ navigation, route }) {
                     } catch (e) {
                         console.warn('Failed to check wishlists:', e);
                         setHasViewableWishlists(false);
+                    }
+
+                    // Check if user has viewable favorites
+                    try {
+                        const favoritesCheck = await apiRequest({
+                            apiBase,
+                            path: `/api/favorites/user/${profileData.profile.id}/check`,
+                            token
+                        });
+                        setHasViewableFavorites(favoritesCheck.hasFavorites || false);
+                    } catch (e) {
+                        console.warn('Failed to check favorites:', e);
+                        setHasViewableFavorites(false);
                     }
                 }
             }
@@ -701,6 +715,17 @@ export default function ProfileScreen({ navigation, route }) {
                                 >
                                     <Ionicons name="gift-outline" size={18} color={colors.primary} />
                                     <Text style={styles.wishlistButtonText}>{profile.firstName || profile.username}'s Wishlists</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            {/* Favorites button for friends - only show if they have viewable favorites */}
+                            {!isOwnProfile && profile.isFriend && hasViewableFavorites && (
+                                <TouchableOpacity
+                                    style={[styles.wishlistButton, { marginLeft: 8 }]}
+                                    onPress={() => navigation.navigate('Favorites', { username: profile.username, userId: profile.id, firstName: profile.firstName })}
+                                >
+                                    <Ionicons name="heart" size={18} color={colors.error} />
+                                    <Text style={styles.wishlistButtonText}>{profile.firstName || profile.username}'s Favorites</Text>
                                 </TouchableOpacity>
                             )}
                         </>

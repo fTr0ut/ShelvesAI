@@ -222,6 +222,7 @@ async function ensureCoverMediaForCollectable({
   kind,
   title,
   coverImageSource,
+  forceRefresh,
 } = {}) {
   // Skip local caching for external-only sources (e.g., OpenLibrary requires hot-linking)
   if (coverImageSource === 'external') {
@@ -234,7 +235,8 @@ async function ensureCoverMediaForCollectable({
   if (!candidate || !candidate.url || !isHttpUrl(candidate.url)) return null;
 
   try {
-    if (coverMediaId) {
+    const allowReuse = !forceRefresh;
+    if (allowReuse && coverMediaId) {
       const existing = await query(
         'SELECT id, source_url, local_path FROM media WHERE id = $1',
         [coverMediaId],
@@ -250,21 +252,23 @@ async function ensureCoverMediaForCollectable({
       }
     }
 
-    const existingByUrl = await query(
-      'SELECT id, local_path FROM media WHERE collectable_id = $1 AND source_url = $2 LIMIT 1',
-      [collectableId, candidate.url],
-    );
-    if (existingByUrl.rows.length) {
-      const existingId = existingByUrl.rows[0].id;
-      const existingPath = existingByUrl.rows[0].local_path || null;
-      if (existingPath) {
-        const absolutePath = toAbsolutePath(existingPath);
-        if (await fileExistsWithContent(absolutePath)) {
-          await query(
-            'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
-            [existingId, collectableId],
-          );
-          return { id: existingId, localPath: existingPath };
+    if (allowReuse) {
+      const existingByUrl = await query(
+        'SELECT id, local_path FROM media WHERE collectable_id = $1 AND source_url = $2 LIMIT 1',
+        [collectableId, candidate.url],
+      );
+      if (existingByUrl.rows.length) {
+        const existingId = existingByUrl.rows[0].id;
+        const existingPath = existingByUrl.rows[0].local_path || null;
+        if (existingPath) {
+          const absolutePath = toAbsolutePath(existingPath);
+          if (await fileExistsWithContent(absolutePath)) {
+            await query(
+              'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
+              [existingId, collectableId],
+            );
+            return { id: existingId, localPath: existingPath };
+          }
         }
       }
     }
@@ -297,7 +301,8 @@ async function ensureCoverMediaForCollectable({
       SET local_path = EXCLUDED.local_path,
           content_type = COALESCE(EXCLUDED.content_type, media.content_type),
           size_bytes = COALESCE(EXCLUDED.size_bytes, media.size_bytes),
-          checksum = COALESCE(EXCLUDED.checksum, media.checksum)
+          checksum = COALESCE(EXCLUDED.checksum, media.checksum),
+          updated_at = NOW()
       RETURNING id, local_path`,
       [
         collectableId,
@@ -322,7 +327,13 @@ async function ensureCoverMediaForCollectable({
          SET cover_media_id = $1,
              cover_image_url = $2,
              cover_image_source = 'local'
-         WHERE id = $3 AND (cover_media_id IS NULL OR cover_media_id <> $1)`,
+         WHERE id = $3
+           AND (
+             cover_media_id IS NULL
+             OR cover_media_id <> $1
+             OR cover_image_url IS DISTINCT FROM $2
+             OR cover_image_source IS DISTINCT FROM 'local'
+           )`,
         [mediaId, mediaPath, collectableId],
       );
       return { id: mediaId, localPath: mediaPath };
