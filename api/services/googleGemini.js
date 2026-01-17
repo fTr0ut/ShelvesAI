@@ -40,7 +40,14 @@ function getVisionSettingsForType(shelfType) {
 }
 
 function cleanJsonResponse(text) {
-    return String(text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+    let clean = String(text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+    // specific fix for "text before json" - extract the array
+    const firstOpen = clean.indexOf('[');
+    const lastClose = clean.lastIndexOf(']');
+    if (firstOpen >= 0 && lastClose > firstOpen) {
+        clean = clean.substring(firstOpen, lastClose + 1);
+    }
+    return clean;
 }
 
 function parseInlineImage(base64Image) {
@@ -135,11 +142,13 @@ class GoogleGeminiService {
         return null;
     }
 
-    buildVisionPrompt(shelfType, shelfDescription = null) {
+    buildVisionPrompt(shelfType, shelfDescription = null, shelfName = null) {
         const normalizedShelf = normalizeString(shelfType || 'collection');
         const normalizedDescription = normalizeString(shelfDescription);
+        const normalizedName = normalizeString(shelfName);
         const settings = getVisionSettingsForType(normalizedShelf);
         const descriptionToken = '{shelfDescription}';
+        const nameToken = '{shelfName}';
 
         // Use type-specific prompt from config if available
         if (settings.prompt) {
@@ -148,6 +157,12 @@ class GoogleGeminiService {
                 prompt = prompt.replace(
                     new RegExp(descriptionToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
                     normalizedDescription || '',
+                );
+            }
+            if (prompt.includes(nameToken)) {
+                prompt = prompt.replace(
+                    new RegExp(nameToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                    normalizedName || '',
                 );
             }
             return prompt;
@@ -439,47 +454,104 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
      * Extract shelf items directly from an image using Gemini Vision.
      * @param {string} base64Image
      * @param {string} shelfType
+     * @param {string|null} shelfDescription
+     * @param {string|null} shelfName
      * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>}>}
      */
-    async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null) {
+    async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null, shelfName = null) {
         if (!this.visionModel) {
             throw new Error('Google Gemini vision model not initialized.');
         }
 
         const { data, mimeType } = parseInlineImage(base64Image);
-        const prompt = this.buildVisionPrompt(shelfType, shelfDescription);
+
+        // For "other" items, we do a 2-step process because Search Grounding only works on text requests
+        const isOther = shelfType === 'other';
+
+        // 1. Vision Step: Get raw visual description/extraction
+        // If "other", we ask for visual details to help the search step
+        const visionPrompt = isOther
+            ? this.buildVisionPrompt('other_initial', shelfDescription, shelfName)
+            : this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
 
         try {
-            const result = await this.visionModel.generateContent([
-                prompt,
-                {
-                    inlineData: {
-                        data,
-                        mimeType,
-                    },
-                },
-            ]);
-            const response = await result.response;
-            const text = response.text();
+            // STEP 1: Vision Extraction (No Tools)
+            const visionResult = await this.visionModel.generateContent({
+                contents: [
+                    {
+                        role: 'user', parts: [
+                            { text: visionPrompt },
+                            { inlineData: { data, mimeType } }
+                        ]
+                    }
+                ]
+            });
+            const visionResponse = await visionResult.response;
+            const visionText = visionResponse.text();
 
             logPayload({
                 source: 'google-gemini-vision',
                 operation: 'detectShelfItems',
                 payload: {
                     model: this.visionModelName,
-                    promptPreview: prompt.substring(0, 200),
-                    text
+                    promptPreview: visionPrompt.substring(0, 200),
+                    text: visionText
                 }
             });
 
-            const jsonStr = cleanJsonResponse(text);
-            const parsed = JSON.parse(jsonStr);
-            if (!Array.isArray(parsed)) {
-                console.warn('[GoogleGeminiService] Vision response was not an array:', parsed);
-                return { items: [] };
+            const jsonStr = cleanJsonResponse(visionText);
+            let parsedItems = [];
+            try {
+                parsedItems = JSON.parse(jsonStr);
+            } catch (e) {
+                console.warn('[GoogleGeminiService] Failed to parse vision JSON:', e);
             }
 
-            const items = parsed.map(item => {
+            if (!Array.isArray(parsedItems)) {
+                console.warn('[GoogleGeminiService] Vision response was not an array:', parsedItems);
+                parsedItems = []; // Continue with empty or retry logic if needed
+            }
+
+            // STEP 2: Enrichment via Search (Only for "other")
+            if (isOther && parsedItems.length > 0 && this.textModel) {
+                console.log('[GoogleGeminiService] Performing search enrichment for "other" items...');
+                const configPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
+                const searchPrompt = `I have performed a visual scan of the items and extracted the following preliminary data:
+${JSON.stringify(parsedItems)}
+
+Using this visual data, please follow these instructions to search for and refine the metadata.
+CRITICAL: You must extract "Visual Description" details from the input (like label color, special markings, bottle shape) and map them to the "labelColor" and "specialMarkings" fields in the output if applicable.
+
+${configPrompt}
+
+CRITICAL: Return ONLY valid JSON. Do not include any conversational text before or after the JSON.`;
+
+                try {
+                    const searchResult = await this.textModel.generateContent({
+                        contents: [{ role: 'user', parts: [{ text: searchPrompt }] }],
+                        tools: [{ googleSearch: {} }]
+                    });
+                    const searchResponse = await searchResult.response;
+                    const searchText = searchResponse.text();
+
+                    logPayload({
+                        source: 'google-gemini-search',
+                        operation: 'enrichOtherItems',
+                        payload: { text: searchText }
+                    });
+
+                    const searchJson = cleanJsonResponse(searchText);
+                    const enriched = JSON.parse(searchJson);
+                    if (Array.isArray(enriched)) {
+                        parsedItems = enriched; // Replace raw items with enriched ones
+                    }
+                } catch (err) {
+                    console.error('[GoogleGeminiService] Search enrichment failed:', err);
+                    // Fallback to raw vision items if search fails
+                }
+            }
+
+            const items = parsedItems.map(item => {
                 const raw = item && typeof item === 'object' ? item : {};
                 const title = normalizeString(raw.title || raw.name || raw.itemName);
                 if (!title) return null;

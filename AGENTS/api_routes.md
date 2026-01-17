@@ -60,7 +60,7 @@ This document maps the mobile application screens to the backend API endpoints t
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/shelves/:shelfId/items` | Add existing catalog item | `{ collectableId, notes, rating }` |
-| `POST` | `/api/shelves/:shelfId/manual` | Add manual entry (no catalog match) | `{ name, type, description }` |
+| `POST` | `/api/shelves/:shelfId/manual` | Add manual entry (no catalog match) | `{ name, type, description, author?, publisher?, format?, year?, ageStatement?, specialMarkings?, labelColor?, regionalItem?, edition?, barcode? }` |
 | `GET` | `/api/shelves/:shelfId/search` | Search catalog to add to shelf | `?q=query` |
 | `POST` | `/api/shelves/:shelfId/vision` | AI Vision (Camera/Image) | `{ imageBase64 }` |
 | `POST` | `/api/shelves/:shelfId/catalog-lookup` | Vision fallback / barcode lookup | `{ query, type }` |
@@ -91,4 +91,6 @@ This document maps the mobile application screens to the backend API endpoints t
 ## Notes
 - **Authentication**: All endpoints (except login/register) require `Authorization: Bearer <token>` header.
 - **Images**: Image upload for profile or items is handled via base64 or separate media endpoints (implementation detail).
-- **Vision**: The `/vision` endpoint is heavy; client should resize images before sending.
+- **Vision**: The `/vision` endpoint is heavy; client should resize images before sending. It runs the vision pipeline and can save items/queue `needs_review`.
+- **Other shelves**: Vision saves manual-only entries (no catalog lookup/enrichment) and uses manual fingerprint dedupe.
+- **Shelf description**: Vision prompts can include `{shelfDescription}` in `visionSettings.json` to inject the shelf description when present.

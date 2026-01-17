@@ -24,8 +24,14 @@ function normalizeOtherManualItem(rawItem, shelfType = 'other') {
     'creator',
     'brand',
     'publisher',
-    'manufacturer',
+    'Director',
+    'Maker',
+    'Brand',
     'producer',
+  ]);
+  const manufacturer = pickFirstValue(normalized, [
+    'manufacturer',
+    'Manufacturer',
   ]);
   const year = pickFirstValue(normalized, ['year', 'Year', 'releaseYear', 'vintage']);
   const description = pickFirstValue(normalized, ['description', 'Description']);
@@ -46,6 +52,7 @@ function normalizeOtherManualItem(rawItem, shelfType = 'other') {
     ...normalized,
     title,
     primaryCreator,
+    manufacturer,
     year,
     description,
     ageStatement,
@@ -63,6 +70,7 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
   return {
     name: item?.title || null,
     author: item?.primaryCreator || null,
+    manufacturer: item?.manufacturer || null,
     type: shelfType || item?.type || null,
     description: item?.description || null,
     year: item?.year || null,

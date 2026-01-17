@@ -255,6 +255,24 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
  * Log an event
  */
 async function logEvent({ userId, shelfId, eventType, payload = {} }) {
+  if (shelfId !== null && shelfId !== undefined) {
+    const visibilityResult = await query(
+      'SELECT visibility FROM shelves WHERE id = $1',
+      [shelfId]
+    );
+    const visibility = visibilityResult.rows[0]?.visibility || null;
+    if (!visibility || visibility === 'private') {
+      if (FEED_AGGREGATE_DEBUG) {
+        console.log('[feed.event] skipped private shelf', {
+          shelfId,
+          eventType,
+          userId,
+        });
+      }
+      return null;
+    }
+  }
+
   if (!userId || !shelfId || !eventType) {
     const result = await query(
       `INSERT INTO event_logs (user_id, shelf_id, event_type, payload)

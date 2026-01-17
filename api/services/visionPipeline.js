@@ -193,7 +193,7 @@ class VisionPipelineService {
         checkAborted();
         updateProgress('extracting');
         console.log('[VisionPipeline] Step 1: Extracting items from image via Gemini Vision...');
-        const rawItems = await this.extractItems(imageBase64, shelf.type, shelf.description);
+        const rawItems = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
         console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
         const isOtherShelf = isOtherShelfType(shelf.type);
         const normalizedItems = isOtherShelf
@@ -510,12 +510,13 @@ class VisionPipelineService {
         };
     }
 
-    async extractItems(imageBase64, shelfType, shelfDescription = null) {
+    async extractItems(imageBase64, shelfType, shelfDescription = null, shelfName = null) {
         // Gemini Vision Detect (Cloud Vision temporarily disabled)
         const detectionResult = await this.geminiService.detectShelfItemsFromImage(
             imageBase64,
             shelfType,
             shelfDescription,
+            shelfName,
         );
         return detectionResult.items || [];
     }

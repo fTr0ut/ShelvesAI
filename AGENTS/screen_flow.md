@@ -131,6 +131,10 @@ graph TD
   - "Add to Shelf" -> `ShelfSelectScreen` -> `ItemSearchScreen`
   - "Check In" -> `CheckInScreen` (modal)
 
+### Vision Scan Behavior
+- **ItemSearchScreen** can invoke vision scanning to add multiple items at once.
+- **Other shelves**: Vision saves manual-only entries and routes low-confidence items to `needs_review`.
+
 ### From Details
 - **ShelfDetail**
   - Tap Item -> `CollectableDetail`

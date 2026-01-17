@@ -8,7 +8,7 @@ The process of adding an item generally follows two main paths:
 1.  **Adding a Collectable** (Catalog Item): The user selects an existing item from the global catalog (potentially found via Search or Vision).
 2.  **Adding a Manual Entry** (Custom Item): The user manually inputs details for an item that is not in the catalog.
 
-There are also "Pre-step" workflows for **Vision Analysis** and **Catalog Lookup** which help populate the data for the above actions but do not directly commit items to the shelf database.
+There are also "Pre-step" workflows for **Vision Analysis** and **Catalog Lookup**. Vision Analysis now runs the full pipeline and can save items (and queue needs_review), while Catalog Lookup remains a read-only analysis step.
 
 ---
 
@@ -54,6 +54,7 @@ This flow is used when the user creates a custom item that doesn't exist in the 
     *   Calls `shelvesQueries.addManual` which executes a transaction.
     *   **Step A:** Inserts into `user_manuals`:
         *   Saves `name`, `type`, `description`, `author`, `publisher`, `format`, `year`, `tags`.
+        *   For `other` shelves, also stores `age_statement`, `special_markings`, `label_color`, `regional_item`, `edition`, `barcode`, and `manual_fingerprint`.
         *   This table holds the custom metadata for the item.
     *   **Step B:** Inserts into `user_collections`:
         *   Links `user_id`, `shelf_id` and the new `manual_id`.
@@ -76,10 +77,10 @@ These endpoints transform input (Images or Text) into structured data *before* t
 1.  **Input:** Accepts Base64 image data.
 2.  **Processing:**
     *   Checks Premium status and Service configuration.
-    *   **OCR:** Calls `GoogleCloudVisionService` to detect text in the image.
-    *   **Enrichment:** Calls `GoogleGeminiService` to structure the OCR text into normalized item data (Title, Author, Year, etc.).
-3.  **Output:** Returns a JSON `analysis` object containing suggested items.
-    *   *Note:* Does **not** save to the database. The frontend must take this result and call `addCollectable` or `addManualEntry` to save.
+    *   **Vision extraction:** Calls `GoogleGeminiService.detectShelfItemsFromImage()` using the prompt from `visionSettings.json` (supports `{shelfType}` and optional `{shelfDescription}`).
+    *   **Pipeline:** `VisionPipelineService` categorizes by confidence and routes through fingerprint -> catalog -> enrichment for non-`other` shelves.
+    *   **Other shelves:** Skip catalog/enrichment and save manual-only (low confidence still goes to `needs_review`).
+3.  **Output:** Returns `analysis` + `results`, and saves items to the shelf (plus `needs_review` entries when applicable).
 
 ### B. Catalog Lookup
 **Endpoint:** `POST /api/shelves/:shelfId/catalog-lookup`  
@@ -89,7 +90,7 @@ These endpoints transform input (Images or Text) into structured data *before* t
 2.  **Processing:**
     *   **Enrichment:** Calls `GoogleGeminiService` to clean up and normalize the data.
 3.  **Output:** Returns a JSON `analysis` object with enriched item data.
-    *   *Note:* Like Vision, this is a read-only analysis step.
+    *   *Note:* This is a read-only analysis step.
 
 ---
 

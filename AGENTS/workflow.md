@@ -15,6 +15,7 @@ Located in: [visionPipeline.js](file:///c:/Users/johna/Documents/Projects/Shelve
 flowchart TD
     A[Step 1: Extract Items] --> B{Step 1b: Confidence Check}
     B -->|Low Confidence| C[needs_review Queue]
+    B -->|High/Medium (Other)| O[Other: Manual Dedup + Save]
     B -->|High Confidence| D[Step 2: Fingerprint Lookup]
     D -->|Match Found| E[Matched Items]
     D -->|No Match| F[Step 3: Catalog Lookup]
@@ -28,14 +29,22 @@ flowchart TD
 
 ### Step 1: Extract Items (Gemini Vision)
 - **Service**: `GoogleGeminiService.detectShelfItemsFromImage()`
-- **Input**: Base64 image, shelf type
-- **Output**: Array of detected items with title, author, confidence scores
+- **Input**: Base64 image, shelf type, optional shelf description
+- **Output**: Array of detected items with title, author/primaryCreator, confidence scores
+- **Prompt tokens**: `visionSettings.json` supports `{shelfType}` and optional `{shelfDescription}` (description injects only when the token is present)
 
 ### Step 1b: Tiered Confidence Categorization
 - **Thresholds**: `VISION_CONFIDENCE_MAX` (default: 0.92), `VISION_CONFIDENCE_MIN` (default: 0.85)
 - **High confidence (≥ 0.92)** → Standard workflow (fingerprint → catalog → enrichment)
 - **Medium confidence (0.85 - 0.92)** → Fingerprint lookup only → special "uncertain" enrichment (skips catalog APIs)
 - **Low confidence (< 0.85)** → Sent directly to `needs_review` queue
+
+### Other Shelf (Manual-Only Path)
+- **Scope**: Only when `shelf.type === "other"`
+- **Flow**: Low confidence -> `needs_review`; high/medium -> manual-only save (no catalog lookup or enrichment pass)
+- **Required fields**: `title` and `primaryCreator` are required to save; missing values are routed to review
+- **Deduping**: Namespace-scoped `manual_fingerprint` (`manual-other`) is used to avoid duplicate manual entries
+- **Progress step**: Uses `preparingOther` progress message before save
 
 ### Step 2: Fingerprint Lookup (PostgreSQL)
 - **Service**: `matchCollectable()` → hash-based lookups only
@@ -64,6 +73,7 @@ flowchart TD
 - **Fuzzy Fingerprint**: When enrichment succeeds, the raw OCR hash is stored in `fuzzy_fingerprints` array so future scans with the same "bad" spelling can match directly
 
 ### Step 5: Save to Shelf
+- **Other shelf**: Uses `saveManualToShelf()` with `shelvesQueries.addManual()` and manual fingerprint dedupe.
 - **Service**: `saveToShelf()` → `shelvesQueries.addCollectable()`
 - **Actions**:
   - Upsert collectable to database
@@ -107,6 +117,7 @@ Configured in [visionSettings.json](file:///c:/Users/johna/Documents/Projects/Sh
 | `vinyl` | 0.85 | 0.75 | Standard - artist usually visible |
 
 Each type also has a custom prompt that tells Gemini what metadata to expect (e.g., movies prompt explicitly states directors are rarely visible).
+Prompts may include `{shelfDescription}` to inject the shelf description; when absent, no description is added.
 
 ---
 
@@ -200,7 +211,7 @@ This project now batches item-level feed events into time-window aggregates and 
 
 ## Manual Add & Needs Review Deduplication
 
-Both manual add and needs_review flows now use a centralized [CollectableMatchingService](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/collectableMatchingService.js) to prevent database duplicates.
+Manual add and needs_review flows use a centralized [CollectableMatchingService](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/collectableMatchingService.js) for catalog-backed shelves. `other` shelves use manual fingerprint dedupe instead of catalog/API matching.
 
 ### Manual Add (2-Step Flow)
 
@@ -236,6 +247,11 @@ flowchart LR
 2. Fuzzy match (pg_trgm similarity)
 3. Catalog API lookup
 4. Create new collectable
+
+**Other shelf override:**
+- Only fingerprint match links to collectable.
+- If no fingerprint match, create (or reuse) a manual entry using `manual_fingerprint`.
+- No fuzzy match, no catalog API lookup, no new collectable creation for `other`.
 
 ### Key Files
 

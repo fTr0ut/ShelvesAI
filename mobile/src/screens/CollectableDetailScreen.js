@@ -65,45 +65,96 @@ export default function CollectableDetailScreen({ route, navigation }) {
         };
     }, [apiBase, token, baseCollectable?.id, baseCollectable?.attribution]);
 
-    const normalizeList = (value) => {
-        if (!value) return [];
-        if (Array.isArray(value)) return value.filter(Boolean);
-        if (typeof value === 'string') return value.split(',').map(v => v.trim()).filter(Boolean);
-        return [];
+    // --- Dynamic Field Definitions ---
+    const FIELD_DEFINITIONS = {
+        movie: [
+            { key: 'primaryCreator', label: 'Director' },
+            { key: 'extras.runtime', label: 'Runtime', format: v => `${v} min` },
+            { key: 'extras.budget', label: 'Budget', format: v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v) },
+            { key: 'extras.revenue', label: 'Box Office', format: v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v) },
+            { key: 'extras.originalTitle', label: 'Original Title' },
+            { key: 'extras.status', label: 'Status' },
+            { key: 'extras.tagline', label: 'Tagline' },
+        ],
+        tv: [
+            { key: 'primaryCreator', label: 'Creator' },
+            { key: 'extras.numberOfSeasons', label: 'Seasons' },
+            { key: 'extras.numberOfEpisodes', label: 'Episodes' },
+            { key: 'extras.networks', label: 'Networks', format: v => Array.isArray(v) ? v.join(', ') : v },
+            { key: 'extras.status', label: 'Status' },
+            { key: 'extras.type', label: 'Type' },
+        ],
+        book: [
+            { key: 'primaryCreator', label: 'Author' },
+            { key: 'physical.pages', label: 'Pages' },
+            { key: 'physical.format', label: 'Format' },
+            { key: 'identifiers.isbn13', label: 'ISBN-13', format: v => Array.isArray(v) ? v[0] : v },
+            { key: 'identifiers.isbn10', label: 'ISBN-10', format: v => Array.isArray(v) ? v[0] : v },
+            { key: 'publisher', label: 'Publisher' },
+        ],
+        other: [
+            { key: 'primaryCreator', label: 'Maker/Brand' },
+            { key: 'manufacturer', label: 'Manufacturer' },
+            { key: 'ageStatement', label: 'Age Statement' },
+            { key: 'specialMarkings', label: 'Special Markings' },
+            { key: 'labelColor', label: 'Label Color' },
+            { key: 'regionalItem', label: 'Region' },
+            { key: 'edition', label: 'Edition' },
+            { key: 'barcode', label: 'Barcode' },
+        ],
+        common: [
+            { key: 'year', label: 'Year' },
+            { key: 'tags', label: 'Tags', format: v => Array.isArray(v) ? v.join(', ') : v },
+        ]
+    };
+
+    const resolveValue = (obj, path) => {
+        if (!obj) return null;
+        return path.split('.').reduce((prev, curr) => prev ? prev[curr] : null, obj);
     };
 
     const title = source?.title || source?.name || 'Untitled';
     const subtitle = source?.author || source?.primaryCreator || source?.publisher || '';
     const type = source?.type || 'Item';
     const description = source?.description || source?.overview || item?.notes || '';
-    const publishers = [
-        ...normalizeList(source?.publisher),
-        ...normalizeList(source?.publishers),
-    ];
-    const publisher = publishers.length ? Array.from(new Set(publishers)).join(', ') : null;
-    const yearRaw = source?.year || source?.publishYear || source?.releaseYear || source?.publishDate || null;
-    const year = yearRaw != null ? String(yearRaw) : null;
-    const tagList = [
-        ...normalizeList(source?.tags),
-        ...normalizeList(source?.genre),
-        ...normalizeList(source?.subjects),
-    ];
-    const tags = tagList.length ? Array.from(new Set(tagList)).join(', ') : null;
-    const isbn = source?.isbn
-        || source?.isbn13
-        || source?.isbn10
-        || (Array.isArray(source?.identifiers?.isbn13) ? source.identifiers.isbn13[0] : null)
-        || (Array.isArray(source?.identifiers?.isbn10) ? source.identifiers.isbn10[0] : null);
 
-    const metadata = [
-        { label: 'Type', value: type },
-        { label: 'Author', value: source?.author || source?.primaryCreator },
-        { label: 'Publisher', value: publisher },
-        { label: 'Year', value: year },
-        { label: 'Format', value: source?.format },
-        { label: 'ISBN', value: isbn },
-        { label: 'Tags', value: tags },
-    ].filter(m => m.value);
+    const buildMetadata = () => {
+        const itemType = (type || 'other').toLowerCase();
+        // Determine specific fields based on type
+        let specificFields = FIELD_DEFINITIONS.other;
+        if (FIELD_DEFINITIONS[itemType]) {
+            specificFields = FIELD_DEFINITIONS[itemType];
+        } else if (itemType === 'game' || itemType === 'videogame') {
+            // Fallback for games if we add them later, or map them to something
+        }
+
+        const commonFields = FIELD_DEFINITIONS.common;
+        const allFields = [...specificFields, ...commonFields];
+
+        return allFields.map(field => {
+            let rawValue = resolveValue(source, field.key);
+
+            // Fallback to manual object if not found in source (and not already manual)
+            if (!rawValue && !isManual && manual) {
+                rawValue = resolveValue(manual, field.key);
+            }
+
+            if (rawValue === null || rawValue === undefined || rawValue === '') return null;
+
+            // Handle arrays that need joining if not formatted
+            if (Array.isArray(rawValue) && !field.format) {
+                rawValue = rawValue.join(', ');
+            }
+
+            const value = field.format ? field.format(rawValue) : rawValue;
+
+            if (value === null || value === '' || (Array.isArray(value) && value.length === 0)) return null;
+
+            return { label: field.label, value: String(value) };
+        }).filter(Boolean);
+    };
+
+    const metadata = buildMetadata();
 
     const getIconForType = (t) => {
         switch (t?.toLowerCase()) {
@@ -115,11 +166,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     };
 
-    // Provider-agnostic cover resolution
     const resolveCoverUri = () => {
         const c = collectable;
         if (!c?.coverImageUrl) {
-            // Fallback to legacy fields
             if (c?.coverMediaPath) {
                 const trimmed = c.coverMediaPath.replace(/^\/+/, '');
                 const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
@@ -131,13 +180,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return null;
         }
 
-        // Use new provider-agnostic fields
         if (c.coverImageSource === 'external') {
-            // External URL, use directly
             return c.coverImageUrl;
         }
 
-        // Local path, resolve via media endpoint
         const trimmed = c.coverImageUrl.replace(/^\/+/, '');
         const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
         return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
@@ -145,7 +191,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const coverUri = resolveCoverUri();
 
-    // Provider-agnostic attribution rendering
     const renderAttribution = () => {
         const attr = collectable?.attribution;
         if (!attr) return null;

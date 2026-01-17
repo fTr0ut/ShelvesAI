@@ -11,6 +11,7 @@ import {
     View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -63,114 +64,116 @@ export default function ManualEditScreen({ route, navigation }) {
     }, [apiBase, shelfId, item, title, author, publisher, year, description, notes, token, navigation]);
 
     return (
-        <KeyboardAvoidingView
-            style={styles.screen}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-                {/* Header */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="close" size={24} color={colors.text} />
-                    </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Edit Item</Text>
-                    <View style={{ width: 40 }} />
-                </View>
+        <SafeAreaView style={styles.screen} edges={['top']}>
+            <KeyboardAvoidingView
+                style={styles.container}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+                <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+                    {/* Header */}
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="close" size={24} color={colors.text} />
+                        </TouchableOpacity>
+                        <Text style={styles.headerTitle}>Edit Item</Text>
+                        <View style={{ width: 40 }} />
+                    </View>
 
-                {/* Form */}
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Title</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={title}
-                        onChangeText={setTitle}
-                        placeholder="Item title"
-                        placeholderTextColor={colors.textMuted}
-                        editable={!saving}
-                    />
-                </View>
-
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Author / Creator</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={author}
-                        onChangeText={setAuthor}
-                        placeholder="Optional"
-                        placeholderTextColor={colors.textMuted}
-                        editable={!saving}
-                    />
-                </View>
-
-                <View style={styles.row}>
-                    <View style={[styles.inputGroup, { flex: 2 }]}>
-                        <Text style={styles.label}>Publisher</Text>
+                    {/* Form */}
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Title</Text>
                         <TextInput
                             style={styles.input}
-                            value={publisher}
-                            onChangeText={setPublisher}
+                            value={title}
+                            onChangeText={setTitle}
+                            placeholder="Item title"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving}
+                        />
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Author / Creator</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={author}
+                            onChangeText={setAuthor}
                             placeholder="Optional"
                             placeholderTextColor={colors.textMuted}
                             editable={!saving}
                         />
                     </View>
-                    <View style={[styles.inputGroup, { flex: 1 }]}>
-                        <Text style={styles.label}>Year</Text>
+
+                    <View style={styles.row}>
+                        <View style={[styles.inputGroup, { flex: 2 }]}>
+                            <Text style={styles.label}>Publisher</Text>
+                            <TextInput
+                                style={styles.input}
+                                value={publisher}
+                                onChangeText={setPublisher}
+                                placeholder="Optional"
+                                placeholderTextColor={colors.textMuted}
+                                editable={!saving}
+                            />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                            <Text style={styles.label}>Year</Text>
+                            <TextInput
+                                style={styles.input}
+                                value={year}
+                                onChangeText={setYear}
+                                placeholder="YYYY"
+                                placeholderTextColor={colors.textMuted}
+                                keyboardType="numeric"
+                                maxLength={4}
+                                editable={!saving}
+                            />
+                        </View>
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Description</Text>
                         <TextInput
-                            style={styles.input}
-                            value={year}
-                            onChangeText={setYear}
-                            placeholder="YYYY"
+                            style={[styles.input, styles.textArea]}
+                            value={description}
+                            onChangeText={setDescription}
+                            placeholder="Optional description"
                             placeholderTextColor={colors.textMuted}
-                            keyboardType="numeric"
-                            maxLength={4}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
                             editable={!saving}
                         />
                     </View>
-                </View>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Description</Text>
-                    <TextInput
-                        style={[styles.input, styles.textArea]}
-                        value={description}
-                        onChangeText={setDescription}
-                        placeholder="Optional description"
-                        placeholderTextColor={colors.textMuted}
-                        multiline
-                        numberOfLines={3}
-                        textAlignVertical="top"
-                        editable={!saving}
-                    />
-                </View>
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Your Notes</Text>
+                        <TextInput
+                            style={[styles.input, styles.textArea]}
+                            value={notes}
+                            onChangeText={setNotes}
+                            placeholder="Personal notes about this item"
+                            placeholderTextColor={colors.textMuted}
+                            multiline
+                            numberOfLines={3}
+                            textAlignVertical="top"
+                            editable={!saving}
+                        />
+                    </View>
+                </ScrollView>
 
-                <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Your Notes</Text>
-                    <TextInput
-                        style={[styles.input, styles.textArea]}
-                        value={notes}
-                        onChangeText={setNotes}
-                        placeholder="Personal notes about this item"
-                        placeholderTextColor={colors.textMuted}
-                        multiline
-                        numberOfLines={3}
-                        textAlignVertical="top"
-                        editable={!saving}
-                    />
+                {/* Save Button */}
+                <View style={styles.footer}>
+                    <TouchableOpacity
+                        style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+                        onPress={handleSave}
+                        disabled={saving}
+                    >
+                        <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
+                    </TouchableOpacity>
                 </View>
-            </ScrollView>
-
-            {/* Save Button */}
-            <View style={styles.footer}>
-                <TouchableOpacity
-                    style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-                    onPress={handleSave}
-                    disabled={saving}
-                >
-                    <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
-                </TouchableOpacity>
-            </View>
-        </KeyboardAvoidingView>
+            </KeyboardAvoidingView>
+        </SafeAreaView>
     );
 }
 
