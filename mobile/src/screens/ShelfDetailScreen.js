@@ -445,7 +445,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return (
             <TouchableOpacity
                 style={styles.itemCard}
-                onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id, readOnly: isReadOnly })}
+                onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id, readOnly: isReadOnly, ownerId: shelf?.ownerId })}
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>

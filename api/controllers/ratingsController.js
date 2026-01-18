@@ -1,0 +1,66 @@
+/**
+ * Controller for decoupled ratings
+ */
+const ratingsQueries = require('../database/queries/ratings');
+const collectablesQueries = require('../database/queries/collectables');
+
+async function getRating(req, res) {
+    try {
+        const { collectableId } = req.params;
+        const rating = await ratingsQueries.getRating(req.user.id, collectableId);
+        res.json({ rating: rating?.rating || 0 });
+    } catch (err) {
+        console.error('getRating error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+async function setRating(req, res) {
+    try {
+        const { collectableId } = req.params;
+        const { rating } = req.body;
+
+        const result = await ratingsQueries.setRating(req.user.id, collectableId, rating);
+
+        // Log event if rating exists (skip if it was cleared)
+        if (result) {
+            // We'll need basic info about the collectable for the feed
+            const collectable = await collectablesQueries.findById(collectableId);
+            // TODO: Add feed event logging here if desired (optional per plan)
+        }
+
+        res.json({ rating: result?.rating || 0 });
+    } catch (err) {
+        console.error('setRating error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+async function getAggregateRating(req, res) {
+    try {
+        const { collectableId } = req.params;
+        const stats = await ratingsQueries.getAggregateRating(collectableId);
+        res.json(stats);
+    } catch (err) {
+        console.error('getAggregateRating error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+async function getUserRating(req, res) {
+    try {
+        const { collectableId, userId } = req.params;
+        const rating = await ratingsQueries.getRating(userId, collectableId);
+        res.json({ rating: rating?.rating || 0 });
+    } catch (err) {
+        console.error('getUserRating error:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+}
+
+module.exports = {
+    getRating,
+    setRating,
+    getAggregateRating,
+    getUserRating,
+};

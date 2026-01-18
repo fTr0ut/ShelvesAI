@@ -118,6 +118,8 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             c.primary_creator as collectable_creator,
             c.publishers as collectable_publishers,
             c.year as collectable_year,
+            c.formats as collectable_formats,
+            c.system_name as collectable_system_name,
             c.tags as collectable_tags,
             c.images as collectable_images,
             c.identifiers as collectable_identifiers,
@@ -172,6 +174,8 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             c.primary_creator as collectable_creator,
             c.publishers as collectable_publishers,
             c.year as collectable_year,
+            c.formats as collectable_formats,
+            c.system_name as collectable_system_name,
             c.tags as collectable_tags,
             c.images as collectable_images,
             c.identifiers as collectable_identifiers,
@@ -418,6 +422,8 @@ async function getItemById(itemId, userId, shelfId) {
             c.primary_creator as collectable_creator,
             c.cover_url as collectable_cover,
             c.kind as collectable_kind,
+            c.formats as collectable_formats,
+            c.system_name as collectable_system_name,
             m.local_path as collectable_cover_media_path
          FROM user_collections uc
          LEFT JOIN collectables c ON c.id = uc.collectable_id

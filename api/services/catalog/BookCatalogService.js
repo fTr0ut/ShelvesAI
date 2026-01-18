@@ -625,7 +625,6 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
             item?.creator,
           releaseYear: direct.year || direct.releaseYear || item?.year,
           mediaType: direct.type || direct.kind || item?.type,
-          format: direct.physical?.format || direct.format || item?.format,
           platforms: direct.platform || direct.platforms || item?.platform,
         });
         direct.fingerprint = computedFingerprint || null;
@@ -677,7 +676,6 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
             item?.creator,
           releaseYear: payload.year || payload.publishYear || item?.year,
           mediaType: payload.type || payload.kind || item?.type,
-          format: payload.physical?.format || payload.format || item?.format,
           platforms: payload.platform || payload.platforms || item?.platform,
         });
         payload.fingerprint = computedFingerprint || null;

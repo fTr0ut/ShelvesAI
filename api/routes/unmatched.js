@@ -19,6 +19,12 @@ const router = express.Router();
 // All routes require authentication
 router.use(auth);
 
+function normalizeString(value) {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed || null;
+}
+
 /**
  * GET /api/unmatched
  * List all pending review items for the current user across all shelves
@@ -99,6 +105,7 @@ router.put('/:id', async (req, res) => {
 
         // Merge user edits with raw data (user edits take priority)
         const completedData = { ...reviewItem.rawData, ...req.body };
+        const userFormat = normalizeString(completedData?.format || completedData?.physical?.format);
         let matchSource = null;
 
         // Get shelf for type info
@@ -202,7 +209,8 @@ router.put('/:id', async (req, res) => {
         }
 
         // 1. Check for existing collectable by fingerprint
-        const fingerprintData = { ...completedData, kind: shelfType };
+        const { format: _format, formats: _formats, ...fingerprintData } = completedData || {};
+        fingerprintData.kind = shelfType;
         const lwf = makeLightweightFingerprint(fingerprintData);
         let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (collectable) {
@@ -229,7 +237,8 @@ router.put('/:id', async (req, res) => {
                 const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
                 if (apiResult) {
                     // API returned a result - upsert it to our database
-                    const apiFingerprintData = { ...apiResult, kind: shelfType };
+                    const { format: _apiFormat, formats: _apiFormats, ...apiFingerprintData } = apiResult || {};
+                    apiFingerprintData.kind = shelfType;
                     collectable = await collectablesQueries.upsert({
                         ...apiResult,
                         kind: shelfType,
@@ -260,6 +269,7 @@ router.put('/:id', async (req, res) => {
             userId: req.user.id,
             shelfId: reviewItem.shelfId,
             collectableId: collectable.id,
+            format: userFormat || null,
         });
 
         // Mark review item as completed

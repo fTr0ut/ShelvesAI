@@ -158,7 +158,10 @@ function buildCollectableUpsertPayload(input, shelfType) {
     input?.platform,
     input?.systemName,
   );
-  const format = normalizeString(input?.format);
+  const format = normalizeString(input?.format || input?.physical?.format);
+  const formats = normalizeStringArray(input?.formats, format);
+  const systemName =
+    normalizeString(input?.systemName) || (platforms.length ? platforms[0] : null);
 
   const fingerprint =
     input?.fingerprint ||
@@ -167,7 +170,6 @@ function buildCollectableUpsertPayload(input, shelfType) {
       primaryCreator: primaryCreator || null,
       releaseYear: year || null,
       mediaType: kind,
-      format: format || null,
       platforms: platforms.length ? platforms : undefined,
     });
 
@@ -191,6 +193,8 @@ function buildCollectableUpsertPayload(input, shelfType) {
     creators,
     publishers,
     year,
+    formats,
+    systemName,
     tags,
     identifiers,
     images,
@@ -251,6 +255,8 @@ function formatShelfItem(row) {
     publisher: collectablePublishers[0] || null,
     publishers: collectablePublishers,
     year: row.collectableYear || null,
+    formats: Array.isArray(row.collectableFormats) ? row.collectableFormats : [],
+    systemName: row.collectableSystemName || null,
     tags: Array.isArray(row.collectableTags) ? row.collectableTags : [],
     images: Array.isArray(row.collectableImages) ? row.collectableImages : [],
     identifiers: row.collectableIdentifiers && typeof row.collectableIdentifiers === 'object'
@@ -541,9 +547,11 @@ async function searchManualEntry(req, res) {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { name, title, author, primaryCreator } = req.body ?? {};
+    const { name, title, author, primaryCreator, platform, systemName, format } = req.body ?? {};
     const searchTitle = title || name;
     const searchCreator = primaryCreator || author;
+    const searchPlatform = normalizeString(platform || systemName) || null;
+    const searchFormat = normalizeString(format) || null;
 
     if (!searchTitle) {
       return res.status(400).json({ error: "title or name is required" });
@@ -551,7 +559,15 @@ async function searchManualEntry(req, res) {
 
     const matchingService = getCollectableMatchingService();
     const result = await matchingService.search(
-      { title: searchTitle, primaryCreator: searchCreator, name: searchTitle, author: searchCreator },
+      {
+        title: searchTitle,
+        primaryCreator: searchCreator,
+        name: searchTitle,
+        author: searchCreator,
+        platform: searchPlatform || undefined,
+        systemName: searchPlatform || undefined,
+        format: searchFormat || undefined,
+      },
       shelf.type,
       { includeApi: true }
     );
@@ -559,7 +575,13 @@ async function searchManualEntry(req, res) {
     res.json({
       suggestions: result.suggestions,
       searched: result.searched,
-      query: { title: searchTitle, creator: searchCreator, shelfType: shelf.type },
+      query: {
+        title: searchTitle,
+        creator: searchCreator,
+        platform: searchPlatform,
+        format: searchFormat,
+        shelfType: shelf.type,
+      },
     });
   } catch (err) {
     console.error('searchManualEntry error:', err);
@@ -692,10 +714,12 @@ async function addCollectableFromApi(req, res) {
     if (!payload) return res.status(400).json({ error: "collectable title is required" });
 
     const collectable = await collectablesQueries.upsert(payload);
+    const userFormat = normalizeString(resolvedInput?.format || resolvedInput?.physical?.format);
     const item = await shelvesQueries.addCollectable({
       userId: req.user.id,
       shelfId: shelf.id,
       collectableId: collectable.id,
+      format: userFormat || null,
     });
 
     await logShelfEvent({
@@ -1074,6 +1098,7 @@ async function completeReviewItem(req, res) {
     // Merge user edits with raw data
     // Prioritize user body over rawData
     const completedData = { ...reviewItem.rawData, ...req.body };
+    const userFormat = normalizeString(completedData?.format || completedData?.physical?.format);
     const isOtherShelf = String(shelf.type || '').toLowerCase() === 'other';
 
     if (isOtherShelf) {
@@ -1091,6 +1116,7 @@ async function completeReviewItem(req, res) {
           userId: req.user.id,
           shelfId: shelf.id,
           collectableId: collectable.id,
+          format: userFormat || null,
         });
 
         await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
@@ -1183,7 +1209,8 @@ async function completeReviewItem(req, res) {
     }
 
     // RE-MATCH: Run fingerprint + fuzzy match to prevent duplicates
-    const fingerprintData = { ...completedData, kind: shelf.type };
+    const { format: _format, formats: _formats, ...fingerprintData } = completedData || {};
+    fingerprintData.kind = shelf.type;
     const lwf = makeLightweightFingerprint(fingerprintData);
     let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
 
@@ -1210,6 +1237,7 @@ async function completeReviewItem(req, res) {
       userId: req.user.id,
       shelfId: shelf.id,
       collectableId: collectable.id,
+      format: userFormat || null,
     });
 
     // Mark review item as completed

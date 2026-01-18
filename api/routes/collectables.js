@@ -49,6 +49,7 @@ router.post("/", async (req, res) => {
       author,
       primaryCreator,
       format,
+      formats,
       publisher,
       year,
       tags,
@@ -65,6 +66,11 @@ router.post("/", async (req, res) => {
       kind: canonicalType,
       description: normalizeString(description),
       primaryCreator: normalizeString(primaryCreator ?? author),
+      formats: Array.isArray(formats)
+        ? formats.map(normalizeString).filter(Boolean)
+        : format
+          ? [normalizeString(format)]
+          : [],
       publishers: publisher ? [normalizeString(publisher)] : [],
       year: normalizeString(year),
       tags: normalizeTags(tags),
@@ -197,6 +203,16 @@ router.put("/:collectableId", async (req, res) => {
     if (body.publisher !== undefined) {
       updates.push(`publishers = $${paramIndex++}`);
       values.push(body.publisher ? [normalizeString(body.publisher)] : []);
+    }
+
+    if (body.formats !== undefined || body.format !== undefined) {
+      const normalizedFormats = Array.isArray(body.formats)
+        ? body.formats.map(normalizeString).filter(Boolean)
+        : body.format
+          ? [normalizeString(body.format)]
+          : [];
+      updates.push(`formats = $${paramIndex++}::jsonb`);
+      values.push(JSON.stringify(normalizedFormats));
     }
 
     if (body.year !== undefined) {

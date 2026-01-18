@@ -135,6 +135,8 @@ async function getItems(listId) {
             c.cover_url as collectable_cover,
             c.kind as collectable_kind,
             c.year as collectable_year,
+            c.system_name as collectable_system_name,
+            c.formats as collectable_formats,
             m.local_path as collectable_cover_media_path
          FROM user_list_items uli
          LEFT JOIN collectables c ON c.id = uli.collectable_id
@@ -160,6 +162,8 @@ async function getItems(listId) {
                 coverMediaPath: base.collectableCoverMediaPath,
                 kind: base.collectableKind,
                 year: base.collectableYear,
+                formats: Array.isArray(base.collectableFormats) ? base.collectableFormats : [],
+                systemName: base.collectableSystemName || null,
             },
         };
     });

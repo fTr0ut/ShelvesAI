@@ -18,7 +18,7 @@
         "games": {
             "confidenceMax": 0.85,
             "confidenceMin": 0.75,
-            "prompt": "You are cataloging a video game shelf. Identify all visible games by reading their covers or spines.\nFor each game, extract:\n- title: The game title\n- author: The publisher/developer ONLY if clearly printed on the spine or cover (often NOT visible - set to null if not clear)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Publishers are sometimes on game spines but not always. Do NOT guess. Only include author if clearly visible. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"The Last of Us\", \"author\": \"Naughty Dog\", \"confidence\": 0.9}]\nIf no games are visible, return []."
+            "prompt": "You are cataloging a video game shelf. Identify all visible games by reading their covers or spines.\nFor each game, extract:\n- title: The game title\n- author: The publisher/developer ONLY if clearly printed on the spine or cover (often NOT visible - set to null if not clear)\n- systemName: The console/system name (e.g., PlayStation 5, Nintendo Switch) ONLY if clearly visible - set to null if not clear\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Publishers and systems are sometimes on game spines but not always. Do NOT guess. Only include author/systemName if clearly visible. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"The Last of Us\", \"author\": \"Naughty Dog\", \"systemName\": \"PlayStation 4\", \"confidence\": 0.9}]\nIf no games are visible, return []."
         },
         "vinyl": {
             "confidenceMax": 0.85,

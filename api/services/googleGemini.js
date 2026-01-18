@@ -205,7 +205,7 @@ Do not include explanations or markdown.`;
 
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
-            game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
+            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
             movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
@@ -240,6 +240,7 @@ Output a JSON array with this schema for each item:
   "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
   "description": "string - brief synopsis (1-2 sentences)",
   "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
   "pageCount": number or null,
   "series": { "name": "string or null", "number": number or null },
   "coverUrl": "string - URL to cover image if you can construct one from ISBN, otherwise null",
@@ -337,7 +338,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
-            game: `For games, include: platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
+            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
             movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
@@ -372,6 +373,7 @@ Output a JSON array with this schema for each item:
   "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
   "description": "string - brief synopsis (1-2 sentences)",
   "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
   "pageCount": number or null,
   "series": { "name": "string or null", "number": number or null },
   "coverUrl": "string - URL to cover image if you can construct one from ISBN or known sources, otherwise null",

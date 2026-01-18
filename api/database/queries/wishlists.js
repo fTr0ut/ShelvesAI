@@ -177,6 +177,8 @@ async function getItems(wishlistId, { limit = 100, offset = 0 } = {}) {
             c.primary_creator as collectable_creator,
             c.cover_url as collectable_cover,
             c.kind as collectable_kind,
+            c.system_name as collectable_system_name,
+            c.formats as collectable_formats,
             m.local_path as collectable_cover_media_path
          FROM wishlist_items wi
          LEFT JOIN collectables c ON c.id = wi.collectable_id

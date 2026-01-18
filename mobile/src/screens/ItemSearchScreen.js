@@ -29,6 +29,7 @@ export default function ItemSearchScreen({ route, navigation }) {
   const [manualTitle, setManualTitle] = useState('');
   const [manualType, setManualType] = useState(shelfType || '');
   const [manualAuthor, setManualAuthor] = useState('');
+  const [manualPlatform, setManualPlatform] = useState('');
   const [manualDescription, setManualDescription] = useState('');
   const [manualSaving, setManualSaving] = useState(false);
 
@@ -58,6 +59,7 @@ export default function ItemSearchScreen({ route, navigation }) {
           name: title,
           type,
           author: manualAuthor.trim() || undefined,
+          format: manualPlatform.trim() || undefined,
           description: manualDescription.trim() || undefined,
         },
       });
@@ -68,7 +70,7 @@ export default function ItemSearchScreen({ route, navigation }) {
     } finally {
       setManualSaving(false);
     }
-  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualDescription, shelfType, navigation]);
+  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualPlatform, manualDescription, shelfType, navigation]);
 
   // Add a collectable from suggestions
   const addSuggestion = useCallback(async (suggestion) => {
@@ -82,7 +84,10 @@ export default function ItemSearchScreen({ route, navigation }) {
           path: `/api/shelves/${shelfId}/items`,
           method: 'POST',
           token,
-          body: { collectableId: suggestion.id },
+          body: {
+            collectableId: suggestion.id,
+            format: manualPlatform.trim() || undefined,
+          },
         });
       } else if (suggestion.fromApi) {
         // API result - create collectable with full metadata
@@ -102,6 +107,7 @@ export default function ItemSearchScreen({ route, navigation }) {
               type: fallbackType,
               primaryCreator: suggestion.primaryCreator || manualAuthor.trim() || undefined,
               description: suggestion.description || manualDescription.trim() || undefined,
+              format: manualPlatform.trim() || undefined,
             },
           },
         });
@@ -113,7 +119,7 @@ export default function ItemSearchScreen({ route, navigation }) {
     } finally {
       setManualSaving(false);
     }
-  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualDescription, shelfType, navigation]);
+  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualPlatform, manualDescription, shelfType, navigation]);
 
   // Main handler - search first, show suggestions if found
   const handleAddManual = useCallback(async () => {
@@ -134,6 +140,8 @@ export default function ItemSearchScreen({ route, navigation }) {
         body: {
           title,
           author: manualAuthor.trim() || undefined,
+          platform: manualPlatform.trim() || undefined,
+          format: manualPlatform.trim() || undefined,
         },
       });
 
@@ -152,7 +160,7 @@ export default function ItemSearchScreen({ route, navigation }) {
       console.warn('Manual search failed, adding directly:', e.message);
       await performManualAdd();
     }
-  }, [apiBase, shelfId, token, manualTitle, manualAuthor, performManualAdd]);
+  }, [apiBase, shelfId, token, manualTitle, manualAuthor, manualPlatform, performManualAdd]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -201,6 +209,17 @@ export default function ItemSearchScreen({ route, navigation }) {
                 placeholderTextColor={colors.textMuted}
                 value={manualAuthor}
                 onChangeText={setManualAuthor}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Platform or Format</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Optional (Nintendo 64, 4K UHD Blu-ray)"
+                placeholderTextColor={colors.textMuted}
+                value={manualPlatform}
+                onChangeText={setManualPlatform}
               />
             </View>
 

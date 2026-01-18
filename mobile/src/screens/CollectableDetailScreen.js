@@ -8,49 +8,59 @@ import {
     TouchableOpacity,
     View,
     StatusBar,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { CachedImage } from '../components/ui';
+import { CachedImage, StarRating } from '../components/ui';
 import { apiRequest } from '../services/api';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId, readOnly, id, collectableId } = route.params || {};
-    const { apiBase, token } = useContext(AuthContext);
+    const { item, shelfId, readOnly, id, collectableId, ownerId } = route.params || {}; // ownerId added for Scenario B/C
+    const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
+    // Determine ownership to initialize ratings correctly from passed params
+    // If ownerId is missing or matches current user, we assume 'item.rating' is OUR rating.
+    // If ownerId is present and distinct, 'item.rating' is the OWNER'S rating.
+    const isOwnerContext = ownerId && user?.id && ownerId !== user.id;
+    const initialRating = !isOwnerContext ? (item?.rating || 0) : 0;
+    const initialOwnerRating = isOwnerContext ? (item?.rating || 0) : null;
+
     const [resolvedCollectable, setResolvedCollectable] = useState(null);
+    const [rating, setRating] = useState(initialRating); // User's own rating
+    const [ownerRating, setOwnerRating] = useState(initialOwnerRating); // Shelf owner's rating
+    const [aggregateRating, setAggregateRating] = useState(null); // Average rating from all users
+    const [isFavorited, setIsFavorited] = useState(false);
 
     const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
     const baseCollectable = item?.collectable
         || item?.collectableSnapshot
         || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
     const collectable = resolvedCollectable || baseCollectable;
-    const manual = item?.manual || item?.manualSnapshot || {};
-    const isManual = !collectable?.title && manual?.title;
-    const source = isManual ? manual : collectable;
 
+    // ... (rest of initial variable declarations)
+
+    // Fetch collectable details
     useEffect(() => {
         let isActive = true;
-        const collectableId = baseCollectable?.id;
-        if (!collectableId || baseCollectable?.attribution || !apiBase || !token) {
-            return () => {
-                isActive = false;
-            };
-        }
+        const targetId = baseCollectable?.id;
+
+        if (!targetId || !apiBase || !token) return;
+        if (resolvedCollectable && String(resolvedCollectable.id) === String(targetId)) return;
 
         (async () => {
             try {
                 const data = await apiRequest({
                     apiBase,
-                    path: `/api/collectables/${collectableId}`,
+                    path: `/api/collectables/${targetId}`,
                     token,
                 });
                 if (!isActive || !data?.collectable) return;
@@ -60,52 +70,123 @@ export default function CollectableDetailScreen({ route, navigation }) {
             }
         })();
 
-        return () => {
-            isActive = false;
-        };
-    }, [apiBase, token, baseCollectable?.id, baseCollectable?.attribution]);
+        return () => { isActive = false; };
+    }, [apiBase, token, baseCollectable?.id]);
 
-    // --- Dynamic Field Definitions ---
-    const FIELD_DEFINITIONS = {
-        movie: [
-            { key: 'primaryCreator', label: 'Director' },
-            { key: 'extras.runtime', label: 'Runtime', format: v => `${v} min` },
-            { key: 'extras.budget', label: 'Budget', format: v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v) },
-            { key: 'extras.revenue', label: 'Box Office', format: v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v) },
-            { key: 'extras.originalTitle', label: 'Original Title' },
-            { key: 'extras.status', label: 'Status' },
-            { key: 'extras.tagline', label: 'Tagline' },
-        ],
-        tv: [
-            { key: 'primaryCreator', label: 'Creator' },
-            { key: 'extras.numberOfSeasons', label: 'Seasons' },
-            { key: 'extras.numberOfEpisodes', label: 'Episodes' },
-            { key: 'extras.networks', label: 'Networks', format: v => Array.isArray(v) ? v.join(', ') : v },
-            { key: 'extras.status', label: 'Status' },
-            { key: 'extras.type', label: 'Type' },
-        ],
-        book: [
-            { key: 'primaryCreator', label: 'Author' },
-            { key: 'physical.pages', label: 'Pages' },
-            { key: 'physical.format', label: 'Format' },
-            { key: 'identifiers.isbn13', label: 'ISBN-13', format: v => Array.isArray(v) ? v[0] : v },
-            { key: 'identifiers.isbn10', label: 'ISBN-10', format: v => Array.isArray(v) ? v[0] : v },
-            { key: 'publisher', label: 'Publisher' },
-        ],
-        other: [
-            { key: 'primaryCreator', label: 'Maker/Brand' },
-            { key: 'manufacturer', label: 'Manufacturer' },
-            { key: 'ageStatement', label: 'Age Statement' },
-            { key: 'specialMarkings', label: 'Special Markings' },
-            { key: 'labelColor', label: 'Label Color' },
-            { key: 'regionalItem', label: 'Region' },
-            { key: 'edition', label: 'Edition' },
-            { key: 'barcode', label: 'Barcode' },
-        ],
-        common: [
-            { key: 'year', label: 'Year' },
-            { key: 'tags', label: 'Tags', format: v => Array.isArray(v) ? v.join(', ') : v },
-        ]
+    // NEW: Fetch all rating data
+    useEffect(() => {
+        let isActive = true;
+        const targetId = collectable?.id;
+
+        if (!targetId || !apiBase || !token) return;
+
+        const loadRatings = async () => {
+            try {
+                // 1. Get Aggregate Rating (Scenario A, B, C)
+                const aggData = await apiRequest({
+                    apiBase,
+                    path: `/api/ratings/${targetId}/aggregate`,
+                    token,
+                });
+                if (isActive) setAggregateRating(aggData);
+
+                // 2. Get Your Rating (Scenario A, B, C - unless redundant)
+                const myData = await apiRequest({
+                    apiBase,
+                    path: `/api/ratings/${targetId}`,
+                    token,
+                });
+                if (isActive) setRating(myData.rating || 0);
+
+                // 3. Get Owner's Rating (Scenario B, C)
+                // Only if owner is specified and is NOT the current user
+                if (ownerId && user?.id && ownerId !== user.id) {
+                    const ownerData = await apiRequest({
+                        apiBase,
+                        path: `/api/ratings/${targetId}/user/${ownerId}`,
+                        token,
+                    });
+                    if (isActive) setOwnerRating(ownerData.rating || 0);
+                }
+            } catch (err) {
+                console.warn('Failed to load ratings:', err);
+            }
+        };
+
+        loadRatings();
+
+        return () => { isActive = false; };
+    }, [apiBase, token, collectable?.id, ownerId, user?.id]);
+
+    // ... (existing collectable fetching effect)
+
+    const handleRateItem = async (newRating) => {
+        // Allow rating even if readOnly (because it's now decoupled!)
+        // Unless it's strictly a view-only mode imposed by something else,
+        // but typically "readOnly" meant "not my shelf". Now we ignore that for rating.
+
+        // Optimistic update
+        setRating(newRating);
+
+        const targetId = collectable?.id;
+        if (!targetId) {
+            Alert.alert('Error', 'Cannot save rating: missing collectable ID');
+            return;
+        }
+
+        try {
+            await apiRequest({
+                apiBase,
+                path: `/api/ratings/${targetId}`,
+                method: 'PUT',
+                token,
+                body: { rating: newRating },
+            });
+
+            // Refresh aggregate after rating (optional, but good for UX)
+            const aggData = await apiRequest({
+                apiBase,
+                path: `/api/ratings/${targetId}/aggregate`,
+                token,
+            });
+            setAggregateRating(aggData);
+
+        } catch (e) {
+            console.warn('Failed to update rating:', e);
+            Alert.alert('Error', 'Failed to save rating');
+            // Revert would be tricky without tracking previous, 
+            // generally separate state "prevRating" is needed or just re-fetch
+        }
+    };
+
+    const handleToggleFavorite = async () => {
+        if (!collectable?.id) return;
+
+        const previousState = isFavorited;
+        // Optimistic update
+        setIsFavorited(!previousState);
+
+        try {
+            if (previousState) {
+                await apiRequest({
+                    apiBase,
+                    path: `/api/favorites/${collectable.id}`,
+                    method: 'DELETE',
+                    token,
+                });
+            } else {
+                await apiRequest({
+                    apiBase,
+                    path: '/api/favorites',
+                    method: 'POST',
+                    token,
+                    body: { collectableId: collectable.id },
+                });
+            }
+        } catch (e) {
+            console.warn('Failed to toggle favorite:', e);
+            setIsFavorited(previousState); // Revert
+        }
     };
 
     const resolveValue = (obj, path) => {
@@ -119,39 +200,198 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const description = source?.description || source?.overview || item?.notes || '';
 
     const buildMetadata = () => {
-        const itemType = (type || 'other').toLowerCase();
-        // Determine specific fields based on type
-        let specificFields = FIELD_DEFINITIONS.other;
-        if (FIELD_DEFINITIONS[itemType]) {
-            specificFields = FIELD_DEFINITIONS[itemType];
-        } else if (itemType === 'game' || itemType === 'videogame') {
-            // Fallback for games if we add them later, or map them to something
-        }
+        const excludedKeys = new Set([
+            'id',
+            'title',
+            'name',
+            'kind',
+            'type',
+            'description',
+            'overview',
+            'images',
+            'identifiers',
+            'sources',
+            'coverUrl',
+            'coverImageUrl',
+            'coverImageSource',
+            'coverMediaId',
+            'coverMediaPath',
+            'attribution',
+            'externalId',
+            'fingerprint',
+            'lightweightFingerprint',
+            'fuzzyFingerprints',
+            'rawOcrFingerprint',
+            '_raw',
+            'raw',
+            'urlCoverFront',
+            'urlCoverBack',
+            'coordinates',
+            'position',
+            'confidence',
+        ]);
 
-        const commonFields = FIELD_DEFINITIONS.common;
-        const allFields = [...specificFields, ...commonFields];
+        const labelOverrides = {
+            primaryCreator: 'Creator',
+            creators: 'Creators',
+            publisher: 'Publisher',
+            publishers: 'Publishers',
+            systemName: 'System',
+            formats: 'Formats',
+            format: 'Format',
+            year: 'Year',
+            tags: 'Tags',
+            genre: 'Genre',
+            region: 'Region',
+            regionalItem: 'Region',
+            developer: 'Developer',
+            author: 'Author',
+            subtitle: 'Subtitle',
+            barcode: 'Barcode',
+            ageStatement: 'Age Statement',
+            specialMarkings: 'Special Markings',
+            labelColor: 'Label Color',
+            edition: 'Edition',
+            pages: 'Pages',
+            runtime: 'Runtime',
+            status: 'Status',
+            networks: 'Networks',
+            numberOfSeasons: 'Seasons',
+            numberOfEpisodes: 'Episodes',
+        };
 
-        return allFields.map(field => {
-            let rawValue = resolveValue(source, field.key);
+        const valueFormatters = {
+            runtime: (value) => `${value} min`,
+            networks: (value) => Array.isArray(value) ? value.join(', ') : value,
+        };
 
-            // Fallback to manual object if not found in source (and not already manual)
+        const usedKeys = new Set();
+        const entries = [];
+
+        const prettifyLabel = (key) =>
+            key
+                .replace(/([A-Z])/g, ' $1')
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (c) => c.toUpperCase())
+                .trim();
+
+        const normalizeValue = (value, key) => {
+            if (value === null || value === undefined || value === '') return null;
+            const formatter = valueFormatters[key];
+            if (formatter) {
+                return formatter(value);
+            }
+            if (Array.isArray(value)) {
+                const flat = value.filter((entry) => entry !== null && entry !== undefined && entry !== '');
+                if (!flat.length) return null;
+                if (flat.every((entry) => ['string', 'number', 'boolean'].includes(typeof entry))) {
+                    return flat.join(', ');
+                }
+                return null;
+            }
+            if (typeof value === 'object') return null;
+            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            return String(value);
+        };
+
+        const resolveBaseValue = (key) => {
+            let rawValue = resolveValue(source, key);
             if (!rawValue && !isManual && manual) {
-                rawValue = resolveValue(manual, field.key);
+                rawValue = resolveValue(manual, key);
             }
+            return rawValue;
+        };
 
-            if (rawValue === null || rawValue === undefined || rawValue === '') return null;
+        const addEntry = (key, label, rawValue) => {
+            const value = normalizeValue(rawValue, key);
+            if (value === null) return;
+            entries.push({ label, value });
+            usedKeys.add(key);
+        };
 
-            // Handle arrays that need joining if not formatted
-            if (Array.isArray(rawValue) && !field.format) {
-                rawValue = rawValue.join(', ');
+        const derivedFormat = () => {
+            if (item?.format) return item.format;
+            const direct = resolveBaseValue('format') || resolveValue(source, 'physical.format');
+            if (direct) return direct;
+            const formats = resolveBaseValue('formats');
+            if (Array.isArray(formats) && formats.length) return formats.join(', ');
+            return null;
+        };
+
+        const derivedPublisher = () => {
+            const direct = resolveBaseValue('publisher');
+            if (direct) return direct;
+            const publishers = resolveBaseValue('publishers');
+            if (Array.isArray(publishers) && publishers.length) return publishers.join(', ');
+            return null;
+        };
+
+        const preferredKeys = [
+            'format',
+            'systemName',
+            'publisher',
+            'primaryCreator',
+            'developer',
+            'author',
+            'year',
+            'region',
+            'genre',
+            'tags',
+            'platforms',
+            'creators',
+        ];
+
+        preferredKeys.forEach((key) => {
+            if (key === 'format') {
+                addEntry(key, labelOverrides.format, derivedFormat());
+                usedKeys.add('formats');
+                usedKeys.add('format');
+                return;
             }
+            if (key === 'publisher') {
+                addEntry(key, labelOverrides.publisher, derivedPublisher());
+                usedKeys.add('publishers');
+                usedKeys.add('publisher');
+                return;
+            }
+            if (key === 'region') {
+                const value = resolveBaseValue('region') || resolveBaseValue('regionalItem');
+                addEntry('region', labelOverrides.region, value);
+                usedKeys.add('regionalItem');
+                return;
+            }
+            const value = resolveBaseValue(key);
+            const label = labelOverrides[key] || prettifyLabel(key);
+            addEntry(key, label, value);
+        });
 
-            const value = field.format ? field.format(rawValue) : rawValue;
+        const nestedGroups = [
+            { key: 'physical', source: resolveBaseValue('physical') },
+            { key: 'extras', source: resolveBaseValue('extras') },
+        ];
 
-            if (value === null || value === '' || (Array.isArray(value) && value.length === 0)) return null;
+        nestedGroups.forEach((group) => {
+            if (!group.source || typeof group.source !== 'object') return;
+            Object.entries(group.source).forEach(([key, value]) => {
+                if (usedKeys.has(key) || excludedKeys.has(key)) return;
+                const label = labelOverrides[key] || prettifyLabel(key);
+                addEntry(key, label, value);
+            });
+        });
 
-            return { label: field.label, value: String(value) };
-        }).filter(Boolean);
+        const combinedKeys = new Set([
+            ...Object.keys(source || {}),
+            ...(!isManual && manual ? Object.keys(manual) : []),
+        ]);
+
+        combinedKeys.forEach((key) => {
+            if (usedKeys.has(key) || excludedKeys.has(key)) return;
+            const value = resolveBaseValue(key);
+            const label = labelOverrides[key] || prettifyLabel(key);
+            addEntry(key, label, value);
+        });
+
+        return entries;
     };
 
     const metadata = buildMetadata();
@@ -257,6 +497,62 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     </View>
                     <Text style={styles.title}>{title}</Text>
                     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+
+                    {/* Actions Row */}
+                    <View style={styles.actionsRow}>
+                        <View style={styles.ratingInfoColumn}>
+                            {/* Aggregate Rating */}
+                            <View style={styles.ratingBlock}>
+                                <Text style={styles.ratingLabel}>Community</Text>
+                                <View style={styles.ratingRow}>
+                                    <Ionicons name="star" size={16} color={colors.warning} />
+                                    <Text style={styles.ratingValue}>
+                                        {aggregateRating?.average || '0.0'}
+                                    </Text>
+                                    <Text style={styles.ratingCount}>
+                                        ({aggregateRating?.count || 0})
+                                    </Text>
+                                </View>
+                            </View>
+
+                            {/* Owner Rating (if visible) */}
+                            {ownerId && user?.id && ownerId !== user.id && (
+                                <View style={styles.ratingBlock}>
+                                    <Text style={styles.ratingLabel}>Owner</Text>
+                                    <View style={styles.ratingRow}>
+                                        <Ionicons name="star" size={16} color={colors.primary} />
+                                        <Text style={styles.ratingValue}>
+                                            {ownerRating || '-'}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
+
+                            {/* Your Rating */}
+                            <View style={styles.ratingBlock}>
+                                <Text style={styles.ratingLabel}>You</Text>
+                                <StarRating
+                                    rating={rating}
+                                    size={24}
+                                    onRatingChange={handleRateItem}
+                                />
+                            </View>
+                        </View>
+
+                        {collectable?.id && (
+                            <TouchableOpacity
+                                onPress={handleToggleFavorite}
+                                style={styles.favoriteBigButton}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons
+                                    name={isFavorited ? 'heart' : 'heart-outline'}
+                                    size={28}
+                                    color={isFavorited ? colors.error : colors.textMuted}
+                                />
+                            </TouchableOpacity>
+                        )}
+                    </View>
                 </View>
 
                 {/* Metadata */}
@@ -381,6 +677,44 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textSecondary,
         marginTop: 4,
         textAlign: 'center',
+    },
+    actionsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: spacing.lg,
+        gap: spacing.xl,
+    },
+    ratingInfoColumn: {
+        flex: 1,
+        gap: spacing.md,
+    },
+    ratingBlock: {
+        marginBottom: 2,
+    },
+    ratingLabel: {
+        fontSize: 11,
+        color: colors.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 4,
+    },
+    ratingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    ratingValue: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    ratingCount: {
+        fontSize: 13,
+        color: colors.textSecondary,
+    },
+    favoriteBigButton: {
+        padding: 4,
     },
     section: {
         marginBottom: spacing.lg,

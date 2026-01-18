@@ -244,7 +244,6 @@ function hardcoverToCollectable(enrichment, options = {}) {
     primaryCreator,
     releaseYear: year,
     mediaType: 'book',
-    format: edition?.physical_format || edition?.edition_format,
   });
 
   const sourceUrls = {};

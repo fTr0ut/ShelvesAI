@@ -231,9 +231,9 @@ export default function FeedDetailScreen({ route, navigation }) {
         onPress={() => {
           if (hasDetailTarget) {
             if (resolvedCollectableId) {
-              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId });
+              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
             } else {
-              navigation.navigate('CollectableDetail', { item });
+              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
             }
           }
         }}
@@ -376,7 +376,7 @@ export default function FeedDetailScreen({ route, navigation }) {
                 style={styles.checkinBody}
                 onPress={() => {
                   if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
                   }
                 }}
                 activeOpacity={collectable?.id ? 0.7 : 1}

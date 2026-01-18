@@ -21,6 +21,8 @@ async function listForUser(userId) {
             c.attribution as collectable_attribution,
             c.kind as collectable_kind,
             c.year as collectable_year,
+            c.system_name as collectable_system_name,
+            c.formats as collectable_formats,
             m.local_path as collectable_cover_media_path
          FROM user_favorites uf
          LEFT JOIN collectables c ON c.id = uf.collectable_id
@@ -47,6 +49,8 @@ async function listForUser(userId) {
                 coverMediaPath: base.collectableCoverMediaPath,
                 kind: base.collectableKind,
                 year: base.collectableYear,
+                formats: Array.isArray(base.collectableFormats) ? base.collectableFormats : [],
+                systemName: base.collectableSystemName || null,
             },
         };
     });

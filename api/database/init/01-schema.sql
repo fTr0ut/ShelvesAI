@@ -80,6 +80,8 @@ CREATE TABLE collectables (
     -- Publishing
     publishers TEXT[] DEFAULT '{}',
     year TEXT,
+    system_name TEXT,
+    formats JSONB DEFAULT '[]',
     
     -- Categorization
     tags TEXT[] DEFAULT '{}',

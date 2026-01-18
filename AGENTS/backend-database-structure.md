@@ -215,13 +215,40 @@ Aggregated feed events for efficient feed display.
 
 ---
 
+### 10. **user_ratings** (Proposed)
+Decoupled user ratings for collectables. This table allows users to rate any collectable without requiring it to be on their shelf.
+
+> **Note:** This table is planned to replace the `rating` column in `user_collections`. The current design couples ratings to shelf membership, preventing users from rating items they don't own (e.g., items on a friend's shelf).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique rating ID |
+| user_id | UUID | `FK -> users(id)` | User who rated |
+| collectable_id | INTEGER | `FK -> collectables(id)` | Rated item |
+| rating | DECIMAL(2,1) | `CHECK (rating >= 0 AND rating <= 5)` | Rating value (0.0 - 5.0) |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Rating creation timestamp |
+| updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
+
+**Constraints:**
+- Unique (`user_id`, `collectable_id`)
+
+**Indexes:** `user_id`, `collectable_id`
+
+**Migration Notes:**
+- Existing ratings will be migrated from `user_collections.rating`
+- The `rating` column in `user_collections` will be deprecated
+
+---
+
 ## Entity Relationship Diagram
+
 
 ```mermaid
 erDiagram
     users ||--o{ shelves : owns
     users ||--o{ user_collections : "has items"
     users ||--o{ user_manuals : creates
+    users ||--o{ user_ratings : rates
     users ||--o{ friendships : initiates
     users ||--o{ friendships : receives
     users ||--o{ event_logs : generates
@@ -231,6 +258,7 @@ erDiagram
     shelves ||--o{ event_logs : "related to"
 
     collectables ||--o{ user_collections : "referenced by"
+    collectables ||--o{ user_ratings : "rated in"
     collectables ||--o{ media : "has media"
 
     user_manuals ||--o{ user_collections : "referenced by"
@@ -269,7 +297,7 @@ erDiagram
         int shelf_id FK
         int collectable_id FK
         int manual_id FK
-        decimal rating
+        decimal rating "DEPRECATED"
     }
 
     user_manuals {
@@ -277,6 +305,13 @@ erDiagram
         UUID user_id FK
         int shelf_id FK
         string name
+    }
+
+    user_ratings {
+        int id PK
+        UUID user_id FK
+        int collectable_id FK
+        decimal rating
     }
 
     friendships {

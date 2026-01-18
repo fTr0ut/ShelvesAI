@@ -780,6 +780,12 @@ class VisionPipelineService {
                     const identifiers = normalizeIdentifiers(item.identifiers);
                     const images = normalizeArray(item.images);
                     const sources = normalizeArray(item.sources);
+                    const systemName = normalizeString(
+                        item.systemName ||
+                        (Array.isArray(item.platforms) ? item.platforms[0] : item.platform),
+                    );
+                    const format = normalizeString(item.format || item.physical?.format);
+                    const formats = normalizeStringArray(item.formats, format);
                     const coverUrl = pickCoverUrl(
                         images,
                         normalizeString(
@@ -797,7 +803,6 @@ class VisionPipelineService {
                         primaryCreator: primaryCreator || null,
                         releaseYear: year || null,
                         mediaType: kind,
-                        format: item.format,
                         platforms: item.systemName ? [item.systemName] : item.platforms || item.platform,
                     });
 
@@ -818,6 +823,8 @@ class VisionPipelineService {
                         creators,
                         publishers,
                         year: year || null,
+                        formats,
+                        systemName,
                         tags,
                         identifiers,
                         images,
@@ -844,7 +851,8 @@ class VisionPipelineService {
                 const shelfItem = await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
-                    collectableId: collectable.id
+                    collectableId: collectable.id,
+                    format: format || null,
                 });
 
                 added.push({

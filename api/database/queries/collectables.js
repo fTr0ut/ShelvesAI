@@ -13,6 +13,24 @@ function pickCoverUrl(images, fallback) {
     return null;
 }
 
+function normalizeFormats(values, fallback) {
+    const raw = [];
+    if (Array.isArray(values)) raw.push(...values);
+    else if (values) raw.push(values);
+    if (fallback) raw.push(fallback);
+    const seen = new Set();
+    const out = [];
+    for (const entry of raw) {
+        const normalized = String(entry ?? '').trim();
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
 /**
  * Find collectable by fingerprint
  */
@@ -96,6 +114,9 @@ async function upsert(data) {
         creators = [],
         publishers = [],
         year,
+        format,
+        formats,
+        systemName,
         tags = [],
         identifiers = {},
         images = [],
@@ -109,14 +130,15 @@ async function upsert(data) {
     } = data;
 
     const resolvedCoverUrl = pickCoverUrl(images, coverUrl);
+    const normalizedFormats = normalizeFormats(formats, format);
 
     const result = await query(
         `INSERT INTO collectables (
        fingerprint, lightweight_fingerprint, kind, title, subtitle, description,
-       primary_creator, creators, publishers, year, tags, identifiers,
+       primary_creator, creators, publishers, year, formats, system_name, tags, identifiers,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
        cover_image_url, cover_image_source, attribution
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -125,6 +147,18 @@ async function upsert(data) {
        creators = COALESCE(EXCLUDED.creators, collectables.creators),
        publishers = COALESCE(EXCLUDED.publishers, collectables.publishers),
        year = COALESCE(EXCLUDED.year, collectables.year),
+       formats = (
+         SELECT to_jsonb(ARRAY(
+           SELECT DISTINCT value
+           FROM (
+             SELECT jsonb_array_elements_text(COALESCE(collectables.formats, '[]'::jsonb)) AS value
+             UNION
+             SELECT jsonb_array_elements_text(COALESCE(EXCLUDED.formats, '[]'::jsonb)) AS value
+           ) AS merged
+           WHERE value IS NOT NULL AND value <> ''
+         ))
+       ),
+       system_name = COALESCE(EXCLUDED.system_name, collectables.system_name),
        tags = COALESCE(EXCLUDED.tags, collectables.tags),
        identifiers = collectables.identifiers || EXCLUDED.identifiers,
        images = COALESCE(EXCLUDED.images, collectables.images),
@@ -138,7 +172,7 @@ async function upsert(data) {
      RETURNING *`,
         [
             fingerprint, lightweightFingerprint, kind, title, subtitle, description,
-            primaryCreator, creators, publishers, year, tags, JSON.stringify(identifiers),
+            primaryCreator, creators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, JSON.stringify(identifiers),
             JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
             JSON.stringify(fuzzyFingerprints), coverImageUrl, coverImageSource,
             attribution ? JSON.stringify(attribution) : null
