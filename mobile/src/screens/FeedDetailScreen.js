@@ -140,8 +140,15 @@ export default function FeedDetailScreen({ route, navigation }) {
   }, [apiBase, token, targetId, commentText, commentLoading, loadComments]);
 
   const resolvedEntry = detailEntry || entry || {};
-  const { shelf, owner, items, eventType, collectable, checkinStatus, note } = resolvedEntry;
+  const { shelf, owner, items, eventType, collectable, checkinStatus, note, displayHints } = resolvedEntry;
   const isCheckIn = eventType === 'checkin.activity';
+
+  // Use displayHints with fallback defaults
+  const hints = displayHints || {
+    showShelfCard: eventType !== 'item.rated',
+    sectionTitle: eventType === 'item.rated' ? 'New ratings' : 'Newly added collectibles',
+    itemDisplayMode: eventType === 'item.rated' ? 'rated' : 'numbered',
+  };
   const displayName = owner?.name || owner?.username || 'Someone';
   const isOwner = !!(user?.id && owner?.id && user.id === owner.id);
 
@@ -204,7 +211,78 @@ export default function FeedDetailScreen({ route, navigation }) {
       coverUrl = c.coverUrl;
     }
 
-    return { title, coverUrl };
+    // Extract rating for rating events
+    const rating = item?.rating || payload?.rating || null;
+
+    return { title, coverUrl, rating };
+  };
+
+  const renderStars = (rating) => {
+    if (!rating) return null;
+    const fullStars = Math.floor(rating);
+    const hasHalf = rating % 1 >= 0.5;
+    const stars = [];
+    for (let i = 0; i < 5; i++) {
+      if (i < fullStars) {
+        stars.push(<Ionicons key={i} name="star" size={12} color="#FFD700" />);
+      } else if (i === fullStars && hasHalf) {
+        stars.push(<Ionicons key={i} name="star-half" size={12} color="#FFD700" />);
+      } else {
+        stars.push(<Ionicons key={i} name="star-outline" size={12} color="#FFD700" />);
+      }
+    }
+    return <View style={{ flexDirection: 'row', marginLeft: spacing.sm }}>{stars}</View>;
+  };
+
+  const renderRatingItem = ({ item, index }) => {
+    const info = getItemInfo(item);
+    const payloadCollectableId = item?.payload?.collectableId ?? item?.payload?.collectable_id ?? null;
+    const directCollectableId = item?.collectableId ?? null;
+    const itemCollectableId = item?.collectable?.id ?? item?.collectableSnapshot?.id ?? null;
+    const hasDetailTarget = !!(
+      payloadCollectableId ||
+      directCollectableId ||
+      itemCollectableId ||
+      item?.collectable ||
+      item?.collectableSnapshot ||
+      item?.manual ||
+      item?.manualSnapshot
+    );
+    const targetCollectableId = payloadCollectableId ?? directCollectableId ?? itemCollectableId;
+    const resolvedCollectableId = targetCollectableId != null ? String(targetCollectableId) : null;
+
+    return (
+      <TouchableOpacity
+        style={styles.ratingItemRow}
+        activeOpacity={hasDetailTarget ? 0.7 : 1}
+        disabled={!hasDetailTarget}
+        onPress={() => {
+          if (hasDetailTarget) {
+            if (resolvedCollectableId) {
+              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
+            } else {
+              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
+            }
+          }
+        }}
+      >
+        {info.coverUrl ? (
+          <Image
+            source={{ uri: info.coverUrl }}
+            style={styles.ratingItemCover}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.ratingItemCoverPlaceholder}>
+            <Ionicons name="book" size={14} color={colors.textMuted} />
+          </View>
+        )}
+        <View style={styles.ratingItemContent}>
+          <Text style={styles.ratingItemTitle} numberOfLines={1}>{info.title}</Text>
+        </View>
+        {renderStars(info.rating)}
+      </TouchableOpacity>
+    );
   };
 
   const renderItem = ({ item, index }) => {
@@ -417,40 +495,49 @@ export default function FeedDetailScreen({ route, navigation }) {
             </View>
           ) : (
             <>
-              {/* Shelf Info */}
-              <View style={styles.shelfCard}>
-                <View style={styles.shelfHeader}>
-                  <Text style={styles.shelfLabel}>Shelf</Text>
-                  <TouchableOpacity
-                    onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
-                  >
-                    <Text style={styles.viewLink}>View →</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
-                {shelf?.description ? (
-                  <Text style={styles.shelfDescription}>{shelf.description}</Text>
-                ) : null}
-                <View style={styles.shelfMeta}>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="library-outline" size={14} color={colors.textMuted} />
-                    <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+              {/* Shelf Info - controlled by displayHints */}
+              {hints.showShelfCard && shelf && (
+                <View style={styles.shelfCard}>
+                  <View style={styles.shelfHeader}>
+                    <Text style={styles.shelfLabel}>Shelf</Text>
+                    <TouchableOpacity
+                      onPress={() => navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name, readOnly: !isOwner })}
+                    >
+                      <Text style={styles.viewLink}>View →</Text>
+                    </TouchableOpacity>
                   </View>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
-                    <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+                  <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
+                  {shelf?.description ? (
+                    <Text style={styles.shelfDescription}>{shelf.description}</Text>
+                  ) : null}
+                  <View style={styles.shelfMeta}>
+                    <View style={styles.metaItem}>
+                      <Ionicons name="library-outline" size={14} color={colors.textMuted} />
+                      <Text style={styles.metaText}>{shelf?.itemCount || items?.length || 0} items</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Ionicons name="pricetag-outline" size={14} color={colors.textMuted} />
+                      <Text style={styles.metaText}>{shelf?.type || 'Collection'}</Text>
+                    </View>
                   </View>
                 </View>
-              </View>
+              )}
 
-              {/* Items */}
-              <Text style={styles.sectionTitle}>Newly added collectibles</Text>
+              {/* Dynamic Section Title from displayHints */}
+              {hints.sectionTitle && (
+                <Text style={styles.sectionTitle}>{hints.sectionTitle}</Text>
+              )}
+
+              {/* Items - render based on displayHints.itemDisplayMode */}
               <View style={styles.itemsListContainer}>
                 <ScrollView nestedScrollEnabled={true}>
                   {(items || []).length > 0 ? (
                     items.map((item, idx) => (
                       <View key={item._id || `item-${idx}`}>
-                        {renderItem({ item, index: idx })}
+                        {hints.itemDisplayMode === 'rated'
+                          ? renderRatingItem({ item, index: idx })
+                          : renderItem({ item, index: idx })
+                        }
                       </View>
                     ))
                   ) : (
@@ -889,5 +976,36 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     fontStyle: 'italic',
     textAlign: 'center',
     paddingTop: spacing.lg,
+  },
+  ratingItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.sm + 2,
+    marginBottom: spacing.xs,
+  },
+  ratingItemCover: {
+    width: 32,
+    height: 48,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceElevated,
+    marginRight: spacing.sm,
+  },
+  ratingItemCoverPlaceholder: {
+    width: 32,
+    height: 48,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceElevated,
+    marginRight: spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ratingItemContent: {
+    flex: 1,
+  },
+  ratingItemTitle: {
+    fontSize: 14,
+    color: colors.text,
   },
 });

@@ -157,6 +157,65 @@ FEED_AGGREGATE_DEBUG=true         # Enable debug logging
 
 ---
 
+## Display Hints
+
+Feed entries include a `displayHints` object that tells the frontend how to render content. This makes the frontend data-driven - new event types can be added without requiring frontend updates.
+
+### Display Hints Structure
+
+```json
+{
+  "displayHints": {
+    "showShelfCard": true,
+    "sectionTitle": "Newly added collectibles",
+    "itemDisplayMode": "numbered"
+  }
+}
+```
+
+### Display Hint Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `showShelfCard` | boolean | Whether to display the shelf info card |
+| `sectionTitle` | string\|null | Title for the items section (null = no title) |
+| `itemDisplayMode` | string | How to render items: `numbered`, `rated`, `checkin` |
+
+### Event Type Hints
+
+| Event Type | showShelfCard | sectionTitle | itemDisplayMode |
+|------------|---------------|--------------|-----------------|
+| `item.collectable_added` | true | "Newly added collectibles" | `numbered` |
+| `item.manual_added` | true | "Newly added collectibles" | `numbered` |
+| `item.rated` | false | "New ratings" | `rated` |
+| `checkin.activity` | false | null | `checkin` |
+| `shelf.created` | true | "New shelf" | `numbered` |
+
+### Item Display Modes
+
+| Mode | Description |
+|------|-------------|
+| `numbered` | Shows: index number, cover image, title |
+| `rated` | Shows: cover image, title, star rating |
+| `checkin` | Special check-in card rendering |
+
+### Frontend Fallback
+
+The frontend includes fallback logic when `displayHints` is not present:
+```javascript
+const hints = displayHints || {
+  showShelfCard: eventType !== 'item.rated',
+  sectionTitle: eventType === 'item.rated' ? 'New ratings' : 'Newly added collectibles',
+  itemDisplayMode: eventType === 'item.rated' ? 'rated' : 'numbered',
+};
+```
+
+### Implementation Location
+- Backend: `api/controllers/feedController.js` - `getDisplayHints()` function
+- Frontend: `mobile/src/screens/FeedDetailScreen.js` - `hints` object and render logic
+
+---
+
 ## Frontend Display
 
 ### SocialFeedScreen
@@ -167,6 +226,17 @@ Renders different card types based on `eventType`:
 
 ### FeedDetailScreen
 Shows full event details including all items, comments, and likes.
+
+Uses `displayHints` to control rendering:
+- **Shelf Card**: Conditionally shown based on `hints.showShelfCard`
+- **Section Title**: Dynamic title from `hints.sectionTitle`
+- **Item Rendering**: Switches between `renderItem` (numbered) and `renderRatingItem` (rated) based on `hints.itemDisplayMode`
+
+#### Rating Item Display
+For `item.rated` events, items are rendered with:
+- Cover image (32x48)
+- Title text
+- 5-star rating display (full, half, and empty stars)
 
 ---
 

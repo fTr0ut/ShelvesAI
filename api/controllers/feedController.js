@@ -7,6 +7,32 @@ const { rowToCamelCase, parsePagination } = require('../database/queries/utils')
 
 const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
 
+function getDisplayHints(eventType) {
+  const hints = {
+    default: {
+      showShelfCard: true,
+      sectionTitle: 'Newly added collectibles',
+      itemDisplayMode: 'numbered',
+    },
+    'item.rated': {
+      showShelfCard: false,
+      sectionTitle: 'New ratings',
+      itemDisplayMode: 'rated',
+    },
+    'checkin.activity': {
+      showShelfCard: false,
+      sectionTitle: null,
+      itemDisplayMode: 'checkin',
+    },
+    'shelf.created': {
+      showShelfCard: true,
+      sectionTitle: 'New shelf',
+      itemDisplayMode: 'numbered',
+    },
+  };
+  return hints[eventType] || hints.default;
+}
+
 function flattenPayloadItems(payloads) {
   const out = [];
   if (!Array.isArray(payloads)) return out;
@@ -299,6 +325,7 @@ async function getFeed(req, res) {
         entry.items = feedItems;
       }
 
+      entry.displayHints = getDisplayHints(e.eventType);
       return entry;
     });
 
@@ -496,6 +523,7 @@ async function getFeedEntryDetails(req, res) {
       entry.hasLiked = !!social.hasLiked;
       entry.topComment = social.topComment || null;
 
+      entry.displayHints = getDisplayHints(aggregate.eventType);
       return res.json({ entry });
     }
 
@@ -589,6 +617,7 @@ async function getFeedEntryDetails(req, res) {
         rating: row.rating,
         createdAt: row.created_at,
       })),
+      displayHints: getDisplayHints(null),
     };
 
     res.json({ entry });
