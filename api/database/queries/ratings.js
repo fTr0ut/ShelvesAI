@@ -65,8 +65,7 @@ async function getAggregateRating(collectableId) {
     const result = await query(
         `SELECT 
             COUNT(*) as count,
-            AVG(rating) as average,
-            json_object_agg(rating, count) as distribution
+            COALESCE(AVG(rating), 0) as average
          FROM user_ratings 
          WHERE collectable_id = $1`,
         [collectableId]
@@ -75,8 +74,7 @@ async function getAggregateRating(collectableId) {
     const row = result.rows[0];
     return {
         count: parseInt(row.count || 0),
-        average: row.average ? parseFloat(parseFloat(row.average).toFixed(1)) : 0,
-        distribution: row.distribution || {}
+        average: row.average ? parseFloat(parseFloat(row.average).toFixed(1)) : 0
     };
 }
 

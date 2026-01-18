@@ -45,8 +45,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
         || item?.collectableSnapshot
         || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
     const collectable = resolvedCollectable || baseCollectable;
-
-    // ... (rest of initial variable declarations)
+    const manual = item?.manual || item?.manualSnapshot || {};
+    const isManual = !collectable?.title && manual?.title;
+    const source = isManual ? manual : collectable;
 
     // Fetch collectable details
     useEffect(() => {
@@ -118,7 +119,29 @@ export default function CollectableDetailScreen({ route, navigation }) {
         return () => { isActive = false; };
     }, [apiBase, token, collectable?.id, ownerId, user?.id]);
 
-    // ... (existing collectable fetching effect)
+    // Check favorite status
+    useEffect(() => {
+        let isActive = true;
+        const checkFavoriteStatus = async () => {
+            if (!collectable?.id || !token) return;
+            try {
+                const response = await apiRequest({
+                    apiBase,
+                    path: '/api/favorites/check-batch',
+                    method: 'POST',
+                    token,
+                    body: { collectableIds: [collectable.id] },
+                });
+                if (isActive && response.status) {
+                    setIsFavorited(!!response.status[collectable.id]);
+                }
+            } catch (e) {
+                console.warn('Failed to check favorite status', e);
+            }
+        };
+        checkFavoriteStatus();
+        return () => { isActive = false; };
+    }, [apiBase, token, collectable?.id]);
 
     const handleRateItem = async (newRating) => {
         // Allow rating even if readOnly (because it's now decoupled!)
