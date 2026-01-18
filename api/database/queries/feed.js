@@ -11,8 +11,41 @@ function normalizePayload(payload) {
 }
 
 async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
-  const findResult = await client.query(
-    `SELECT *
+  // For item.* events on shelves, aggregate together regardless of specific type
+  // For rating events (shelfId = null), aggregate globally
+  // For other events (checkin, etc.), keep separate
+  const isItemEvent = eventType && eventType.startsWith('item.');
+
+  let findQuery;
+  let findParams;
+
+  if (shelfId == null) {
+    // Global aggregation (ratings) - match by eventType with null shelfId
+    findQuery = `SELECT *
+     FROM event_aggregates
+     WHERE user_id = $1
+       AND shelf_id IS NULL
+       AND event_type = $2
+       AND window_end_utc >= NOW()
+     ORDER BY window_end_utc DESC
+     LIMIT 1
+     FOR UPDATE`;
+    findParams = [userId, eventType];
+  } else if (isItemEvent) {
+    // Shelf-based item events - aggregate ALL item.* types together
+    findQuery = `SELECT *
+     FROM event_aggregates
+     WHERE user_id = $1
+       AND shelf_id = $2
+       AND event_type LIKE 'item.%'
+       AND window_end_utc >= NOW()
+     ORDER BY window_end_utc DESC
+     LIMIT 1
+     FOR UPDATE`;
+    findParams = [userId, shelfId];
+  } else {
+    // Other events (checkin, etc.) - keep by specific type
+    findQuery = `SELECT *
      FROM event_aggregates
      WHERE user_id = $1
        AND shelf_id = $2
@@ -20,17 +53,22 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
        AND window_end_utc >= NOW()
      ORDER BY window_end_utc DESC
      LIMIT 1
-     FOR UPDATE`,
-    [userId, shelfId, eventType]
-  );
+     FOR UPDATE`;
+    findParams = [userId, shelfId, eventType];
+  }
+
+  const findResult = await client.query(findQuery, findParams);
 
   if (findResult.rows.length) return findResult.rows[0];
+
+  // Use generic type for aggregated item events
+  const aggregateEventType = isItemEvent && shelfId != null ? 'item.added' : eventType;
 
   const insertResult = await client.query(
     `INSERT INTO event_aggregates (user_id, shelf_id, event_type, window_start_utc, window_end_utc)
      VALUES ($1, $2, $3, NOW(), NOW() + make_interval(mins => $4))
      RETURNING *`,
-    [userId, shelfId, eventType, AGGREGATE_WINDOW_MINUTES]
+    [userId, shelfId, aggregateEventType, AGGREGATE_WINDOW_MINUTES]
   );
 
   if (FEED_AGGREGATE_DEBUG) {
@@ -38,13 +76,15 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
       aggregateId: insertResult.rows[0]?.id,
       userId,
       shelfId,
-      eventType,
+      eventType: aggregateEventType,
+      originalEventType: eventType,
       windowMinutes: AGGREGATE_WINDOW_MINUTES,
     });
   }
 
   return insertResult.rows[0];
 }
+
 
 /**
  * Get global feed (friends' posts + public posts, EXCLUDING self)
@@ -77,7 +117,6 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN media cm ON cm.id = c.cover_media_id
     WHERE a.user_id != $1 -- Exclude self
     AND (
-      -- Shelf-based events: check shelf visibility
       (a.shelf_id IS NOT NULL AND (
         s.visibility = 'public'
         OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND s.visibility = 'friends')
@@ -88,8 +127,12 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
         a.visibility = 'public'
         OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
       ))
+      OR
+      -- Global events (ratings): visible to friends
+      (a.shelf_id IS NULL AND a.event_type = 'item.rated' AND a.user_id IN (SELECT friend_id FROM friend_ids))
     )
   `;
+
   const params = [userId];
 
   if (type) {
@@ -148,6 +191,9 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
         a.visibility = 'public'
         OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
       ))
+      OR
+      -- Global rating events from friends
+      (a.shelf_id IS NULL AND a.event_type = 'item.rated' AND a.user_id != $1 AND a.user_id IN (SELECT friend_id FROM friend_ids))
     )
   `;
   const params = [userId];
@@ -200,8 +246,12 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
       OR
       -- Check-in events
       (a.event_type = 'checkin.activity' AND a.visibility IN ('public', 'friends'))
+      OR
+      -- Global rating events (always visible from friends)
+      (a.shelf_id IS NULL AND a.event_type = 'item.rated')
     )
   `;
+
   const params = [userId];
 
   if (type) {
@@ -255,7 +305,8 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
  * Log an event
  */
 async function logEvent({ userId, shelfId, eventType, payload = {} }) {
-  if (shelfId !== null && shelfId !== undefined) {
+  // Only check shelf visibility if shelfId is provided
+  if (shelfId != null) {
     const visibilityResult = await query(
       'SELECT visibility FROM shelves WHERE id = $1',
       [shelfId]
@@ -273,7 +324,8 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
     }
   }
 
-  if (!userId || !shelfId || !eventType) {
+  // Non-aggregated events (missing userId or eventType)
+  if (!userId || !eventType) {
     const result = await query(
       `INSERT INTO event_logs (user_id, shelf_id, event_type, payload)
        VALUES ($1, $2, $3, $4)
@@ -282,6 +334,7 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
     );
     return rowToCamelCase(result.rows[0]);
   }
+
 
   return transaction(async (client) => {
     const aggregate = await getOrCreateAggregate(client, { userId, shelfId, eventType });

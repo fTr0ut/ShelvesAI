@@ -212,8 +212,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ]);
     }, [apiBase, id, token, isReadOnly]);
 
-    const handleRateItem = useCallback(async (itemId, rating) => {
-        if (isReadOnly) return;
+    const handleRateItem = useCallback(async (itemId, collectableId, rating) => {
+        if (isReadOnly || !collectableId) return;
 
         // Optimistic update
         setItems(prev => prev.map(item =>
@@ -223,7 +223,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         try {
             await apiRequest({
                 apiBase,
-                path: `/api/shelves/${id}/items/${itemId}/rating`,
+                path: `/api/ratings/${collectableId}`,
                 method: 'PUT',
                 token,
                 body: { rating },
@@ -234,7 +234,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
             Alert.alert('Error', 'Failed to update rating');
             loadShelf(); // Reload to get current state
         }
-    }, [apiBase, id, token, isReadOnly, loadShelf]);
+    }, [apiBase, token, isReadOnly, loadShelf]);
 
     const handleToggleFavorite = useCallback(async (collectableId) => {
         if (!collectableId) return;
@@ -468,7 +468,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         <StarRating
                             rating={item.rating || 0}
                             size={16}
-                            onRatingChange={!isReadOnly ? (newRating) => handleRateItem(item.id, newRating) : undefined}
+                            onRatingChange={!isReadOnly ? (newRating) => handleRateItem(item.id, collectableId, newRating) : undefined}
                             disabled={isReadOnly}
                         />
                     </View>

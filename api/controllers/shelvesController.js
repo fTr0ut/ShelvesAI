@@ -314,11 +314,12 @@ async function hydrateShelfItems(userId, shelfId, { limit, skip = 0 } = {}) {
 }
 
 async function logShelfEvent({ userId, shelfId, type, payload }) {
-  if (!userId || !shelfId || !type) return;
+  // Allow null shelfId for global events (like ratings)
+  if (!userId || !type) return;
   try {
     await feedQueries.logEvent({
       userId,
-      shelfId: parseInt(shelfId, 10),
+      shelfId: shelfId != null ? parseInt(shelfId, 10) : null,
       eventType: type,
       payload: payload || {},
     });
@@ -326,6 +327,7 @@ async function logShelfEvent({ userId, shelfId, type, payload }) {
     console.warn("Event log failed", err.message || err);
   }
 }
+
 
 // Catalog services
 const bookCatalogService = new BookCatalogService();
@@ -1309,16 +1311,19 @@ async function rateShelfItem(req, res) {
     const fullItem = await shelvesQueries.getItemById(itemId, req.user.id, shelfId);
 
     // Log feed event if rating was set (not cleared)
+    // Use null shelfId for global rating aggregation
     if (validRating !== null) {
       await logShelfEvent({
         userId: req.user.id,
-        shelfId: shelf.id,
+        shelfId: null, // Global aggregation for ratings
         type: "item.rated",
         payload: {
           itemId,
           collectableId: fullItem?.collectableId || null,
           title: fullItem?.collectableTitle || 'Unknown',
           primaryCreator: fullItem?.collectableCreator || null,
+          coverUrl: fullItem?.collectableCover || null,
+          coverMediaPath: fullItem?.collectableCoverMediaPath || null,
           rating: validRating,
           type: fullItem?.collectableKind || shelf.type,
         },
@@ -1335,6 +1340,7 @@ async function rateShelfItem(req, res) {
     res.status(500).json({ error: 'Server error' });
   }
 }
+
 
 
 module.exports = {

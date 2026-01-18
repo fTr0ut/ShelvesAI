@@ -3,6 +3,7 @@
  */
 const ratingsQueries = require('../database/queries/ratings');
 const collectablesQueries = require('../database/queries/collectables');
+const feedQueries = require('../database/queries/feed');
 
 async function getRating(req, res) {
     try {
@@ -22,11 +23,25 @@ async function setRating(req, res) {
 
         const result = await ratingsQueries.setRating(req.user.id, collectableId, rating);
 
-        // Log event if rating exists (skip if it was cleared)
-        if (result) {
-            // We'll need basic info about the collectable for the feed
+        // Log feed event if rating was set (not cleared)
+        if (result && result.rating) {
             const collectable = await collectablesQueries.findById(collectableId);
-            // TODO: Add feed event logging here if desired (optional per plan)
+            if (collectable) {
+                await feedQueries.logEvent({
+                    userId: req.user.id,
+                    shelfId: null, // Global aggregation for ratings
+                    eventType: 'item.rated',
+                    payload: {
+                        collectableId: collectable.id,
+                        title: collectable.title || 'Unknown',
+                        primaryCreator: collectable.primaryCreator || null,
+                        coverUrl: collectable.coverUrl || null,
+                        coverMediaPath: collectable.coverMediaPath || null,
+                        rating: result.rating,
+                        type: collectable.kind || 'item',
+                    },
+                });
+            }
         }
 
         res.json({ rating: result?.rating || 0 });
@@ -35,6 +50,7 @@ async function setRating(req, res) {
         res.status(500).json({ error: 'Server error' });
     }
 }
+
 
 async function getAggregateRating(req, res) {
     try {

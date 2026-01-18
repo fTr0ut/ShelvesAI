@@ -459,12 +459,18 @@ export default function SocialFeedScreen({ navigation }) {
                 // Check-in events now navigate to FeedDetail (event details)
                 // The item preview inside handles navigation to the collectable
                 navigation.navigate('FeedDetail', { entry: item });
+            } else if (eventType === 'item.rated') {
+                // Rating events navigate to FeedDetail to show all rated items
+                navigation.navigate('FeedDetail', { entry: item });
             } else if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
                 navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
             }
         };
+
+        const isRatingEvent = eventType === 'item.rated';
+
 
         // Check-in event rendering
         if (isCheckIn) {
@@ -564,6 +570,110 @@ export default function SocialFeedScreen({ navigation }) {
             );
         }
 
+        // Rating event rendering
+        if (isRatingEvent) {
+            const ratingItems = items || [];
+            const totalRated = item?.eventItemCount || ratingItems.length || 0;
+
+            // Helper to render star rating
+            const renderStars = (rating) => {
+                const fullStars = Math.floor(rating);
+                const hasHalf = rating % 1 >= 0.5;
+                const stars = [];
+                for (let i = 0; i < 5; i++) {
+                    if (i < fullStars) {
+                        stars.push(<Ionicons key={i} name="star" size={12} color="#FFD700" />);
+                    } else if (i === fullStars && hasHalf) {
+                        stars.push(<Ionicons key={i} name="star-half" size={12} color="#FFD700" />);
+                    } else {
+                        stars.push(<Ionicons key={i} name="star-outline" size={12} color="#FFD700" />);
+                    }
+                }
+                return <View style={{ flexDirection: 'row' }}>{stars}</View>;
+            };
+
+            // Get cover items with ratings
+            const ratingPreviews = ratingItems.slice(0, 3).map(e => {
+                const collectable = e.collectable || {};
+                let coverUrl = null;
+                if (collectable.coverMediaPath && apiBase) {
+                    coverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
+                } else if (collectable.coverUrl) {
+                    coverUrl = collectable.coverUrl;
+                }
+                return {
+                    title: collectable.title || e.title || 'Untitled',
+                    coverUrl,
+                    rating: e.rating || 0
+                };
+            });
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePress}
+                    style={styles.feedCard}
+                >
+                    {/* Header */}
+                    <View style={styles.cardHeader}>
+                        <View style={styles.avatar}>
+                            {avatarSource ? (
+                                <Image source={avatarSource} style={styles.avatarImage} />
+                            ) : (
+                                <Text style={styles.avatarText}>{initial}</Text>
+                            )}
+                        </View>
+                        <View style={styles.headerContent}>
+                            <View style={styles.headerTop}>
+                                <Text style={styles.username}>{displayName}</Text>
+                                <Text style={styles.timestamp}>{timeAgo}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Ionicons name="star" size={14} color="#FFD700" style={{ marginRight: 4 }} />
+                                <Text style={styles.shelfAction}>
+                                    rated{' '}
+                                    <Text style={styles.shelfName}>
+                                        {totalRated === 1
+                                            ? ratingPreviews[0]?.title
+                                            : `${totalRated} item${totalRated === 1 ? '' : 's'}`}
+                                    </Text>
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* Rating items with stars */}
+                    {ratingPreviews.length > 0 && (
+                        <View style={styles.coverRow}>
+                            {ratingPreviews.map((ratingItem, idx) => (
+                                <View key={idx} style={{ alignItems: 'center', marginRight: 8 }}>
+                                    {ratingItem.coverUrl ? (
+                                        <Image
+                                            source={{ uri: ratingItem.coverUrl }}
+                                            style={styles.coverThumb}
+                                            resizeMode="cover"
+                                        />
+                                    ) : (
+                                        <View style={[styles.coverThumb, { backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center' }]}>
+                                            <Ionicons name="book" size={20} color={colors.primary} />
+                                        </View>
+                                    )}
+                                    {renderStars(ratingItem.rating)}
+                                </View>
+                            ))}
+                            {totalRated > ratingPreviews.length && (
+                                <View style={styles.moreCoversChip}>
+                                    <Text style={styles.moreCoversText}>+{totalRated - ratingPreviews.length}</Text>
+                                </View>
+                            )}
+                        </View>
+                    )}
+
+                    {renderSocialActions(item)}
+                </TouchableOpacity>
+            );
+        }
+
         // Regular shelf-based event rendering
         const previewItems = (items || []).slice(0, 3);
         const totalItems = item?.eventItemCount || items?.length || 0;
@@ -574,6 +684,7 @@ export default function SocialFeedScreen({ navigation }) {
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
         else if (eventType && eventType.includes('added')) actionText = 'added';
+
 
         return (
             <TouchableOpacity

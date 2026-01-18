@@ -30,19 +30,38 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
   const flattened = flattenPayloadItems(payloads);
   for (const payload of flattened) {
     if (!payload || typeof payload !== 'object') continue;
-    if (eventType === 'item.collectable_added') {
+
+    // Handle aggregated item events (item.added, item.collectable_added, item.manual_added)
+    if (eventType === 'item.collectable_added' || eventType === 'item.added') {
+      // Check if this payload is a collectable (has collectableId or no manualId)
       const collectableId = payload.collectableId || payload.collectable_id || payload.collectable?.id || null;
-      items.push({
-        id: payload.itemId || payload.id || null,
-        collectableId,
-        collectable: {
-          id: collectableId,
-          title: payload.title || payload.name || null,
-          primaryCreator: payload.primaryCreator || payload.author || null,
-          coverUrl: payload.coverUrl || null,
-          kind: payload.type || payload.kind || null,
-        },
-      });
+      const isManual = payload.manualId || payload.manual_id || (!collectableId && (payload.name || payload.title));
+
+      if (isManual) {
+        // Treat as manual item
+        const name = payload.name || payload.title || null;
+        items.push({
+          id: payload.itemId || payload.id || null,
+          manual: {
+            name,
+            title: name,
+            author: payload.author || payload.primaryCreator || null,
+          },
+        });
+      } else {
+        items.push({
+          id: payload.itemId || payload.id || null,
+          collectableId,
+          collectable: {
+            id: collectableId,
+            title: payload.title || payload.name || null,
+            primaryCreator: payload.primaryCreator || payload.author || null,
+            coverUrl: payload.coverUrl || null,
+            coverMediaPath: payload.coverMediaPath || null,
+            kind: payload.type || payload.kind || null,
+          },
+        });
+      }
     } else if (eventType === 'item.manual_added') {
       const name = payload.name || payload.title || null;
       items.push({
@@ -61,11 +80,28 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
           barcode: payload.barcode || null,
         },
       });
+    } else if (eventType === 'item.rated') {
+      // Rating events - include the rating value
+      const collectableId = payload.collectableId || payload.collectable_id || null;
+      items.push({
+        id: payload.itemId || payload.id || null,
+        collectableId,
+        rating: payload.rating || null,
+        collectable: {
+          id: collectableId,
+          title: payload.title || payload.name || null,
+          primaryCreator: payload.primaryCreator || payload.author || null,
+          coverUrl: payload.coverUrl || null,
+          coverMediaPath: payload.coverMediaPath || null,
+          kind: payload.type || payload.kind || null,
+        },
+      });
     }
     if (items.length >= maxItems) break;
   }
   return items;
 }
+
 
 function getPayloadItemCount(payloads) {
   if (!Array.isArray(payloads)) return null;
