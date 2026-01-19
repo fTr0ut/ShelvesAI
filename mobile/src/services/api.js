@@ -2,6 +2,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 
 const TOKEN_KEY = 'token'
 
+// Global auth error handler - set by App.js to trigger logout on invalid token
+let authErrorHandler = null
+
+export function setAuthErrorHandler(handler) {
+  authErrorHandler = handler
+}
+
 export async function saveToken(token) {
   if (!token) {
     await AsyncStorage.removeItem(TOKEN_KEY)
@@ -49,7 +56,14 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
     data = { raw: text }
   }
   if (!res.ok) {
-    const err = new Error(data?.error || `HTTP ${res.status}`)
+    const errorMessage = data?.error || `HTTP ${res.status}`
+
+    // Check for invalid token and trigger logout
+    if (errorMessage === 'Invalid token' && authErrorHandler) {
+      authErrorHandler()
+    }
+
+    const err = new Error(errorMessage)
     err.status = res.status
     err.data = data
     throw err

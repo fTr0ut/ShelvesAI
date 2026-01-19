@@ -50,7 +50,7 @@ import linkingConfig from './navigation/linkingConfig'
 
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
-import { apiRequest } from './services/api'
+import { apiRequest, setAuthErrorHandler } from './services/api'
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
 
@@ -139,6 +139,16 @@ export default function App() {
         setReady(true)
       }
     })()
+  }, [])
+
+  // Set up global auth error handler to log out on invalid token
+  useEffect(() => {
+    setAuthErrorHandler(() => {
+      setToken('')
+      setUser(null)
+      AsyncStorage.removeItem(TOKEN_STORAGE_KEY)
+    })
+    return () => setAuthErrorHandler(null)
   }, [])
 
   useEffect(() => {
