@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx knex migrate:latest)",
+      "Bash(node jobs/refreshNewsCache.js:*)",
+      "Bash(node -e:*)"
+    ]
+  }
+}

@@ -21,7 +21,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
-import { CachedImage, StarRating } from '../components/ui';
+import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
 import { useVisionProcessing } from '../hooks/useVisionProcessing';
 
@@ -371,13 +371,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     };
 
     const getIconForType = (type) => {
-        switch (type?.toLowerCase()) {
-            case 'book': return 'book';
-            case 'movie': return 'film';
-            case 'game': return 'game-controller';
-            case 'music': case 'album': return 'musical-notes';
-            default: return 'cube';
-        }
+        const config = require('../utils/iconConfig').getIconConfig(type);
+        return config.icon;
     };
 
     // Provider-agnostic cover resolution
@@ -457,7 +452,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         />
                     ) : (
                         <View style={styles.itemCoverFallback}>
-                            <Ionicons name={getIconForType(info.type)} size={22} color={colors.primary} />
+                            <CategoryIcon type={info.type} size={22} />
                         </View>
                     )}
                 </View>

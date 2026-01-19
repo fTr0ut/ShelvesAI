@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { AccountSlideMenu } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -97,6 +98,9 @@ export default function SocialFeedScreen({ navigation }) {
     const [searchLoading, setSearchLoading] = useState(false);
     const [showResults, setShowResults] = useState(false);
     const searchTimeoutRef = useRef(null);
+
+    // Account menu state
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     // Inline comment state
     const [commentTexts, setCommentTexts] = useState({});
@@ -837,7 +841,7 @@ export default function SocialFeedScreen({ navigation }) {
                             </View>
                         )}
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => navigation.navigate('Account')} style={styles.headerButton}>
+                    <TouchableOpacity onPress={() => setIsMenuOpen(true)} style={styles.headerButton}>
                         <Ionicons name="person-circle-outline" size={26} color={colors.text} />
                     </TouchableOpacity>
                 </View>
@@ -991,6 +995,14 @@ export default function SocialFeedScreen({ navigation }) {
                     ItemSeparatorComponent={() => <View style={styles.separator} />}
                 />
             )}
+
+            {/* Account Slide Menu */}
+            <AccountSlideMenu
+                isVisible={isMenuOpen}
+                onClose={() => setIsMenuOpen(false)}
+                navigation={navigation}
+                user={user}
+            />
         </SafeAreaView>
     );
 }

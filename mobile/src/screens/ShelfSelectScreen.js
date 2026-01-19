@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { CategoryIcon } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -62,16 +63,7 @@ export default function ShelfSelectScreen({ navigation }) {
         loadShelves();
     }, [loadShelves]);
 
-    const getIconForType = (type) => {
-        switch (type?.toLowerCase()) {
-            case 'books': return 'book';
-            case 'movies': return 'film';
-            case 'games': return 'game-controller';
-            case 'music': return 'musical-notes';
-            case 'vinyl': return 'disc';
-            default: return 'library';
-        }
-    };
+
 
     const handleSelectShelf = useCallback((shelf) => {
         navigation.navigate('ShelfDetail', {
@@ -93,7 +85,7 @@ export default function ShelfSelectScreen({ navigation }) {
             activeOpacity={0.8}
         >
             <View style={styles.listIcon}>
-                <Ionicons name={getIconForType(item.type)} size={22} color={colors.primary} />
+                <CategoryIcon type={item.type} size={22} />
             </View>
             <View style={styles.listContent}>
                 <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>

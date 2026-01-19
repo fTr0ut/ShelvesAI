@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { CategoryIcon } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -217,15 +218,7 @@ export default function ListDetailScreen({ route, navigation }) {
         }
     };
 
-    const getIconForType = (type) => {
-        switch (type?.toLowerCase()) {
-            case 'book': return 'book';
-            case 'movie': return 'film';
-            case 'game': return 'game-controller';
-            case 'music': case 'album': return 'musical-notes';
-            default: return 'cube';
-        }
-    };
+
 
     const buildCoverUri = (pathOrUrl) => {
         if (!pathOrUrl) return null;
@@ -250,7 +243,7 @@ export default function ListDetailScreen({ route, navigation }) {
                         <Image source={{ uri: coverUri }} style={styles.itemCoverImage} resizeMode="cover" />
                     ) : (
                         <View style={styles.itemCoverFallback}>
-                            <Ionicons name={getIconForType(collectable.kind)} size={20} color={colors.primary} />
+                            <CategoryIcon type={collectable.kind} size={20} />
                         </View>
                     )}
                 </View>

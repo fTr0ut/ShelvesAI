@@ -4,9 +4,13 @@ const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils'
 async function getAccount(req, res) {
   try {
     const result = await query(
-      `SELECT id, username, email, first_name, last_name, phone_number, 
-              picture, country, city, state, is_private, is_premium, onboarding_completed, created_at
-       FROM users WHERE id = $1`,
+      `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone_number,
+              u.picture, u.country, u.city, u.state, u.is_private, u.is_premium,
+              u.onboarding_completed, u.created_at,
+              pm.local_path as profile_media_path
+       FROM users u
+       LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
+       WHERE u.id = $1`,
       [req.user.id]
     );
 

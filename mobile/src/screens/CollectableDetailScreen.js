@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { CachedImage, StarRating } from '../components/ui';
+import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import { apiRequest } from '../services/api';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
@@ -425,15 +425,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const metadata = buildMetadata();
 
-    const getIconForType = (t) => {
-        switch (t?.toLowerCase()) {
-            case 'book': return 'book';
-            case 'movie': return 'film';
-            case 'game': return 'game-controller';
-            case 'music': case 'album': return 'musical-notes';
-            default: return 'cube';
-        }
-    };
+
 
     const resolveCoverUri = () => {
         const c = collectable;
@@ -520,7 +512,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             />
                         ) : (
                             <View style={styles.coverFallback}>
-                                <Ionicons name={getIconForType(type)} size={48} color={colors.primary} />
+                                <CategoryIcon type={type} size={48} />
                             </View>
                         )}
                     </View>

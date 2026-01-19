@@ -11,12 +11,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { CategoryIcon, AccountSlideMenu } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function ShelvesScreen({ navigation }) {
-    const { token, apiBase } = useContext(AuthContext);
+    const { token, apiBase, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [shelves, setShelves] = useState([]);
@@ -26,6 +27,7 @@ export default function ShelvesScreen({ navigation }) {
     const [viewMode, setViewMode] = useState('grid');
     const [unmatchedCount, setUnmatchedCount] = useState(0);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     const loadShelves = useCallback(async () => {
         try {
@@ -85,16 +87,7 @@ export default function ShelvesScreen({ navigation }) {
         return shelves.filter(s => s.name?.toLowerCase().includes(q));
     }, [shelves, searchQuery]);
 
-    const getIconForType = (type) => {
-        switch (type?.toLowerCase()) {
-            case 'books': return 'book';
-            case 'movies': return 'film';
-            case 'games': return 'game-controller';
-            case 'music': return 'musical-notes';
-            case 'vinyl': return 'disc';
-            default: return 'library';
-        }
-    };
+
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -130,7 +123,7 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.gridIconBox}>
-                    <Ionicons name={getIconForType(item.type)} size={28} color={colors.primary} />
+                    <CategoryIcon type={item.type} size={28} />
                 </View>
                 <Text style={styles.gridTitle} numberOfLines={2}>{item.name}</Text>
                 <Text style={styles.gridMeta}>{item.itemCount || 0} items</Text>
@@ -165,7 +158,7 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.listIcon}>
-                    <Ionicons name={getIconForType(item.type)} size={22} color={colors.primary} />
+                    <CategoryIcon type={item.type} size={22} />
                 </View>
                 <View style={styles.listContent}>
                     <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>
@@ -222,7 +215,7 @@ export default function ShelvesScreen({ navigation }) {
                             </View>
                         )}
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => navigation.navigate('Account')}>
+                    <TouchableOpacity onPress={() => setIsMenuOpen(true)}>
                         <Ionicons name="person-circle-outline" size={28} color={colors.text} />
                     </TouchableOpacity>
                 </View>
@@ -287,6 +280,14 @@ export default function ShelvesScreen({ navigation }) {
                     ListEmptyComponent={renderEmpty}
                 />
             )}
+
+            {/* Account Slide Menu */}
+            <AccountSlideMenu
+                isVisible={isMenuOpen}
+                onClose={() => setIsMenuOpen(false)}
+                navigation={navigation}
+                user={user}
+            />
         </SafeAreaView>
     );
 }
