@@ -159,6 +159,8 @@ CREATE TABLE user_manuals (
     edition TEXT,
     barcode TEXT,
     manual_fingerprint TEXT,
+    limited_edition TEXT,
+    item_specific_text TEXT,
     tags TEXT[] DEFAULT '{}',
     
     created_at TIMESTAMPTZ DEFAULT NOW()

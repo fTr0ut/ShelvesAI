@@ -272,6 +272,8 @@ class VisionPipelineService {
                     edition: item.edition || null,
                     description: item.description || null,
                     barcode: item.barcode || null,
+                    limitedEdition: item.limitedEdition || null,
+                    itemSpecificText: item.itemSpecificText || null,
                     type: item.type || item.kind || shelf.type,
                 }));
                 const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
@@ -784,8 +786,9 @@ class VisionPipelineService {
                         item.systemName ||
                         (Array.isArray(item.platforms) ? item.platforms[0] : item.platform),
                     );
-                    const format = normalizeString(item.format || item.physical?.format);
-                    const formats = normalizeStringArray(item.formats, format);
+                    // Collectable-level formats (VHS, DVD, 4K, etc.) - NOT user-specific
+                    const itemFormat = normalizeString(item.format || item.physical?.format);
+                    const formats = normalizeStringArray(item.formats, itemFormat);
                     const coverUrl = pickCoverUrl(
                         images,
                         normalizeString(
@@ -846,13 +849,14 @@ class VisionPipelineService {
                     console.log('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
                 }
 
-                // Add to shelf
+                // Add to shelf - format is user-specific and should be set manually, not during scan
                 console.log('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
                 const shelfItem = await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
                     collectableId: collectable.id,
-                    format: format || null,
+                    // Note: format (user-specific) is intentionally not set during vision scan
+                    // Users can set their preferred format later via manual edit
                 });
 
                 added.push({

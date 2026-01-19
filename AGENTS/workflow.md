@@ -43,6 +43,7 @@ flowchart TD
 - **Scope**: Only when `shelf.type === "other"`
 - **Flow**: Low confidence -> `needs_review`; high/medium -> manual-only save (no catalog lookup or enrichment pass)
 - **Required fields**: `title` and `primaryCreator` are required to save; missing values are routed to review
+- **New Fields**: Extracts `limitedEdition` (e.g. "37/50") and `itemSpecificText` (notes, inscriptions) via Gemini
 - **Deduping**: Namespace-scoped `manual_fingerprint` (`manual-other`) is used to avoid duplicate manual entries
 - **Progress step**: Uses `preparingOther` progress message before save
 

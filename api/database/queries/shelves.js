@@ -151,6 +151,8 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             um.edition as manual_edition,
             um.barcode as manual_barcode,
             um.manual_fingerprint as manual_fingerprint,
+            um.limited_edition as manual_limited_edition,
+            um.item_specific_text as manual_item_specific_text,
             um.tags as manual_tags
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
@@ -210,6 +212,8 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             um.edition as manual_edition,
             um.barcode as manual_barcode,
             um.manual_fingerprint as manual_fingerprint,
+            um.limited_edition as manual_limited_edition,
+            um.item_specific_text as manual_item_specific_text,
             um.tags as manual_tags
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
@@ -263,15 +267,18 @@ async function addManual({
     barcode,
     manualFingerprint,
     tags,
+    limitedEdition,
+    itemSpecificText,
 }) {
     return transaction(async (client) => {
         // Create manual entry
         const manualResult = await client.query(
             `INSERT INTO user_manuals (
         user_id, shelf_id, name, type, description, author, publisher, manufacturer, format, year,
-        age_statement, special_markings, label_color, regional_item, edition, barcode, manual_fingerprint, tags
+        age_statement, special_markings, label_color, regional_item, edition, barcode, manual_fingerprint, tags,
+        limited_edition, item_specific_text
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
             [
                 userId,
@@ -292,6 +299,8 @@ async function addManual({
                 barcode,
                 manualFingerprint,
                 tags || [],
+                limitedEdition,
+                itemSpecificText,
             ]
         );
         const manual = manualResult.rows[0];

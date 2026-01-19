@@ -104,6 +104,8 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
           edition: payload.edition || null,
           description: payload.description || null,
           barcode: payload.barcode || null,
+          limitedEdition: payload.limitedEdition || null,
+          itemSpecificText: payload.itemSpecificText || null,
         },
       });
     } else if (eventType === 'item.rated') {
@@ -175,7 +177,7 @@ async function summarizeItems(shelfIds) {
             uc.id, uc.collectable_id, uc.manual_id, uc.position, uc.notes, uc.rating,
             c.title as collectable_title, c.primary_creator, c.cover_url, c.cover_media_id, c.kind,
             m.local_path as cover_media_path,
-            um.name as manual_name, um.author as manual_author
+            um.name as manual_name, um.author as manual_author, um.limited_edition, um.item_specific_text
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -206,6 +208,8 @@ async function summarizeItems(shelfIds) {
           id: row.manual_id,
           name: row.manual_name,
           author: row.manual_author,
+          limitedEdition: row.limited_edition,
+          itemSpecificText: row.item_specific_text,
         } : null,
         position: row.position,
         notes: row.notes,
@@ -410,7 +414,11 @@ async function getFeedEntryDetails(req, res) {
                     um.label_color as manual_label_color,
                     um.regional_item as manual_regional_item,
                     um.edition as manual_edition,
-                    um.barcode as manual_barcode
+                    um.regional_item as manual_regional_item,
+                    um.edition as manual_edition,
+                    um.barcode as manual_barcode,
+                    um.limited_edition,
+                    um.item_specific_text
              FROM user_collections uc
              LEFT JOIN collectables c ON c.id = uc.collectable_id
              LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -442,7 +450,10 @@ async function getFeedEntryDetails(req, res) {
                 labelColor: row.manual_label_color || null,
                 regionalItem: row.manual_regional_item || null,
                 edition: row.manual_edition || null,
+                edition: row.manual_edition || null,
                 barcode: row.manual_barcode || null,
+                limitedEdition: row.limited_edition || null,
+                itemSpecificText: row.item_specific_text || null,
               } : null,
             };
           });
@@ -554,7 +565,11 @@ async function getFeedEntryDetails(req, res) {
               um.label_color as manual_label_color,
               um.regional_item as manual_regional_item,
               um.edition as manual_edition,
-              um.barcode as manual_barcode
+              um.regional_item as manual_regional_item,
+              um.edition as manual_edition,
+              um.barcode as manual_barcode,
+              um.limited_edition,
+              um.item_specific_text
        FROM user_collections uc
        LEFT JOIN collectables c ON c.id = uc.collectable_id
        LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -611,6 +626,8 @@ async function getFeedEntryDetails(req, res) {
           regionalItem: row.manual_regional_item,
           edition: row.manual_edition,
           barcode: row.manual_barcode,
+          limitedEdition: row.limited_edition,
+          itemSpecificText: row.item_specific_text,
         } : null,
         position: row.position,
         notes: row.notes,

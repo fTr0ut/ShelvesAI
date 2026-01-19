@@ -252,6 +252,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'coordinates',
             'position',
             'confidence',
+            'manualFingerprint',
+            'createdAt',
+            'updatedAt',
         ]);
 
         const labelOverrides = {
@@ -269,6 +272,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             regionalItem: 'Region',
             developer: 'Developer',
             author: 'Author',
+            manufacturer: 'Manufacturer',
             subtitle: 'Subtitle',
             barcode: 'Barcode',
             ageStatement: 'Age Statement',
@@ -281,6 +285,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
             networks: 'Networks',
             numberOfSeasons: 'Seasons',
             numberOfEpisodes: 'Episodes',
+            limitedEdition: 'Limited Edition',
+            itemSpecificText: 'Item Details',
         };
 
         const valueFormatters = {

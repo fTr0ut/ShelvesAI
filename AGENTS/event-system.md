@@ -103,12 +103,15 @@ FEED_AGGREGATE_DEBUG=true         # Enable debug logging
 {
   "itemId": 123,
   "collectableId": "uuid",
+  "manualId": 456,
   "title": "Book Title",
   "primaryCreator": "Author Name",
   "coverUrl": "https://...",
   "coverMediaPath": "collectables/abc.jpg",
   "rating": 4.5,
-  "type": "book"
+  "type": "book",
+  "limitedEdition": "37/50",
+  "itemSpecificText": "Store pick details"
 }
 ```
 

@@ -283,6 +283,7 @@ function formatShelfItem(row) {
     type: row.manualType || null,
     description: row.manualDescription || null,
     author: row.manualAuthor || null,
+    manufacturer: row.manualManufacturer || null,
     publisher: row.manualPublisher || null,
     format: row.manualFormat || null,
     year: row.manualYear || null,
@@ -292,6 +293,8 @@ function formatShelfItem(row) {
     regionalItem: row.manualRegionalItem || null,
     edition: row.manualEdition || null,
     barcode: row.manualBarcode || null,
+    limitedEdition: row.manualLimitedEdition || null,
+    itemSpecificText: row.manualItemSpecificText || null,
     manualFingerprint: row.manualFingerprint || null,
     tags: Array.isArray(row.manualTags) ? row.manualTags : [],
   } : null;
@@ -612,6 +615,8 @@ async function addManualEntry(req, res) {
       edition,
       barcode,
       tags,
+      limitedEdition,
+      itemSpecificText,
     } = req.body ?? {};
     if (!name) return res.status(400).json({ error: "name is required" });
 
@@ -632,6 +637,8 @@ async function addManualEntry(req, res) {
       edition,
       barcode,
       tags,
+      limitedEdition,
+      itemSpecificText,
     });
 
     await logShelfEvent({

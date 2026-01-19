@@ -124,6 +124,8 @@ Custom user-created items that don't exist in the global catalog.
 | format | TEXT | | Physical/Digital format |
 | year | TEXT | | Release year |
 | tags | TEXT[] | `DEFAULT {}` | Tags |
+| limited_edition | TEXT | | Numbered edition notation (e.g. "37/50") |
+| item_specific_text | TEXT | | Unique text (store picks, inscriptions) |
 | created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
 
 **Indexes:** `user_id`, `shelf_id`

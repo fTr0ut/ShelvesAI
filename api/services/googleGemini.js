@@ -543,9 +543,15 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
                     });
 
                     const searchJson = cleanJsonResponse(searchText);
-                    const enriched = JSON.parse(searchJson);
-                    if (Array.isArray(enriched)) {
-                        parsedItems = enriched; // Replace raw items with enriched ones
+
+                    // Guard against empty or invalid JSON response
+                    if (!searchJson || !searchJson.startsWith('[') || !searchJson.endsWith(']')) {
+                        console.warn('[GoogleGeminiService] Search enrichment returned invalid JSON, using raw vision items. Response preview:', (searchText || '').substring(0, 200));
+                    } else {
+                        const enriched = JSON.parse(searchJson);
+                        if (Array.isArray(enriched)) {
+                            parsedItems = enriched; // Replace raw items with enriched ones
+                        }
                     }
                 } catch (err) {
                     console.error('[GoogleGeminiService] Search enrichment failed:', err);

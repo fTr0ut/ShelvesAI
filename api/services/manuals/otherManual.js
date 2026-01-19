@@ -47,6 +47,21 @@ function normalizeOtherManualItem(rawItem, shelfType = 'other') {
   const regionalItem = pickFirstValue(normalized, ['regionalItem', 'Regional', 'region', 'regionInfo', 'regional_item']);
   const edition = pickFirstValue(normalized, ['edition', 'Edition', 'Edition(s)', 'edition(s)']);
   const barcode = pickFirstValue(normalized, ['barcode', 'Barcode', 'UPC', 'UPC barcode', 'upc']);
+  const limitedEdition = pickFirstValue(normalized, [
+    'limitedEdition',
+    'Limited Edition',
+    'limited_edition',
+    'numberedEdition',
+  ]);
+  const itemSpecificText = pickFirstValue(normalized, [
+    'itemSpecificText',
+    'Item Specific Text',
+    'item_specific_text',
+    'uniqueText',
+    'rawText',
+    'labelText',
+    'specialText',
+  ]);
 
   return {
     ...normalized,
@@ -60,7 +75,10 @@ function normalizeOtherManualItem(rawItem, shelfType = 'other') {
     labelColor,
     regionalItem,
     edition,
+    edition,
     barcode,
+    limitedEdition,
+    itemSpecificText,
     type: normalized.type || shelfType,
     kind: normalized.kind || shelfType,
   };
@@ -80,12 +98,14 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
     regionalItem: item?.regionalItem || null,
     edition: item?.edition || null,
     barcode: item?.barcode || null,
+    limitedEdition: item?.limitedEdition || null,
+    itemSpecificText: item?.itemSpecificText || null,
     manualFingerprint: manualFingerprint || null,
   };
 }
 
 function hasRequiredOtherFields(item) {
-  return !!(item?.title && item?.primaryCreator);
+  return !!(item?.title);
 }
 
 module.exports = {
