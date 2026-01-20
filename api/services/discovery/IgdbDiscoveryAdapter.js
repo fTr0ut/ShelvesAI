@@ -1,7 +1,18 @@
 /**
- * IgdbDiscoveryAdapter - Fetches popular and recent games from IGDB
+ * IgdbDiscoveryAdapter - Fetches popular and trending games from IGDB
  *
- * Uses IGDB's query API to find popular, highly-rated, and recent games.
+ * Uses IGDB's Popularity Primitives API for real-time trending data.
+ * See: https://api-docs.igdb.com/#how-to-use-popularity-api
+ *
+ * Popularity Types:
+ *   1 = IGDB Visits (trending page visits)
+ *   2 = Want to Play (anticipated games)
+ *   3 = Playing (currently being played)
+ *   4 = Played (completed)
+ *   5 = Steam 24hr Peak Players
+ *   6 = Steam Positive Reviews
+ *   7 = Steam Negative Reviews
+ *   8 = Steam Total Reviews
  */
 
 const fetch = require('node-fetch');
@@ -9,6 +20,18 @@ const fetch = require('node-fetch');
 const IGDB_BASE_URL = 'https://api.igdb.com/v4';
 const IGDB_AUTH_URL = 'https://id.twitch.tv/oauth2/token';
 const DEFAULT_TIMEOUT_MS = 10000;
+
+// Popularity type IDs from IGDB API
+const POPULARITY_TYPES = {
+  IGDB_VISITS: 1,
+  WANT_TO_PLAY: 2,
+  PLAYING: 3,
+  PLAYED: 4,
+  STEAM_PEAK_PLAYERS: 5,
+  STEAM_POSITIVE_REVIEWS: 6,
+  STEAM_NEGATIVE_REVIEWS: 7,
+  STEAM_TOTAL_REVIEWS: 8
+};
 
 function normalizeString(value) {
   if (value == null) return '';
@@ -45,48 +68,37 @@ class IgdbDiscoveryAdapter {
   }
 
   /**
-   * Fetch highly-rated games (sorted by total rating)
+   * Fetch trending games based on IGDB page visits (real-time popularity)
    */
-  async fetchTopRatedGames(limit = 20) {
-    const query = `
-      fields name, summary, cover.image_id, first_release_date,
-             involved_companies.company.name, involved_companies.developer,
-             genres.name, total_rating, total_rating_count, follows;
-      where cover != null & total_rating > 85;
-      sort total_rating desc;
-      limit ${limit};
-    `;
+  async fetchTrendingGames(limit = 20) {
+    const gameIds = await this._getPopularGameIds(POPULARITY_TYPES.IGDB_VISITS, limit);
+    if (!gameIds.length) return [];
 
-    const results = await this._callIgdb('games', query);
-    return this._normalizeGames(results || [], 'trending');
+    const games = await this._fetchGamesByIds(gameIds);
+    return this._normalizeGames(games, 'trending');
   }
 
   /**
-   * Fetch most followed games (indicating high anticipation/popularity)
+   * Fetch anticipated games based on "Want to Play" additions
    */
-  async fetchMostFollowedGames(limit = 20) {
-    const query = `
-      fields name, summary, cover.image_id, first_release_date,
-             involved_companies.company.name, involved_companies.developer,
-             genres.name, total_rating, follows, hypes;
-      where cover != null & follows != null;
-      sort follows desc;
-      limit ${limit};
-    `;
+  async fetchAnticipatedGames(limit = 20) {
+    const gameIds = await this._getPopularGameIds(POPULARITY_TYPES.WANT_TO_PLAY, limit);
+    if (!gameIds.length) return [];
 
-    const results = await this._callIgdb('games', query);
-    return this._normalizeGames(results || [], 'upcoming');
+    const games = await this._fetchGamesByIds(gameIds);
+    return this._normalizeGames(games, 'upcoming');
   }
 
   /**
    * Fetch recently released games (sorted by release date descending)
    */
   async fetchRecentReleases(limit = 20) {
+    const now = Math.floor(Date.now() / 1000);
     const query = `
       fields name, summary, cover.image_id, first_release_date,
              involved_companies.company.name, involved_companies.developer,
              genres.name, total_rating, total_rating_count;
-      where cover != null & first_release_date != null;
+      where cover != null & first_release_date != null & first_release_date < ${now};
       sort first_release_date desc;
       limit ${limit};
     `;
@@ -96,33 +108,99 @@ class IgdbDiscoveryAdapter {
   }
 
   /**
-   * Fetch popular games (high rating count indicates popularity)
+   * Fetch currently popular games based on "Playing" status or Steam peak players
    */
-  async fetchPopularGames(limit = 20) {
-    const query = `
-      fields name, summary, cover.image_id, first_release_date,
-             involved_companies.company.name, involved_companies.developer,
-             genres.name, total_rating, total_rating_count, follows;
-      where cover != null & total_rating_count != null;
-      sort total_rating_count desc;
-      limit ${limit};
-    `;
+  async fetchNowPlayingGames(limit = 20) {
+    // Try Steam peak players first for active player data
+    let gameIds = await this._getPopularGameIds(POPULARITY_TYPES.STEAM_PEAK_PLAYERS, limit);
 
-    const results = await this._callIgdb('games', query);
-    return this._normalizeGames(results || [], 'now_playing');
+    // Fall back to IGDB "Playing" if Steam data is insufficient
+    if (gameIds.length < limit / 2) {
+      const igdbPlayingIds = await this._getPopularGameIds(POPULARITY_TYPES.PLAYING, limit);
+      // Merge and dedupe, prioritizing Steam data
+      const existingSet = new Set(gameIds);
+      for (const id of igdbPlayingIds) {
+        if (!existingSet.has(id) && gameIds.length < limit) {
+          gameIds.push(id);
+        }
+      }
+    }
+
+    if (!gameIds.length) return [];
+
+    const games = await this._fetchGamesByIds(gameIds);
+    return this._normalizeGames(games, 'now_playing');
+  }
+
+  // Legacy method aliases for backward compatibility
+  async fetchTopRatedGames(limit = 20) {
+    return this.fetchTrendingGames(limit);
+  }
+
+  async fetchMostFollowedGames(limit = 20) {
+    return this.fetchAnticipatedGames(limit);
+  }
+
+  async fetchPopularGames(limit = 20) {
+    return this.fetchNowPlayingGames(limit);
   }
 
   /**
-   * Fetch all game content
+   * Get top game IDs from popularity primitives API
+   * @param {number} popularityType - The popularity type ID (1-8)
+   * @param {number} limit - Number of results to fetch
+   * @returns {number[]} Array of game IDs sorted by popularity
+   */
+  async _getPopularGameIds(popularityType, limit) {
+    const query = `
+      fields game_id, value, popularity_type;
+      where popularity_type = ${popularityType};
+      sort value desc;
+      limit ${limit};
+    `;
+
+    const results = await this._callIgdb('popularity_primitives', query);
+    if (!results || !Array.isArray(results)) return [];
+
+    return results.map(r => r.game_id).filter(Boolean);
+  }
+
+  /**
+   * Fetch full game details for a list of game IDs
+   * @param {number[]} gameIds - Array of IGDB game IDs
+   * @returns {object[]} Array of game objects with full details
+   */
+  async _fetchGamesByIds(gameIds) {
+    if (!gameIds.length) return [];
+
+    const idsString = gameIds.join(',');
+    const query = `
+      fields name, summary, cover.image_id, first_release_date,
+             involved_companies.company.name, involved_companies.developer,
+             genres.name, total_rating, total_rating_count, follows, hypes;
+      where id = (${idsString});
+      limit ${gameIds.length};
+    `;
+
+    const results = await this._callIgdb('games', query);
+    if (!results) return [];
+
+    // Preserve the popularity order from the original gameIds array
+    const gameMap = new Map(results.map(g => [g.id, g]));
+    return gameIds.map(id => gameMap.get(id)).filter(Boolean);
+  }
+
+  /**
+   * Fetch all game content from all popularity sources
    */
   async fetchAll() {
-    const [topRated, mostFollowed, recent, popular] = await Promise.all([
-      this.fetchTopRatedGames(),
-      this.fetchMostFollowedGames(),
+    const [trending, anticipated, recent, nowPlaying] = await Promise.all([
+      this.fetchTrendingGames(),
+      this.fetchAnticipatedGames(),
       this.fetchRecentReleases(),
-      this.fetchPopularGames()
+      this.fetchNowPlayingGames()
     ]);
-    return [...topRated, ...mostFollowed, ...recent, ...popular];
+    return [...trending, ...anticipated, ...recent, ...nowPlaying];
   }
 
   _normalizeGames(results, itemType) {

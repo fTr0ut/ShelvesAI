@@ -80,40 +80,107 @@ async function getDiscover(req, res) {
       params.push(item_type);
     }
 
-    // Main query with personalization ordering
-    const sql = `
-      SELECT
-        id, category, item_type, title, description, cover_image_url,
-        release_date, creators, genres, external_id, source_api, source_url,
-        payload, fetched_at,
-        -- Personalization score
-        CASE WHEN category = ANY($${paramIndex++}) THEN 2 ELSE 0 END +
-        CASE WHEN creators && $${paramIndex++} THEN 3 ELSE 0 END +
-        CASE WHEN genres && $${paramIndex++} THEN 1 ELSE 0 END
-        AS relevance_score
-      FROM news_items
-      WHERE ${conditions.join(' AND ')}
-      ORDER BY
-        relevance_score DESC,
-        CASE item_type
-          WHEN 'trending' THEN 1
-          WHEN 'upcoming' THEN 2
-          WHEN 'now_playing' THEN 3
-          WHEN 'recent' THEN 4
-          ELSE 5
-        END,
-        (payload->>'popularity')::float DESC NULLS LAST,
-        release_date DESC NULLS LAST
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
+    // When fetching all categories, use window function to get balanced results per category/type
+    // This ensures each category+item_type combination gets represented
+    const isAllCategories = category === 'all';
+    // With ~9 category+item_type combinations (3 categories * ~3 types), divide limit accordingly
+    // Cap at 15 items per group for reasonable mobile performance
+    const itemsPerGroup = isAllCategories ? Math.min(15, Math.ceil(safeLimit / 9)) : safeLimit;
 
-    params.push(
-      userInterests.categories,
-      userInterests.creators,
-      userInterests.genres,
-      safeLimit,
-      safeOffset
-    );
+    let sql;
+    if (isAllCategories && item_type === 'all') {
+      // Balanced query: get top N items per category+item_type combination
+      // This ensures each category gets fair representation in the results
+      const p1 = paramIndex++;     // categories for SELECT
+      const p2 = paramIndex++;     // creators for SELECT
+      const p3 = paramIndex++;     // genres for SELECT
+      const p4 = paramIndex++;     // categories for OVER clause
+      const p5 = paramIndex++;     // creators for OVER clause
+      const p6 = paramIndex++;     // genres for OVER clause
+      const p7 = paramIndex++;     // itemsPerGroup limit
+
+      sql = `
+        WITH ranked AS (
+          SELECT
+            id, category, item_type, title, description, cover_image_url,
+            release_date, creators, genres, external_id, source_api, source_url,
+            payload, fetched_at,
+            -- Personalization score
+            CASE WHEN category = ANY($${p1}) THEN 2 ELSE 0 END +
+            CASE WHEN creators && $${p2} THEN 3 ELSE 0 END +
+            CASE WHEN genres && $${p3} THEN 1 ELSE 0 END
+            AS relevance_score,
+            ROW_NUMBER() OVER (
+              PARTITION BY category, item_type
+              ORDER BY
+                CASE WHEN category = ANY($${p4}) THEN 2 ELSE 0 END +
+                CASE WHEN creators && $${p5} THEN 3 ELSE 0 END +
+                CASE WHEN genres && $${p6} THEN 1 ELSE 0 END DESC,
+                (payload->>'popularity')::float DESC NULLS LAST,
+                release_date DESC NULLS LAST
+            ) as rn
+          FROM news_items
+          WHERE ${conditions.join(' AND ')}
+        )
+        SELECT * FROM ranked
+        WHERE rn <= $${p7}
+        ORDER BY
+          category,
+          CASE item_type
+            WHEN 'trending' THEN 1
+            WHEN 'upcoming' THEN 2
+            WHEN 'now_playing' THEN 3
+            WHEN 'recent' THEN 4
+            ELSE 5
+          END,
+          relevance_score DESC,
+          (payload->>'popularity')::float DESC NULLS LAST
+      `;
+      // Push parameters: 3 for SELECT, 3 for OVER clause, 1 for limit
+      params.push(
+        userInterests.categories,
+        userInterests.creators,
+        userInterests.genres,
+        userInterests.categories,  // Duplicate for OVER clause
+        userInterests.creators,    // Duplicate for OVER clause
+        userInterests.genres,      // Duplicate for OVER clause
+        itemsPerGroup
+      );
+    } else {
+      // Standard query for single category or single item_type
+      sql = `
+        SELECT
+          id, category, item_type, title, description, cover_image_url,
+          release_date, creators, genres, external_id, source_api, source_url,
+          payload, fetched_at,
+          -- Personalization score
+          CASE WHEN category = ANY($${paramIndex++}) THEN 2 ELSE 0 END +
+          CASE WHEN creators && $${paramIndex++} THEN 3 ELSE 0 END +
+          CASE WHEN genres && $${paramIndex++} THEN 1 ELSE 0 END
+          AS relevance_score
+        FROM news_items
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY
+          relevance_score DESC,
+          CASE item_type
+            WHEN 'trending' THEN 1
+            WHEN 'upcoming' THEN 2
+            WHEN 'now_playing' THEN 3
+            WHEN 'recent' THEN 4
+            ELSE 5
+          END,
+          (payload->>'popularity')::float DESC NULLS LAST,
+          release_date DESC NULLS LAST
+        LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+      `;
+      params.push(
+        userInterests.categories,
+        userInterests.creators,
+        userInterests.genres,
+        safeLimit,
+        safeOffset
+      );
+    }
 
     const result = await query(sql, params);
 

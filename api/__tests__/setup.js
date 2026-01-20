@@ -1,30 +1,33 @@
-const mongoose = require('mongoose')
-const { MongoMemoryServer } = require('mongodb-memory-server')
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') })
 
-if (process.env.SKIP_MONGO_MEMORY === 'true') {
-  beforeAll(async () => {})
-  afterEach(async () => {})
-  afterAll(async () => {
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.disconnect()
-    }
-  })
-} else {
-  let mongod
+// Mock the pg pool for tests that don't need a real connection
+// Tests that need real DB access can unmock this
+jest.mock('../database/pg', () => {
+  const mockPool = {
+    query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+    connect: jest.fn().mockResolvedValue({
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      release: jest.fn()
+    }),
+    end: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn()
+  }
+  return {
+    pool: mockPool,
+    query: mockPool.query,
+    getClient: mockPool.connect,
+    transaction: jest.fn(async (fn) => {
+      const client = await mockPool.connect()
+      try {
+        return await fn(client)
+      } finally {
+        client.release()
+      }
+    })
+  }
+})
 
-  beforeAll(async () => {
-    mongod = await MongoMemoryServer.create()
-    const uri = mongod.getUri()
-    await mongoose.connect(uri)
-  })
-
-  afterEach(async () => {
-    const collections = mongoose.connection.collections
-    await Promise.all(Object.values(collections).map((col) => col.deleteMany({})))
-  })
-
-  afterAll(async () => {
-    await mongoose.disconnect()
-    await mongod.stop()
-  })
-}
+// Clean up after all tests
+afterAll(async () => {
+  // Any cleanup needed
+})

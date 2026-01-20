@@ -22,6 +22,8 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { query } = require('../database/pg');
 const TmdbDiscoveryAdapter = require('../services/discovery/TmdbDiscoveryAdapter');
 const IgdbDiscoveryAdapter = require('../services/discovery/IgdbDiscoveryAdapter');
+const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAdapter');
+const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -41,15 +43,16 @@ async function upsertNewsItem(item) {
     await query(`
       INSERT INTO news_items (
         category, item_type, title, description, cover_image_url,
-        release_date, creators, franchises, genres, external_id,
+        release_date, physical_release_date, creators, franchises, genres, external_id,
         source_api, source_url, payload, fetched_at, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
       ON CONFLICT (source_api, external_id, item_type)
       DO UPDATE SET
         title = EXCLUDED.title,
         description = EXCLUDED.description,
         cover_image_url = EXCLUDED.cover_image_url,
         release_date = EXCLUDED.release_date,
+        physical_release_date = EXCLUDED.physical_release_date,
         creators = EXCLUDED.creators,
         franchises = EXCLUDED.franchises,
         genres = EXCLUDED.genres,
@@ -65,6 +68,7 @@ async function upsertNewsItem(item) {
       item.description || null,
       item.cover_image_url || null,
       item.release_date || null,
+      item.physical_release_date || null,
       item.creators || [],
       item.franchises || [],
       item.genres || [],
@@ -202,6 +206,130 @@ async function refreshIgdb(adapter) {
 }
 
 /**
+ * Fetch and store Blu-ray.com content (Physical Releases)
+ */
+async function refreshBluray(blurayAdapter, tmdbAdapter) {
+  const stats = { items: 0, enriched: 0, errors: 0 };
+
+  try {
+    console.log('[News Cache] Fetching Blu-ray.com releases...');
+
+    // Fetch all 6 distinct categories
+    const [
+      preorder4K,
+      preorderBluray,
+      newRelease4K,
+      newReleaseBluray,
+      upcoming4K,
+      upcomingBluray
+    ] = await Promise.all([
+      blurayAdapter.fetchNewPreorders4K(),
+      blurayAdapter.fetchNewPreordersBluray(),
+      blurayAdapter.fetchNewReleases4K(),
+      blurayAdapter.fetchNewReleasesBluray(),
+      blurayAdapter.fetchUpcomingReleases4K(),
+      blurayAdapter.fetchUpcomingReleasesBluray()
+    ]);
+
+    // Combine and mark types
+    const items = [
+      ...preorder4K.map(i => ({ ...i, type: 'preorder_4k' })),
+      ...preorderBluray.map(i => ({ ...i, type: 'preorder_bluray' })),
+      ...newRelease4K.map(i => ({ ...i, type: 'new_release_4k' })),
+      ...newReleaseBluray.map(i => ({ ...i, type: 'new_release_bluray' })),
+      ...upcoming4K.map(i => ({ ...i, type: 'upcoming_4k' })),
+      ...upcomingBluray.map(i => ({ ...i, type: 'upcoming_bluray' }))
+    ];
+
+    console.log(`[News Cache] Blu-ray.com totals: preorder_4k=${preorder4K.length}, preorder_bluray=${preorderBluray.length}, new_release_4k=${newRelease4K.length}, new_release_bluray=${newReleaseBluray.length}, upcoming_4k=${upcoming4K.length}, upcoming_bluray=${upcomingBluray.length}`);
+
+    // Deduplicate by URL
+    const uniqueItems = [];
+    const seenUrls = new Set();
+
+    for (const item of items) {
+      if (!seenUrls.has(item.source_url)) {
+        seenUrls.add(item.source_url);
+        uniqueItems.push(item);
+      }
+    }
+
+    for (const item of uniqueItems) {
+      try {
+        // Enrichment
+        let tmdbData = null;
+        if (tmdbAdapter && tmdbAdapter.isConfigured()) {
+          // Note: We don't pass year because the physical release date differs from theatrical release
+          const searchResults = await tmdbAdapter.searchMovie({ title: item.title });
+
+          if (searchResults.length > 0) {
+            tmdbData = searchResults[0];
+          }
+        }
+
+        // Construct News Item
+        const newsItem = {
+          category: 'movies',
+          item_type: item.type,
+          title: tmdbData ? (tmdbData.title || tmdbData.original_title) : item.title,
+          description: tmdbData ? tmdbData.overview : null,
+          cover_image_url: tmdbData && tmdbData.poster_path ? `${tmdbAdapter.imageBaseUrl}${tmdbData.poster_path}` : null,
+          release_date: tmdbData ? new Date(tmdbData.release_date) : null,
+          physical_release_date: item.release_date || null,
+          creators: [],
+          franchises: [],
+          genres: tmdbData ? (tmdbData.genre_ids || []).map(id => tmdbAdapter.movieGenres[id]).filter(Boolean) : [],
+          external_id: tmdbData ? `tmdb:${tmdbData.id}` : `bluray:${item.title.replace(/\s+/g, '_').toLowerCase()}`,
+          source_api: 'blu-ray.com',
+          source_url: item.source_url,
+          payload: {
+            original_source: 'blu-ray.com',
+            tmdb_match: !!tmdbData,
+            tmdb_id: tmdbData ? tmdbData.id : null,
+            original_title: item.title,
+            physical_release_date: item.release_date ? item.release_date.toISOString().split('T')[0] : null
+          }
+        };
+
+        if (await upsertNewsItem(newsItem)) {
+          stats.items++;
+          if (tmdbData) stats.enriched++;
+
+          // Hook: Also add to collectables table for TMDB-matched items
+          if (tmdbData) {
+            try {
+              const hook = getCollectableDiscoveryHook({ imageBaseUrl: tmdbAdapter.imageBaseUrl });
+              await hook.processEnrichedItem({
+                source: 'bluray',
+                kind: 'movie',
+                enrichment: tmdbData,
+                originalItem: item
+              });
+            } catch (hookErr) {
+              console.warn('[News Cache] Collectable hook failed:', hookErr.message);
+            }
+          }
+        } else {
+          stats.errors++;
+        }
+
+      } catch (innerErr) {
+        console.error(`[News Cache] Failed to process bluray item ${item.title}:`, innerErr);
+        stats.errors++;
+      }
+    }
+
+    console.log(`[News Cache] Blu-ray.com: ${stats.items} items stored (${stats.enriched} enriched)`);
+
+  } catch (err) {
+    console.error('[News Cache] Blu-ray fetch failed:', err.message);
+    stats.errors++;
+  }
+
+  return stats;
+}
+
+/**
  * Main refresh job
  */
 async function runRefresh() {
@@ -233,6 +361,14 @@ async function runRefresh() {
     totals.errors += igdbStats.errors;
   } else {
     console.warn('[News Cache] IGDB not configured (missing IGDB_CLIENT_ID/SECRET)');
+  }
+
+  // Refresh Blu-ray.com
+  const bluray = new BlurayDiscoveryAdapter();
+  if (bluray.isConfigured()) {
+    const blurayStats = await refreshBluray(bluray, tmdb);
+    totals.items += blurayStats.items;
+    totals.errors += blurayStats.errors;
   }
 
   // Cleanup expired items

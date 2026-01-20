@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AccountSlideMenu } from '../components/ui';
+import NewsFeed from '../components/news/NewsFeed';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -25,6 +26,7 @@ const FILTERS = [
     { key: 'all', label: 'All' },
     { key: 'friends', label: 'Friends' },
     { key: 'public', label: 'Discover' },
+    { key: 'news', label: 'News' },
 ];
 
 // --- Helpers ---
@@ -804,6 +806,44 @@ export default function SocialFeedScreen({ navigation }) {
         );
     };
 
+    // Conditional content renderer
+    const renderContent = () => {
+        if (activeFilter === 'news') {
+            return <NewsFeed />;
+        }
+
+        // Default Feed List
+        return (
+            <FlatList
+                data={entries}
+                renderItem={renderItem}
+                keyExtractor={(item) => item?.aggregateId || item?.id || Math.random().toString()}
+                contentContainerStyle={styles.listContent}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        tintColor={colors.primary}
+                        colors={[colors.primary]}
+                    />
+                }
+                ListHeaderComponent={
+                    <View style={styles.headerSpacer} />
+                }
+                ListFooterComponent={
+                    loading ? (
+                        <ActivityIndicator style={styles.loader} color={colors.primary} />
+                    ) : entries.length === 0 ? (
+                        renderEmpty()
+                    ) : (
+                        <View style={styles.footerSpacer} />
+                    )
+                }
+            />
+        );
+    };
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -971,30 +1011,8 @@ export default function SocialFeedScreen({ navigation }) {
                 </View>
             ) : null}
 
-            {/* Content */}
-            {loading && !refreshing ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                </View>
-            ) : (
-                <FlatList
-                    data={entries}
-                    keyExtractor={(item, idx) => item.id ? `${item.id}-${activeFilter}` : (item.shelf?.id ? `${item.shelf.id}-${activeFilter}` : `entry-${idx}`)}
-                    renderItem={renderItem}
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={refreshing}
-                            onRefresh={onRefresh}
-                            tintColor={colors.primary}
-                            colors={[colors.primary]}
-                        />
-                    }
-                    ListEmptyComponent={renderEmpty}
-                    showsVerticalScrollIndicator={false}
-                    ItemSeparatorComponent={() => <View style={styles.separator} />}
-                />
-            )}
+            {/* Content Body */}
+            {renderContent()}
 
             {/* Account Slide Menu */}
             <AccountSlideMenu

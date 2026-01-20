@@ -120,6 +120,19 @@ class TmdbDiscoveryAdapter {
     return [...movies, ...tv];
   }
 
+  /**
+   * Search for a movie by title and optional year
+   */
+  async searchMovie({ title, year }) {
+    const params = { query: title };
+    if (year) {
+      params.primary_release_year = year;
+    }
+    const data = await this._fetchJson('/search/movie', params);
+    // Return raw results, caller will handle normalization/matching logic
+    return data.results || [];
+  }
+
   _normalizeMovies(results, itemType, limit = 20) {
     return results.slice(0, limit).map(movie => ({
       category: 'movies',
