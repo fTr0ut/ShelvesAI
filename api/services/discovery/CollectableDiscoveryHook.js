@@ -160,59 +160,115 @@ class CollectableDiscoveryHook {
 
     /**
      * Build payload from IGDB enrichment
-     * @param {Object} igdbData - IGDB API result
-     * @param {Object} originalItem - Original news item
+     * Handles both raw IGDB API format and normalized news item format
+     * @param {Object} igdbData - IGDB API result or payload from normalized item
+     * @param {Object} originalItem - Original news item (may contain normalized fields)
      */
     _buildIgdbPayload(igdbData, originalItem) {
-        if (!igdbData) return this._buildGenericPayload(null, originalItem);
+        const item = originalItem || {};
 
-        const year = igdbData.first_release_date
-            ? new Date(igdbData.first_release_date * 1000).getFullYear()
+        // Handle raw IGDB API format (has 'name' and 'first_release_date' as unix timestamp)
+        if (igdbData?.name || igdbData?.first_release_date) {
+            const year = igdbData.first_release_date
+                ? new Date(igdbData.first_release_date * 1000).getFullYear()
+                : null;
+
+            return {
+                title: igdbData.name || item.title,
+                description: igdbData.summary || null,
+                primaryCreator: igdbData.involved_companies?.[0]?.company?.name || null,
+                year,
+                coverUrl: igdbData.cover?.url || null,
+                images: igdbData.cover?.url ? [{ url: igdbData.cover.url, type: 'cover' }] : [],
+                formats: igdbData.platforms?.map(p => p.name) || [],
+                tags: igdbData.genres?.map(g => g.name) || [],
+                identifiers: {
+                    igdb: igdbData.id ? String(igdbData.id) : null
+                },
+                externalId: igdbData.id ? `igdb:${igdbData.id}` : null
+            };
+        }
+
+        // Handle normalized news item format (from IgdbDiscoveryAdapter)
+        // Parse IGDB ID from external_id (format: "igdb:123")
+        const externalId = item.external_id || '';
+        const igdbId = externalId.startsWith('igdb:')
+            ? externalId.replace('igdb:', '')
+            : null;
+
+        const year = item.release_date
+            ? new Date(item.release_date).getFullYear()
             : null;
 
         return {
-            title: igdbData.name || originalItem?.title,
-            description: igdbData.summary || null,
-            primaryCreator: igdbData.involved_companies?.[0]?.company?.name || null,
+            title: item.title,
+            description: item.description || null,
+            primaryCreator: item.creators?.[0] || null,
             year,
-            coverUrl: igdbData.cover?.url || null,
-            images: igdbData.cover?.url ? [{ url: igdbData.cover.url, type: 'cover' }] : [],
-            formats: igdbData.platforms?.map(p => p.name) || [],
-            tags: igdbData.genres?.map(g => g.name) || [],
+            coverUrl: item.cover_image_url || null,
+            images: item.cover_image_url ? [{ url: item.cover_image_url, type: 'cover' }] : [],
+            formats: [],
+            tags: item.genres || [],
             identifiers: {
-                igdb: igdbData.id ? String(igdbData.id) : null
+                igdb: igdbId
             },
-            externalId: igdbData.id ? `igdb:${igdbData.id}` : null
+            externalId: igdbId ? `igdb:${igdbId}` : null
         };
     }
 
     /**
      * Build payload from direct TMDB data (non-Bluray source)
-     * @param {Object} tmdbData - TMDB API result
-     * @param {Object} originalItem - Original news item
+     * Handles both raw TMDB API format and normalized news item format
+     * @param {Object} tmdbData - TMDB API result or payload from normalized item
+     * @param {Object} originalItem - Original news item (may contain normalized fields)
      */
     _buildTmdbPayload(tmdbData, originalItem) {
-        if (!tmdbData) return this._buildGenericPayload(null, originalItem);
+        const item = originalItem || {};
 
-        const year = tmdbData.release_date
-            ? new Date(tmdbData.release_date).getFullYear()
-            : tmdbData.first_air_date
-                ? new Date(tmdbData.first_air_date).getFullYear()
-                : null;
+        // Handle raw TMDB API format (has 'release_date' or 'first_air_date' as string)
+        if (tmdbData?.id && (tmdbData?.title || tmdbData?.name)) {
+            const year = tmdbData.release_date
+                ? new Date(tmdbData.release_date).getFullYear()
+                : tmdbData.first_air_date
+                    ? new Date(tmdbData.first_air_date).getFullYear()
+                    : null;
 
-        const coverUrl = tmdbData.poster_path ? `${this.imageBaseUrl}${tmdbData.poster_path}` : null;
+            const coverUrl = tmdbData.poster_path ? `${this.imageBaseUrl}${tmdbData.poster_path}` : null;
+
+            return {
+                title: tmdbData.title || tmdbData.name || tmdbData.original_title || item.title,
+                description: tmdbData.overview || null,
+                year,
+                coverUrl,
+                images: coverUrl ? [{ url: coverUrl, type: 'poster' }] : [],
+                tags: [],
+                identifiers: {
+                    tmdb: tmdbData.id ? String(tmdbData.id) : null
+                },
+                externalId: tmdbData.id ? `tmdb:${tmdbData.id}` : null
+            };
+        }
+
+        // Handle normalized news item format (from TmdbDiscoveryAdapter)
+        // Parse TMDB ID from external_id (format: "tmdb:123" or "tmdb_tv:123")
+        const externalId = item.external_id || '';
+        const tmdbId = externalId.replace(/^tmdb(_tv)?:/, '');
+
+        const year = item.release_date
+            ? new Date(item.release_date).getFullYear()
+            : null;
 
         return {
-            title: tmdbData.title || tmdbData.name || tmdbData.original_title || originalItem?.title,
-            description: tmdbData.overview || null,
+            title: item.title,
+            description: item.description || null,
             year,
-            coverUrl,
-            images: coverUrl ? [{ url: coverUrl, type: 'poster' }] : [],
-            tags: [], // Could map genre_ids
+            coverUrl: item.cover_image_url || null,
+            images: item.cover_image_url ? [{ url: item.cover_image_url, type: 'poster' }] : [],
+            tags: item.genres || [],
             identifiers: {
-                tmdb: tmdbData.id ? String(tmdbData.id) : null
+                tmdb: tmdbId || null
             },
-            externalId: tmdbData.id ? `tmdb:${tmdbData.id}` : null
+            externalId: tmdbId ? item.external_id : null
         };
     }
 

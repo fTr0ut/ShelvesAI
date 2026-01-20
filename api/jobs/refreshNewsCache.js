@@ -131,6 +131,19 @@ async function refreshTmdb(adapter) {
     for (const item of allMovies) {
       if (await upsertNewsItem(item)) {
         stats.movies++;
+
+        // Hook: Add movie to collectables table
+        try {
+          const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
+          await hook.processEnrichedItem({
+            source: 'tmdb',
+            kind: 'movie',
+            enrichment: item.payload,
+            originalItem: item
+          });
+        } catch (hookErr) {
+          console.warn('[News Cache] Collectable hook failed for TMDB movie:', hookErr.message);
+        }
       } else {
         stats.errors++;
       }
@@ -153,6 +166,19 @@ async function refreshTmdb(adapter) {
     for (const item of allTV) {
       if (await upsertNewsItem(item)) {
         stats.tv++;
+
+        // Hook: Add TV show to collectables table
+        try {
+          const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
+          await hook.processEnrichedItem({
+            source: 'tmdb',
+            kind: 'tv',
+            enrichment: item.payload,
+            originalItem: item
+          });
+        } catch (hookErr) {
+          console.warn('[News Cache] Collectable hook failed for TMDB TV:', hookErr.message);
+        }
       } else {
         stats.errors++;
       }
@@ -192,6 +218,19 @@ async function refreshIgdb(adapter) {
     for (const item of allGames) {
       if (await upsertNewsItem(item)) {
         stats.games++;
+
+        // Hook: Add game to collectables table
+        try {
+          const hook = getCollectableDiscoveryHook();
+          await hook.processEnrichedItem({
+            source: 'igdb',
+            kind: 'game',
+            enrichment: item.payload,
+            originalItem: item
+          });
+        } catch (hookErr) {
+          console.warn('[News Cache] Collectable hook failed for IGDB:', hookErr.message);
+        }
       } else {
         stats.errors++;
       }
