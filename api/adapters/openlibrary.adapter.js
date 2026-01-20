@@ -20,19 +20,30 @@ function openLibraryToCollectable(h) {
     h.publishYear ||
     (h.edition?.publish_date ? (String(h.edition.publish_date).match(/\b(\d{4})\b/)?.[1] || null) : null);
 
-    const identifiers = {
-        openlibrary: {
-            work: [h.workId],
-            ...(h.edition?.id ? { edition: [h.edition.id] } : {}),
-        },
-        };
+  const publishers = unique([
+    ...(Array.isArray(h.edition?.publishers) ? h.edition.publishers : []),
+    ...(Array.isArray(h.publishers) ? h.publishers : []),
+  ]);
 
-        if (Array.isArray(h.edition?.isbn_13) && h.edition.isbn_13.length) {
-        identifiers.isbn13 = unique(h.edition.isbn_13);
-        }
-        if (Array.isArray(h.edition?.isbn_10) && h.edition.isbn_10.length) {
-        identifiers.isbn10 = unique(h.edition.isbn_10);
-    }
+  const identifiers = {
+    openlibrary: {
+      work: [h.workId],
+      ...(h.edition?.id ? { edition: [h.edition.id] } : {}),
+    },
+  };
+
+  if (Array.isArray(h.edition?.isbn_13) && h.edition.isbn_13.length) {
+    identifiers.isbn13 = unique(h.edition.isbn_13);
+  }
+  if (Array.isArray(h.edition?.isbn_10) && h.edition.isbn_10.length) {
+    identifiers.isbn10 = unique(h.edition.isbn_10);
+  }
+
+  const coverImageUrl =
+    h.coverUrls?.large || h.coverUrls?.medium || h.coverUrls?.small || null;
+  const workUrl =
+    h.openLibraryUrls?.work ||
+    (h.workId ? `https://openlibrary.org/works/${h.workId}` : null);
 
 
   const sources = [{
@@ -86,6 +97,7 @@ function openLibraryToCollectable(h) {
   }
 
   const lwf = h.lightweightFingerprint || makeLightweightFingerprint({ title: h.title, primaryCreator, kind: 'book' });
+  const genres = unique(h.subjects || []);
 
   const doc = {
     kind: 'book',
@@ -97,10 +109,12 @@ function openLibraryToCollectable(h) {
     creators: unique(
       (h.authorsDetailed && h.authorsDetailed.map(a => a?.name).filter(Boolean)) || h.authors || []
     ),
+    publishers,
 
     year,
 
-    tags: unique(h.subjects || []),
+    tags: genres,
+    genre: genres,
 
     lightweightFingerprint: lwf || null,
 
@@ -120,6 +134,15 @@ function openLibraryToCollectable(h) {
 
     fingerprint: makeCollectableFingerprint({ title: h.title, primaryCreator, releaseYear: year, mediaType: 'book' }),
     extras: {},
+
+    coverImageUrl,
+    coverImageSource: 'external',
+    attribution: workUrl ? {
+      linkUrl: workUrl,
+      linkText: 'View on Open Library',
+      logoPath: null,
+      disclaimerText: null,
+    } : null,
   };
 
   return doc;

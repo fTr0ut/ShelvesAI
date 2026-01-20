@@ -211,6 +211,7 @@ function tmdbMovieToCollectable(movie, options = {}) {
     primaryCreator,
     creators: uniqueStrings([...directorNames, ...castNames]),
     year: year || null,
+    runtime: movie.runtime ?? null,
     publisher: productionCompanies[0] || null,
     tags: keywordNames,
     genre: genres,

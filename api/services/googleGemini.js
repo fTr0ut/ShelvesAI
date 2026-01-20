@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { logPayload } = require('../utils/payloadLogger');
 const fs = require('fs');
 const path = require('path');
+const { normalizeCollectableKind } = require('./collectables/kind');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
@@ -20,6 +21,27 @@ try {
     console.warn('[GoogleGeminiService] Failed to load visionSettings.json:', err.message);
 }
 
+function resolveVisionSettingsKey(shelfType) {
+    if (!visionSettings?.types || !shelfType) return null;
+    if (visionSettings.types[shelfType]) return shelfType;
+
+    const normalized = normalizeCollectableKind(shelfType, shelfType);
+    if (visionSettings.types[normalized]) return normalized;
+
+    if (normalized === 'album' && visionSettings.types.vinyl) return 'vinyl';
+
+    const plural = normalized.endsWith('s') ? normalized : `${normalized}s`;
+    if (visionSettings.types[plural]) return plural;
+
+    return null;
+}
+
+function resolveVisionCategory(shelfType) {
+    const normalized = normalizeCollectableKind(shelfType, shelfType);
+    if (normalized === 'album') return 'music';
+    return normalized;
+}
+
 /**
  * Get vision settings for a specific shelf type
  * @param {string} shelfType
@@ -31,7 +53,8 @@ function getVisionSettingsForType(shelfType) {
         confidenceMin: 0.85,
         prompt: null
     };
-    const typeSettings = visionSettings?.types?.[shelfType] || {};
+    const typeKey = resolveVisionSettingsKey(shelfType);
+    const typeSettings = typeKey ? visionSettings?.types?.[typeKey] || {} : {};
     return {
         confidenceMax: typeSettings.confidenceMax ?? defaults.confidenceMax,
         confidenceMin: typeSettings.confidenceMin ?? defaults.confidenceMin,
@@ -203,6 +226,8 @@ Do not include explanations or markdown.`;
             throw new Error('Google Gemini client not initialized.');
         }
 
+        const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
+        const categoryKey = resolveVisionCategory(normalizedKind);
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
             game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
@@ -210,7 +235,7 @@ Do not include explanations or markdown.`;
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
-        const specificInstruction = categoryPrompts[shelfType] || categoryPrompts['book'];
+        const specificInstruction = categoryPrompts[categoryKey] || categoryPrompts['book'];
 
         const itemText = items.map(i => {
             return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
@@ -234,7 +259,7 @@ Output a JSON array with this schema for each item:
   "subtitle": "string or null",
   "primaryCreator": "string - author/developer/director/artist",
   "year": "string - publication/release year (4 digits)",
-  "kind": "${shelfType}",
+  "kind": "${normalizedKind}",
   "publishers": ["array of publisher names"],
   "tags": ["genres", "categories", "notable attributes"],
   "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
@@ -281,7 +306,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
                     console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
                     const items = partialItems.map(item => ({
                         ...item,
-                        kind: shelfType,
+                        kind: normalizedKind,
                         publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
                         tags: Array.isArray(item.tags) ? item.tags : [],
                         identifiers: item.identifiers || {},
@@ -306,7 +331,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
             return enrichedItems.map(item => ({
                 ...item,
                 // Ensure kind is set correctly if AI hallucinated
-                kind: shelfType,
+                kind: normalizedKind,
                 // Ensure array fields are arrays
                 publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
                 tags: Array.isArray(item.tags) ? item.tags : [],
@@ -320,7 +345,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
             return items.map(i => ({
                 title: i.name || i.title,
                 primaryCreator: i.author,
-                kind: shelfType,
+                kind: normalizedKind,
                 confidence: 0.5,
                 notes: "Enrichment failed"
             }));
@@ -336,6 +361,8 @@ Return ONLY valid JSON array. No markdown, no explanation.
             throw new Error('Google Gemini client not initialized.');
         }
 
+        const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
+        const categoryKey = resolveVisionCategory(normalizedKind);
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
             game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
@@ -343,7 +370,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
-        const specificInstruction = categoryPrompts[shelfType] || categoryPrompts['book'];
+        const specificInstruction = categoryPrompts[categoryKey] || categoryPrompts['book'];
         const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
 
         const prompt = `You are an expert librarian and cataloguer with extensive knowledge of published works. The following items were extracted via OCR but recognition is UNCERTAIN or PARTIAL. Text may be incomplete or misspelled.
@@ -367,7 +394,7 @@ Output a JSON array with this schema for each item:
   "subtitle": "string or null",
   "primaryCreator": "string - author/developer/director/artist",
   "year": "string - publication/release year (4 digits)",
-  "kind": "${shelfType}",
+  "kind": "${normalizedKind}",
   "publishers": ["array of publisher names"],
   "tags": ["genres", "categories", "notable attributes"],
   "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
@@ -410,7 +437,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
                     const items = partialItems.map(item => ({
                         ...item,
-                        kind: shelfType,
+                        kind: normalizedKind,
                         publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
                         tags: Array.isArray(item.tags) ? item.tags : [],
                         identifiers: item.identifiers || {},
@@ -432,7 +459,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
             return enrichedItems.map(item => ({
                 ...item,
-                kind: shelfType,
+                kind: normalizedKind,
                 publishers: Array.isArray(item.publishers) ? item.publishers : (item.publishers ? [item.publishers] : []),
                 tags: Array.isArray(item.tags) ? item.tags : [],
                 identifiers: item.identifiers || {},
@@ -445,7 +472,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 title: i.name || i.title,
                 _originalTitle: i.name || i.title,
                 primaryCreator: i.author,
-                kind: shelfType,
+                kind: normalizedKind,
                 confidence: 0.4,
                 notes: "Uncertain enrichment failed"
             }));
@@ -465,6 +492,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             throw new Error('Google Gemini vision model not initialized.');
         }
 
+        const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
         const { data, mimeType } = parseInlineImage(base64Image);
 
         // For "other" items, we do a 2-step process because Search Grounding only works on text requests
@@ -575,7 +603,8 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
                     title,
                     author: author || null,
                     primaryCreator: primaryCreator || null,
-                    type: shelfType,
+                    type: normalizedKind,
+                    kind: normalizedKind,
                     confidence: coerceConfidence(raw.confidence),
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);

@@ -23,6 +23,7 @@ const { query } = require('../database/pg');
 const TmdbDiscoveryAdapter = require('../services/discovery/TmdbDiscoveryAdapter');
 const IgdbDiscoveryAdapter = require('../services/discovery/IgdbDiscoveryAdapter');
 const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAdapter');
+const NytBooksDiscoveryAdapter = require('../services/discovery/NytBooksDiscoveryAdapter');
 const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
 
 function parsePositiveInt(value, fallback) {
@@ -32,6 +33,22 @@ function parsePositiveInt(value, fallback) {
 
 const EXPIRY_HOURS = parsePositiveInt(process.env.NEWS_CACHE_EXPIRY_HOURS, 36);
 const ITEMS_PER_TYPE = parsePositiveInt(process.env.NEWS_CACHE_ITEMS_PER_TYPE, 20);
+
+/**
+ * Check if a value is a valid Date object
+ */
+function isValidDate(d) {
+  return d instanceof Date && !isNaN(d.getTime());
+}
+
+/**
+ * Safely convert a value to a Date or return null
+ */
+function toSafeDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return isValidDate(date) ? date : null;
+}
 
 /**
  * Upsert a news item into the database
@@ -67,8 +84,8 @@ async function upsertNewsItem(item) {
       item.title,
       item.description || null,
       item.cover_image_url || null,
-      item.release_date || null,
-      item.physical_release_date || null,
+      toSafeDate(item.release_date),
+      toSafeDate(item.physical_release_date),
       item.creators || [],
       item.franchises || [],
       item.genres || [],
@@ -306,6 +323,17 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
           }
         }
 
+        if (tmdbData) {
+          await query(
+            'DELETE FROM news_items WHERE source_api = $1 AND source_url = $2 AND item_type = $3',
+            ['blu-ray.com', item.source_url, item.type]
+          );
+        }
+
+        const tmdbSourceUrl = tmdbData ? `https://www.themoviedb.org/movie/${tmdbData.id}` : null;
+        const sourceApi = tmdbData ? 'tmdb' : 'blu-ray.com';
+        const sourceUrl = tmdbData ? tmdbSourceUrl : item.source_url;
+
         // Construct News Item
         const newsItem = {
           category: 'movies',
@@ -313,20 +341,21 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
           title: tmdbData ? (tmdbData.title || tmdbData.original_title) : item.title,
           description: tmdbData ? tmdbData.overview : null,
           cover_image_url: tmdbData && tmdbData.poster_path ? `${tmdbAdapter.imageBaseUrl}${tmdbData.poster_path}` : null,
-          release_date: tmdbData ? new Date(tmdbData.release_date) : null,
-          physical_release_date: item.release_date || null,
+          release_date: toSafeDate(tmdbData?.release_date),
+          physical_release_date: toSafeDate(item.release_date),
           creators: [],
           franchises: [],
           genres: tmdbData ? (tmdbData.genre_ids || []).map(id => tmdbAdapter.movieGenres[id]).filter(Boolean) : [],
           external_id: tmdbData ? `tmdb:${tmdbData.id}` : `bluray:${item.title.replace(/\s+/g, '_').toLowerCase()}`,
-          source_api: 'blu-ray.com',
-          source_url: item.source_url,
+          source_api: sourceApi,
+          source_url: sourceUrl,
           payload: {
             original_source: 'blu-ray.com',
+            original_source_url: item.source_url,
             tmdb_match: !!tmdbData,
             tmdb_id: tmdbData ? tmdbData.id : null,
             original_title: item.title,
-            physical_release_date: item.release_date ? item.release_date.toISOString().split('T')[0] : null
+            physical_release_date: toSafeDate(item.release_date)?.toISOString().split('T')[0] ?? null
           }
         };
 
@@ -362,6 +391,53 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
 
   } catch (err) {
     console.error('[News Cache] Blu-ray fetch failed:', err.message);
+    stats.errors++;
+  }
+
+  return stats;
+}
+
+/**
+ * Fetch and store NYT Bestseller books
+ */
+async function refreshNytBooks(adapter) {
+  const stats = { books: 0, errors: 0 };
+
+  try {
+    console.log('[News Cache] Fetching NYT bestsellers...');
+    const allBooks = await adapter.fetchBestsellerOverview();
+
+    // Deduplicate by external_id (same book might appear in multiple lists)
+    const seen = new Set();
+    const uniqueBooks = allBooks.filter(book => {
+      if (seen.has(book.external_id)) return false;
+      seen.add(book.external_id);
+      return true;
+    });
+
+    for (const item of uniqueBooks) {
+      if (await upsertNewsItem(item)) {
+        stats.books++;
+
+        // Hook: Add book to collectables table
+        try {
+          const hook = getCollectableDiscoveryHook();
+          await hook.processEnrichedItem({
+            source: 'nyt',
+            kind: 'book',
+            enrichment: item.payload,
+            originalItem: item
+          });
+        } catch (hookErr) {
+          console.warn('[News Cache] Collectable hook failed for NYT book:', hookErr.message);
+        }
+      } else {
+        stats.errors++;
+      }
+    }
+    console.log(`[News Cache] NYT Books: ${stats.books} items stored`);
+  } catch (err) {
+    console.error('[News Cache] NYT Books fetch failed:', err.message);
     stats.errors++;
   }
 
@@ -408,6 +484,16 @@ async function runRefresh() {
     const blurayStats = await refreshBluray(bluray, tmdb);
     totals.items += blurayStats.items;
     totals.errors += blurayStats.errors;
+  }
+
+  // Refresh NYT Books
+  const nyt = new NytBooksDiscoveryAdapter();
+  if (nyt.isConfigured()) {
+    const nytStats = await refreshNytBooks(nyt);
+    totals.items += nytStats.books;
+    totals.errors += nytStats.errors;
+  } else {
+    console.warn('[News Cache] NYT Books not configured (missing NYT_BOOKS_API_KEY)');
   }
 
   // Cleanup expired items

@@ -10,7 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 
-const NewsCard = ({ item }) => {
+const NewsCard = ({ item, onCheckIn }) => {
     const { colors, spacing, typography, shadows } = useTheme();
 
     // Safety check
@@ -29,6 +29,13 @@ const NewsCard = ({ item }) => {
             Linking.openURL(sourceUrl).catch(err =>
                 console.error("Couldn't load page", err)
             );
+        }
+    };
+
+    const handleCheckIn = (e) => {
+        e.stopPropagation();
+        if (onCheckIn) {
+            onCheckIn(item);
         }
     };
 
@@ -78,8 +85,22 @@ const NewsCard = ({ item }) => {
         footer: {
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             marginTop: spacing.xs,
+        },
+        checkInButton: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            backgroundColor: colors.primary + '15',
+            borderRadius: 8,
+            gap: 4,
+        },
+        checkInText: {
+            ...typography.caption,
+            color: colors.primary,
+            fontWeight: '600',
         },
         sourceBadge: {
             flexDirection: 'row',
@@ -124,6 +145,18 @@ const NewsCard = ({ item }) => {
                 ) : null}
 
                 <View style={styles.footer}>
+                    {onCheckIn ? (
+                        <TouchableOpacity
+                            style={styles.checkInButton}
+                            onPress={handleCheckIn}
+                            accessibilityLabel={`Check in to ${title}`}
+                        >
+                            <Ionicons name="add-circle-outline" size={14} color={colors.primary} />
+                            <Text style={styles.checkInText}>Check In</Text>
+                        </TouchableOpacity>
+                    ) : (
+                        <View />
+                    )}
                     <View style={styles.sourceBadge}>
                         <Text style={styles.sourceText}>
                             Read on {sourceApi ? sourceApi.toUpperCase() : 'Web'}

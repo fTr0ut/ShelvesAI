@@ -68,7 +68,9 @@ The trusted global catalog of items (movies, games, books, etc.).
 | creators | TEXT[] | `DEFAULT {}` | List of creators |
 | publishers | TEXT[] | `DEFAULT {}` | List of publishers |
 | year | TEXT | | Release year |
-| tags | TEXT[] | `DEFAULT {}` | Genres/Tags |
+| tags | TEXT[] | `DEFAULT {}` | Tags/keywords |
+| genre | TEXT[] | `DEFAULT {}` | Genre list |
+| runtime | INTEGER | | Runtime in minutes (movies/TV) |
 | identifiers | JSONB | `DEFAULT {}` | ISBN, IMDB ID, IGDB ID, etc. |
 | images | JSONB | `DEFAULT []` | Array of image URLs |
 | cover_url | TEXT | | Primary cover image (legacy) |
@@ -123,6 +125,7 @@ Custom user-created items that don't exist in the global catalog.
 | publisher | TEXT | | Publisher name |
 | format | TEXT | | Physical/Digital format |
 | year | TEXT | | Release year |
+| genre | TEXT[] | `DEFAULT {}` | Genre list |
 | tags | TEXT[] | `DEFAULT {}` | Tags |
 | limited_edition | TEXT | | Numbered edition notation (e.g. "37/50") |
 | item_specific_text | TEXT | | Unique text (store picks, inscriptions) |

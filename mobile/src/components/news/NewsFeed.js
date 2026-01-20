@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -10,11 +10,26 @@ import {
 import { useTheme } from '../../context/ThemeContext';
 import { useNews } from '../../hooks/useNews';
 import NewsSection from './NewsSection';
+import QuickCheckInModal from './QuickCheckInModal';
 import { Ionicons } from '@expo/vector-icons';
 
 const NewsFeed = () => {
     const { colors, spacing, typography } = useTheme();
     const { newsData, loading, error, loadNews } = useNews();
+
+    // Check-in modal state
+    const [checkInModalVisible, setCheckInModalVisible] = useState(false);
+    const [selectedNewsItem, setSelectedNewsItem] = useState(null);
+
+    const handleCheckIn = useCallback((newsItem) => {
+        setSelectedNewsItem(newsItem);
+        setCheckInModalVisible(true);
+    }, []);
+
+    const handleCloseCheckIn = useCallback(() => {
+        setCheckInModalVisible(false);
+        setSelectedNewsItem(null);
+    }, []);
 
     // Initial load
     useEffect(() => {
@@ -150,10 +165,18 @@ const NewsFeed = () => {
                     category={sec.category}
                     itemType={sec.itemType}
                     items={sec.items}
+                    onCheckIn={handleCheckIn}
                 />
             ))}
             {/* Bottom spacer */}
             <View style={{ height: spacing.xl }} />
+
+            {/* Quick Check-In Modal */}
+            <QuickCheckInModal
+                visible={checkInModalVisible}
+                onClose={handleCloseCheckIn}
+                newsItem={selectedNewsItem}
+            />
         </ScrollView>
     );
 };

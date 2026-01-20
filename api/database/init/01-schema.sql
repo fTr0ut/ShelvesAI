@@ -85,6 +85,10 @@ CREATE TABLE collectables (
     
     -- Categorization
     tags TEXT[] DEFAULT '{}',
+    genre TEXT[] DEFAULT '{}',
+
+    -- Runtime (minutes; primarily for film/TV)
+    runtime INTEGER,
     
     -- External identifiers (ISBN, IMDB, IGDB, etc.)
     identifiers JSONB DEFAULT '{}',
@@ -161,6 +165,7 @@ CREATE TABLE user_manuals (
     manual_fingerprint TEXT,
     limited_edition TEXT,
     item_specific_text TEXT,
+    genre TEXT[] DEFAULT '{}',
     tags TEXT[] DEFAULT '{}',
     
     created_at TIMESTAMPTZ DEFAULT NOW()

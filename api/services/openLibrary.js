@@ -106,6 +106,12 @@ function extractIdFromKey(key) {
   return parts[parts.length - 1] || null;
 }
 
+function extractYear(value) {
+  if (!value) return null;
+  const match = String(value).match(/\b(\d{4})\b/);
+  return match ? match[1] : null;
+}
+
 function makePathFromIdentifier(identifier) {
   if (!identifier) return null;
   if (identifier.startsWith('/')) return identifier;
@@ -369,9 +375,15 @@ async function hydrateDoc(doc) {
         : [];
 
   const normal = normaliseDoc(doc);
+  const workPublishYear =
+    extractYear(work?.first_publish_date) ||
+    extractYear(work?.first_publish_year) ||
+    extractYear(work?.created?.value);
+  const publishYear = normal.publishYear || workPublishYear || null;
 
   return {
     ...normal,
+    publishYear,
     // Canonical source of truth
     title: work?.title || normal.title,
     subtitle: work?.subtitle || normal.subtitle,
@@ -443,34 +455,14 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
 async function lookupWorkBookMetadata({ title, author }) {
   if (!title && !author) return null;
   try {
-    const url = buildSearchUrl({ title, author });
-    console.log('[openLibrary.lookupWorkBookMetadata] request', { title, author, url });
+    const url = buildSearchUrl({ title, author, limit: 1 });
+    console.log('[openLibrary.lookupWorkBookMetadata] request', { title, author, strategy: 'first', url });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return null;
 
-    let best = null;
-    let bestScore = -Infinity;
-    for (const doc of docs) {
-      const score = scoreDoc(doc, { title, author });
-      if (score > bestScore) {
-        best = doc;
-        bestScore = score;
-      }
-    }
-
-    // Reject results with no meaningful title match (score < 0 means no match found)
-    if (bestScore < 0) {
-      console.log('[openLibrary.lookupWorkBookMetadata] No matching title found', {
-        searchTitle: title,
-        bestResultTitle: best?.title,
-        bestScore
-      });
-      return null;
-    }
-
-    // Hydrate the best match for richer fields while preserving original shape
-    return await hydrateDoc(best);
+    const first = docs[0];
+    return await hydrateDoc(first);
   } catch (err) {
     console.warn('OpenLibrary lookup failed', err.message);
     return null;

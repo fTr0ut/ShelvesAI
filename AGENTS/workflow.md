@@ -30,7 +30,7 @@ flowchart TD
 ### Step 1: Extract Items (Gemini Vision)
 - **Service**: `GoogleGeminiService.detectShelfItemsFromImage()`
 - **Input**: Base64 image, shelf type, optional shelf description
-- **Output**: Array of detected items with title, author/primaryCreator, confidence scores
+- **Output**: Array of detected items with title, author/primaryCreator, confidence scores (and genre/runtime when available)
 - **Prompt tokens**: `visionSettings.json` supports `{shelfType}` and optional `{shelfDescription}` (description injects only when the token is present)
 
 ### Step 1b: Tiered Confidence Categorization
@@ -43,7 +43,7 @@ flowchart TD
 - **Scope**: Only when `shelf.type === "other"`
 - **Flow**: Low confidence -> `needs_review`; high/medium -> manual-only save (no catalog lookup or enrichment pass)
 - **Required fields**: `title` and `primaryCreator` are required to save; missing values are routed to review
-- **New Fields**: Extracts `limitedEdition` (e.g. "37/50") and `itemSpecificText` (notes, inscriptions) via Gemini
+- **New Fields**: Extracts `limitedEdition` (e.g. "37/50"), `itemSpecificText` (notes, inscriptions), and `genre` via Gemini
 - **Deduping**: Namespace-scoped `manual_fingerprint` (`manual-other`) is used to avoid duplicate manual entries
 - **Progress step**: Uses `preparingOther` progress message before save
 
@@ -78,6 +78,7 @@ flowchart TD
 - **Service**: `saveToShelf()` → `shelvesQueries.addCollectable()`
 - **Actions**:
   - Upsert collectable to database
+  - Persist `genre` (array) and `runtime` (minutes, when present) on collectables/manuals
   - Link collectable to user's shelf
   - Any post-enrichment low-confidence items → `needs_review` queue
 

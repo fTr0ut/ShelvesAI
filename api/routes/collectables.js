@@ -3,10 +3,25 @@ const { auth } = require("../middleware/auth");
 const collectablesQueries = require("../database/queries/collectables");
 const { query } = require("../database/pg");
 const { rowToCamelCase, parsePagination } = require("../database/queries/utils");
+const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../services/collectables/fingerprint");
+const { normalizeCollectableKind } = require("../services/collectables/kind");
 
 const router = express.Router();
 
 router.use(auth);
+
+// Category to kind mapping for news items
+const CATEGORY_TO_KIND = {
+  movies: 'movie',
+  tv: 'tv',
+  games: 'game',
+  books: 'book',
+  vinyl: 'album',
+};
+
+function categoryToKind(category) {
+  return CATEGORY_TO_KIND[category?.toLowerCase()] || 'other';
+}
 
 function normalizeTags(input) {
   if (input == null) return [];
@@ -26,6 +41,26 @@ function normalizeTags(input) {
     tags.push(trimmed);
   }
   return tags;
+}
+
+function normalizeStringArray(input) {
+  if (input == null) return [];
+  const source = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[;,]+/)
+      : [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of source) {
+    const trimmed = String(entry ?? "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 function normalizeString(value) {
@@ -53,13 +88,20 @@ router.post("/", async (req, res) => {
       publisher,
       year,
       tags,
+      genre,
+      genres,
+      runtime,
     } = req.body ?? {};
 
     const canonicalTitle = normalizeString(title ?? name);
-    const canonicalType = normalizeString(type);
+    const canonicalType = normalizeCollectableKind(type, normalizeString(type));
 
     if (!canonicalTitle || !canonicalType)
       return res.status(400).json({ error: "title and type required" });
+
+    const normalizedGenre = normalizeStringArray(genre ?? genres);
+    const parsedRuntime = runtime === null ? null : parseInt(runtime, 10);
+    const resolvedRuntime = Number.isFinite(parsedRuntime) ? parsedRuntime : null;
 
     const item = await collectablesQueries.upsert({
       title: canonicalTitle,
@@ -74,6 +116,8 @@ router.post("/", async (req, res) => {
       publishers: publisher ? [normalizeString(publisher)] : [],
       year: normalizeString(year),
       tags: normalizeTags(tags),
+      genre: normalizedGenre.length ? normalizedGenre : null,
+      runtime: resolvedRuntime,
     });
 
     res.status(201).json({ item });
@@ -83,11 +127,106 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Resolve a news item to a collectable (find existing or create minimal)
+router.post("/from-news", async (req, res) => {
+  try {
+    const {
+      externalId,
+      sourceApi,
+      title,
+      category,
+      primaryCreator,
+      coverUrl,
+      year,
+      description,
+      genre,
+      genres,
+      runtime,
+    } = req.body ?? {};
+
+    // Validate required fields
+    if (!externalId) {
+      return res.status(400).json({ error: "externalId is required" });
+    }
+    if (!title) {
+      return res.status(400).json({ error: "title is required" });
+    }
+
+    // Try to find existing collectable by source ID
+    const existing = await collectablesQueries.findBySourceId(externalId, sourceApi);
+    if (existing) {
+      return res.json({ collectable: existing, source: 'existing' });
+    }
+
+    // Create a minimal collectable
+    const kind = categoryToKind(category);
+
+    // Parse the externalId to extract source and ID
+    // Format: "tmdb:1054867" or "igdb:12345" or raw ID
+    let parsedSource = sourceApi;
+    let parsedId = externalId;
+    if (!sourceApi && typeof externalId === 'string' && externalId.includes(':')) {
+      const colonIndex = externalId.indexOf(':');
+      parsedSource = externalId.slice(0, colonIndex);
+      parsedId = externalId.slice(colonIndex + 1);
+    }
+
+    const fullExternalId = parsedSource ? `${parsedSource}:${parsedId}` : parsedId;
+
+    // Build identifiers object matching the format used by CollectableDiscoveryHook
+    const identifiers = {};
+    if (parsedSource && parsedId) {
+      // Use nested structure: { tmdb: { movie: ["1054867"] } }
+      identifiers[parsedSource] = { [kind]: [String(parsedId)] };
+    }
+
+    // Generate proper SHA1 fingerprint using the fingerprint utility
+    const fingerprint = makeCollectableFingerprint({
+      title: normalizeString(title),
+      primaryCreator: normalizeString(primaryCreator),
+      releaseYear: normalizeString(year),
+      mediaType: kind,
+    });
+
+    const lightweightFingerprint = makeLightweightFingerprint({
+      title: normalizeString(title),
+      primaryCreator: normalizeString(primaryCreator),
+      kind,
+    });
+
+    const normalizedGenre = normalizeStringArray(genre ?? genres);
+    const parsedRuntime = runtime === null ? null : parseInt(runtime, 10);
+    const resolvedRuntime = Number.isFinite(parsedRuntime) ? parsedRuntime : null;
+
+    const created = await collectablesQueries.upsert({
+      fingerprint,
+      lightweightFingerprint,
+      kind,
+      title: normalizeString(title),
+      primaryCreator: normalizeString(primaryCreator),
+      coverUrl: normalizeString(coverUrl),
+      year: normalizeString(year),
+      description: normalizeString(description),
+      genre: normalizedGenre.length ? normalizedGenre : null,
+      runtime: resolvedRuntime,
+      externalId: fullExternalId,
+      identifiers,
+      sources: parsedSource ? [parsedSource] : [],
+    });
+
+    res.status(201).json({ collectable: created, source: 'created' });
+  } catch (err) {
+    console.error('POST /collectables/from-news error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Search catalog globally
 router.get("/", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
-    const type = String(req.query.type || "").trim();
+    const rawType = String(req.query.type || "").trim();
+    const type = rawType ? normalizeCollectableKind(rawType) : "";
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
     const useWildcard = String(req.query.wildcard || '').toLowerCase() === 'true';
 
@@ -223,6 +362,18 @@ router.put("/:collectableId", async (req, res) => {
     if (body.tags !== undefined) {
       updates.push(`tags = $${paramIndex++}`);
       values.push(normalizeTags(body.tags));
+    }
+
+    if (body.genre !== undefined || body.genres !== undefined) {
+      const normalizedGenre = normalizeStringArray(body.genre ?? body.genres);
+      updates.push(`genre = $${paramIndex++}`);
+      values.push(normalizedGenre);
+    }
+
+    if (body.runtime !== undefined) {
+      const parsedRuntime = body.runtime === null ? null : parseInt(body.runtime, 10);
+      updates.push(`runtime = $${paramIndex++}`);
+      values.push(Number.isFinite(parsedRuntime) ? parsedRuntime : null);
     }
 
     if (!updates.length) {

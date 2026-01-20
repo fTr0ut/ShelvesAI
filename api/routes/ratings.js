@@ -4,13 +4,18 @@ const ctrl = require('../controllers/ratingsController');
 
 const router = express.Router();
 
-// Public/Shared routes (still require auth for context usually, but could be open)
-// For now, we'll require auth for everything consistent with the app
+// All routes require authentication
 router.use(auth);
 
-router.get('/:collectableId', ctrl.getRating);
-router.put('/:collectableId', ctrl.setRating);
+// GET/PUT /api/ratings/:itemId - get/set rating for item
+// Use query param ?type=manual for manual items
+router.get('/:itemId', ctrl.getRating);
+router.put('/:itemId', ctrl.setRating);
+
+// GET /api/ratings/:collectableId/aggregate - aggregate rating for collectables only
 router.get('/:collectableId/aggregate', ctrl.getAggregateRating);
-router.get('/:collectableId/user/:userId', ctrl.getUserRating);
+
+// GET /api/ratings/:itemId/user/:userId - get another user's rating for item
+router.get('/:itemId/user/:userId', ctrl.getUserRating);
 
 module.exports = router;

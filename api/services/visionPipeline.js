@@ -255,7 +255,14 @@ class VisionPipelineService {
             const manualResult = await this.saveManualToShelf(itemsToSave, userId, shelf.id, shelf.type);
             const addedItems = manualResult.added || [];
             const matchedItems = manualResult.matched || [];
+            const skippedItems = manualResult.skipped || [];
             const allResolvedItems = [...addedItems, ...matchedItems];
+
+            // Route skipped items (missing title or primaryCreator) to review queue
+            if (skippedItems.length > 0) {
+                console.log('[VisionPipeline] Routing', skippedItems.length, 'skipped items (missing fields) to review queue...');
+                await this.saveToReviewQueue(skippedItems, userId, shelf.id);
+            }
 
             if (addedItems.length > 0) {
                 const previewLimit = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
@@ -298,14 +305,14 @@ class VisionPipelineService {
                 }
             }
 
-            const totalNeedsReview = lowConfidence.length + itemsToReview.length;
+            const totalNeedsReview = lowConfidence.length + itemsToReview.length + skippedItems.length;
             console.log('[VisionPipeline] === processImage Complete (other) ===', { added: addedItems.length, needsReview: totalNeedsReview });
 
             return {
                 analysis: { shelfConfirmed: true, items: allResolvedItems },
                 results: { added: addedItems.length, needsReview: totalNeedsReview },
                 addedItems,
-                needsReview: [...lowConfidence, ...itemsToReview],
+                needsReview: [...lowConfidence, ...itemsToReview, ...skippedItems],
                 warnings: warnings.length > 0 ? warnings : undefined,
             };
         }
@@ -777,7 +784,10 @@ class VisionPipelineService {
                     const kind = normalizeString(item.kind || shelfType) || shelfType;
                     const year = normalizeString(item.year || item.releaseYear);
                     const publishers = normalizeStringArray(item.publishers, item.publisher);
-                    const tags = normalizeStringArray(item.tags, item.genre);
+                    const genre = normalizeStringArray(item.genre, item.genres);
+                    const tags = normalizeStringArray(item.tags, item.genre, item.genres);
+                    const runtimeValue = item.runtime ?? item.extras?.runtime;
+                    const runtime = Number.isFinite(Number(runtimeValue)) ? Number(runtimeValue) : null;
                     const creators = normalizeStringArray(item.creators, primaryCreator);
                     const identifiers = normalizeIdentifiers(item.identifiers);
                     const images = normalizeArray(item.images);
@@ -828,6 +838,8 @@ class VisionPipelineService {
                         year: year || null,
                         formats,
                         systemName,
+                        genre: genre.length ? genre : null,
+                        runtime,
                         tags,
                         identifiers,
                         images,
@@ -882,6 +894,7 @@ class VisionPipelineService {
         console.log('[VisionPipeline.saveManualToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
         const matched = [];
+        const skipped = [];
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
@@ -890,7 +903,8 @@ class VisionPipelineService {
                 item.primaryCreator || item.author || item.creator || item.brand || item.publisher || item.manufacturer,
             );
             if (!title || !primaryCreator) {
-                console.warn('[VisionPipeline.saveManualToShelf] Skipping - missing title or primaryCreator', { item });
+                console.warn('[VisionPipeline.saveManualToShelf] Missing title or primaryCreator, routing to review', { item });
+                skipped.push(item);
                 continue;
             }
 
@@ -961,7 +975,7 @@ class VisionPipelineService {
             });
         }
 
-        return { added, matched };
+        return { added, matched, skipped };
     }
 
     async saveToReviewQueue(items, userId, shelfId) {

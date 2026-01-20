@@ -41,8 +41,8 @@ flowchart TD
 
 - `physical_release_date` — Date from blu-ray.com (when the disc ships)
 - `release_date` — Theatrical release from TMDB
-- `source_api` — Always `blu-ray.com`
-- `source_url` — Link to blu-ray.com product page
+- `source_api` — `tmdb` when matched (falls back to `blu-ray.com` if no TMDB result)
+- `source_url` — TMDB title page when matched (blu-ray.com URL stored in `payload.original_source_url`)
 - `payload.tmdb_match` — Boolean indicating TMDB enrichment success
 
 ## Scraping Logic

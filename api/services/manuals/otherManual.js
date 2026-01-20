@@ -4,6 +4,20 @@ function normalizeString(value) {
   return trimmed || null;
 }
 
+function normalizeStringArray(...values) {
+  const out = [];
+  values.forEach((value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => out.push(entry));
+    } else {
+      out.push(value);
+    }
+  });
+  const normalized = out.map((entry) => normalizeString(entry)).filter(Boolean);
+  return Array.from(new Set(normalized));
+}
+
 function pickFirstValue(source, keys) {
   if (!source || typeof source !== 'object') return null;
   for (const key of keys) {
@@ -92,6 +106,7 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
     type: shelfType || item?.type || null,
     description: item?.description || null,
     year: item?.year || null,
+    genre: normalizeStringArray(item?.genre, item?.genres),
     ageStatement: item?.ageStatement || null,
     specialMarkings: item?.specialMarkings || null,
     labelColor: item?.labelColor || null,

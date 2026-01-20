@@ -212,8 +212,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ]);
     }, [apiBase, id, token, isReadOnly]);
 
-    const handleRateItem = useCallback(async (itemId, collectableId, rating) => {
-        if (isReadOnly || !collectableId) return;
+    const handleRateItem = useCallback(async (itemId, collectableId, manualId, rating) => {
+        if (isReadOnly) return;
+        // Need either collectableId or manualId
+        if (!collectableId && !manualId) return;
 
         // Optimistic update
         setItems(prev => prev.map(item =>
@@ -221,9 +223,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ));
 
         try {
+            const isManual = !!manualId;
+            const targetId = isManual ? manualId : collectableId;
+            const queryParam = isManual ? '?type=manual' : '';
+
             await apiRequest({
                 apiBase,
-                path: `/api/ratings/${collectableId}`,
+                path: `/api/ratings/${targetId}${queryParam}`,
                 method: 'PUT',
                 token,
                 body: { rating },
@@ -434,7 +440,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const renderItem = ({ item }) => {
         const info = getItemInfo(item);
         const coverUri = resolveCoverUri(item);
-        const collectableId = item.collectable?.id;
+        const collectableId = item.collectable?.id || item.collectableId;
+        const manualId = item.manual?.id || item.manualId;
         const isFavorited = collectableId ? favorites[collectableId] : false;
 
         return (
@@ -463,7 +470,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         <StarRating
                             rating={item.rating || 0}
                             size={16}
-                            onRatingChange={!isReadOnly ? (newRating) => handleRateItem(item.id, collectableId, newRating) : undefined}
+                            onRatingChange={!isReadOnly ? (newRating) => handleRateItem(item.id, collectableId, manualId, newRating) : undefined}
                             disabled={isReadOnly}
                         />
                     </View>

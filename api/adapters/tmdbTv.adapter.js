@@ -216,6 +216,7 @@ function tmdbTvToCollectable(tvShow, options = {}) {
         primaryCreator,
         creators: uniqueStrings([...creatorNames, ...castNames]),
         year: year || null,
+        runtime: episodeRuntime,
         publisher: networks[0] || productionCompanies[0] || null,
         tags: keywordNames,
         genre: genres,

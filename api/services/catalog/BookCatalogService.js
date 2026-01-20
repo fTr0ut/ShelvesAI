@@ -2,6 +2,10 @@ const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
 const { hardcoverToCollectable } = require('../../adapters/hardcover.adapter');
 const {
+  scoreBookCollectable,
+  resolveBookMetadataMinScore,
+} = require('./metadataScore');
+const {
   lookupWorkBookMetadata,
   lookupWorkByISBN,
 } = require('../openLibrary');
@@ -53,6 +57,8 @@ class BookCatalogService {
     // Enable config-driven routing (set USE_CATALOG_ROUTER=true to activate)
     const useRouter = options.useRouter ?? process.env.USE_CATALOG_ROUTER;
     this.useRouter = String(useRouter || 'false').trim().toLowerCase() === 'true';
+
+    this.bookMetadataMinScore = resolveBookMetadataMinScore({ options });
 
     this.hardcoverClient = new HardcoverClient({
       token: options.hardcoverToken,
@@ -129,7 +135,7 @@ class BookCatalogService {
     const router = getCatalogRouter();
     if (!router) {
       console.warn('[BookCatalogService.routerLookup] Router not available, falling back to safeLookup');
-      return this.safeLookup(item, retries);
+      return this.safeLookup(item, retries, { bypassRouter: true });
     }
 
     try {
@@ -141,7 +147,10 @@ class BookCatalogService {
     }
   }
 
-  async safeLookup(item, retries = DEFAULT_RETRIES) {
+  async safeLookup(item, retries = DEFAULT_RETRIES, options = {}) {
+    if (this.useRouter && !options?.bypassRouter) {
+      return this.routerLookup(item, retries);
+    }
     const payload = {
       title: normalizeString(item?.name || item?.title),
       author: normalizeString(item?.author || item?.primaryCreator),
@@ -164,6 +173,26 @@ class BookCatalogService {
       this._warnedMissingHardcoverToken = true;
       console.warn('[BookCatalogService.safeLookup] Hardcover API token missing; skipping Hardcover fallback');
     }
+
+    const minMetadataScore = Number.isFinite(this.bookMetadataMinScore)
+      ? this.bookMetadataMinScore
+      : null;
+    let bestCandidate = null;
+
+    const evaluateCandidate = (result, provider, stage) => {
+      if (!result) return false;
+      if (!Number.isFinite(minMetadataScore)) return true;
+      const metadata = this.scoreBookMetadata(result, provider);
+      if (!bestCandidate || metadata.score > bestCandidate.metadata.score) {
+        bestCandidate = {
+          result,
+          metadata,
+          provider,
+          stage,
+        };
+      }
+      return metadata.score >= minMetadataScore;
+    };
 
     const handleHardcoverError = async (err, attempt, payload, stage) => {
       const message = String(err?.message || err);
@@ -219,7 +248,10 @@ class BookCatalogService {
           try {
             const hardcoverByIsbn = await this.hardcoverClient.lookupByISBN(isbn);
             if (hardcoverByIsbn) {
-              return hardcoverByIsbn;
+              if (evaluateCandidate(hardcoverByIsbn, 'hardcover', 'isbn')) {
+                return hardcoverByIsbn;
+              }
+              break;
             }
             break;
           } catch (err) {
@@ -238,7 +270,10 @@ class BookCatalogService {
           author: payload.author,
         });
         if (result) {
-          return result;
+          if (evaluateCandidate(result, 'openlibrary', 'search')) {
+            return result;
+          }
+          break;
         }
         break;
       } catch (err) {
@@ -278,7 +313,10 @@ class BookCatalogService {
             limit: 5,
           });
           if (hardcoverResult) {
-            return hardcoverResult;
+            if (evaluateCandidate(hardcoverResult, 'hardcover', 'search')) {
+              return hardcoverResult;
+            }
+            break;
           }
           break;
         } catch (err) {
@@ -293,7 +331,10 @@ class BookCatalogService {
       try {
         const byIsbn = await lookupWorkByISBN(isbn);
         if (byIsbn) {
-          return byIsbn;
+          if (evaluateCandidate(byIsbn, 'openlibrary', 'isbn')) {
+            return byIsbn;
+          }
+          continue;
         }
       } catch (err) {
         const message = String(err?.message || err);
@@ -314,7 +355,30 @@ class BookCatalogService {
       }
     }
 
+    if (bestCandidate) {
+      return bestCandidate.result;
+    }
+
     return null;
+  }
+
+  scoreBookMetadata(enrichment, provider) {
+    const collectable = this.normalizeCollectableForScore(enrichment, provider);
+    if (!collectable) {
+      return { score: 0, maxScore: 100, missing: ['collectable'] };
+    }
+    return scoreBookCollectable(collectable);
+  }
+
+  normalizeCollectableForScore(enrichment, provider) {
+    if (!enrichment) return null;
+    if (enrichment.__collectable) return enrichment.collectable || null;
+    if (enrichment.kind === 'book' && enrichment.title) return enrichment;
+    const normalizedProvider = provider || enrichment.provider;
+    if (normalizedProvider === 'hardcover') {
+      return hardcoverToCollectable(enrichment, {});
+    }
+    return openLibraryToCollectable(enrichment);
   }
 
   async enrichWithOpenAI(unresolved = [], openaiClient) {

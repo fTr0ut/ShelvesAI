@@ -17,7 +17,7 @@ const formatTitle = (category, type) => {
     return `${t} ${cat}`;
 };
 
-const NewsSection = ({ category, itemType, items }) => {
+const NewsSection = ({ category, itemType, items, onCheckIn }) => {
     const { colors, spacing, typography } = useTheme();
 
     if (!items || items.length === 0) return null;
@@ -60,7 +60,12 @@ const NewsSection = ({ category, itemType, items }) => {
                 horizontal
                 data={items}
                 keyExtractor={(item) => `news-${category}-${itemType}-${item.id}`}
-                renderItem={({ item }) => <NewsCard item={item} />}
+                renderItem={({ item }) => (
+                    <NewsCard
+                        item={item}
+                        onCheckIn={onCheckIn ? () => onCheckIn({ ...item, category }) : undefined}
+                    />
+                )}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.listContent}
             />

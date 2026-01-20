@@ -158,7 +158,8 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
-     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id AND ur.collectable_id = uc.collectable_id
+     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id 
+        AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1 AND uc.user_id = $2
      ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC
      LIMIT $3 OFFSET $4`,
@@ -219,7 +220,8 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
-     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id AND ur.collectable_id = uc.collectable_id
+     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id 
+        AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1
      ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC
      LIMIT $2 OFFSET $3`,
@@ -449,6 +451,17 @@ async function getItemById(itemId, userId, shelfId) {
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
+/**
+ * Get a manual item by ID
+ */
+async function getManualById(manualId) {
+    const result = await query(
+        `SELECT * FROM user_manuals WHERE id = $1`,
+        [manualId]
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
 module.exports = {
     listForUser,
     getById,
@@ -467,4 +480,5 @@ module.exports = {
     listVisibleForUser,
     updateItemRating,
     getItemById,
+    getManualById,
 };

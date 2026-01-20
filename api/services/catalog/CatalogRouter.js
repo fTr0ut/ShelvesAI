@@ -11,6 +11,11 @@
  */
 
 const path = require('path');
+const {
+    scoreBookCollectable,
+    resolveBookMetadataMinScore,
+    isBookContainer,
+} = require('./metadataScore');
 
 // Load config - will be cached by require()
 let containersConfig;
@@ -173,19 +178,30 @@ class CatalogRouter {
         }
 
         const mode = container.mode || 'fallback';
+        const sharedOptions = {
+            ...options,
+            containerType,
+            container,
+        };
         console.log(`[CatalogRouter] Looking up item in ${containerType} container (mode: ${mode}), APIs:`, apis.map(a => a.name));
 
         if (mode === 'merge') {
-            return this._lookupMerge(item, apis, options);
+            return this._lookupMerge(item, apis, sharedOptions);
         }
 
-        return this._lookupFallback(item, apis, options);
+        return this._lookupFallback(item, apis, sharedOptions);
     }
 
     /**
      * Fallback mode: Stop on first successful result
      */
     async _lookupFallback(item, apis, options = {}) {
+        const containerType = options.containerType || '';
+        const container = options.container || null;
+        const shouldScore = isBookContainer(containerType);
+        const minScore = shouldScore ? resolveBookMetadataMinScore({ options, container }) : null;
+        let bestCandidate = null;
+
         for (const api of apis) {
             const adapter = this.getAdapter(api.name);
             if (!adapter) continue;
@@ -201,25 +217,68 @@ class CatalogRouter {
                 const result = await adapter.lookup(item, options);
 
                 if (result) {
-                    console.log(`[CatalogRouter] ✓ Hit on ${api.name}`);
-                    return {
-                        ...result,
-                        _source: api.name,
-                        _sourceIndex: apis.indexOf(api),
-                    };
+                    if (!shouldScore || !Number.isFinite(minScore)) {
+                        console.log(`[CatalogRouter] Hit on ${api.name}`);
+                        return {
+                            ...result,
+                            _source: api.name,
+                            _sourceIndex: apis.indexOf(api),
+                        };
+                    }
+
+                    const metadata = scoreBookCollectable(result);
+                    const sourceIndex = apis.indexOf(api);
+                    if (!bestCandidate || metadata.score > bestCandidate.metadata.score) {
+                        bestCandidate = {
+                            result,
+                            metadata,
+                            source: api.name,
+                            sourceIndex,
+                        };
+                    }
+
+                    if (metadata.score >= minScore) {
+                        console.log(`[CatalogRouter] Hit on ${api.name}`);
+                        return {
+                            ...result,
+                            _source: api.name,
+                            _sourceIndex: sourceIndex,
+                            _metadataScore: metadata.score,
+                            _metadataMissing: metadata.missing,
+                        };
+                    }
+
+                    console.log(`[CatalogRouter] Low metadata score from ${api.name}, trying next API`, {
+                        score: metadata.score,
+                        missing: metadata.missing,
+                    });
+                    continue;
                 }
 
-                console.log(`[CatalogRouter] ✗ No result from ${api.name}`);
+                console.log(`[CatalogRouter] No result from ${api.name}`);
             } catch (err) {
                 console.warn(`[CatalogRouter] ${api.name} failed:`, err.message);
                 // Continue to next API
             }
         }
 
+        if (bestCandidate) {
+            console.log('[CatalogRouter] Returning best available result below metadata threshold', {
+                source: bestCandidate.source,
+                score: bestCandidate.metadata.score,
+            });
+            return {
+                ...bestCandidate.result,
+                _source: bestCandidate.source,
+                _sourceIndex: bestCandidate.sourceIndex,
+                _metadataScore: bestCandidate.metadata.score,
+                _metadataMissing: bestCandidate.metadata.missing,
+            };
+        }
+
         console.log('[CatalogRouter] All APIs exhausted, no result found');
         return null;
     }
-
     /**
      * Merge mode: Call all enabled APIs and merge results
      */
@@ -349,3 +408,4 @@ function getCatalogRouter() {
 }
 
 module.exports = { CatalogRouter, getCatalogRouter };
+

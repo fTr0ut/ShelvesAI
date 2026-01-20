@@ -82,7 +82,7 @@ function buildSummaryText(items, totalCount) {
 }
 
 // --- Component ---
-export default function SocialFeedScreen({ navigation }) {
+export default function SocialFeedScreen({ navigation, route }) {
     const { token, apiBase, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, isDark } = useTheme();
 
@@ -158,6 +158,13 @@ export default function SocialFeedScreen({ navigation }) {
         const unsubscribe = navigation.addListener('focus', loadUnreadCount);
         return unsubscribe;
     }, [navigation, loadUnreadCount]);
+
+    // Listen for tab press reset
+    useEffect(() => {
+        if (route.params?.resetTab) {
+            setActiveFilter('all');
+        }
+    }, [route.params?.resetTab]);
 
     const onRefresh = () => {
         setRefreshing(true);

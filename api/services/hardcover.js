@@ -5,8 +5,10 @@ const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
 const DEFAULT_BASE_URL = 'https://api.hardcover.app/v1/graphql';
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 20000;
 const DEFAULT_REQUESTS_PER_MINUTE = 55;
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1000;
 
 const SEARCH_QUERY = `
 query HardcoverSearch($query: String!, $queryType: String!, $perPage: Int!, $page: Int!, $fields: String, $weights: String, $sort: String) {
@@ -266,6 +268,16 @@ class HardcoverClient {
 
     this.fetch = typeof options.fetch === 'function' ? options.fetch : fetch;
     this.limiter = new RateLimiter(perMinute, 60);
+
+    // Retry configuration
+    this.maxRetries = Number.isFinite(options.maxRetries)
+      ? options.maxRetries
+      : Number.parseInt(process.env.HARDCOVER_MAX_RETRIES || '', 10) ||
+      DEFAULT_MAX_RETRIES;
+    this.initialRetryDelayMs = Number.isFinite(options.initialRetryDelayMs)
+      ? options.initialRetryDelayMs
+      : Number.parseInt(process.env.HARDCOVER_INITIAL_RETRY_DELAY_MS || '', 10) ||
+      DEFAULT_INITIAL_RETRY_DELAY_MS;
   }
 
   isConfigured() {
@@ -555,57 +567,92 @@ class HardcoverClient {
   async fetchGraphQL(query, variables) {
     if (!this.isConfigured()) return null;
 
-    const controller = AbortController ? new AbortController() : null;
-    const timeout = controller
-      ? setTimeout(() => controller.abort(), this.timeoutMs)
-      : null;
+    let lastError = null;
 
-    try {
-      await this.limiter.acquire();
-      const requestBody = JSON.stringify({ query, variables });
-      const headers = {
-        'Content-Type': 'application/json',
-        'User-Agent': this.userAgent,
-        authorization: this.token,
-      };
-      if (this.debug) {
-        const logHeaders = { ...headers };
-        if (!this.debugLogAuth && logHeaders.authorization) {
-          logHeaders.authorization = `REDACTED(${String(logHeaders.authorization).length})`;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = AbortController ? new AbortController() : null;
+      const timeout = controller
+        ? setTimeout(() => controller.abort(), this.timeoutMs)
+        : null;
+
+      try {
+        await this.limiter.acquire();
+        const requestBody = JSON.stringify({ query, variables });
+        const headers = {
+          'Content-Type': 'application/json',
+          'User-Agent': this.userAgent,
+          authorization: this.token,
+        };
+        if (this.debug) {
+          const logHeaders = { ...headers };
+          if (!this.debugLogAuth && logHeaders.authorization) {
+            logHeaders.authorization = `REDACTED(${String(logHeaders.authorization).length})`;
+          }
+          console.log('[HardcoverClient] request', {
+            url: this.baseUrl,
+            headers: logHeaders,
+            body: requestBody,
+            attempt: attempt + 1,
+            maxRetries: this.maxRetries,
+          });
         }
-        console.log('[HardcoverClient] request', {
-          url: this.baseUrl,
-          headers: logHeaders,
+        const response = await this.fetch(this.baseUrl, {
+          method: 'POST',
+          headers,
           body: requestBody,
+          signal: controller ? controller.signal : undefined,
         });
-      }
-      const response = await this.fetch(this.baseUrl, {
-        method: 'POST',
-        headers,
-        body: requestBody,
-        signal: controller ? controller.signal : undefined,
-      });
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Hardcover request failed with ${response.status}: ${text.slice(0, 200)}`);
-      }
+        if (!response.ok) {
+          const text = await response.text();
+          const statusError = new Error(`Hardcover request failed with ${response.status}: ${text.slice(0, 200)}`);
+          // Retry on 5xx server errors, but not on 4xx client errors
+          if (response.status >= 500) {
+            lastError = statusError;
+            throw statusError;
+          }
+          throw statusError;
+        }
 
-      const payload = await response.json();
-      if (payload?.errors?.length) {
-        const message = payload.errors.map((err) => err?.message).filter(Boolean).join('; ');
-        throw new Error(`Hardcover GraphQL error: ${message || 'Unknown error'}`);
-      }
+        const payload = await response.json();
+        if (payload?.errors?.length) {
+          const message = payload.errors.map((err) => err?.message).filter(Boolean).join('; ');
+          throw new Error(`Hardcover GraphQL error: ${message || 'Unknown error'}`);
+        }
 
-      return payload?.data || null;
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        throw new Error('Hardcover request aborted');
+        return payload?.data || null;
+      } catch (err) {
+        if (timeout) clearTimeout(timeout);
+
+        const isAbortError = err?.name === 'AbortError';
+        const isTimeoutError = isAbortError || err?.message?.includes('aborted');
+        const isNetworkError = err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT' ||
+          err?.code === 'ECONNREFUSED' || err?.message?.includes('network');
+        const isServerError = err?.message?.includes('failed with 5');
+
+        // Only retry on timeout, network, or server errors
+        if ((isTimeoutError || isNetworkError || isServerError) && attempt < this.maxRetries) {
+          const delay = this.initialRetryDelayMs * Math.pow(2, attempt);
+          console.log(`[HardcoverClient] Request failed (attempt ${attempt + 1}/${this.maxRetries + 1}), retrying in ${delay}ms...`, {
+            error: err.message,
+          });
+          lastError = isAbortError ? new Error('Hardcover request aborted') : err;
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Non-retryable error or max retries exceeded
+        if (isAbortError) {
+          throw new Error('Hardcover request aborted');
+        }
+        throw err;
+      } finally {
+        if (timeout) clearTimeout(timeout);
       }
-      throw err;
-    } finally {
-      if (timeout) clearTimeout(timeout);
     }
+
+    // Should not reach here, but just in case
+    throw lastError || new Error('Hardcover request failed after all retries');
   }
 }
 

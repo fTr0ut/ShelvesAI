@@ -209,6 +209,13 @@ export default function BottomTabNavigator() {
                 <Tab.Screen
                     name="Home"
                     component={SocialFeedScreen}
+                    listeners={({ navigation }) => ({
+                        tabPress: (e) => {
+                            if (navigation.isFocused()) {
+                                navigation.setParams({ resetTab: Date.now() });
+                            }
+                        },
+                    })}
                     options={{
                         tabBarIcon: ({ color, size }) => (
                             <Ionicons name="home" size={size} color={color} />

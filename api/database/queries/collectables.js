@@ -1,6 +1,7 @@
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const { ensureCoverMediaForCollectable } = require('./media');
+const { normalizeCollectableKind } = require('../../services/collectables/kind');
 
 function pickCoverUrl(images, fallback) {
     if (fallback) return fallback;
@@ -31,6 +32,27 @@ function normalizeFormats(values, fallback) {
     return out;
 }
 
+function normalizeString(value) {
+    if (value == null) return '';
+    return String(value).trim();
+}
+
+function normalizeStringArray(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const seen = new Set();
+    const out = [];
+    for (const entry of source) {
+        const normalized = normalizeString(entry);
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
 /**
  * Find collectable by fingerprint
  */
@@ -44,6 +66,57 @@ async function findByFingerprint(fingerprint) {
         [fingerprint]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Find collectable by external source ID
+ * Supports formats like "tmdb:123" or separate externalId/sourceApi params
+ * Checks both external_id column and identifiers JSONB field
+ */
+async function findBySourceId(externalId, sourceApi) {
+    if (!externalId) return null;
+
+    // Parse "tmdb:123" format if sourceApi not provided
+    let parsedId = externalId;
+    let parsedSource = sourceApi;
+    if (!sourceApi && typeof externalId === 'string' && externalId.includes(':')) {
+        const [source, id] = externalId.split(':');
+        parsedSource = source;
+        parsedId = id;
+    }
+
+    // Build full external_id string for lookup
+    const fullExternalId = parsedSource ? `${parsedSource}:${parsedId}` : parsedId;
+
+    // First try external_id column
+    let result = await query(
+        `SELECT c.*, m.local_path as cover_media_path
+         FROM collectables c
+         LEFT JOIN media m ON m.id = c.cover_media_id
+         WHERE c.external_id = $1`,
+        [fullExternalId]
+    );
+
+    if (result.rows[0]) {
+        return rowToCamelCase(result.rows[0]);
+    }
+
+    // Try identifiers JSONB field if source is known
+    if (parsedSource) {
+        result = await query(
+            `SELECT c.*, m.local_path as cover_media_path
+             FROM collectables c
+             LEFT JOIN media m ON m.id = c.cover_media_id
+             WHERE c.identifiers->>$1 = $2`,
+            [parsedSource, parsedId]
+        );
+
+        if (result.rows[0]) {
+            return rowToCamelCase(result.rows[0]);
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -87,9 +160,10 @@ async function searchByTitle(term, kind = null, limit = 20) {
   `;
     const params = [term];
 
-    if (kind) {
+    const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
+    if (normalizedKind) {
         sql += ` AND c.kind = $2`;
-        params.push(kind);
+        params.push(normalizedKind);
     }
 
     sql += ` ORDER BY sim DESC LIMIT $${params.length + 1}`;
@@ -118,6 +192,8 @@ async function upsert(data) {
         formats,
         systemName,
         tags = [],
+        genre,
+        runtime,
         identifiers = {},
         images = [],
         coverUrl,
@@ -131,14 +207,25 @@ async function upsert(data) {
 
     const resolvedCoverUrl = pickCoverUrl(images, coverUrl);
     const normalizedFormats = normalizeFormats(formats, format);
+    const normalizedCreators = normalizeStringArray(creators);
+    const resolvedPrimaryCreator = normalizeString(primaryCreator) || normalizedCreators[0] || null;
+    const normalizedGenre = Array.isArray(genre) && genre.length ? genre : null;
+    const normalizedRuntime = runtime == null
+        ? null
+        : Number.isFinite(runtime)
+            ? runtime
+            : Number.isFinite(Number(runtime))
+                ? Number(runtime)
+                : null;
 
+    const normalizedKind = normalizeCollectableKind(kind, 'item');
     const result = await query(
         `INSERT INTO collectables (
        fingerprint, lightweight_fingerprint, kind, title, subtitle, description,
-       primary_creator, creators, publishers, year, formats, system_name, tags, identifiers,
+       primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
        cover_image_url, cover_image_source, attribution
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -160,6 +247,8 @@ async function upsert(data) {
        ),
        system_name = COALESCE(EXCLUDED.system_name, collectables.system_name),
        tags = COALESCE(EXCLUDED.tags, collectables.tags),
+       genre = COALESCE(EXCLUDED.genre, collectables.genre),
+       runtime = COALESCE(EXCLUDED.runtime, collectables.runtime),
        identifiers = collectables.identifiers || EXCLUDED.identifiers,
        images = COALESCE(EXCLUDED.images, collectables.images),
        cover_url = COALESCE(EXCLUDED.cover_url, collectables.cover_url),
@@ -171,9 +260,9 @@ async function upsert(data) {
        updated_at = NOW()
      RETURNING *`,
         [
-            fingerprint, lightweightFingerprint, kind, title, subtitle, description,
-            primaryCreator, creators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, JSON.stringify(identifiers),
-            JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
+            fingerprint, lightweightFingerprint, normalizedKind, title, subtitle, description,
+            resolvedPrimaryCreator, normalizedCreators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, normalizedGenre, normalizedRuntime,
+            JSON.stringify(identifiers), JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
             JSON.stringify(fuzzyFingerprints), coverImageUrl, coverImageSource,
             attribution ? JSON.stringify(attribution) : null
         ]
@@ -186,7 +275,7 @@ async function upsert(data) {
             coverMediaId: collectable.coverMediaId,
             images,
             coverUrl: resolvedCoverUrl,
-            kind,
+            kind: normalizedKind,
             title,
             coverImageSource,
         });
@@ -226,9 +315,10 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
   `;
     const params = [q];
 
-    if (kind) {
+    const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
+    if (normalizedKind) {
         sql += ` AND c.kind = $${params.length + 1}`;
-        params.push(kind);
+        params.push(normalizedKind);
     }
 
     sql += ` ORDER BY GREATEST(similarity(c.title, $1), similarity(c.primary_creator, $1)) DESC`;
@@ -255,9 +345,10 @@ async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
   `;
     const params = [sqlPattern];
 
-    if (kind) {
+    const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
+    if (normalizedKind) {
         sql += ` AND c.kind = $${params.length + 1}`;
-        params.push(kind);
+        params.push(normalizedKind);
     }
 
     sql += ` ORDER BY c.title ASC`;
@@ -293,9 +384,10 @@ async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
   `;
     const params = [title, primaryCreator || '', threshold];
 
-    if (kind) {
+    const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
+    if (normalizedKind) {
         sql += ` AND c.kind = $4`;
-        params.push(kind);
+        params.push(normalizedKind);
     }
 
     sql += ` ORDER BY combined_sim DESC LIMIT 1`;
@@ -348,6 +440,7 @@ module.exports = {
     findByFingerprint,
     findByLightweightFingerprint,
     findByFuzzyFingerprint,
+    findBySourceId,
     findById,
     searchByTitle,
     upsert,

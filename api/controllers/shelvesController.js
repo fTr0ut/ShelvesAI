@@ -128,7 +128,8 @@ function buildCollectableUpsertPayload(input, shelfType) {
   );
   const creators = normalizeStringArray(input?.creators, primaryCreator);
   const publishers = normalizeStringArray(input?.publishers, input?.publisher);
-  const tags = normalizeStringArray(input?.tags, input?.genre);
+  const genre = normalizeStringArray(input?.genre, input?.genres);
+  const tags = normalizeStringArray(input?.tags, input?.genre, input?.genres);
   const identifiers = normalizeIdentifiers(input?.identifiers);
   const images = normalizeArray(input?.images);
   const sources = normalizeArray(input?.sources);
@@ -162,6 +163,8 @@ function buildCollectableUpsertPayload(input, shelfType) {
   const formats = normalizeStringArray(input?.formats, format);
   const systemName =
     normalizeString(input?.systemName) || (platforms.length ? platforms[0] : null);
+  const runtime = coerceNumber(input?.runtime ?? input?.extras?.runtime, null);
+  const normalizedGenre = genre.length ? genre : null;
 
   const fingerprint =
     input?.fingerprint ||
@@ -195,6 +198,8 @@ function buildCollectableUpsertPayload(input, shelfType) {
     year,
     formats,
     systemName,
+    genre: normalizedGenre,
+    runtime,
     tags,
     identifiers,
     images,
@@ -258,6 +263,8 @@ function formatShelfItem(row) {
     formats: Array.isArray(row.collectableFormats) ? row.collectableFormats : [],
     systemName: row.collectableSystemName || null,
     tags: Array.isArray(row.collectableTags) ? row.collectableTags : [],
+    genre: Array.isArray(row.collectableGenre) ? row.collectableGenre : [],
+    runtime: row.collectableRuntime ?? null,
     images: Array.isArray(row.collectableImages) ? row.collectableImages : [],
     identifiers: row.collectableIdentifiers && typeof row.collectableIdentifiers === 'object'
       ? row.collectableIdentifiers
@@ -297,6 +304,7 @@ function formatShelfItem(row) {
     itemSpecificText: row.manualItemSpecificText || null,
     manualFingerprint: row.manualFingerprint || null,
     tags: Array.isArray(row.manualTags) ? row.manualTags : [],
+    genre: Array.isArray(row.manualGenre) ? row.manualGenre : [],
   } : null;
 
   return {
@@ -614,6 +622,8 @@ async function addManualEntry(req, res) {
       regionalItem,
       edition,
       barcode,
+      genre,
+      genres,
       tags,
       limitedEdition,
       itemSpecificText,
@@ -636,6 +646,7 @@ async function addManualEntry(req, res) {
       regionalItem,
       edition,
       barcode,
+      genre: normalizeStringArray(genre, genres),
       tags,
       limitedEdition,
       itemSpecificText,
@@ -835,12 +846,17 @@ async function updateManualEntry(req, res) {
       'regionalItem',
       'edition',
       'barcode',
+      'genre',
     ];
 
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
         const dbField = fieldMap[field] || field;
-        updates[dbField] = String(body[field]).trim();
+        if (field === 'genre') {
+          updates[dbField] = normalizeStringArray(body[field]);
+        } else {
+          updates[dbField] = String(body[field]).trim();
+        }
       }
     }
 

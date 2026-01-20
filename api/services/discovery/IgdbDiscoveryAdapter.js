@@ -86,7 +86,9 @@ class IgdbDiscoveryAdapter {
     if (!gameIds.length) return [];
 
     const games = await this._fetchGamesByIds(gameIds);
-    return this._normalizeGames(games, 'upcoming');
+    const now = Math.floor(Date.now() / 1000);
+    const upcoming = games.filter(game => game.first_release_date && game.first_release_date >= now);
+    return this._normalizeGames(upcoming, 'upcoming');
   }
 
   /**
