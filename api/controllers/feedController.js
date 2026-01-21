@@ -2,6 +2,7 @@ const feedQueries = require('../database/queries/feed');
 const shelvesQueries = require('../database/queries/shelves');
 const friendshipQueries = require('../database/queries/friendships');
 const eventSocialQueries = require('../database/queries/eventSocial');
+const { markNewsItemsSeen } = require('../database/queries/newsSeen');
 const { query } = require('../database/pg');
 const { getNewsRecommendationsForUser } = require('../services/discovery/newsRecommendations');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
@@ -134,6 +135,31 @@ function buildNewsRecommendationEntries(groups = []) {
       },
     };
   });
+}
+
+function extractNewsItemIdsFromEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  const ids = new Set();
+  entries.forEach((entry) => {
+    if (!entry || entry.eventType !== 'news.recommendation') return;
+    const items = Array.isArray(entry.items) ? entry.items : [];
+    items.forEach((item) => {
+      const parsed = parseInt(item?.id, 10);
+      if (Number.isFinite(parsed)) ids.add(parsed);
+    });
+  });
+  return Array.from(ids);
+}
+
+async function markNewsEntriesSeen(userId, entries) {
+  if (!userId) return;
+  const ids = extractNewsItemIdsFromEntries(entries);
+  if (!ids.length) return;
+  try {
+    await markNewsItemsSeen(userId, ids);
+  } catch (err) {
+    console.warn('[Feed] Failed to mark news items seen:', err.message);
+  }
 }
 
 function interleaveEntries(baseEntries, insertEntries, interval) {
@@ -367,6 +393,7 @@ async function getFeed(req, res) {
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 50 });
     const typeFilter = req.query.type ? String(req.query.type).trim() : null;
     const ownerOverride = req.query.ownerId ? String(req.query.ownerId).trim() : null;
+    const refreshPersonalizations = req.query.refreshPersonalizations === '1';
 
     const viewerId = req.user.id;
     // const friendIds = await friendshipQueries.getAcceptedFriendIds(viewerId); // Used in legacy, not needed here
@@ -392,8 +419,10 @@ async function getFeed(req, res) {
           const groups = await getNewsRecommendationsForUser(viewerId, {
             groupLimit: NEWS_FEED_GROUP_LIMIT,
             itemsPerGroup: NEWS_FEED_ITEMS_PER_GROUP,
+            forceRandomize: refreshPersonalizations,
           });
           entries = buildNewsRecommendationEntries(groups);
+          await markNewsEntriesSeen(viewerId, entries);
         } catch (newsErr) {
           console.warn('[Feed] Failed to build news recommendations:', newsErr.message);
         }
@@ -477,10 +506,12 @@ async function getFeed(req, res) {
         const groups = await getNewsRecommendationsForUser(viewerId, {
           groupLimit: NEWS_FEED_GROUP_LIMIT,
           itemsPerGroup: NEWS_FEED_ITEMS_PER_GROUP,
+          forceRandomize: refreshPersonalizations,
         });
         const newsEntries = buildNewsRecommendationEntries(groups);
         if (newsEntries.length) {
           entries = interleaveEntries(entries, newsEntries, NEWS_FEED_INSERT_INTERVAL).slice(0, limit);
+          await markNewsEntriesSeen(viewerId, entries);
         }
       } catch (newsErr) {
         console.warn('[Feed] Failed to build news recommendations:', newsErr.message);

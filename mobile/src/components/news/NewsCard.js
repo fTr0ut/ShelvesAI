@@ -2,11 +2,11 @@ import React from 'react';
 import {
     View,
     Text,
-    Image,
     StyleSheet,
     TouchableOpacity,
     Linking
 } from 'react-native';
+import CachedImage from '../ui/CachedImage';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -152,10 +152,11 @@ const NewsCard = ({ item, onCheckIn }) => {
         >
             <View style={styles.coverContainer}>
                 {coverImageUrl ? (
-                    <Image
+                    <CachedImage
                         source={{ uri: coverImageUrl }}
                         style={styles.cover}
-                        resizeMode="cover"
+                        contentFit="cover"
+                        contentPosition="center"
                     />
                 ) : (
                     <View style={styles.fallbackCover}>

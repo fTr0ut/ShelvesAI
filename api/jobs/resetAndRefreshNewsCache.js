@@ -18,7 +18,9 @@ const { query } = require('../database/pg');
 const TmdbDiscoveryAdapter = require('../services/discovery/TmdbDiscoveryAdapter');
 const IgdbDiscoveryAdapter = require('../services/discovery/IgdbDiscoveryAdapter');
 const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAdapter');
+const NytDiscoveryAdapter = require('../services/discovery/NytBooksDiscoveryAdapter');
 const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
+
 
 function parsePositiveInt(value, fallback) {
     const parsed = Number.parseInt(value, 10);
@@ -256,6 +258,53 @@ async function refreshIgdb(adapter) {
 }
 
 /**
+ * Fetch and store NYT Books
+ */
+
+async function refreshNyt(nytAdapter) {
+    const stats = { books: 0, errors: 0 };
+
+    try {
+        console.log('[News Cache] Fetching NYT Books...');
+        const [bestSellerOverview, hardcoverFiction, hardcoverNonfiction, youngAdult] = await Promise.all([
+            nytAdapter.fetchBestsellerOverview(),
+            nytAdapter.fetchHardcoverFiction(),
+            nytAdapter.fetchHardcoverNonfiction(),
+            nytAdapter.fetchYoungAdult()
+
+        ]);
+
+        const allBooks = [...bestSellerOverview, ...hardcoverFiction, ...hardcoverNonfiction, ...youngAdult];
+        for (const item of allBooks) {
+            if (await upsertNewsItem(item)) {
+                stats.books++;
+
+                // Hook: Add book to collectables table
+                try {
+                    const hook = getCollectableDiscoveryHook();
+                    await hook.processEnrichedItem({
+                        source: 'nyt',
+                        kind: 'book',
+                        enrichment: item.payload,
+                        originalItem: item
+                    });
+                } catch (hookErr) {
+                    console.warn('[News Cache] Collectable hook failed for NYT:', hookErr.message);
+                }
+            } else {
+                stats.errors++;
+            }
+        }
+        console.log(`[News Cache] NYT Books: ${stats.books} items stored`);
+    } catch (err) {
+        console.error('[News Cache] NYT Books fetch failed:', err.message);
+        stats.errors++;
+    }
+
+    return stats;
+}
+
+/**
  * Fetch and store Blu-ray.com content (Physical Releases)
  */
 async function refreshBluray(blurayAdapter, tmdbAdapter) {
@@ -434,6 +483,14 @@ async function runResetAndRefresh() {
         const blurayStats = await refreshBluray(bluray, tmdb);
         totals.items += blurayStats.items;
         totals.errors += blurayStats.errors;
+    }
+
+    // Step 5: Refresh NYT Books
+    const nytAdapter = new NytDiscoveryAdapter();
+    if (nytAdapter.isConfigured()) {
+        const nytStats = await refreshNyt(nytAdapter);
+        totals.items += nytStats.books;
+        totals.errors += nytStats.errors;
     }
 
     // Print final stats

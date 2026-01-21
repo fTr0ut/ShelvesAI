@@ -188,13 +188,23 @@ export default function SocialFeedScreen({ navigation, route }) {
     }, [navigation, loadUnreadCount]);
 
     // Listen for tab press reset
+    const lastResetTabRef = useRef(null);
+    const feedListRef = useRef(null);
     useEffect(() => {
-        if (route.params?.resetTab) {
-            setActiveFilter('all');
+        const resetTabTimestamp = route.params?.resetTab;
+        if (resetTabTimestamp && resetTabTimestamp !== lastResetTabRef.current) {
+            lastResetTabRef.current = resetTabTimestamp;
+            if (activeFilter === 'all') {
+                // Scroll to top and refresh
+                feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+                onRefresh();
+            } else {
+                setActiveFilter('all');
+            }
         }
-    }, [route.params?.resetTab]);
+    }, [route.params?.resetTab, activeFilter, onRefresh]);
 
-    const onRefresh = () => {
+    const onRefresh = useCallback(() => {
         setRefreshing(true);
 
         // Check if we should refresh personalizations (rate-limited to once per minute)
@@ -210,7 +220,7 @@ export default function SocialFeedScreen({ navigation, route }) {
 
         load({ silent: true, forceRefreshPersonalizations: canRefreshPersonalizations });
         loadUnreadCount();
-    };
+    }, [activeFilter, lastPersonalizationRefresh, load, loadUnreadCount]);
 
     // Debounced search handler
     const handleSearchChange = useCallback((text) => {
@@ -903,6 +913,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         // Default Feed List
         return (
             <FlatList
+                ref={feedListRef}
                 data={entries}
                 renderItem={renderItem}
                 keyExtractor={(item) => item?.aggregateId || item?.id || Math.random().toString()}

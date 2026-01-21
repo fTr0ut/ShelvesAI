@@ -24,6 +24,33 @@ async function markNewsItemSeen(userId, newsItemId) {
 }
 
 /**
+ * Mark multiple news items as seen/dismissed for a user
+ * @param {string} userId - User UUID
+ * @param {number[]} newsItemIds - News item IDs
+ * @returns {Promise<number>} - Number of inserted rows
+ */
+async function markNewsItemsSeen(userId, newsItemIds) {
+    if (!userId || !Array.isArray(newsItemIds) || newsItemIds.length === 0) return 0;
+
+    const uniqueIds = Array.from(new Set(
+        newsItemIds
+            .map((id) => parseInt(id, 10))
+            .filter((id) => Number.isFinite(id))
+    ));
+
+    if (!uniqueIds.length) return 0;
+
+    const result = await query(
+        `INSERT INTO user_news_seen (user_id, news_item_id)
+         SELECT $1, UNNEST($2::int[])
+         ON CONFLICT (user_id, news_item_id) DO NOTHING`,
+        [userId, uniqueIds]
+    );
+
+    return result.rowCount;
+}
+
+/**
  * Get all seen news item IDs for a user
  * @param {string} userId - User UUID
  * @returns {Promise<number[]>} - Array of seen news item IDs
@@ -57,6 +84,7 @@ async function clearSeenNewsItems(userId) {
 
 module.exports = {
     markNewsItemSeen,
+    markNewsItemsSeen,
     getSeenNewsItemIds,
     clearSeenNewsItems,
 };

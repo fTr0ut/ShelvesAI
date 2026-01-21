@@ -10,6 +10,45 @@ function parseRatio(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function getCategoryCountFromRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const rawCount = Number(rows[0].profile_category_count);
+  if (Number.isFinite(rawCount)) return rawCount;
+  const categories = rows[0].profile_categories;
+  return Array.isArray(categories) ? categories.length : 0;
+}
+
+function selectGroupsByCategory(groups, groupLimit, categoryCount) {
+  if (!Array.isArray(groups) || groupLimit <= 0) return [];
+
+  if (!Number.isFinite(categoryCount) || categoryCount < 3) {
+    return groups.slice(0, groupLimit);
+  }
+
+  const selected = [];
+  const seenCategories = new Set();
+
+  for (const group of groups) {
+    if (!group || !group.category) continue;
+    if (seenCategories.has(group.category)) continue;
+    selected.push(group);
+    seenCategories.add(group.category);
+    if (selected.length >= groupLimit) break;
+  }
+
+  if (selected.length >= groupLimit) return selected;
+
+  const selectedKeys = new Set(selected.map((group) => group.key));
+  for (const group of groups) {
+    if (selected.length >= groupLimit) break;
+    if (!group || selectedKeys.has(group.key)) continue;
+    selected.push(group);
+    selectedKeys.add(group.key);
+  }
+
+  return selected;
+}
+
 const DEFAULT_GROUP_LIMIT = parsePositiveInt(process.env.NEWS_FEED_GROUP_LIMIT, 3);
 const DEFAULT_ITEMS_PER_GROUP = parsePositiveInt(process.env.NEWS_FEED_ITEMS_PER_GROUP, 3);
 const DEFAULT_MIN_MOVIES_FOR_FORMAT = parsePositiveInt(process.env.NEWS_FEED_MIN_MOVIES_FOR_FORMAT, 10);
@@ -36,8 +75,9 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
   );
   const minFormatCount = parsePositiveInt(options.minFormatCount, DEFAULT_MIN_FORMAT_COUNT);
   const minFormatRatio = parseRatio(options.minFormatRatio, DEFAULT_MIN_FORMAT_RATIO);
+  const forceRandomize = !!options.forceRandomize;
 
-  const itemTypeStartIndex = 8;
+  const itemTypeStartIndex = 7;
   const itemTypePlaceholders = getItemTypePlaceholders(FOUR_K_ITEM_TYPES, itemTypeStartIndex);
 
   const sql = `
@@ -145,6 +185,8 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
         ni.source_api,
         ni.source_url,
         ni.payload,
+        profile.categories AS profile_categories,
+        array_length(profile.categories, 1) AS profile_category_count,
         ni.fetched_at,
         c.id AS collectable_id,
         c.kind AS collectable_kind,
@@ -179,7 +221,7 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
           OR (
             profile.movie_count >= $2
             AND profile.format_4k_count >= $3
-            AND (profile.format_4k_count::float / NULLIF(profile.movie_count, 0)) >= $7
+            AND (profile.format_4k_count::float / NULLIF(profile.movie_count, 0)) >= $6
           )
         )
         AND ni.id NOT IN (SELECT news_item_id FROM seen_news_ids)
@@ -189,10 +231,11 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
         ROW_NUMBER() OVER (
           PARTITION BY category, item_type
           ORDER BY relevance_score DESC,
+                   ${forceRandomize ? 'RANDOM(),' : ''}
                    -- Time-based rotation: rotate item priority by day of year
                    ((id + EXTRACT(DOY FROM NOW())::int) % 100),
-                   -- Random shuffle within same score tier
-                   RANDOM(),
+                   -- Random shuffle within same score tier (lower priority when not force-randomizing)
+                   ${forceRandomize ? '' : 'RANDOM(),'}
                    COALESCE(physical_release_date, release_date) DESC NULLS LAST,
                    (payload->>'popularity')::float DESC NULLS LAST
         ) AS rn
@@ -224,7 +267,7 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
       FROM ranked r
       JOIN ranked_groups g
         ON g.category = r.category AND g.item_type = r.item_type
-      WHERE r.rn <= $5 AND g.group_rank <= $6
+      WHERE r.rn <= $5
     )
     SELECT * FROM final
     ORDER BY group_rank, relevance_score DESC, COALESCE(physical_release_date, release_date) DESC NULLS LAST;
@@ -236,7 +279,6 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
     minFormatCount,
     FOUR_K_FORMATS,
     itemsPerGroup,
-    groupLimit,
     minFormatRatio,
     ...FOUR_K_ITEM_TYPES,
   ];
@@ -293,7 +335,9 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
     }
   }
 
-  return Array.from(groups.values()).sort((a, b) => a.groupRank - b.groupRank);
+  const sortedGroups = Array.from(groups.values()).sort((a, b) => a.groupRank - b.groupRank);
+  const categoryCount = getCategoryCountFromRows(result.rows);
+  return selectGroupsByCategory(sortedGroups, groupLimit, categoryCount);
 }
 
 module.exports = {
