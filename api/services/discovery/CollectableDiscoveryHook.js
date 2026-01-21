@@ -13,6 +13,8 @@ const {
     makeLightweightFingerprint
 } = require('../collectables/fingerprint');
 const { tmdbMovieToCollectable } = require('../../adapters/tmdb.adapter');
+const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
+const { hardcoverToCollectable } = require('../../adapters/hardcover.adapter');
 const fetch = require('node-fetch');
 
 // Environment toggle for gradual rollout
@@ -287,6 +289,10 @@ class CollectableDiscoveryHook {
                 return this._buildTmdbPayload(enrichment, originalItem);
             case 'nyt':
                 return this._buildNytBooksPayload(enrichment, originalItem);
+            case 'openlibrary':
+                return this._buildOpenLibraryPayload(enrichment, originalItem);
+            case 'hardcover':
+                return this._buildHardcoverPayload(enrichment, originalItem);
             default:
                 return this._buildGenericPayload(enrichment, originalItem);
         }
@@ -814,6 +820,74 @@ class CollectableDiscoveryHook {
             rank: data.rank || null,
             weeksOnList: data.weeks_on_list || null,
             amazonUrl: data.amazon_product_url || null
+        };
+    }
+
+    /**
+     * Build payload from OpenLibrary enrichment
+     * @param {Object} data - OpenLibrary API result (from BookCatalogService)
+     * @param {Object} originalItem - Original news item (NYT bestseller)
+     */
+    _buildOpenLibraryPayload(data, originalItem) {
+        if (!data) {
+            return this._buildNytBooksPayload(null, originalItem);
+        }
+        // Use the existing adapter transformer
+        const collectable = openLibraryToCollectable(data);
+        if (!collectable) {
+            return this._buildNytBooksPayload(null, originalItem);
+        }
+        // Merge NYT-specific fields from originalItem
+        const item = originalItem || {};
+        return {
+            title: collectable.title || item.title,
+            description: collectable.description || item.description,
+            primaryCreator: collectable.primaryCreator || item.creators?.[0] || null,
+            creators: collectable.creators || item.creators || [],
+            publishers: collectable.publishers || [],
+            year: collectable.year || null,
+            coverUrl: collectable.coverUrl || item.cover_image_url || null,
+            images: collectable.images || [],
+            formats: ['book'],
+            tags: collectable.tags || [],
+            genre: collectable.genre || item.genres?.[0] || null,
+            identifiers: collectable.identifiers || {},
+            externalId: collectable.externalId || item.external_id || null,
+            sources: collectable.sources || []
+        };
+    }
+
+    /**
+     * Build payload from Hardcover enrichment
+     * @param {Object} data - Hardcover API result (from BookCatalogService)
+     * @param {Object} originalItem - Original news item (NYT bestseller)
+     */
+    _buildHardcoverPayload(data, originalItem) {
+        if (!data) {
+            return this._buildNytBooksPayload(null, originalItem);
+        }
+        // Use the existing adapter transformer
+        const collectable = hardcoverToCollectable(data, {});
+        if (!collectable) {
+            return this._buildNytBooksPayload(null, originalItem);
+        }
+        // Merge NYT-specific fields from originalItem
+        const item = originalItem || {};
+        return {
+            title: collectable.title || item.title,
+            description: collectable.description || item.description,
+            primaryCreator: collectable.primaryCreator || item.creators?.[0] || null,
+            creators: collectable.creators || item.creators || [],
+            publishers: collectable.publishers || [],
+            year: collectable.year || null,
+            coverUrl: collectable.coverUrl || item.cover_image_url || null,
+            images: collectable.images || [],
+            formats: ['book'],
+            tags: collectable.tags || [],
+            genre: collectable.genre || item.genres?.[0] || null,
+            identifiers: collectable.identifiers || {},
+            externalId: collectable.externalId || item.external_id || null,
+            sources: collectable.sources || []
         };
     }
 

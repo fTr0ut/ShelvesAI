@@ -24,9 +24,9 @@ async function listWishlists(req, res) {
 async function listUserWishlists(req, res) {
     try {
         const { userId } = req.params;
-        const targetUserId = parseInt(userId);
+        const targetUserId = userId;
 
-        if (isNaN(targetUserId)) {
+        if (!targetUserId || typeof targetUserId !== 'string') {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
@@ -45,9 +45,9 @@ async function listUserWishlists(req, res) {
 async function checkUserHasWishlists(req, res) {
     try {
         const { userId } = req.params;
-        const targetUserId = parseInt(userId);
+        const targetUserId = userId;
 
-        if (isNaN(targetUserId)) {
+        if (!targetUserId || typeof targetUserId !== 'string') {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 

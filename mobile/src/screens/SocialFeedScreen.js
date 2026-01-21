@@ -25,8 +25,7 @@ import { toggleLike, addComment } from '../services/feedApi';
 const FILTERS = [
     { key: 'all', label: 'All' },
     { key: 'friends', label: 'Friends' },
-    { key: 'public', label: 'Discover' },
-    { key: 'news', label: 'News' },
+    { key: 'news', label: 'Discover' },
 ];
 
 // --- Helpers ---
@@ -55,6 +54,7 @@ function getItemPreview(entry, apiBase = '') {
     const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
     const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
     const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
+    const collectableId = collectable?.id || entry?.collectableId || entry?.collectable_id || null;
 
     // Extract cover URL with priority: local media path > external URL
     let coverUrl = null;
@@ -62,9 +62,11 @@ function getItemPreview(entry, apiBase = '') {
         coverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
     } else if (collectable?.coverUrl) {
         coverUrl = collectable.coverUrl;
+    } else if (entry?.coverImageUrl) {
+        coverUrl = entry.coverImageUrl;
     }
 
-    return { title, coverUrl };
+    return { title, coverUrl, collectableId };
 }
 
 function buildSummaryText(items, totalCount) {
@@ -456,8 +458,9 @@ export default function SocialFeedScreen({ navigation, route }) {
     const renderItem = ({ item }) => {
         const { shelf, owner, items, eventType, collectable, checkinStatus, note } = item;
         const isCheckIn = eventType === 'checkin.activity';
+        const isNewsRecommendation = eventType === 'news.recommendation';
         const timeAgo = formatRelativeTime(isCheckIn ? item.createdAt : shelf?.updatedAt);
-        const displayName = owner?.name || owner?.username || 'Someone';
+        const displayName = isNewsRecommendation ? 'Discover' : (owner?.name || owner?.username || 'Someone');
         const initial = displayName.charAt(0).toUpperCase();
 
         let avatarSource = null;
@@ -468,6 +471,10 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
 
         const handlePress = () => {
+            if (isNewsRecommendation) {
+                setActiveFilter('news');
+                return;
+            }
             if (isCheckIn) {
                 // Check-in events now navigate to FeedDetail (event details)
                 // The item preview inside handles navigation to the collectable
@@ -484,6 +491,70 @@ export default function SocialFeedScreen({ navigation, route }) {
 
         const isRatingEvent = eventType === 'item.rated';
 
+        if (isNewsRecommendation) {
+            const previewItems = (items || []).slice(0, 3);
+            const totalItems = item?.eventItemCount || items?.length || 0;
+            const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
+            const summaryText = buildSummaryText(itemPreviews, totalItems);
+            const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
+            const sectionTitle = item?.displayHints?.sectionTitle || 'Discover picks';
+            const newsTime = formatRelativeTime(item.createdAt);
+            const handleNewsItemPress = (preview) => {
+                if (preview?.collectableId) {
+                    navigation.navigate('CollectableDetail', { collectableId: String(preview.collectableId) });
+                } else {
+                    setActiveFilter('news');
+                }
+            };
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePress}
+                    style={styles.feedCard}
+                >
+                    <View style={styles.cardHeader}>
+                        <View style={[styles.avatar, styles.newsAvatar]}>
+                            <Ionicons name="newspaper-outline" size={20} color={colors.primary} />
+                        </View>
+                        <View style={styles.headerContent}>
+                            <View style={styles.headerTop}>
+                                <Text style={styles.username}>{displayName}</Text>
+                                <Text style={styles.timestamp}>{newsTime}</Text>
+                            </View>
+                            <Text style={styles.shelfAction}>
+                                {sectionTitle}{summaryText ? `: ${summaryText}` : ''}
+                            </Text>
+                        </View>
+                    </View>
+
+                    {coverItems.length > 0 && (
+                        <View style={styles.coverRow}>
+                            {coverItems.map((item, idx) => (
+                                <TouchableOpacity
+                                    key={idx}
+                                    activeOpacity={item.collectableId ? 0.7 : 1}
+                                    disabled={!item.collectableId}
+                                    onPress={() => handleNewsItemPress(item)}
+                                    style={idx > 0 ? { marginLeft: -8 } : null}
+                                >
+                                    <Image
+                                        source={{ uri: item.coverUrl }}
+                                        style={styles.coverThumb}
+                                        resizeMode="cover"
+                                    />
+                                </TouchableOpacity>
+                            ))}
+                            {totalItems > coverItems.length && (
+                                <View style={styles.moreCoversChip}>
+                                    <Text style={styles.moreCoversText}>+{totalItems - coverItems.length}</Text>
+                                </View>
+                            )}
+                        </View>
+                    )}
+                </TouchableOpacity>
+            );
+        }
 
         // Check-in event rendering
         if (isCheckIn) {
@@ -1209,6 +1280,9 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
+    },
+    newsAvatar: {
+        backgroundColor: colors.surfaceElevated,
     },
     moreCoversChip: {
         width: 32,

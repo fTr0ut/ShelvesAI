@@ -77,31 +77,38 @@ export default function CollectableDetailScreen({ route, navigation }) {
     // NEW: Fetch all rating data
     useEffect(() => {
         let isActive = true;
-        const targetId = collectable?.id;
+        const targetCollectableId = collectable?.id;
+        const targetManualId = manual?.id;
 
-        if (!targetId || !apiBase || !token) return;
+        // Need either collectableId or manualId
+        if ((!targetCollectableId && !targetManualId) || !apiBase || !token) return;
+
+        const isManualItem = !targetCollectableId && !!targetManualId;
+        const targetId = isManualItem ? targetManualId : targetCollectableId;
+        const queryParam = isManualItem ? '?type=manual' : '';
 
         const loadRatings = async () => {
             try {
-                // 1. Get Aggregate Rating (Scenario A, B, C)
-                const aggData = await apiRequest({
-                    apiBase,
-                    path: `/api/ratings/${targetId}/aggregate`,
-                    token,
-                });
-                if (isActive) setAggregateRating(aggData);
+                // 1. Get Aggregate Rating (only for collectables)
+                if (!isManualItem) {
+                    const aggData = await apiRequest({
+                        apiBase,
+                        path: `/api/ratings/${targetId}/aggregate`,
+                        token,
+                    });
+                    if (isActive) setAggregateRating(aggData);
+                }
 
-                // 2. Get Your Rating (Scenario A, B, C - unless redundant)
+                // 2. Get Your Rating
                 const myData = await apiRequest({
                     apiBase,
-                    path: `/api/ratings/${targetId}`,
+                    path: `/api/ratings/${targetId}${queryParam}`,
                     token,
                 });
                 if (isActive) setRating(myData.rating || 0);
 
-                // 3. Get Owner's Rating (Scenario B, C)
-                // Only if owner is specified and is NOT the current user
-                if (ownerId && user?.id && ownerId !== user.id) {
+                // 3. Get Owner's Rating (Scenario B, C) - only for collectables
+                if (!isManualItem && ownerId && user?.id && ownerId !== user.id) {
                     const ownerData = await apiRequest({
                         apiBase,
                         path: `/api/ratings/${targetId}/user/${ownerId}`,
@@ -117,7 +124,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
         loadRatings();
 
         return () => { isActive = false; };
-    }, [apiBase, token, collectable?.id, ownerId, user?.id]);
+    }, [apiBase, token, collectable?.id, manual?.id, ownerId, user?.id]);
 
     // Check favorite status
     useEffect(() => {
@@ -151,28 +158,37 @@ export default function CollectableDetailScreen({ route, navigation }) {
         // Optimistic update
         setRating(newRating);
 
-        const targetId = collectable?.id;
-        if (!targetId) {
-            Alert.alert('Error', 'Cannot save rating: missing collectable ID');
+        const targetCollectableId = collectable?.id;
+        const targetManualId = manual?.id;
+
+        // Need either collectableId or manualId
+        if (!targetCollectableId && !targetManualId) {
+            Alert.alert('Error', 'Cannot save rating: missing item ID');
             return;
         }
 
         try {
+            const isManualItem = !targetCollectableId && !!targetManualId;
+            const targetId = isManualItem ? targetManualId : targetCollectableId;
+            const queryParam = isManualItem ? '?type=manual' : '';
+
             await apiRequest({
                 apiBase,
-                path: `/api/ratings/${targetId}`,
+                path: `/api/ratings/${targetId}${queryParam}`,
                 method: 'PUT',
                 token,
                 body: { rating: newRating },
             });
 
-            // Refresh aggregate after rating (optional, but good for UX)
-            const aggData = await apiRequest({
-                apiBase,
-                path: `/api/ratings/${targetId}/aggregate`,
-                token,
-            });
-            setAggregateRating(aggData);
+            // Refresh aggregate after rating (only for collectables)
+            if (!isManualItem) {
+                const aggData = await apiRequest({
+                    apiBase,
+                    path: `/api/ratings/${targetId}/aggregate`,
+                    token,
+                });
+                setAggregateRating(aggData);
+            }
 
         } catch (e) {
             console.warn('Failed to update rating:', e);

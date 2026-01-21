@@ -3,9 +3,13 @@ const shelvesQueries = require('../database/queries/shelves');
 const friendshipQueries = require('../database/queries/friendships');
 const eventSocialQueries = require('../database/queries/eventSocial');
 const { query } = require('../database/pg');
+const { getNewsRecommendationsForUser } = require('../services/discovery/newsRecommendations');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 
 const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
+const NEWS_FEED_GROUP_LIMIT = parseInt(process.env.NEWS_FEED_GROUP_LIMIT || '3', 10);
+const NEWS_FEED_ITEMS_PER_GROUP = parseInt(process.env.NEWS_FEED_ITEMS_PER_GROUP || '3', 10);
+const NEWS_FEED_INSERT_INTERVAL = parseInt(process.env.NEWS_FEED_INSERT_INTERVAL || '3', 10);
 
 function getDisplayHints(eventType) {
   const hints = {
@@ -13,6 +17,11 @@ function getDisplayHints(eventType) {
       showShelfCard: true,
       sectionTitle: 'Newly added collectibles',
       itemDisplayMode: 'numbered',
+    },
+    'news.recommendation': {
+      showShelfCard: false,
+      sectionTitle: 'Discover picks',
+      itemDisplayMode: 'news',
     },
     'item.rated': {
       showShelfCard: false,
@@ -31,6 +40,124 @@ function getDisplayHints(eventType) {
     },
   };
   return hints[eventType] || hints.default;
+}
+
+const NEWS_CATEGORY_LABELS = {
+  movies: 'Movies',
+  tv: 'TV',
+  games: 'Games',
+  books: 'Books',
+  vinyl: 'Vinyl',
+};
+
+const NEWS_ITEM_TYPE_LABELS = {
+  trending: 'Trending',
+  upcoming: 'Upcoming',
+  now_playing: 'Now Playing',
+  recent: 'Recent',
+  preorder_4k: '4K Preorders',
+  new_release_4k: 'New 4K Releases',
+  upcoming_4k: 'Upcoming 4K Releases',
+  preorder_bluray: 'Blu-ray Preorders',
+  new_release_bluray: 'New Blu-ray Releases',
+  upcoming_bluray: 'Upcoming Blu-ray Releases',
+};
+
+function formatNewsSectionTitle(category, itemType) {
+  const typeLabel = NEWS_ITEM_TYPE_LABELS[itemType] || itemType.replace(/_/g, ' ');
+  const categoryLabel = NEWS_CATEGORY_LABELS[category] || category;
+  if (/4k|bluray/i.test(itemType)) return typeLabel;
+  return `${typeLabel} ${categoryLabel}`.trim();
+}
+
+function buildNewsFeedTags(category, itemType) {
+  const tags = ['news', 'discover', category, itemType];
+  if (/4k/i.test(itemType)) tags.push('format:4k');
+  if (/bluray/i.test(itemType)) tags.push('format:bluray');
+  return tags;
+}
+
+function buildNewsRecommendationEntries(groups = []) {
+  if (!Array.isArray(groups) || groups.length === 0) return [];
+
+  return groups.map((group) => {
+    const createdAt = group.latestDate ? new Date(group.latestDate).toISOString() : new Date().toISOString();
+    const sectionTitle = formatNewsSectionTitle(group.category, group.itemType);
+    const groupKey = `${group.category}:${group.itemType}`;
+    const items = (group.items || []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description || null,
+      coverImageUrl: item.coverImageUrl || null,
+      releaseDate: item.releaseDate || null,
+      physicalReleaseDate: item.physicalReleaseDate || null,
+      sourceUrl: item.sourceUrl || null,
+      sourceApi: item.sourceApi || null,
+      category: item.category,
+      itemType: item.itemType,
+      relevanceScore: item.relevanceScore || 0,
+      reasons: item.reasons || [],
+      collectableId: item.collectableId || null,
+      collectable: {
+        id: item.collectableId || null,
+        title: item.title,
+        primaryCreator: item.collectablePrimaryCreator || null,
+        coverUrl: item.coverImageUrl || null,
+        kind: item.collectableKind || item.category || null,
+      },
+    }));
+
+    return {
+      id: `news:${groupKey}`,
+      aggregateId: null,
+      eventType: 'news.recommendation',
+      origin: 'news_items',
+      filterKey: 'news_items',
+      feedTags: buildNewsFeedTags(group.category, group.itemType),
+      createdAt,
+      updatedAt: createdAt,
+      eventItemCount: items.length,
+      owner: {
+        id: null,
+        username: 'Discover',
+        name: 'Discover',
+      },
+      items,
+      displayHints: {
+        showShelfCard: false,
+        sectionTitle,
+        itemDisplayMode: 'news',
+      },
+      metadata: {
+        groupKey,
+        maxScore: group.maxScore || null,
+      },
+    };
+  });
+}
+
+function interleaveEntries(baseEntries, insertEntries, interval) {
+  if (!insertEntries.length) return baseEntries;
+  if (!baseEntries.length) return insertEntries;
+
+  const resolvedInterval = Number.isFinite(interval) && interval > 0 ? interval : 3;
+  const result = [];
+  let insertIndex = 0;
+
+  for (let i = 0; i < baseEntries.length; i += 1) {
+    result.push(baseEntries[i]);
+    if ((i + 1) % resolvedInterval === 0 && insertIndex < insertEntries.length) {
+      result.push(insertEntries[insertIndex]);
+      insertIndex += 1;
+    }
+  }
+
+  while (insertIndex < insertEntries.length) {
+    result.push(insertEntries[insertIndex]);
+    insertIndex += 1;
+  }
+
+  return result;
 }
 
 function flattenPayloadItems(payloads) {
@@ -259,7 +386,19 @@ async function getFeed(req, res) {
     }
 
     if (!events.length) {
-      return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries: [] });
+      let entries = [];
+      if (scope === 'all' && offset === 0 && (!typeFilter || typeFilter === 'news.recommendation')) {
+        try {
+          const groups = await getNewsRecommendationsForUser(viewerId, {
+            groupLimit: NEWS_FEED_GROUP_LIMIT,
+            itemsPerGroup: NEWS_FEED_ITEMS_PER_GROUP,
+          });
+          entries = buildNewsRecommendationEntries(groups);
+        } catch (newsErr) {
+          console.warn('[Feed] Failed to build news recommendations:', newsErr.message);
+        }
+      }
+      return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
     }
 
     // Get shelf counts
@@ -268,7 +407,7 @@ async function getFeed(req, res) {
     const aggregateIds = [...new Set(events.map(e => e.id).filter(Boolean))];
     const socialMap = await eventSocialQueries.getSocialSummaries(aggregateIds, viewerId);
 
-    const entries = events.map(e => {
+    let entries = events.map(e => {
       const social = socialMap.get(e.id) || {};
       const isCheckIn = e.eventType === 'checkin.activity';
 
@@ -332,6 +471,21 @@ async function getFeed(req, res) {
       entry.displayHints = getDisplayHints(e.eventType);
       return entry;
     });
+
+    if (scope === 'all' && offset === 0 && (!typeFilter || typeFilter === 'news.recommendation')) {
+      try {
+        const groups = await getNewsRecommendationsForUser(viewerId, {
+          groupLimit: NEWS_FEED_GROUP_LIMIT,
+          itemsPerGroup: NEWS_FEED_ITEMS_PER_GROUP,
+        });
+        const newsEntries = buildNewsRecommendationEntries(groups);
+        if (newsEntries.length) {
+          entries = interleaveEntries(entries, newsEntries, NEWS_FEED_INSERT_INTERVAL).slice(0, limit);
+        }
+      } catch (newsErr) {
+        console.warn('[Feed] Failed to build news recommendations:', newsErr.message);
+      }
+    }
 
     res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
   } catch (err) {

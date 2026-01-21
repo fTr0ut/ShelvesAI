@@ -25,6 +25,7 @@ const IgdbDiscoveryAdapter = require('../services/discovery/IgdbDiscoveryAdapter
 const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAdapter');
 const NytBooksDiscoveryAdapter = require('../services/discovery/NytBooksDiscoveryAdapter');
 const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
+const { BookCatalogService } = require('../services/catalog/BookCatalogService');
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -53,7 +54,7 @@ function toSafeDate(value) {
 /**
  * Upsert a news item into the database
  */
-async function upsertNewsItem(item) {
+async function upsertNewsItem(item, collectableId = null) {
   const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 60 * 60 * 1000);
 
   try {
@@ -61,8 +62,8 @@ async function upsertNewsItem(item) {
       INSERT INTO news_items (
         category, item_type, title, description, cover_image_url,
         release_date, physical_release_date, creators, franchises, genres, external_id,
-        source_api, source_url, payload, fetched_at, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
+        source_api, source_url, payload, fetched_at, expires_at, collectable_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15, $16)
       ON CONFLICT (source_api, external_id, item_type)
       DO UPDATE SET
         title = EXCLUDED.title,
@@ -77,6 +78,7 @@ async function upsertNewsItem(item) {
         payload = EXCLUDED.payload,
         fetched_at = NOW(),
         expires_at = EXCLUDED.expires_at,
+        collectable_id = COALESCE(EXCLUDED.collectable_id, news_items.collectable_id),
         updated_at = NOW()
     `, [
       item.category,
@@ -93,7 +95,8 @@ async function upsertNewsItem(item) {
       item.source_api,
       item.source_url || null,
       JSON.stringify(item.payload || {}),
-      expiresAt
+      expiresAt,
+      collectableId
     ]);
     return true;
   } catch (err) {
@@ -146,21 +149,23 @@ async function refreshTmdb(adapter) {
 
     const allMovies = [...trending, ...upcoming, ...nowPlaying];
     for (const item of allMovies) {
-      if (await upsertNewsItem(item)) {
-        stats.movies++;
+      // Hook: Add movie to collectables table FIRST to get collectable.id
+      let collectableId = null;
+      try {
+        const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
+        const hookResult = await hook.processEnrichedItem({
+          source: 'tmdb',
+          kind: 'movie',
+          enrichment: item.payload,
+          originalItem: item
+        });
+        collectableId = hookResult.collectable?.id || null;
+      } catch (hookErr) {
+        console.warn('[News Cache] Collectable hook failed for TMDB movie:', hookErr.message);
+      }
 
-        // Hook: Add movie to collectables table
-        try {
-          const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
-          await hook.processEnrichedItem({
-            source: 'tmdb',
-            kind: 'movie',
-            enrichment: item.payload,
-            originalItem: item
-          });
-        } catch (hookErr) {
-          console.warn('[News Cache] Collectable hook failed for TMDB movie:', hookErr.message);
-        }
+      if (await upsertNewsItem(item, collectableId)) {
+        stats.movies++;
       } else {
         stats.errors++;
       }
@@ -181,21 +186,23 @@ async function refreshTmdb(adapter) {
 
     const allTV = [...trending, ...onAir];
     for (const item of allTV) {
-      if (await upsertNewsItem(item)) {
-        stats.tv++;
+      // Hook: Add TV show to collectables table FIRST to get collectable.id
+      let collectableId = null;
+      try {
+        const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
+        const hookResult = await hook.processEnrichedItem({
+          source: 'tmdb',
+          kind: 'tv',
+          enrichment: item.payload,
+          originalItem: item
+        });
+        collectableId = hookResult.collectable?.id || null;
+      } catch (hookErr) {
+        console.warn('[News Cache] Collectable hook failed for TMDB TV:', hookErr.message);
+      }
 
-        // Hook: Add TV show to collectables table
-        try {
-          const hook = getCollectableDiscoveryHook({ imageBaseUrl: adapter.imageBaseUrl });
-          await hook.processEnrichedItem({
-            source: 'tmdb',
-            kind: 'tv',
-            enrichment: item.payload,
-            originalItem: item
-          });
-        } catch (hookErr) {
-          console.warn('[News Cache] Collectable hook failed for TMDB TV:', hookErr.message);
-        }
+      if (await upsertNewsItem(item, collectableId)) {
+        stats.tv++;
       } else {
         stats.errors++;
       }
@@ -233,21 +240,23 @@ async function refreshIgdb(adapter) {
     });
 
     for (const item of allGames) {
-      if (await upsertNewsItem(item)) {
-        stats.games++;
+      // Hook: Add game to collectables table FIRST to get collectable.id
+      let collectableId = null;
+      try {
+        const hook = getCollectableDiscoveryHook();
+        const hookResult = await hook.processEnrichedItem({
+          source: 'igdb',
+          kind: 'game',
+          enrichment: item.payload,
+          originalItem: item
+        });
+        collectableId = hookResult.collectable?.id || null;
+      } catch (hookErr) {
+        console.warn('[News Cache] Collectable hook failed for IGDB:', hookErr.message);
+      }
 
-        // Hook: Add game to collectables table
-        try {
-          const hook = getCollectableDiscoveryHook();
-          await hook.processEnrichedItem({
-            source: 'igdb',
-            kind: 'game',
-            enrichment: item.payload,
-            originalItem: item
-          });
-        } catch (hookErr) {
-          console.warn('[News Cache] Collectable hook failed for IGDB:', hookErr.message);
-        }
+      if (await upsertNewsItem(item, collectableId)) {
+        stats.games++;
       } else {
         stats.errors++;
       }
@@ -359,24 +368,26 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
           }
         };
 
-        if (await upsertNewsItem(newsItem)) {
+        // Hook: Add to collectables table FIRST for TMDB-matched items to get collectable.id
+        let collectableId = null;
+        if (tmdbData) {
+          try {
+            const hook = getCollectableDiscoveryHook({ imageBaseUrl: tmdbAdapter.imageBaseUrl });
+            const hookResult = await hook.processEnrichedItem({
+              source: 'bluray',
+              kind: 'movie',
+              enrichment: tmdbData,
+              originalItem: item
+            });
+            collectableId = hookResult.collectable?.id || null;
+          } catch (hookErr) {
+            console.warn('[News Cache] Collectable hook failed:', hookErr.message);
+          }
+        }
+
+        if (await upsertNewsItem(newsItem, collectableId)) {
           stats.items++;
           if (tmdbData) stats.enriched++;
-
-          // Hook: Also add to collectables table for TMDB-matched items
-          if (tmdbData) {
-            try {
-              const hook = getCollectableDiscoveryHook({ imageBaseUrl: tmdbAdapter.imageBaseUrl });
-              await hook.processEnrichedItem({
-                source: 'bluray',
-                kind: 'movie',
-                enrichment: tmdbData,
-                originalItem: item
-              });
-            } catch (hookErr) {
-              console.warn('[News Cache] Collectable hook failed:', hookErr.message);
-            }
-          }
         } else {
           stats.errors++;
         }
@@ -401,7 +412,8 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
  * Fetch and store NYT Bestseller books
  */
 async function refreshNytBooks(adapter) {
-  const stats = { books: 0, errors: 0 };
+  const stats = { books: 0, enriched: 0, errors: 0 };
+  const bookCatalog = new BookCatalogService();
 
   try {
     console.log('[News Cache] Fetching NYT bestsellers...');
@@ -416,26 +428,49 @@ async function refreshNytBooks(adapter) {
     });
 
     for (const item of uniqueBooks) {
-      if (await upsertNewsItem(item)) {
-        stats.books++;
-
-        // Hook: Add book to collectables table
-        try {
-          const hook = getCollectableDiscoveryHook();
-          await hook.processEnrichedItem({
-            source: 'nyt',
-            kind: 'book',
-            enrichment: item.payload,
-            originalItem: item
-          });
-        } catch (hookErr) {
-          console.warn('[News Cache] Collectable hook failed for NYT book:', hookErr.message);
+      // Enrich via BookCatalogService (OpenLibrary → Hardcover fallback) FIRST
+      let enrichedData = null;
+      let enrichmentSource = 'nyt';
+      try {
+        const lookupItem = {
+          title: item.title,
+          author: item.creators?.[0],
+          identifiers: {
+            isbn13: item.payload?.primary_isbn13 ? [item.payload.primary_isbn13] : [],
+            isbn10: item.payload?.primary_isbn10 ? [item.payload.primary_isbn10] : []
+          }
+        };
+        enrichedData = await bookCatalog.safeLookup(lookupItem);
+        if (enrichedData) {
+          enrichmentSource = enrichedData.provider || 'openlibrary';
         }
+      } catch (enrichErr) {
+        console.warn('[News Cache] Book enrichment failed:', enrichErr.message);
+      }
+
+      // Hook: Add book to collectables table to get collectable.id
+      let collectableId = null;
+      try {
+        const hook = getCollectableDiscoveryHook();
+        const hookResult = await hook.processEnrichedItem({
+          source: enrichmentSource,
+          kind: 'books',
+          enrichment: enrichedData || item.payload,
+          originalItem: item
+        });
+        collectableId = hookResult.collectable?.id || null;
+      } catch (hookErr) {
+        console.warn('[News Cache] Collectable hook failed for NYT book:', hookErr.message);
+      }
+
+      if (await upsertNewsItem(item, collectableId)) {
+        stats.books++;
+        if (enrichedData) stats.enriched++;
       } else {
         stats.errors++;
       }
     }
-    console.log(`[News Cache] NYT Books: ${stats.books} items stored`);
+    console.log(`[News Cache] NYT Books: ${stats.books} items stored (${stats.enriched} enriched)`);
   } catch (err) {
     console.error('[News Cache] NYT Books fetch failed:', err.message);
     stats.errors++;

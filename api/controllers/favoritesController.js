@@ -141,10 +141,10 @@ async function checkFavoritesBatch(req, res) {
 async function listUserFavorites(req, res) {
     try {
         const { userId } = req.params;
-        const targetUserId = parseInt(userId);
+        const targetUserId = userId;
         const viewerId = req.user.id;
 
-        if (isNaN(targetUserId)) {
+        if (!targetUserId || typeof targetUserId !== 'string') {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
@@ -181,10 +181,10 @@ async function listUserFavorites(req, res) {
 async function checkUserHasFavorites(req, res) {
     try {
         const { userId } = req.params;
-        const targetUserId = parseInt(userId);
+        const targetUserId = userId;
         const viewerId = req.user.id;
 
-        if (isNaN(targetUserId)) {
+        if (!targetUserId || typeof targetUserId !== 'string') {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
