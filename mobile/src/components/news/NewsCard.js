@@ -21,8 +21,21 @@ const NewsCard = ({ item, onCheckIn }) => {
         description,
         coverImageUrl,
         sourceUrl,
-        sourceApi
+        sourceApi,
+        releaseDate,
+        physicalReleaseDate
     } = item;
+
+    // Format date for display
+    const formatDate = (dateString) => {
+        if (!dateString) return null;
+        return new Date(dateString).toLocaleDateString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric'
+        });
+    };
+
+    const formattedReleaseDate = formatDate(releaseDate);
+    const formattedPhysicalDate = formatDate(physicalReleaseDate);
 
     const handlePress = () => {
         if (sourceUrl) {
@@ -111,6 +124,21 @@ const NewsCard = ({ item, onCheckIn }) => {
             color: colors.primary,
             marginLeft: 4,
             fontWeight: '600',
+        },
+        dateRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginBottom: spacing.xs,
+        },
+        dateLabel: {
+            ...typography.caption,
+            color: colors.textMuted,
+            fontWeight: '600',
+        },
+        dateValue: {
+            ...typography.caption,
+            color: colors.textMuted,
+            marginLeft: 4,
         }
     });
 
@@ -143,6 +171,19 @@ const NewsCard = ({ item, onCheckIn }) => {
                         {description}
                     </Text>
                 ) : null}
+
+                {formattedReleaseDate && (
+                    <View style={styles.dateRow}>
+                        <Text style={styles.dateLabel}>Release Date:</Text>
+                        <Text style={styles.dateValue}>{formattedReleaseDate}</Text>
+                    </View>
+                )}
+                {formattedPhysicalDate && (
+                    <View style={styles.dateRow}>
+                        <Text style={styles.dateLabel}>Physical disc release:</Text>
+                        <Text style={styles.dateValue}>{formattedPhysicalDate}</Text>
+                    </View>
+                )}
 
                 <View style={styles.footer}>
                     {onCheckIn ? (

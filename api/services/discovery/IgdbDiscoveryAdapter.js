@@ -79,16 +79,14 @@ class IgdbDiscoveryAdapter {
   }
 
   /**
-   * Fetch anticipated games based on "Want to Play" additions
+   * Fetch upcoming games based on release_dates (IGDB "coming soon" style)
    */
   async fetchAnticipatedGames(limit = 20) {
-    const gameIds = await this._getPopularGameIds(POPULARITY_TYPES.WANT_TO_PLAY, limit);
+    const gameIds = await this._getComingSoonGameIds(limit);
     if (!gameIds.length) return [];
 
     const games = await this._fetchGamesByIds(gameIds);
-    const now = Math.floor(Date.now() / 1000);
-    const upcoming = games.filter(game => game.first_release_date && game.first_release_date >= now);
-    return this._normalizeGames(upcoming, 'upcoming');
+    return this._normalizeGames(games, 'upcoming');
   }
 
   /**
@@ -168,6 +166,35 @@ class IgdbDiscoveryAdapter {
   }
 
   /**
+   * Fetch upcoming game IDs using release_dates (coming soon page behavior)
+   */
+  async _getComingSoonGameIds(limit) {
+    const now = Math.floor(Date.now() / 1000);
+    const queryLimit = Math.max(limit * 4, limit);
+    const query = `
+      fields game, date;
+      where game != null & date != null & date >= ${now};
+      sort date asc;
+      limit ${queryLimit};
+    `;
+
+    const results = await this._callIgdb('release_dates', query);
+    if (!results || !Array.isArray(results)) return [];
+
+    const gameIds = [];
+    const seen = new Set();
+    for (const row of results) {
+      const gameId = row.game;
+      if (!gameId || seen.has(gameId)) continue;
+      seen.add(gameId);
+      gameIds.push(gameId);
+      if (gameIds.length >= limit) break;
+    }
+
+    return gameIds;
+  }
+
+  /**
    * Fetch full game details for a list of game IDs
    * @param {number[]} gameIds - Array of IGDB game IDs
    * @returns {object[]} Array of game objects with full details
@@ -177,7 +204,7 @@ class IgdbDiscoveryAdapter {
 
     const idsString = gameIds.join(',');
     const query = `
-      fields name, summary, cover.image_id, first_release_date,
+      fields name, summary, cover.image_id, first_release_date, release_dates.date,
              involved_companies.company.name, involved_companies.developer,
              genres.name, total_rating, total_rating_count, follows, hypes;
       where id = (${idsString});
@@ -216,13 +243,18 @@ class IgdbDiscoveryAdapter {
       // Extract genres
       const genres = (game.genres || []).map(g => g.name).filter(Boolean);
 
+      const releaseDateSeconds = game.first_release_date
+        || (Array.isArray(game.release_dates) && game.release_dates.length
+          ? Math.min(...game.release_dates.map(rd => rd?.date).filter(Boolean))
+          : null);
+
       return {
         category: 'games',
         item_type: itemType,
         title: game.name,
         description: game.summary || null,
         cover_image_url: game.cover?.image_id ? igdbImageUrl(game.cover.image_id) : null,
-        release_date: secondsToDateString(game.first_release_date),
+        release_date: secondsToDateString(releaseDateSeconds),
         creators: developers,
         franchises: [],
         genres,

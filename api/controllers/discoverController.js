@@ -103,7 +103,7 @@ async function getDiscover(req, res) {
         WITH ranked AS (
           SELECT
             id, category, item_type, title, description, cover_image_url,
-            release_date, creators, genres, external_id, source_api, source_url,
+            release_date, physical_release_date, creators, genres, external_id, source_api, source_url,
             payload, fetched_at,
             -- Personalization score
             CASE WHEN category = ANY($${p1}) THEN 2 ELSE 0 END +
@@ -151,7 +151,7 @@ async function getDiscover(req, res) {
       sql = `
         SELECT
           id, category, item_type, title, description, cover_image_url,
-          release_date, creators, genres, external_id, source_api, source_url,
+          release_date, physical_release_date, creators, genres, external_id, source_api, source_url,
           payload, fetched_at,
           -- Personalization score
           CASE WHEN category = ANY($${paramIndex++}) THEN 2 ELSE 0 END +
@@ -199,6 +199,7 @@ async function getDiscover(req, res) {
         description: row.description,
         coverImageUrl: row.cover_image_url,
         releaseDate: row.release_date,
+        physicalReleaseDate: row.physical_release_date,
         creators: row.creators,
         genres: row.genres,
         externalId: row.external_id,
@@ -218,6 +219,7 @@ async function getDiscover(req, res) {
       description: row.description,
       coverImageUrl: row.cover_image_url,
       releaseDate: row.release_date,
+      physicalReleaseDate: row.physical_release_date,
       creators: row.creators,
       genres: row.genres,
       externalId: row.external_id,

@@ -126,6 +126,9 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
       JOIN collectables c ON c.id = uc.collectable_id
       WHERE uc.user_id = $1 AND c.external_id IS NOT NULL
     ),
+    seen_news_ids AS (
+      SELECT news_item_id FROM user_news_seen WHERE user_id = $1
+    ),
     candidates AS (
       SELECT
         ni.id,
@@ -179,12 +182,17 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
             AND (profile.format_4k_count::float / NULLIF(profile.movie_count, 0)) >= $7
           )
         )
+        AND ni.id NOT IN (SELECT news_item_id FROM seen_news_ids)
     ),
     ranked AS (
       SELECT *,
         ROW_NUMBER() OVER (
           PARTITION BY category, item_type
           ORDER BY relevance_score DESC,
+                   -- Time-based rotation: rotate item priority by day of year
+                   ((id + EXTRACT(DOY FROM NOW())::int) % 100),
+                   -- Random shuffle within same score tier
+                   RANDOM(),
                    COALESCE(physical_release_date, release_date) DESC NULLS LAST,
                    (payload->>'popularity')::float DESC NULLS LAST
         ) AS rn

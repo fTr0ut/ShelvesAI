@@ -17,6 +17,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AccountSlideMenu } from '../components/ui';
 import NewsFeed from '../components/news/NewsFeed';
+import NewsSection from '../components/news/NewsSection';
+import QuickCheckInModal from '../components/news/QuickCheckInModal';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -110,13 +112,32 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [commentTexts, setCommentTexts] = useState({});
     const [pendingComments, setPendingComments] = useState({});
 
+    // Check-in modal state for news recommendations
+    const [checkInModalVisible, setCheckInModalVisible] = useState(false);
+    const [selectedNewsItem, setSelectedNewsItem] = useState(null);
+
+    // Personalization refresh rate limiting (only refresh once per minute)
+    const [lastPersonalizationRefresh, setLastPersonalizationRefresh] = useState(null);
+    const PERSONALIZATION_RATE_LIMIT_MS = 60 * 1000; // 1 minute
+
+    const handleNewsCheckIn = useCallback((newsItem) => {
+        setSelectedNewsItem(newsItem);
+        setCheckInModalVisible(true);
+    }, []);
+
+    const handleCloseCheckIn = useCallback(() => {
+        setCheckInModalVisible(false);
+        setSelectedNewsItem(null);
+    }, []);
+
     const load = useCallback(async (opts = {}) => {
+        const { silent, forceRefreshPersonalizations } = opts;
         if (!token) {
             setEntries([]);
             setLoading(false);
             return;
         }
-        if (!opts.silent) setLoading(true);
+        if (!silent) setLoading(true);
 
         // Map tab key to backend scope
         let scope = 'global';
@@ -124,7 +145,12 @@ export default function SocialFeedScreen({ navigation, route }) {
         else if (activeFilter === 'all') scope = 'all';
 
         try {
-            const result = await apiRequest({ apiBase, path: `/api/feed?scope=${scope}`, token });
+            // Add refreshPersonalizations flag when rate limit allows
+            let path = `/api/feed?scope=${scope}`;
+            if (forceRefreshPersonalizations) {
+                path += '&refreshPersonalizations=1';
+            }
+            const result = await apiRequest({ apiBase, path, token });
             // Filter out shelf.created events as requested (legacy logic preserved)
             const filtered = (result.entries || []).filter(e => e.eventType !== 'shelf.created');
             setEntries(filtered);
@@ -170,7 +196,19 @@ export default function SocialFeedScreen({ navigation, route }) {
 
     const onRefresh = () => {
         setRefreshing(true);
-        load({ silent: true });
+
+        // Check if we should refresh personalizations (rate-limited to once per minute)
+        const now = Date.now();
+        const canRefreshPersonalizations =
+            activeFilter === 'all' &&
+            (!lastPersonalizationRefresh ||
+                now - lastPersonalizationRefresh >= PERSONALIZATION_RATE_LIMIT_MS);
+
+        if (canRefreshPersonalizations) {
+            setLastPersonalizationRefresh(now);
+        }
+
+        load({ silent: true, forceRefreshPersonalizations: canRefreshPersonalizations });
         loadUnreadCount();
     };
 
@@ -492,27 +530,17 @@ export default function SocialFeedScreen({ navigation, route }) {
         const isRatingEvent = eventType === 'item.rated';
 
         if (isNewsRecommendation) {
-            const previewItems = (items || []).slice(0, 3);
-            const totalItems = item?.eventItemCount || items?.length || 0;
-            const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
-            const summaryText = buildSummaryText(itemPreviews, totalItems);
-            const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
+            // Extract category and itemType from metadata or first item
+            const groupKey = item?.metadata?.groupKey || '';
+            const [category, itemType] = groupKey.split(':');
+            const newsItems = items || [];
             const sectionTitle = item?.displayHints?.sectionTitle || 'Discover picks';
             const newsTime = formatRelativeTime(item.createdAt);
-            const handleNewsItemPress = (preview) => {
-                if (preview?.collectableId) {
-                    navigation.navigate('CollectableDetail', { collectableId: String(preview.collectableId) });
-                } else {
-                    setActiveFilter('news');
-                }
-            };
 
+            // Render as event-card framed slider matching other feed entries
             return (
-                <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={handlePress}
-                    style={styles.feedCard}
-                >
+                <View style={styles.feedCard}>
+                    {/* Header matching other feed cards */}
                     <View style={styles.cardHeader}>
                         <View style={[styles.avatar, styles.newsAvatar]}>
                             <Ionicons name="newspaper-outline" size={20} color={colors.primary} />
@@ -522,37 +550,19 @@ export default function SocialFeedScreen({ navigation, route }) {
                                 <Text style={styles.username}>{displayName}</Text>
                                 <Text style={styles.timestamp}>{newsTime}</Text>
                             </View>
-                            <Text style={styles.shelfAction}>
-                                {sectionTitle}{summaryText ? `: ${summaryText}` : ''}
-                            </Text>
+                            <Text style={styles.shelfAction}>{sectionTitle}</Text>
                         </View>
                     </View>
 
-                    {coverItems.length > 0 && (
-                        <View style={styles.coverRow}>
-                            {coverItems.map((item, idx) => (
-                                <TouchableOpacity
-                                    key={idx}
-                                    activeOpacity={item.collectableId ? 0.7 : 1}
-                                    disabled={!item.collectableId}
-                                    onPress={() => handleNewsItemPress(item)}
-                                    style={idx > 0 ? { marginLeft: -8 } : null}
-                                >
-                                    <Image
-                                        source={{ uri: item.coverUrl }}
-                                        style={styles.coverThumb}
-                                        resizeMode="cover"
-                                    />
-                                </TouchableOpacity>
-                            ))}
-                            {totalItems > coverItems.length && (
-                                <View style={styles.moreCoversChip}>
-                                    <Text style={styles.moreCoversText}>+{totalItems - coverItems.length}</Text>
-                                </View>
-                            )}
-                        </View>
-                    )}
-                </TouchableOpacity>
+                    {/* Horizontal slider with news cards */}
+                    <NewsSection
+                        category={category || newsItems[0]?.category}
+                        itemType={itemType || newsItems[0]?.itemType}
+                        items={newsItems}
+                        onCheckIn={handleNewsCheckIn}
+                        hideHeader={true}
+                    />
+                </View>
             );
         }
 
@@ -906,6 +916,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                         colors={[colors.primary]}
                     />
                 }
+                ItemSeparatorComponent={() => <View style={styles.separator} />}
                 ListHeaderComponent={
                     <View style={styles.headerSpacer} />
                 }
@@ -1099,6 +1110,13 @@ export default function SocialFeedScreen({ navigation, route }) {
                 navigation={navigation}
                 user={user}
             />
+
+            {/* Quick Check-In Modal for News Items */}
+            <QuickCheckInModal
+                visible={checkInModalVisible}
+                onClose={handleCloseCheckIn}
+                newsItem={selectedNewsItem}
+            />
         </SafeAreaView>
     );
 }
@@ -1184,7 +1202,7 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         ...shadows.sm,
     },
     separator: {
-        height: spacing.sm,
+        height: spacing.md,
     },
     cardHeader: {
         flexDirection: 'row',

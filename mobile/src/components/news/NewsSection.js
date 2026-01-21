@@ -17,14 +17,14 @@ const formatTitle = (category, type) => {
     return `${t} ${cat}`;
 };
 
-const NewsSection = ({ category, itemType, items, onCheckIn }) => {
+const NewsSection = ({ category, itemType, items, onCheckIn, hideHeader = false }) => {
     const { colors, spacing, typography } = useTheme();
 
     if (!items || items.length === 0) return null;
 
     const styles = StyleSheet.create({
         container: {
-            marginBottom: spacing.xl,
+            marginBottom: hideHeader ? 0 : spacing.xl,
         },
         header: {
             paddingHorizontal: spacing.md,
@@ -50,11 +50,13 @@ const NewsSection = ({ category, itemType, items, onCheckIn }) => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>
-                    {formatTitle(category, itemType)}
-                </Text>
-            </View>
+            {!hideHeader && (
+                <View style={styles.header}>
+                    <Text style={styles.title}>
+                        {formatTitle(category, itemType)}
+                    </Text>
+                </View>
+            )}
 
             <FlatList
                 horizontal
