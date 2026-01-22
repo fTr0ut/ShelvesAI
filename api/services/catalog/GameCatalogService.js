@@ -3,6 +3,7 @@ const {
   makeCollectableFingerprint,
   makeLightweightFingerprint,
 } = require('../collectables/fingerprint');
+const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -15,18 +16,6 @@ const DEFAULT_MAX_RESULTS = 8;
 
 const IGDB_BASE_URL = 'https://api.igdb.com/v4';
 const IGDB_AUTH_URL = 'https://id.twitch.tv/oauth2/token';
-
-const GAME_TYPE_HINTS = new Set([
-  'game',
-  'games',
-  'video game',
-  'video games',
-  'nintendo',
-  'playstation',
-  'xbox',
-  'switch',
-  'pc games',
-]);
 
 const IGDB_REGION_MAP = {
   1: 'Europe',
@@ -155,11 +144,11 @@ class GameCatalogService {
     this.timeoutMs = Number.isFinite(options.timeoutMs)
       ? options.timeoutMs
       : Number.parseInt(process.env.IGDB_TIMEOUT_MS || '', 10) ||
-        DEFAULT_TIMEOUT_MS;
+      DEFAULT_TIMEOUT_MS;
     this.maxResults = Number.isFinite(options.maxResults)
       ? options.maxResults
       : Number.parseInt(process.env.IGDB_MAX_RESULTS || '', 10) ||
-        DEFAULT_MAX_RESULTS;
+      DEFAULT_MAX_RESULTS;
 
     const envRequestsPerSecond = coerceNumber(
       process.env.IGDB_REQUESTS_PER_SECOND,
@@ -192,13 +181,7 @@ class GameCatalogService {
   }
 
   supportsShelfType(type) {
-    const normalized = normalizeString(type).toLowerCase();
-    if (!normalized) return false;
-    if (normalized === 'games' || normalized === 'game') return true;
-    for (const hint of GAME_TYPE_HINTS) {
-      if (normalized.includes(hint)) return true;
-    }
-    return false;
+    return shelfTypeSupports(type, 'games');
   }
 
   shouldRunSecondPass(type, unresolvedCount) {
@@ -353,7 +336,7 @@ class GameCatalogService {
     let query = this.buildSearchQuery({ title, limit: this.maxResults });
     let usingPlatformFilter = false;
 
-    for (let attempt = 0; attempt <= retries; ) {
+    for (let attempt = 0; attempt <= retries;) {
       try {
         const payload = await this.callIgdb('games', query);
         if (!Array.isArray(payload) || payload.length === 0) {
@@ -726,7 +709,7 @@ class GameCatalogService {
     );
     const keywords = uniqueStrings(
       (Array.isArray(game.keywords) ? game.keywords.map((k) => k?.name) : []) ||
-        [],
+      [],
     );
     if (game.collection?.name) keywords.push(game.collection.name);
     if (Array.isArray(game.franchises)) {
@@ -739,37 +722,37 @@ class GameCatalogService {
     const coverXL = igdbImageUrl(game.cover?.image_id, 't_cover_big_2x');
     const screenshots = Array.isArray(game.screenshots)
       ? game.screenshots
-          .map((shot) => {
-            const large = igdbImageUrl(shot?.image_id, 't_screenshot_huge');
-            const medium = igdbImageUrl(shot?.image_id, 't_screenshot_big');
-            const small = igdbImageUrl(shot?.image_id, 't_thumb');
-            if (!large && !medium && !small) return null;
-            return {
-              kind: 'screenshot',
-              urlLarge: large || medium || small || null,
-              urlMedium: medium || large || small || null,
-              urlSmall: small || medium || large || null,
-              provider: 'igdb',
-            };
-          })
-          .filter(Boolean)
+        .map((shot) => {
+          const large = igdbImageUrl(shot?.image_id, 't_screenshot_huge');
+          const medium = igdbImageUrl(shot?.image_id, 't_screenshot_big');
+          const small = igdbImageUrl(shot?.image_id, 't_thumb');
+          if (!large && !medium && !small) return null;
+          return {
+            kind: 'screenshot',
+            urlLarge: large || medium || small || null,
+            urlMedium: medium || large || small || null,
+            urlSmall: small || medium || large || null,
+            provider: 'igdb',
+          };
+        })
+        .filter(Boolean)
       : [];
     const artworks = Array.isArray(game.artworks)
       ? game.artworks
-          .map((art) => {
-            const large = igdbImageUrl(art?.image_id, 't_1080p');
-            const medium = igdbImageUrl(art?.image_id, 't_720p');
-            const small = igdbImageUrl(art?.image_id, 't_thumb');
-            if (!large && !medium && !small) return null;
-            return {
-              kind: 'artwork',
-              urlLarge: large || medium || small || null,
-              urlMedium: medium || large || small || null,
-              urlSmall: small || medium || large || null,
-              provider: 'igdb',
-            };
-          })
-          .filter(Boolean)
+        .map((art) => {
+          const large = igdbImageUrl(art?.image_id, 't_1080p');
+          const medium = igdbImageUrl(art?.image_id, 't_720p');
+          const small = igdbImageUrl(art?.image_id, 't_thumb');
+          if (!large && !medium && !small) return null;
+          return {
+            kind: 'artwork',
+            urlLarge: large || medium || small || null,
+            urlMedium: medium || large || small || null,
+            urlSmall: small || medium || large || null,
+            provider: 'igdb',
+          };
+        })
+        .filter(Boolean)
       : [];
 
     const images = [];
@@ -860,12 +843,12 @@ class GameCatalogService {
           first_release_date: game.first_release_date || null,
           release_dates: Array.isArray(game.release_dates)
             ? game.release_dates.map((rd) => ({
-                date: rd?.date || null,
-                human: rd?.human || null,
-                region: rd?.region || null,
-                regionName: rd?.region ? IGDB_REGION_MAP[rd.region] || null : null,
-                platform: rd?.platform?.name || rd?.platform?.abbreviation || null,
-              }))
+              date: rd?.date || null,
+              human: rd?.human || null,
+              region: rd?.region || null,
+              regionName: rd?.region ? IGDB_REGION_MAP[rd.region] || null : null,
+              platform: rd?.platform?.name || rd?.platform?.abbreviation || null,
+            }))
             : [],
         },
       },
@@ -1097,9 +1080,9 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
 
       const baseDeveloper = normalizeString(
         corr.developer ||
-          corr.primaryCreator ||
-          original.primaryCreator ||
-          original.developer,
+        corr.primaryCreator ||
+        original.primaryCreator ||
+        original.developer,
       );
 
       const platforms = clampArray(corr.platforms).map(normalizeString);
@@ -1262,18 +1245,18 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       collectable.images = Array.isArray(collectable.images)
         ? collectable.images
         : collectable.images
-        ? [collectable.images]
-        : [];
+          ? [collectable.images]
+          : [];
       collectable.tags = Array.isArray(collectable.tags)
         ? collectable.tags
         : collectable.tags
-        ? [collectable.tags]
-        : [];
+          ? [collectable.tags]
+          : [];
       collectable.sources = Array.isArray(collectable.sources)
         ? collectable.sources
         : collectable.sources
-        ? [collectable.sources]
-        : [];
+          ? [collectable.sources]
+          : [];
       collectable.identifiers = collectable.identifiers || {};
       collectable.physical = collectable.physical || {};
       return collectable;
@@ -1339,7 +1322,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
     let loggedReason = null;
     this._waitingCount += 1;
     try {
-      for (;;) {
+      for (; ;) {
         const now = Date.now();
         const minInterval = this._minRequestIntervalMs;
         const timeSinceLast = now - this._lastRequestTime;

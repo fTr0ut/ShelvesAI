@@ -1,0 +1,76 @@
+{
+    "types": {
+        "books": {
+            "canonical": "books",
+            "aliases": [
+                "book",
+                "novel",
+                "novels",
+                "comic",
+                "manga"
+            ],
+            "apiContainerKey": "books",
+            "catalogService": "BookCatalogService"
+        },
+        "movies": {
+            "canonical": "movies",
+            "aliases": [
+                "movie",
+                "film",
+                "films",
+                "blu-ray",
+                "bluray",
+                "dvd",
+                "4k",
+                "uhd",
+                "vhs"
+            ],
+            "apiContainerKey": "movies",
+            "catalogService": "MovieCatalogService"
+        },
+        "games": {
+            "canonical": "games",
+            "aliases": [
+                "game",
+                "video game",
+                "video games",
+                "nintendo",
+                "playstation",
+                "xbox",
+                "switch",
+                "pc games"
+            ],
+            "apiContainerKey": "games",
+            "catalogService": "GameCatalogService"
+        },
+        "tv": {
+            "canonical": "tv",
+            "aliases": [
+                "television",
+                "series",
+                "tv show",
+                "tv shows"
+            ],
+            "apiContainerKey": "tv",
+            "catalogService": "TvCatalogService"
+        },
+        "vinyl": {
+            "canonical": "vinyl",
+            "aliases": [
+                "album",
+                "record",
+                "lp",
+                "records"
+            ],
+            "apiContainerKey": "vinyl",
+            "catalogService": null
+        },
+        "other": {
+            "canonical": "other",
+            "aliases": [],
+            "apiContainerKey": null,
+            "catalogService": null
+        }
+    },
+    "defaultType": "other"
+}

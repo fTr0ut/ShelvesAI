@@ -10,6 +10,7 @@ const {
   lookupWorkByISBN,
 } = require('../openLibrary');
 const { HardcoverClient } = require('../hardcover');
+const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 
 // Config-driven router (optional, for gradual migration)
 let catalogRouter = null;
@@ -27,15 +28,6 @@ function getCatalogRouter() {
 
 const DEFAULT_CONCURRENCY = 5;
 const DEFAULT_RETRIES = 2;
-
-const BOOK_TYPE_HINTS = new Set([
-  'book',
-  'books',
-  'novel',
-  'novels',
-  'comic',
-  'manga',
-]);
 
 function normalizeString(value) {
   return String(value || '').trim();
@@ -72,15 +64,7 @@ class BookCatalogService {
   }
 
   supportsShelfType(type) {
-    const normalized = normalizeString(type).toLowerCase();
-    if (!normalized) return false;
-    if (normalized === 'books') return true;
-
-    for (const hint of BOOK_TYPE_HINTS) {
-      if (normalized.includes(hint)) return true;
-    }
-
-    return false;
+    return shelfTypeSupports(type, 'books');
   }
 
   shouldRunSecondPass(type, unresolvedCount) {

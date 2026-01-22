@@ -1,22 +1,10 @@
 const fetch = require('node-fetch');
 const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { tmdbMovieToCollectable } = require('../../adapters/tmdb.adapter');
+const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
-
-const MOVIE_TYPE_HINTS = new Set([
-  'movie',
-  'movies',
-  'film',
-  'films',
-  'blu-ray',
-  'bluray',
-  'dvd',
-  '4k',
-  'uhd',
-  'vhs',
-]);
 
 const DEFAULT_BASE_URL = 'https://api.themoviedb.org/3';
 const DEFAULT_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p';
@@ -95,13 +83,7 @@ class MovieCatalogService {
   }
 
   supportsShelfType(type) {
-    const normalized = normalizeString(type).toLowerCase();
-    if (!normalized) return false;
-    if (normalized === 'movies' || normalized === 'movie') return true;
-    for (const hint of MOVIE_TYPE_HINTS) {
-      if (normalized.includes(hint)) return true;
-    }
-    return false;
+    return shelfTypeSupports(type, 'movies');
   }
 
   shouldRunSecondPass(type, unresolvedCount) {
