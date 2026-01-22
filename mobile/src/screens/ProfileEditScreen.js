@@ -125,6 +125,7 @@ export default function ProfileEditScreen({ navigation }) {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${token}`,
+                    'ngrok-skip-browser-warning': 'true',
                 },
                 body: formData,
             });

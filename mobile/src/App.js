@@ -82,6 +82,7 @@ function guessApiBase() {
 
   const envUseNgrok = process.env.EXPO_PUBLIC_USE_NGROK
   const envNgrokUrl = process.env.EXPO_PUBLIC_NGROK_URL
+  console.log('[guessApiBase] envUseNgrok:', envUseNgrok, 'envNgrokUrl:', envNgrokUrl)
   if (isTruthy(envUseNgrok) && envNgrokUrl) return envNgrokUrl
 
   const extra = getExtraConfig()
@@ -194,8 +195,9 @@ export default function App() {
       try {
         const res = await fetch(`${apiBase}/api/account`, {
           headers: {
-            Authorization: `Bearer ${token}`
-          }
+            Authorization: `Bearer ${token}`,
+            'ngrok-skip-browser-warning': 'true',
+          },
         })
         if (!res.ok) return
         const data = await res.json()

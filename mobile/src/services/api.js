@@ -43,6 +43,7 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
     method,
     headers: {
       'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },

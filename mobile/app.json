@@ -27,9 +27,10 @@
       "package": "com.shelvesai.app",
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
@@ -40,6 +41,11 @@
           "cameraPermission": "Allow Shelves.AI to capture your shelves."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "fc24bb32-ca24-4e79-b843-c87916d0f3de"
+      }
+    }
   }
 }

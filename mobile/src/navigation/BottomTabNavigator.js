@@ -50,7 +50,6 @@ function CustomTabBarButton({ children, onPress, onPressIn, menuProgress, style,
             {...props}
             style={[
                 styles.fabWrap,
-                { ...shadows.lg },
                 buttonStyle,
                 style,
             ]}
@@ -65,6 +64,7 @@ function CustomTabBarButton({ children, onPress, onPressIn, menuProgress, style,
                         backgroundColor: colors.primary,
                         borderColor: colors.surface,
                     },
+                    shadows.lg,
                 ]}
             >
                 <Animated.View style={iconStyle}>{children}</Animated.View>

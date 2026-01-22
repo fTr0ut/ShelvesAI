@@ -156,7 +156,7 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
         },
     });
 
-    if (!isVisible && menuProgress.value === 0) {
+    if (!isVisible) {
         return null;
     }
 

@@ -261,7 +261,10 @@ export default function ProfileScreen({ navigation, route }) {
 
             const res = await fetch(`${apiBase}/api/profile/photo`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'ngrok-skip-browser-warning': 'true',
+                },
                 body: formData,
             });
 

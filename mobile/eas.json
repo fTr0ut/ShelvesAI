@@ -11,6 +11,10 @@
             },
             "ios": {
                 "simulator": true
+            },
+            "env": {
+                "EXPO_PUBLIC_USE_NGROK": "true",
+                "EXPO_PUBLIC_NGROK_URL": "https://nonresilient-rylan-nondebilitating.ngrok-free.dev"
             }
         },
         "preview": {
