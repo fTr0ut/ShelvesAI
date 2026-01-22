@@ -5,7 +5,7 @@
         "prompt": "You are assisting with cataloging physical collections. Identify the visible items on a shelf described as: {shelfDescription}.\n Look for Title or Item name, Brand or Publisher or Manufacturer, Age statements, Special markings, UPC barcode if available, and then use this information to search for item description(s), Year released, Regional information, and Edition(s) if applicable. Your confidence score should be weighted based on Item name or title and brand or manufactor name and less on the optional items requested. \nReturn ONLY a valid JSON array of objects.Examples: [{\"title\": \"Wellers\", \"primaryCreator\": \"Buffalo Trace\", \"Age statement\": \"12 years\", \"Year\": \"2025\", \"Special Marking\": \"Gold top\", \"Color or label color\": \"White\", \"Regional\": \"USA\", \"Edition\": \"Limited\", \"Description\": \"Aged bourbon\", \"barcode\": \"123456789012\", \"confidence\": \"0.95\"}],\nIf no items are visible, return []."
     },
     "types": {
-        "book": {
+        "books": {
             "confidenceMax": 0.92,
             "confidenceMin": 0.85,
             "prompt": "You are cataloging a book shelf. Identify all visible books by reading their spines.\nFor each book, extract:\n- title: The book title\n- author: The author name (usually printed on the spine)\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"1984\", \"author\": \"George Orwell\", \"confidence\": 0.95}]\nIf no books are visible, return []."

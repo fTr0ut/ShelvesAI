@@ -13,6 +13,7 @@ const { MovieCatalogService } = require("../services/catalog/MovieCatalogService
 const { GoogleGeminiService } = require('../services/googleGemini');
 // const { GoogleCloudVisionService } = require('../services/googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const { VisionPipelineService } = require('../services/visionPipeline');
+const { getVisionPipelineHooks } = require('../services/visionPipelineHooks');
 const processingStatus = require('../services/processingStatus');
 
 // PostgreSQL imports
@@ -906,8 +907,10 @@ async function processShelfVision(req, res) {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { imageBase64, metadata: requestMetadata = {}, async: asyncMode = true } = req.body ?? {};
-    if (!imageBase64) return res.status(400).json({ error: "imageBase64 is required" });
+    const { imageBase64, rawItems, metadata: requestMetadata = {}, async: asyncMode = true } = req.body ?? {};
+    if (!imageBase64 && (!Array.isArray(rawItems) || rawItems.length === 0)) {
+      return res.status(400).json({ error: "imageBase64 or rawItems are required" });
+    }
 
     // Premium Check
     if (!req.user.isPremium) {
@@ -924,14 +927,18 @@ async function processShelfVision(req, res) {
     processingStatus.createJob(jobId, req.user.id, shelf.id);
 
     // Instantiate new Pipeline
-    const pipeline = new VisionPipelineService();
+    const hooks = getVisionPipelineHooks();
+    const pipeline = new VisionPipelineService({ hooks });
+    const pipelineOptions = Array.isArray(rawItems) && rawItems.length > 0
+      ? { rawItems, ocrProvider: 'mlkit' }
+      : null;
 
     // If async mode (default), return immediately with jobId
     if (asyncMode) {
       // Start processing in background
       (async () => {
         try {
-          const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId);
+          const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, pipelineOptions);
 
           // Mark job complete with result
           processingStatus.completeJob(jobId, {
@@ -962,7 +969,7 @@ async function processShelfVision(req, res) {
     }
 
     // Synchronous mode (for backwards compatibility)
-    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId);
+    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, pipelineOptions);
     processingStatus.completeJob(jobId, result);
 
     // Get updated shelf items

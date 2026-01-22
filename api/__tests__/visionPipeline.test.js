@@ -9,7 +9,10 @@ jest.mock('../database/queries/collectables');
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/shelves');
 jest.mock('../services/collectables/fingerprint', () => ({
-    makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title)
+    makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title),
+    makeVisionOcrFingerprint: jest.fn(() => 'ocr-fingerprint'),
+    makeCollectableFingerprint: jest.fn(() => 'collectable-fingerprint'),
+    makeManualFingerprint: jest.fn(() => 'manual-fingerprint'),
 }));
 jest.mock('../services/catalog/BookCatalogService');
 
@@ -67,7 +70,7 @@ describe('VisionPipelineService', () => {
     });
 
     it('should integrate catalog results', async () => {
-        mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [{ title: 'Known Book', confidence: 0.9 }] });
+        mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [{ title: 'Known Book', confidence: 0.95 }] });
 
         const mockCatalog = {
             search: jest.fn().mockResolvedValue([{ title: 'Known Book', authors: ['Author'], id: 'cat-1' }])

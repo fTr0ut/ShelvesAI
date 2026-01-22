@@ -27,17 +27,17 @@ flowchart TD
     I --> J
 ```
 
-### Step 1: Extract Items (Gemini Vision)
-- **Service**: `GoogleGeminiService.detectShelfItemsFromImage()`
-- **Input**: Base64 image, shelf type, optional shelf description
+### Step 1: Extract Items (Vision OCR)
+- **Service**: `GoogleGeminiService.detectShelfItemsFromImage()` (or MLKit `rawItems` when OCR is disabled)
+- **Input**: Base64 image (Gemini) or `rawItems` (MLKit), shelf type, optional shelf description
 - **Output**: Array of detected items with title, author/primaryCreator, confidence scores (and genre/runtime when available)
 - **Prompt tokens**: `visionSettings.json` supports `{shelfType}` and optional `{shelfDescription}` (description injects only when the token is present)
 
 ### Step 1b: Tiered Confidence Categorization
 - **Thresholds**: `VISION_CONFIDENCE_MAX` (default: 0.92), `VISION_CONFIDENCE_MIN` (default: 0.85)
-- **High confidence (≥ 0.92)** → Standard workflow (fingerprint → catalog → enrichment)
-- **Medium confidence (0.85 - 0.92)** → Fingerprint lookup only → special "uncertain" enrichment (skips catalog APIs)
-- **Low confidence (< 0.85)** → Sent directly to `needs_review` queue
+- **High confidence (>= 0.92)** -> Standard workflow (fingerprint -> catalog -> enrichment)
+- **Medium confidence (0.85 - 0.92)** -> Fingerprint lookup -> manual save when unmatched
+- **Low confidence (< 0.85)** -> Sent directly to `needs_review` queue
 
 ### Other Shelf (Manual-Only Path)
 - **Scope**: Only when `shelf.type === "other"`
@@ -48,14 +48,14 @@ flowchart TD
 - **Progress step**: Uses `preparingOther` progress message before save
 
 ### Step 2: Fingerprint Lookup (PostgreSQL)
-- **Service**: `matchCollectable()` → hash-based lookups only
+- **Service**: `matchCollectable()` -> hash-based lookups only
 - **Lookup Order**:
   1. `fingerprint` column (exact hash from catalog/enrichment data)
   2. `lightweight_fingerprint` column (title + creator hash)
   3. `fuzzy_fingerprints` array (raw OCR hashes from previous enrichments)
 - **Purpose**: Check if item already exists in local database via fast hash lookups
-- **Match found** → Item is ready for shelf (skip catalog/enrichment)
-- **No match** → Continue to Step 3
+- **Match found** -> Item is ready for shelf (skip catalog/enrichment)
+- **No match** -> Continue to Step 3
 
 ### Step 3: Catalog Lookup (External APIs)
 - **Service**: `BookCatalogService.lookupFirstPass()` (or Game/Movie variants)
@@ -64,23 +64,53 @@ flowchart TD
   1. Hardcover (if configured)
   2. OpenLibrary (fallback)
 - **Purpose**: Enrich item with metadata from external catalogs
-- **Resolved** → Item is ready for shelf
-- **Unresolved** → Continue to Step 4
+- **Toggle**: Skips when `VISION_CATALOG_ENABLED=false`
+- **Resolved** -> Item is ready for shelf
+- **Unresolved** -> Continue to Step 4
 
 ### Step 4: Gemini Enrichment (Conditional)
 - **Service**: `GoogleGeminiService.enrichWithSchema()`
 - **Condition**: Only runs if BOTH fingerprint AND catalog failed
+- **Toggle**: Skips when `VISION_ENRICHMENT_ENABLED=false` (unresolved items route to `needs_review`)
 - **Purpose**: Last-resort AI enrichment for unknown items
 - **Fuzzy Fingerprint**: When enrichment succeeds, the raw OCR hash is stored in `fuzzy_fingerprints` array so future scans with the same "bad" spelling can match directly
 
 ### Step 5: Save to Shelf
 - **Other shelf**: Uses `saveManualToShelf()` with `shelvesQueries.addManual()` and manual fingerprint dedupe.
-- **Service**: `saveToShelf()` → `shelvesQueries.addCollectable()`
+- **Medium confidence (non-other)**: Unmatched items save as manual entries via `saveManualToShelf()`.
+- **Service**: `saveToShelf()` -> `shelvesQueries.addCollectable()`
 - **Actions**:
   - Upsert collectable to database
   - Persist `genre` (array) and `runtime` (minutes, when present) on collectables/manuals
   - Link collectable to user's shelf
-  - Any post-enrichment low-confidence items → `needs_review` queue
+  - Any post-enrichment low-confidence items -> `needs_review` queue
+
+## Vision Pipeline Hooks
+The vision pipeline exposes hooks at key transitions for observability and extension.
+See [hooks.md](file:///c:/Users/johna/Documents/Projects/ShelvesAI/AGENTS/hooks.md) for detailed hook contexts.
+
+### Available Hooks
+| Hook | Trigger | Use Cases |
+|------|---------|-----------|
+| afterVisionOCR | After OCR extraction completes | Logging, metrics, pre-filtering |
+| afterConfidenceCategorization | After tier split | Analytics, QA sampling |
+| afterFingerprintLookup | After DB matching (per tier) | Match-rate tracking |
+| afterCatalogLookup | After catalog lookup | API success metrics |
+| afterGeminiEnrichment | After Gemini enrichment | Enrichment quality checks |
+| beforeCollectableSave | Before collectable upsert | Validation, custom enrichment |
+| beforeManualSave | Before manual entry save | Validation, custom normalization |
+| afterShelfUpsert | After shelf item add | Auditing, downstream triggers |
+| afterNeedsReviewQueue | After needs_review insert | Review queue monitoring |
+
+### Registering Hooks
+```javascript
+const { getVisionPipelineHooks, HOOK_TYPES } = require('./visionPipelineHooks');
+
+const hooks = getVisionPipelineHooks();
+hooks.register(HOOK_TYPES.AFTER_VISION_OCR, async (ctx) => {
+  console.log(`Extracted ${ctx.items.length} items`);
+});
+```
 
 ---
 
@@ -89,6 +119,7 @@ flowchart TD
 | File | Purpose |
 |------|---------|
 | [visionPipeline.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/visionPipeline.js) | Main workflow orchestration |
+| [visionPipelineHooks.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/visionPipelineHooks.js) | Hook registry and execution |
 | [googleGemini.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/googleGemini.js) | Vision detection + AI enrichment |
 | [BookCatalogService.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/BookCatalogService.js) | Book catalog lookups |
 | [CatalogRouter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/CatalogRouter.js) | Config-driven API routing |
@@ -103,6 +134,10 @@ flowchart TD
 |--------------|---------|------------|
 | `VISION_CONFIDENCE_MAX` | `0.92` | Default high confidence threshold (fallback) |
 | `VISION_CONFIDENCE_MIN` | `0.85` | Default medium confidence threshold (fallback) |
+| `VISION_HOOKS_ENABLED` | `true` | Master toggle for vision hooks |
+| `VISION_OCR_ENABLED` | `true` | Enable/disable Gemini Vision OCR |
+| `VISION_CATALOG_ENABLED` | `true` | Enable/disable catalog API lookups |
+| `VISION_ENRICHMENT_ENABLED` | `true` | Enable/disable Gemini enrichment |
 | `USE_CATALOG_ROUTER` | `false` | Enable config-driven API routing |
 | `DISABLE_HARDCOVER` | `false` | Skip Hardcover API (env override) |
 | `DISABLE_OPENLIBRARY` | `false` | Skip OpenLibrary API (env override) |
@@ -220,7 +255,7 @@ Manual add and needs_review flows use a centralized [CollectableMatchingService]
 ```mermaid
 flowchart LR
     A[User fills form] --> B[POST /manual/search]
-    B --> C{Suggestions?}
+    B --> C{Suggestions->}
     C -->|Yes| D[Show picker]
     D -->|Pick one| E[Link existing]
     D -->|Add anyway| F[Create manual]
@@ -326,8 +361,8 @@ To comply with API Terms of Service, cover art and attribution are handled per-p
 | Provider | Cover Policy | Attribution Required |
 |----------|-------------|---------------------|
 | **OpenLibrary** | `'external'` - Must hot-link from `covers.openlibrary.org` | Courtesy link to book page |
-| **TMDB** | `null` → cached locally | Logo + disclaimer + link |
-| **Hardcover** | `null` → cached locally | None |
+| **TMDB** | `null` -> cached locally | Logo + disclaimer + link |
+| **Hardcover** | `null` -> cached locally | None |
 
 ### Attribution JSONB Structure
 
@@ -340,14 +375,14 @@ To comply with API Terms of Service, cover art and attribution are handled per-p
 }
 ```
 
-- `logoKey` maps to bundled SVG in mobile app (e.g., `tmdb` → `tmdb-logo.svg`)
+- `logoKey` maps to bundled SVG in mobile app (e.g., `tmdb` -> `tmdb-logo.svg`)
 - Mobile renders what's present; no provider-specific conditionals
 
 ### Caching Logic (media.js)
 
 ```mermaid
 flowchart LR
-    A[ensureCoverMediaForCollectable] --> B{coverImageSource?}
+    A[ensureCoverMediaForCollectable] --> B{coverImageSource->}
     B -->|'external'| C[Skip caching]
     B -->|null| D[Download & cache]
     D --> E[Update cover_image_url, set source='local']

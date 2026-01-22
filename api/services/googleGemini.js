@@ -45,20 +45,22 @@ function resolveVisionCategory(shelfType) {
 /**
  * Get vision settings for a specific shelf type
  * @param {string} shelfType
- * @returns {{ confidenceMax: number, confidenceMin: number, prompt: string }}
+ * @returns {{ confidenceMax: number, confidenceMin: number, prompt: string, enrichmentPrompt: string|null }}
  */
 function getVisionSettingsForType(shelfType) {
     const defaults = visionSettings?.defaults || {
         confidenceMax: 0.92,
         confidenceMin: 0.85,
-        prompt: null
+        prompt: null,
+        enrichmentPrompt: null
     };
     const typeKey = resolveVisionSettingsKey(shelfType);
     const typeSettings = typeKey ? visionSettings?.types?.[typeKey] || {} : {};
     return {
         confidenceMax: typeSettings.confidenceMax ?? defaults.confidenceMax,
         confidenceMin: typeSettings.confidenceMin ?? defaults.confidenceMin,
-        prompt: typeSettings.prompt || defaults.prompt || null
+        prompt: typeSettings.prompt || defaults.prompt || null,
+        enrichmentPrompt: typeSettings.enrichmentPrompt || defaults.enrichmentPrompt || null
     };
 }
 
@@ -228,6 +230,11 @@ Do not include explanations or markdown.`;
 
         const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
         const categoryKey = resolveVisionCategory(normalizedKind);
+
+        // Check visionSettings.json for type-specific enrichment prompt first
+        const visionTypeSettings = getVisionSettingsForType(shelfType);
+
+        // Fallback category prompts if no config-driven enrichmentPrompt exists
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
             game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
@@ -235,7 +242,8 @@ Do not include explanations or markdown.`;
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
-        const specificInstruction = categoryPrompts[categoryKey] || categoryPrompts['book'];
+        // Use config enrichmentPrompt if available, otherwise fall back to category defaults
+        const specificInstruction = visionTypeSettings.enrichmentPrompt || categoryPrompts[categoryKey] || categoryPrompts['book'];
 
         const itemText = items.map(i => {
             return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
@@ -363,6 +371,11 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
         const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
         const categoryKey = resolveVisionCategory(normalizedKind);
+
+        // Check visionSettings.json for type-specific enrichment prompt first
+        const visionTypeSettings = getVisionSettingsForType(shelfType);
+
+        // Fallback category prompts if no config-driven enrichmentPrompt exists
         const categoryPrompts = {
             book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
             game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
@@ -370,7 +383,8 @@ Return ONLY valid JSON array. No markdown, no explanation.
             music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
         };
 
-        const specificInstruction = categoryPrompts[categoryKey] || categoryPrompts['book'];
+        // Use config enrichmentPrompt if available, otherwise fall back to category defaults
+        const specificInstruction = visionTypeSettings.enrichmentPrompt || categoryPrompts[categoryKey] || categoryPrompts['book'];
         const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
 
         const prompt = `You are an expert librarian and cataloguer with extensive knowledge of published works. The following items were extracted via OCR but recognition is UNCERTAIN or PARTIAL. Text may be incomplete or misspelled.
