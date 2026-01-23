@@ -120,18 +120,7 @@ export default function LoginScreen() {
                         />
                     </View>
 
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Password</Text>
-                        <TextInput
-                            style={styles.input}
-                            value={password}
-                            onChangeText={setPassword}
-                            placeholder="Enter password"
-                            placeholderTextColor={colors.textMuted}
-                            secureTextEntry
-                            editable={!loading}
-                        />
-                    </View>
+
 
                     {isRegister && (
                         <View style={styles.inputGroup}>
@@ -149,6 +138,19 @@ export default function LoginScreen() {
                             />
                         </View>
                     )}
+                    
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Password</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={password}
+                            onChangeText={setPassword}
+                            placeholder="Enter password"
+                            placeholderTextColor={colors.textMuted}
+                            secureTextEntry
+                            editable={!loading}
+                        />
+                    </View>
 
                     {isRegister && (
                         <View style={styles.inputGroup}>

@@ -417,6 +417,25 @@ async function findByFuzzyFingerprint(fuzzyFp) {
 }
 
 /**
+ * Find collectable by name search using trigram similarity.
+ * Returns the best match if it meets the similarity threshold.
+ * Useful for movies/TV where director is not visible on spine - matches by title only.
+ *
+ * @param {string} title - Item title to search for
+ * @param {string} kind - Type filter (book, game, movie, tv)
+ * @param {number} threshold - Minimum similarity score (0.0-1.0), default 0.4
+ * @returns {Promise<Object|null>} Best matching collectable or null
+ */
+async function findByNameSearch(title, kind, threshold = 0.4) {
+    if (!title) return null;
+    const results = await searchByTitle(title, kind, 1);
+    if (results.length > 0 && results[0].sim >= threshold) {
+        return results[0];
+    }
+    return null;
+}
+
+/**
  * Add a fuzzy fingerprint to an existing collectable's fuzzy_fingerprints array.
  * This is used to store raw OCR hashes that map to this collectable.
  */
@@ -440,6 +459,7 @@ module.exports = {
     findByFingerprint,
     findByLightweightFingerprint,
     findByFuzzyFingerprint,
+    findByNameSearch,
     findBySourceId,
     findById,
     searchByTitle,

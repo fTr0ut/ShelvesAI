@@ -13,12 +13,19 @@
         "movies": {
             "confidenceMax": 0.80,
             "confidenceMin": 0.70,
+            "nameSearchThreshold": 0.4,
             "prompt": "You are cataloging a movie/Blu-ray/DVD shelf. Identify all visible movies by reading their spines.\nFor each movie, extract:\n- title: The movie title\n- author: The director name ONLY if explicitly printed on the spine (usually NOT visible on movie spines - set to null if not clearly printed)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Directors are rarely printed on movie spines. Do NOT guess the director. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy, not whether you found a director.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Inception\", \"author\": null, \"confidence\": 0.95}]\nIf no movies are visible, return []."
         },
         "games": {
             "confidenceMax": 0.85,
             "confidenceMin": 0.75,
             "prompt": "You are cataloging a video game shelf. Identify all visible games by reading their covers or spines.\nFor each game, extract:\n- title: The game title\n- author: The publisher/developer ONLY if clearly printed on the spine or cover (often NOT visible - set to null if not clear)\n- systemName: The console/system name (e.g., PlayStation 5, Nintendo Switch) ONLY if clearly visible - set to null if not clear\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Publishers and systems are sometimes on game spines but not always. Do NOT guess. Only include author/systemName if clearly visible. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"The Last of Us\", \"author\": \"Naughty Dog\", \"systemName\": \"PlayStation 4\", \"confidence\": 0.9}]\nIf no games are visible, return []."
+        },
+        "tv": {
+            "confidenceMax": 0.80,
+            "confidenceMin": 0.70,
+            "nameSearchThreshold": 0.4,
+            "prompt": "You are cataloging a TV series/show shelf. Identify all visible TV series by reading their spines.\nFor each TV series, extract:\n- title: The series title\n- author: The creator/showrunner ONLY if explicitly printed on the spine (usually NOT visible - set to null if not clearly printed)\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Creators are rarely printed on TV show spines. Do NOT guess. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Breaking Bad\", \"author\": null, \"confidence\": 0.95}]\nIf no TV series are visible, return []."
         },
         "vinyl": {
                 "confidenceMax": 0.85,

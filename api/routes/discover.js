@@ -5,8 +5,8 @@
  */
 
 const express = require('express');
-const { optionalAuth } = require('../middleware/auth');
-const { getDiscover, getDiscoverStats } = require('../controllers/discoverController');
+const { auth, optionalAuth } = require('../middleware/auth');
+const { getDiscover, getDiscoverStats, dismissDiscoverItem } = require('../controllers/discoverController');
 
 const router = express.Router();
 
@@ -18,5 +18,8 @@ router.get('/', getDiscover);
 
 // GET /api/discover/stats - Get cache statistics
 router.get('/stats', getDiscoverStats);
+
+// POST /api/discover/dismiss - Dismiss a discover item with a negative vote
+router.post('/dismiss', auth, dismissDiscoverItem);
 
 module.exports = router;

@@ -48,14 +48,31 @@ flowchart TD
 - **Progress step**: Uses `preparingOther` progress message before save
 
 ### Step 2: Fingerprint Lookup (PostgreSQL)
-- **Service**: `matchCollectable()` -> hash-based lookups only
-- **Lookup Order**:
+- **Service**: `matchCollectable()` -> shelf-type-aware lookups
+- **Lookup Order** (always):
   1. `fingerprint` column (exact hash from catalog/enrichment data)
   2. `lightweight_fingerprint` column (title + creator hash)
-  3. `fuzzy_fingerprints` array (raw OCR hashes from previous enrichments)
+  3. **Shelf-type-specific secondary lookup** (see below)
 - **Purpose**: Check if item already exists in local database via fast hash lookups
 - **Match found** -> Item is ready for shelf (skip catalog/enrichment)
 - **No match** -> Continue to Step 3
+
+#### Shelf-Type-Specific Secondary Lookup
+
+Different media types have different metadata visibility on spines:
+
+| Shelf Type | Secondary Lookup | Rationale |
+|------------|------------------|-----------|
+| **books** | Fuzzy fingerprint (OCR hash) | Author is usually visible on spine |
+| **movies** | Name search (trigram similarity) | Director is rarely visible on Blu-ray/DVD spines |
+| **tv** | Name search (trigram similarity) | Creator is rarely visible on TV show spines |
+| **games** | Fuzzy fingerprint (OCR hash) | Publisher is sometimes visible |
+
+**Name Search** uses PostgreSQL `pg_trgm` trigram similarity on title only. Threshold is configurable per-type in `visionSettings.json` (default: 0.4).
+
+**Fuzzy Fingerprint** checks the `fuzzy_fingerprints` JSONB array for raw OCR hashes stored from previous enrichments.
+
+For detailed documentation on the matching process, see [MatchCollectable.md](MatchCollectable.md).
 
 ### Step 3: Catalog Lookup (External APIs)
 - **Service**: `BookCatalogService.lookupFirstPass()` (or Game/Movie variants)
@@ -123,9 +140,12 @@ hooks.register(HOOK_TYPES.AFTER_VISION_OCR, async (ctx) => {
 | [googleGemini.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/googleGemini.js) | Vision detection + AI enrichment |
 | [BookCatalogService.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/BookCatalogService.js) | Book catalog lookups |
 | [CatalogRouter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/catalog/CatalogRouter.js) | Config-driven API routing |
+| [shelfType.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/shelfType.json) | Shelf type definitions + aliases |
+| [shelfTypeResolver.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/config/shelfTypeResolver.js) | Shelf type resolution utility |
 | [apiContainers.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/apiContainers.json) | API priority configuration |
-| [visionSettings.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/visionSettings.json) | Per-type prompts & confidence thresholds |
-| [collectables.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/collectables.js) | Fingerprint + fuzzy matching queries |
+| [visionSettings.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/visionSettings.json) | Per-type prompts, thresholds & name search config |
+| [collectables.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/collectables.js) | Fingerprint + fuzzy matching + name search queries |
+| [MatchCollectable.md](MatchCollectable.md) | Detailed documentation of matching process |
 
 ## Configuration
 
@@ -146,15 +166,40 @@ hooks.register(HOOK_TYPES.AFTER_VISION_OCR, async (ctx) => {
 
 Configured in [visionSettings.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/visionSettings.json):
 
-| Type | Max Threshold | Min Threshold | Notes |
-|------|---------------|---------------|-------|
-| `book` | 0.92 | 0.85 | Standard - author usually visible on spine |
-| `movie` | 0.80 | 0.70 | Lower - director rarely on Blu-ray spines |
-| `game` | 0.85 | 0.75 | Lower - publisher sometimes visible |
-| `vinyl` | 0.85 | 0.75 | Standard - artist usually visible |
+| Type | Max Threshold | Min Threshold | Name Search Threshold | Notes |
+|------|---------------|---------------|----------------------|-------|
+| `books` | 0.92 | 0.85 | N/A | Author usually visible on spine |
+| `movies` | 0.80 | 0.70 | 0.4 | Director rarely on Blu-ray spines; uses title-only matching |
+| `tv` | 0.80 | 0.70 | 0.4 | Creator rarely visible; uses title-only matching |
+| `games` | 0.85 | 0.75 | N/A | Publisher sometimes visible |
+| `vinyl` | 0.85 | 0.75 | N/A | Artist usually visible |
 
 Each type also has a custom prompt that tells Gemini what metadata to expect (e.g., movies prompt explicitly states directors are rarely visible).
 Prompts may include `{shelfDescription}` to inject the shelf description; when absent, no description is added.
+
+The `nameSearchThreshold` is used for movies/TV where the secondary lookup uses trigram similarity on title only (instead of fuzzy fingerprints).
+
+### Shelf Type Configuration
+
+Shelf types are defined in [shelfType.json](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/config/shelfType.json). Each type uses **plural as canonical** (e.g., `books`, `movies`, `games`):
+
+```json
+{
+  "types": {
+    "books": {
+      "canonical": "books",
+      "aliases": ["book", "novel", "novels", "comic", "manga"],
+      "apiContainerKey": "books",
+      "catalogService": "BookCatalogService"
+    }
+  }
+}
+```
+
+**Adding a new shelf type:**
+1. Add entry to `shelfType.json` with canonical name, aliases, and API container key
+2. Create catalog service in `api/services/catalog/` if API lookups are needed
+3. Add prompts/thresholds to `visionSettings.json` for OCR behavior
 
 ---
 

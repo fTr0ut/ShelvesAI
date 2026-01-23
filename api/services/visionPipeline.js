@@ -54,8 +54,8 @@ function getProgressMessage(key, vars = {}) {
 }
 
 // Default tiered confidence thresholds (can be overridden per-type via visionSettings.json)
-// High confidence (≥ max): catalog workflow
-// Medium confidence (≥ min, < max): special enrichment only (skip catalog APIs)
+// High confidence (≥ max): fingerprint → catalog → enrichment workflow
+// Medium confidence (≥ min, < max): fingerprint → catalog → enrichment workflow (same as high)
 // Low confidence (< min): needs_review directly
 const DEFAULT_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '0.92');
 const DEFAULT_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
@@ -426,6 +426,7 @@ class VisionPipelineService {
             tier: 'high',
             matched,
             unmatched: unmatchedHigh,
+            lookupStrategy: this.normalizeShelfType(shelf.type),
         });
 
         // Step 3: Catalog lookup for unmatched HIGH confidence items only
@@ -508,13 +509,13 @@ class VisionPipelineService {
         }
 
         // ===== MEDIUM CONFIDENCE WORKFLOW (between min and max) =====
-        // Fingerprint lookup, then save unmatched to manual entries
+        // Fingerprint lookup, then catalog, then enrichment for unmatched
         checkAborted();
         updateProgress('matching', { count: mediumConfidence.length });
         const mediumMatched = [];
         const mediumUnmatched = [];
         if (mediumConfidence.length > 0) {
-            console.log('[VisionPipeline] Step 4b: Medium-confidence matching (fingerprint only)...');
+            console.log('[VisionPipeline] Step 4b: Medium-confidence matching (fingerprint first)...');
             for (const item of mediumConfidence) {
                 const collectable = await this.matchCollectable(item, shelf.type);
                 if (collectable) {
@@ -523,7 +524,7 @@ class VisionPipelineService {
                     mediumUnmatched.push(item);
                 }
             }
-            console.log('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Manual candidates:', mediumUnmatched.length);
+            console.log('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Unmatched:', mediumUnmatched.length);
 
             // Add DB matches to our matched list
             matched.push(...mediumMatched);
@@ -533,15 +534,133 @@ class VisionPipelineService {
             tier: 'medium',
             matched: mediumMatched,
             unmatched: mediumUnmatched,
+            lookupStrategy: this.normalizeShelfType(shelf.type),
         });
+
+        // Step 4c: Catalog lookup for medium-confidence unmatched items
+        checkAborted();
+        let mediumCatalogResults = { resolved: [], unresolved: mediumUnmatched };
+        if (mediumUnmatched.length > 0) {
+            if (this.catalogEnabled) {
+                updateProgress('catalog', { count: mediumUnmatched.length });
+                console.log('[VisionPipeline] Step 4c: Catalog lookup for', mediumUnmatched.length, 'medium-confidence items...');
+                mediumCatalogResults = await this.lookupCatalog(mediumUnmatched, shelf.type);
+                console.log('[VisionPipeline] Step 4c Complete: Catalog resolved:', mediumCatalogResults.resolved.length, ', Still unresolved:', mediumCatalogResults.unresolved.length);
+            } else {
+                console.log('[VisionPipeline] Step 4c: Skipped - catalog lookup disabled');
+            }
+        } else {
+            console.log('[VisionPipeline] Step 4c: Skipped - all medium-confidence items matched in database');
+        }
+        await this.executeHook(HOOK_TYPES.AFTER_CATALOG_LOOKUP, {
+            ...baseHookContext,
+            tier: 'medium',
+            resolved: mediumCatalogResults.resolved,
+            unresolved: mediumCatalogResults.unresolved,
+            skipped: !this.catalogEnabled || mediumUnmatched.length === 0,
+        });
+
+        // Step 4d: Enrichment for medium-confidence items that failed both fingerprint AND catalog
+        checkAborted();
+        let enrichedMediumConf = [];
+        let unresolvedMediumForManual = [];
+        if (mediumCatalogResults.unresolved.length > 0) {
+            if (this.enrichmentEnabled) {
+                updateProgress('enriching', { count: mediumCatalogResults.unresolved.length });
+                console.log('[VisionPipeline] Step 4d: Enrichment for', mediumCatalogResults.unresolved.length, 'unresolved medium-confidence items...');
+
+                const rawOcrFingerprints = new Map();
+                for (const item of mediumCatalogResults.unresolved) {
+                    const rawFp = makeVisionOcrFingerprint(
+                        item.title || item.name,
+                        item.author || item.primaryCreator || item.creator,
+                        item.kind || item.type || shelf.type,
+                    );
+                    if (rawFp) {
+                        rawOcrFingerprints.set(item.title || item.name, rawFp);
+                    }
+                }
+
+                // Use enrichUncertain for medium-confidence items if available
+                const enrichResult = typeof this.geminiService.enrichWithSchemaUncertain === 'function'
+                    ? await this.enrichUncertain(mediumCatalogResults.unresolved, shelf.type)
+                    : await this.enrichUnresolved(mediumCatalogResults.unresolved, shelf.type);
+
+                const enrichedArray = Array.isArray(enrichResult) ? enrichResult : enrichResult.items || [];
+                if (enrichResult.warning) {
+                    warnings.push(enrichResult.warning);
+                }
+                enrichedMediumConf = enrichedArray.map(enrichedItem => {
+                    const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
+                    const rawFp = rawOcrFingerprints.get(originalTitle);
+                    if (rawFp) {
+                        return { ...enrichedItem, rawOcrFingerprint: rawFp };
+                    }
+                    return enrichedItem;
+                });
+
+                console.log('[VisionPipeline] Step 4d Complete: Enriched', enrichedMediumConf.length, 'medium-confidence items');
+                await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
+                    ...baseHookContext,
+                    enrichedItems: enrichedMediumConf,
+                    warnings: warnings.length > 0 ? warnings : undefined,
+                    mode: 'uncertain',
+                    tier: 'medium',
+                    skipped: false,
+                });
+            } else {
+                console.log('[VisionPipeline] Step 4d: Skipped - enrichment disabled');
+                unresolvedMediumForManual = mediumCatalogResults.unresolved;
+                await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
+                    ...baseHookContext,
+                    enrichedItems: [],
+                    warnings: warnings.length > 0 ? warnings : undefined,
+                    mode: 'uncertain',
+                    tier: 'medium',
+                    skipped: true,
+                });
+            }
+        }
+
+        // Filter enriched medium-confidence items by confidence before deciding save vs manual
+        const {
+            highConfidence: enrichedMediumToSave,
+            mediumConfidence: enrichedMediumMid,
+            lowConfidence: enrichedMediumToManual
+        } = this.categorizeByConfidence(enrichedMediumConf, confidenceMax, confidenceMin);
+
+        // Medium+ enriched items can be saved as collectables
+        const mediumItemsToSave = [...mediumCatalogResults.resolved, ...enrichedMediumToSave, ...enrichedMediumMid];
+        // Low confidence enriched items and unresolved items go to manual
+        const mediumItemsToManual = [...enrichedMediumToManual, ...unresolvedMediumForManual];
+
+        console.log('[VisionPipeline] Step 4d: Medium-conf items split:', {
+            toSaveAsCollectable: mediumItemsToSave.length,
+            toSaveAsManual: mediumItemsToManual.length
+        });
+
+        // Save resolved medium-confidence items as collectables
+        let mediumAddedCollectables = [];
+        if (mediumItemsToSave.length > 0) {
+            checkAborted();
+            updateProgress('saving', { count: mediumItemsToSave.length });
+            mediumAddedCollectables = await this.saveToShelf(
+                mediumItemsToSave,
+                userId,
+                shelf.id,
+                shelf.type,
+                { ...baseHookContext, tier: 'medium' },
+            );
+            console.log('[VisionPipeline] Saved', mediumAddedCollectables.length, 'medium-confidence items as collectables');
+        }
 
         let manualAdded = [];
         let manualMatched = [];
         let manualSkipped = [];
-        if (mediumUnmatched.length > 0) {
+        if (mediumItemsToManual.length > 0) {
             checkAborted();
-            updateProgress('saving', { count: mediumUnmatched.length });
-            const manualResult = await this.saveManualToShelf(mediumUnmatched, userId, shelf.id, shelf.type, {
+            updateProgress('saving', { count: mediumItemsToManual.length });
+            const manualResult = await this.saveManualToShelf(mediumItemsToManual, userId, shelf.id, shelf.type, {
                 requireCreator: false,
                 hookContext: { ...baseHookContext, tier: 'medium' },
             });
@@ -624,7 +743,7 @@ class VisionPipelineService {
             shelf.type,
             baseHookContext,
         );
-        const addedItems = [...addedCollectables, ...manualAdded];
+        const addedItems = [...addedCollectables, ...mediumAddedCollectables, ...manualAdded];
         console.log('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
 
         if (addedItems.length > 0) {
@@ -873,11 +992,114 @@ class VisionPipelineService {
         return { highConfidence, mediumConfidence, lowConfidence };
     }
 
+    /**
+     * Normalize shelf type to canonical form.
+     * Maps singular to plural and handles common aliases.
+     * @param {string} shelfType - Raw shelf type
+     * @returns {string} Normalized shelf type
+     */
+    normalizeShelfType(shelfType) {
+        const normalized = String(shelfType || '').toLowerCase().trim();
+        const mappings = {
+            'book': 'books',
+            'movie': 'movies',
+            'film': 'movies',
+            'game': 'games',
+            'television': 'tv',
+            'series': 'tv',
+            'show': 'tv',
+        };
+        return mappings[normalized] || normalized;
+    }
+
+    /**
+     * Perform shelf-type-specific secondary lookup.
+     * Movies/TV use name search (director not visible on spine).
+     * Books/games use fuzzy fingerprint (creator usually visible).
+     * @param {object} item - Item to look up
+     * @param {string} shelfType - Shelf type
+     * @param {string} lwf - Lightweight fingerprint
+     * @returns {Promise<object|null>} Matching collectable or null
+     */
+    async shelfTypeSecondaryLookup(item, shelfType, lwf) {
+        const itemTitle = item.title || item.name;
+        const normalizedType = this.normalizeShelfType(shelfType);
+
+        switch (normalizedType) {
+            case 'movies':
+            case 'tv':
+                // Name search only (director not visible on spine)
+                // Get threshold from visionSettings.json if available
+                const typeSettings = getVisionSettingsForType(shelfType) || {};
+                const threshold = typeSettings.nameSearchThreshold ?? 0.4;
+                console.log('[VisionPipeline.matchCollectable] Using name search for', normalizedType, '(threshold:', threshold, ')');
+                return collectablesQueries.findByNameSearch(itemTitle, normalizedType, threshold);
+
+            case 'books':
+            case 'games':
+            default:
+                // Fuzzy fingerprint lookup (creator usually visible)
+                return this.fuzzyFingerprintLookup(item, shelfType, lwf);
+        }
+    }
+
+    /**
+     * Perform fuzzy fingerprint lookup for items where creator is visible.
+     * Checks OCR fingerprint first, then legacy fuzzy fingerprints array.
+     * @param {object} item - Item to look up
+     * @param {string} shelfType - Shelf type
+     * @param {string} lwf - Lightweight fingerprint
+     * @returns {Promise<object|null>} Matching collectable or null
+     */
+    async fuzzyFingerprintLookup(item, shelfType, lwf) {
+        const itemTitle = item.title || item.name;
+
+        // Check fuzzy OCR fingerprint
+        const ocrFingerprint = makeVisionOcrFingerprint(
+            itemTitle,
+            item.author || item.primaryCreator || item.creator,
+            item.kind || item.type || shelfType,
+        );
+        if (ocrFingerprint) {
+            console.log('[VisionPipeline.matchCollectable] Checking fuzzy OCR fingerprint:', ocrFingerprint);
+            const match = await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint);
+            if (match) {
+                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy OCR fingerprint:', match.id, match.title);
+                return match;
+            }
+        }
+
+        // Check legacy fuzzy fingerprints array
+        console.log('[VisionPipeline.matchCollectable] Checking legacy fuzzy fingerprints array:', lwf);
+        const legacyMatch = await collectablesQueries.findByFuzzyFingerprint(lwf);
+        if (legacyMatch) {
+            console.log('[VisionPipeline.matchCollectable] ✓ Found via legacy fuzzy fingerprint:', legacyMatch.id, legacyMatch.title);
+            return legacyMatch;
+        }
+
+        return null;
+    }
+
+    /**
+     * Match an item against the collectables database using shelf-type-aware strategies.
+     *
+     * Lookup order:
+     * 1. Fingerprint (if present from catalog)
+     * 2. Lightweight fingerprint (title + creator hash)
+     * 3. Shelf-type-specific secondary lookup:
+     *    - Books/Games: Fuzzy fingerprint (creator usually visible on spine)
+     *    - Movies/TV: Name search via trigram (director rarely visible on spine)
+     *
+     * @param {object} item - Item to match
+     * @param {string} shelfType - Shelf type for strategy selection
+     * @returns {Promise<object|null>} Matching collectable or null
+     */
     async matchCollectable(item, shelfType) {
         const itemTitle = item.title || item.name;
-        console.log('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle);
+        const normalizedType = this.normalizeShelfType(shelfType);
+        console.log('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle, '(shelfType:', normalizedType, ')');
 
-        // 1. Check by fingerprint (if present on item from catalog)
+        // 1. Always check fingerprint first (if present from catalog)
         if (item.fingerprint) {
             console.log('[VisionPipeline.matchCollectable] Checking fingerprint:', item.fingerprint);
             const byFp = await collectablesQueries.findByFingerprint(item.fingerprint);
@@ -887,40 +1109,22 @@ class VisionPipelineService {
             }
         }
 
-        // 2. Lightweight fingerprint (title + creator hash)
+        // 2. Always try lightweight fingerprint
         const lwf = makeLightweightFingerprint(item);
         console.log('[VisionPipeline.matchCollectable] Checking lightweight fingerprint:', lwf);
         let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-
         if (collectable) {
             console.log('[VisionPipeline.matchCollectable] ✓ Found via lightweight fingerprint:', collectable.id, collectable.title);
             return collectable;
         }
 
-        // 3. Fuzzy fingerprints array (raw OCR hashes stored from previous enrichments)
-        if (collectablesQueries.findByFuzzyFingerprint) {
-            const ocrFingerprint = makeVisionOcrFingerprint(
-                itemTitle,
-                item.author || item.primaryCreator || item.creator,
-                item.kind || item.type || shelfType,
-            );
-            if (ocrFingerprint) {
-                console.log('[VisionPipeline.matchCollectable] Checking fuzzy OCR fingerprint:', ocrFingerprint);
-                collectable = await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint);
-                if (collectable) {
-                    console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy OCR fingerprint:', collectable.id, collectable.title);
-                    return collectable;
-                }
-            }
-            console.log('[VisionPipeline.matchCollectable] Checking legacy fuzzy fingerprints array:', lwf);
-            collectable = await collectablesQueries.findByFuzzyFingerprint(lwf);
-            if (collectable) {
-                console.log('[VisionPipeline.matchCollectable] ✓ Found via legacy fuzzy fingerprint:', collectable.id, collectable.title);
-                return collectable;
-            }
+        // 3. Shelf-type-specific secondary lookup
+        collectable = await this.shelfTypeSecondaryLookup(item, shelfType, lwf);
+        if (collectable) {
+            return collectable;
         }
 
-        console.log('[VisionPipeline.matchCollectable] ✗ No hash match found for:', itemTitle);
+        console.log('[VisionPipeline.matchCollectable] ✗ No match found for:', itemTitle);
         return null;
     }
 

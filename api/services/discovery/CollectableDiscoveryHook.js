@@ -825,15 +825,25 @@ class CollectableDiscoveryHook {
 
     /**
      * Build payload from OpenLibrary enrichment
-     * @param {Object} data - OpenLibrary API result (from BookCatalogService)
+     * @param {Object} data - OpenLibrary API result (from BookCatalogService) or pre-transformed collectable
      * @param {Object} originalItem - Original news item (NYT bestseller)
      */
     _buildOpenLibraryPayload(data, originalItem) {
         if (!data) {
             return this._buildNytBooksPayload(null, originalItem);
         }
-        // Use the existing adapter transformer
-        const collectable = openLibraryToCollectable(data);
+
+        // Check if data is already a collectable (from CatalogRouter path)
+        // CatalogRouter's adapters pre-transform data using openLibraryToCollectable
+        let collectable;
+        if (data.__collectable || data.kind === 'book' || (data.title && data.identifiers)) {
+            // Data is already in collectable format, use it directly
+            collectable = data.__collectable ? data.collectable : data;
+        } else {
+            // Use the existing adapter transformer for raw OpenLibrary data
+            collectable = openLibraryToCollectable(data);
+        }
+
         if (!collectable) {
             return this._buildNytBooksPayload(null, originalItem);
         }
@@ -859,15 +869,25 @@ class CollectableDiscoveryHook {
 
     /**
      * Build payload from Hardcover enrichment
-     * @param {Object} data - Hardcover API result (from BookCatalogService)
+     * @param {Object} data - Hardcover API result (from BookCatalogService) or pre-transformed collectable
      * @param {Object} originalItem - Original news item (NYT bestseller)
      */
     _buildHardcoverPayload(data, originalItem) {
         if (!data) {
             return this._buildNytBooksPayload(null, originalItem);
         }
-        // Use the existing adapter transformer
-        const collectable = hardcoverToCollectable(data, {});
+
+        // Check if data is already a collectable (from CatalogRouter path)
+        // CatalogRouter's HardcoverAdapter pre-transforms data using hardcoverToCollectable
+        let collectable;
+        if (data.__collectable || data.kind === 'book' || (data.title && data.identifiers)) {
+            // Data is already in collectable format, use it directly
+            collectable = data.__collectable ? data.collectable : data;
+        } else {
+            // Use the existing adapter transformer for raw Hardcover API data
+            collectable = hardcoverToCollectable(data, {});
+        }
+
         if (!collectable) {
             return this._buildNytBooksPayload(null, originalItem);
         }

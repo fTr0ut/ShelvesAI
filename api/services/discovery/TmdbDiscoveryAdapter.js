@@ -5,6 +5,11 @@
  */
 
 const fetch = require('node-fetch');
+const { resolveShelfType } = require('../config/shelfTypeResolver');
+
+// Get canonical types at module load (cached)
+const MOVIES_CATEGORY = resolveShelfType('movie');
+const TV_CATEGORY = resolveShelfType('tv');
 
 const DEFAULT_BASE_URL = 'https://api.themoviedb.org/3';
 const DEFAULT_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
@@ -135,7 +140,7 @@ class TmdbDiscoveryAdapter {
 
   _normalizeMovies(results, itemType, limit = 20) {
     return results.slice(0, limit).map(movie => ({
-      category: 'movies',
+      category: MOVIES_CATEGORY,
       item_type: itemType,
       title: movie.title || movie.original_title,
       description: movie.overview || null,
@@ -160,7 +165,7 @@ class TmdbDiscoveryAdapter {
 
   _normalizeTV(results, itemType, limit = 20) {
     return results.slice(0, limit).map(show => ({
-      category: 'tv',
+      category: TV_CATEGORY,
       item_type: itemType,
       title: show.name || show.original_name,
       description: show.overview || null,

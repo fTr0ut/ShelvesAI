@@ -10,7 +10,7 @@ import CachedImage from '../ui/CachedImage';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 
-const NewsCard = ({ item, onCheckIn }) => {
+const NewsCard = ({ item, onCheckIn, onDismiss }) => {
     const { colors, spacing, typography, shadows } = useTheme();
 
     // Safety check
@@ -52,6 +52,13 @@ const NewsCard = ({ item, onCheckIn }) => {
         }
     };
 
+    const handleDismiss = (e) => {
+        e.stopPropagation();
+        if (onDismiss) {
+            onDismiss(item);
+        }
+    };
+
     const styles = StyleSheet.create({
         card: {
             width: 280,
@@ -69,6 +76,17 @@ const NewsCard = ({ item, onCheckIn }) => {
             width: '100%',
             backgroundColor: colors.background,
             position: 'relative',
+        },
+        dismissButton: {
+            position: 'absolute',
+            top: spacing.sm,
+            right: spacing.sm,
+            width: 28,
+            height: 28,
+            borderRadius: 14,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            alignItems: 'center',
+            justifyContent: 'center',
         },
         cover: {
             width: '100%',
@@ -163,6 +181,16 @@ const NewsCard = ({ item, onCheckIn }) => {
                         <Ionicons name="newspaper-outline" size={48} color={colors.textMuted} />
                     </View>
                 )}
+                {onDismiss ? (
+                    <TouchableOpacity
+                        style={styles.dismissButton}
+                        onPress={handleDismiss}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Dismiss ${title}`}
+                    >
+                        <Ionicons name="close" size={16} color={colors.textInverted} />
+                    </TouchableOpacity>
+                ) : null}
             </View>
 
             <View style={styles.content}>

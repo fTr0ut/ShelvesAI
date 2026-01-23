@@ -1,8 +1,8 @@
 /**
  * Migration: Create user_news_seen table
  *
- * Tracks which news items a user has dismissed ("don't show again").
- * Used to filter out seen items from recommendations.
+ * Tracks which news items a user has seen.
+ * Used to rotate personalized recommendations.
  */
 
 exports.up = async function (knex) {

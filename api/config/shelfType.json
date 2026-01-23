@@ -48,8 +48,11 @@
             "aliases": [
                 "television",
                 "series",
+                "show",
+                "shows",
                 "tv show",
-                "tv shows"
+                "tv shows",
+                "tv series"
             ],
             "apiContainerKey": "tv",
             "catalogService": "TvCatalogService"

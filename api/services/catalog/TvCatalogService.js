@@ -1,20 +1,11 @@
 const fetch = require('node-fetch');
 const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { tmdbTvToCollectable } = require('../../adapters/tmdbTv.adapter');
+const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 
 const AbortController =
     (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
-const TV_TYPE_HINTS = new Set([
-    'tv',
-    'television',
-    'series',
-    'show',
-    'shows',
-    'tv show',
-    'tv shows',
-    'tv series',
-]);
 
 const DEFAULT_BASE_URL = 'https://api.themoviedb.org/3';
 const DEFAULT_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p';
@@ -84,13 +75,7 @@ class TvCatalogService {
     }
 
     supportsShelfType(type) {
-        const normalized = normalizeString(type).toLowerCase();
-        if (!normalized) return false;
-        if (normalized === 'tv' || normalized === 'television') return true;
-        for (const hint of TV_TYPE_HINTS) {
-            if (normalized.includes(hint)) return true;
-        }
-        return false;
+        return shelfTypeSupports(type, 'tv');
     }
 
     async safeLookup(item, retries = this.retries) {

@@ -17,7 +17,7 @@ const formatTitle = (category, type) => {
     return `${t} ${cat}`;
 };
 
-const NewsSection = ({ category, itemType, items, onCheckIn, hideHeader = false }) => {
+const NewsSection = ({ category, itemType, items, onCheckIn, onDismiss, hideHeader = false }) => {
     const { colors, spacing, typography } = useTheme();
 
     if (!items || items.length === 0) return null;
@@ -66,6 +66,7 @@ const NewsSection = ({ category, itemType, items, onCheckIn, hideHeader = false 
                     <NewsCard
                         item={item}
                         onCheckIn={onCheckIn ? () => onCheckIn({ ...item, category }) : undefined}
+                        onDismiss={onDismiss ? () => onDismiss({ ...item, category, itemType }) : undefined}
                     />
                 )}
                 showsHorizontalScrollIndicator={false}

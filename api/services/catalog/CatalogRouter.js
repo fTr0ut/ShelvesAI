@@ -16,6 +16,7 @@ const {
     resolveBookMetadataMinScore,
     isBookContainer,
 } = require('./metadataScore');
+const { getApiContainerKey } = require('../config/shelfTypeResolver');
 
 // Load config - will be cached by require()
 let containersConfig;
@@ -55,6 +56,22 @@ class CatalogRouter {
         };
     }
 
+    wrapCollectableResult(result, meta = {}) {
+        if (!result || typeof result !== 'object') {
+            return result;
+        }
+        if (result.__collectable && result.collectable) {
+            return { ...result, ...meta };
+        }
+        const collectable = { ...result };
+        return {
+            ...result,
+            __collectable: true,
+            collectable,
+            ...meta,
+        };
+    }
+
     _loadAdapter(adapterName) {
         if (this._adapterInstances.has(adapterName)) {
             return this._adapterInstances.get(adapterName);
@@ -85,32 +102,10 @@ class CatalogRouter {
             return this.config[normalized];
         }
 
-        // Alias resolution for shelf types
-        const aliases = {
-            book: 'books',
-            novel: 'books',
-            manga: 'books',
-            comic: 'books',
-            game: 'games',
-            videogame: 'games',
-            'video game': 'games',
-            movie: 'movies',
-            film: 'movies',
-            dvd: 'movies',
-            bluray: 'movies',
-            'blu-ray': 'movies',
-            'tv show': 'tv',
-            'tv shows': 'tv',
-            series: 'tv',
-            television: 'tv',
-            record: 'vinyl',
-            album: 'vinyl',
-            music: 'vinyl',
-        };
-
-        const aliasKey = aliases[normalized];
-        if (aliasKey && this.config[aliasKey]) {
-            return this.config[aliasKey];
+        // Use shelfTypeResolver for alias resolution
+        const apiContainerKey = getApiContainerKey(containerType);
+        if (apiContainerKey && this.config[apiContainerKey]) {
+            return this.config[apiContainerKey];
         }
 
         return null;
@@ -219,11 +214,10 @@ class CatalogRouter {
                 if (result) {
                     if (!shouldScore || !Number.isFinite(minScore)) {
                         console.log(`[CatalogRouter] Hit on ${api.name}`);
-                        return {
-                            ...result,
+                        return this.wrapCollectableResult(result, {
                             _source: api.name,
                             _sourceIndex: apis.indexOf(api),
-                        };
+                        });
                     }
 
                     const metadata = scoreBookCollectable(result);
@@ -239,13 +233,12 @@ class CatalogRouter {
 
                     if (metadata.score >= minScore) {
                         console.log(`[CatalogRouter] Hit on ${api.name}`);
-                        return {
-                            ...result,
+                        return this.wrapCollectableResult(result, {
                             _source: api.name,
                             _sourceIndex: sourceIndex,
                             _metadataScore: metadata.score,
                             _metadataMissing: metadata.missing,
-                        };
+                        });
                     }
 
                     console.log(`[CatalogRouter] Low metadata score from ${api.name}, trying next API`, {
@@ -267,13 +260,12 @@ class CatalogRouter {
                 source: bestCandidate.source,
                 score: bestCandidate.metadata.score,
             });
-            return {
-                ...bestCandidate.result,
+            return this.wrapCollectableResult(bestCandidate.result, {
                 _source: bestCandidate.source,
                 _sourceIndex: bestCandidate.sourceIndex,
                 _metadataScore: bestCandidate.metadata.score,
                 _metadataMissing: bestCandidate.metadata.missing,
-            };
+            });
         }
 
         console.log('[CatalogRouter] All APIs exhausted, no result found');
@@ -326,7 +318,7 @@ class CatalogRouter {
         merged._sources = validResults.map(r => r._source);
 
         console.log(`[CatalogRouter] (merge) Combined results from:`, merged._sources);
-        return merged;
+        return this.wrapCollectableResult(merged);
     }
 
     /**

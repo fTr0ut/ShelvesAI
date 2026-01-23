@@ -549,13 +549,18 @@ async function runRefresh() {
   console.log('='.repeat(60));
 }
 
-// Run the job
-runRefresh()
-  .then(() => {
-    console.log('[News Cache] Job finished successfully');
-    process.exit(0);
-  })
-  .catch((err) => {
-    console.error('[News Cache] Job failed:', err);
-    process.exit(1);
-  });
+module.exports = {
+  runRefresh,
+};
+
+if (require.main === module) {
+  runRefresh()
+    .then(() => {
+      console.log('[News Cache] Job finished successfully');
+      process.exit(0);
+    })
+    .catch((err) => {
+      console.error('[News Cache] Job failed:', err);
+      process.exit(1);
+    });
+}

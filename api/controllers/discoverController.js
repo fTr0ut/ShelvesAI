@@ -6,6 +6,7 @@
  */
 
 const { query } = require('../database/pg');
+const { markNewsItemDismissed } = require('../database/queries/newsDismissed');
 
 /**
  * GET /api/discover
@@ -79,6 +80,10 @@ async function getDiscover(req, res) {
       conditions.push(`item_type = $${paramIndex++}`);
       params.push(item_type);
     }
+    if (userId) {
+      conditions.push(`news_items.id NOT IN (SELECT news_item_id FROM user_news_dismissed WHERE user_id = $${paramIndex++})`);
+      params.push(userId);
+    }
 
     // When fetching all categories, use window function to get balanced results per category/type
     // This ensures each category+item_type combination gets represented
@@ -108,14 +113,16 @@ async function getDiscover(req, res) {
             -- Personalization score
             CASE WHEN category = ANY($${p1}) THEN 2 ELSE 0 END +
             CASE WHEN creators && $${p2} THEN 3 ELSE 0 END +
-            CASE WHEN genres && $${p3} THEN 1 ELSE 0 END
+            CASE WHEN genres && $${p3} THEN 1 ELSE 0 END +
+            COALESCE(votes, 0)
             AS relevance_score,
             ROW_NUMBER() OVER (
               PARTITION BY category, item_type
               ORDER BY
                 CASE WHEN category = ANY($${p4}) THEN 2 ELSE 0 END +
                 CASE WHEN creators && $${p5} THEN 3 ELSE 0 END +
-                CASE WHEN genres && $${p6} THEN 1 ELSE 0 END DESC,
+                CASE WHEN genres && $${p6} THEN 1 ELSE 0 END +
+                COALESCE(votes, 0) DESC,
                 (payload->>'popularity')::float DESC NULLS LAST,
                 release_date DESC NULLS LAST
             ) as rn
@@ -156,7 +163,8 @@ async function getDiscover(req, res) {
           -- Personalization score
           CASE WHEN category = ANY($${paramIndex++}) THEN 2 ELSE 0 END +
           CASE WHEN creators && $${paramIndex++} THEN 3 ELSE 0 END +
-          CASE WHEN genres && $${paramIndex++} THEN 1 ELSE 0 END
+          CASE WHEN genres && $${paramIndex++} THEN 1 ELSE 0 END +
+          COALESCE(votes, 0)
           AS relevance_score
         FROM news_items
         WHERE ${conditions.join(' AND ')}
@@ -304,7 +312,52 @@ async function getDiscoverStats(req, res) {
   }
 }
 
+/**
+ * POST /api/discover/dismiss
+ *
+ * Marks a discover item as dismissed and applies a negative vote.
+ */
+async function dismissDiscoverItem(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const rawId = req.body?.newsItemId ?? req.body?.id;
+    const newsItemId = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(newsItemId)) {
+      return res.status(400).json({ success: false, error: 'Invalid news item id' });
+    }
+
+    const result = await query(
+      `UPDATE news_items
+       SET votes = COALESCE(votes, 0) - 1,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, votes`,
+      [newsItemId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, error: 'News item not found' });
+    }
+
+    try {
+      await markNewsItemDismissed(userId, newsItemId);
+    } catch (err) {
+      console.warn('[Discover] Failed to mark news item dismissed:', err.message);
+    }
+
+    return res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('[Discover] Dismiss error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to dismiss discover item' });
+  }
+}
+
 module.exports = {
   getDiscover,
-  getDiscoverStats
+  getDiscoverStats,
+  dismissDiscoverItem
 };

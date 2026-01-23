@@ -13,6 +13,10 @@
  */
 
 const fetch = require('node-fetch');
+const { resolveShelfType } = require('../config/shelfTypeResolver');
+
+// Get canonical type at module load (cached)
+const BOOKS_CATEGORY = resolveShelfType('book');
 
 const NYT_BASE_URL = 'https://api.nytimes.com/svc/books/v3';
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -140,7 +144,7 @@ class NytBooksDiscoveryAdapter {
             : (book.amazon_product_url || null);
 
         return {
-            category: 'books',
+            category: BOOKS_CATEGORY,
             item_type: itemType,
             title: normalizeString(book.title),
             description: normalizeString(book.description),

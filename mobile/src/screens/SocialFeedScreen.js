@@ -23,6 +23,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { toggleLike, addComment } from '../services/feedApi';
+import { dismissNewsItem } from '../services/newsApi';
 
 const FILTERS = [
     { key: 'all', label: 'All' },
@@ -111,6 +112,7 @@ export default function SocialFeedScreen({ navigation, route }) {
     // Inline comment state
     const [commentTexts, setCommentTexts] = useState({});
     const [pendingComments, setPendingComments] = useState({});
+    const [pendingNewsDismissals, setPendingNewsDismissals] = useState({});
 
     // Check-in modal state for news recommendations
     const [checkInModalVisible, setCheckInModalVisible] = useState(false);
@@ -128,6 +130,19 @@ export default function SocialFeedScreen({ navigation, route }) {
     const handleCloseCheckIn = useCallback(() => {
         setCheckInModalVisible(false);
         setSelectedNewsItem(null);
+    }, []);
+
+    const setPendingNewsDismiss = useCallback((newsItemId, isPending) => {
+        if (!newsItemId) return;
+        setPendingNewsDismissals((prev) => {
+            const next = { ...prev };
+            if (isPending) {
+                next[newsItemId] = true;
+            } else {
+                delete next[newsItemId];
+            }
+            return next;
+        });
     }, []);
 
     const load = useCallback(async (opts = {}) => {
@@ -163,6 +178,34 @@ export default function SocialFeedScreen({ navigation, route }) {
             setRefreshing(false);
         }
     }, [apiBase, token, activeFilter]);
+
+    const handleDismissNewsItem = useCallback(async (newsItem) => {
+        const targetId = Number.parseInt(newsItem?.id, 10);
+        if (!token || !Number.isFinite(targetId) || pendingNewsDismissals[targetId]) return;
+
+        setEntries((prevEntries) => prevEntries
+            .map((entry) => {
+                if (!entry || entry.eventType !== 'news.recommendation') return entry;
+                const filteredItems = Array.isArray(entry.items)
+                    ? entry.items.filter((item) => Number.parseInt(item?.id, 10) !== targetId)
+                    : [];
+                if (!filteredItems.length) return null;
+                return { ...entry, items: filteredItems, eventItemCount: filteredItems.length };
+            })
+            .filter(Boolean));
+
+        setPendingNewsDismiss(targetId, true);
+        try {
+            await dismissNewsItem({ apiBase, token, newsItemId: targetId });
+        } catch (err) {
+            console.error('Dismiss news item error:', err);
+        } finally {
+            setPendingNewsDismiss(targetId, false);
+            if (activeFilter === 'all') {
+                load({ silent: true, forceRefreshPersonalizations: true });
+            }
+        }
+    }, [activeFilter, apiBase, load, pendingNewsDismissals, setPendingNewsDismiss, token]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -570,6 +613,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                         itemType={itemType || newsItems[0]?.itemType}
                         items={newsItems}
                         onCheckIn={handleNewsCheckIn}
+                        onDismiss={handleDismissNewsItem}
                         hideHeader={true}
                     />
                 </View>

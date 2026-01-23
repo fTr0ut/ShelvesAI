@@ -1,10 +1,10 @@
 /**
- * Query functions for tracking seen/dismissed news items
+ * Query functions for tracking seen news items
  */
 const { query } = require('../pg');
 
 /**
- * Mark a news item as seen/dismissed for a user
+ * Mark a news item as seen for a user
  * @param {string} userId - User UUID
  * @param {number} newsItemId - News item ID
  * @returns {Promise<boolean>} - True if inserted, false if already existed
@@ -24,7 +24,7 @@ async function markNewsItemSeen(userId, newsItemId) {
 }
 
 /**
- * Mark multiple news items as seen/dismissed for a user
+ * Mark multiple news items as seen for a user
  * @param {string} userId - User UUID
  * @param {number[]} newsItemIds - News item IDs
  * @returns {Promise<number>} - Number of inserted rows

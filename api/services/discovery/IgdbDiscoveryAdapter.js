@@ -16,6 +16,10 @@
  */
 
 const fetch = require('node-fetch');
+const { resolveShelfType } = require('../config/shelfTypeResolver');
+
+// Get canonical type at module load (cached)
+const GAMES_CATEGORY = resolveShelfType('game');
 
 const IGDB_BASE_URL = 'https://api.igdb.com/v4';
 const IGDB_AUTH_URL = 'https://id.twitch.tv/oauth2/token';
@@ -249,7 +253,7 @@ class IgdbDiscoveryAdapter {
           : null);
 
       return {
-        category: 'games',
+        category: GAMES_CATEGORY,
         item_type: itemType,
         title: game.name,
         description: game.summary || null,

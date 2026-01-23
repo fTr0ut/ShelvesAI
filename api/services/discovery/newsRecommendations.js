@@ -169,6 +169,9 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
     seen_news_ids AS (
       SELECT news_item_id FROM user_news_seen WHERE user_id = $1
     ),
+    dismissed_news_ids AS (
+      SELECT news_item_id FROM user_news_dismissed WHERE user_id = $1
+    ),
     candidates AS (
       SELECT
         ni.id,
@@ -193,7 +196,8 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
         c.primary_creator AS collectable_primary_creator,
         CASE WHEN ni.category = ANY(coalesce(profile.categories, '{}'::text[])) THEN 2 ELSE 0 END +
         CASE WHEN ni.creators && coalesce(profile.creators, '{}'::text[]) THEN 3 ELSE 0 END +
-        CASE WHEN ni.genres && coalesce(profile.genres, '{}'::text[]) THEN 1 ELSE 0 END
+        CASE WHEN ni.genres && coalesce(profile.genres, '{}'::text[]) THEN 1 ELSE 0 END +
+        COALESCE(ni.votes, 0)
         AS relevance_score,
         array_remove(ARRAY[
           CASE WHEN ni.category = ANY(coalesce(profile.categories, '{}'::text[])) THEN 'category' END,
@@ -225,6 +229,7 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
           )
         )
         AND ni.id NOT IN (SELECT news_item_id FROM seen_news_ids)
+        AND ni.id NOT IN (SELECT news_item_id FROM dismissed_news_ids)
     ),
     ranked AS (
       SELECT *,
