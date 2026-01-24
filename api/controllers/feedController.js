@@ -396,11 +396,17 @@ async function getFeed(req, res) {
     const refreshPersonalizations = req.query.refreshPersonalizations === '1';
 
     const viewerId = req.user.id;
-    // const friendIds = await friendshipQueries.getAcceptedFriendIds(viewerId); // Used in legacy, not needed here
 
     let events = [];
 
     if (ownerOverride) {
+      // Security: Verify viewer has permission to see this user's feed
+      if (ownerOverride !== viewerId) {
+        const isFriend = await friendshipQueries.areFriends(viewerId, ownerOverride);
+        if (!isFriend) {
+          return res.status(403).json({ error: 'You do not have permission to view this feed' });
+        }
+      }
       events = await feedQueries.getMyFeed(ownerOverride, { limit, offset, type: typeFilter });
     } else if (scope === 'friends') {
       events = await feedQueries.getFriendsFeed(viewerId, { limit, offset, type: typeFilter });
@@ -561,6 +567,20 @@ async function getFeedEntryDetails(req, res) {
 
       const aggregate = rowToCamelCase(aggregateResult.rows[0]);
       const isCheckIn = aggregate.eventType === 'checkin.activity';
+      const isOwner = !!(viewerId && aggregate.userId && String(viewerId) === String(aggregate.userId));
+
+      if (isCheckIn && !isOwner) {
+        const visibility = aggregate.visibility || 'public';
+        if (visibility === 'friends') {
+          const isFriend = await friendshipQueries.areFriends(viewerId, aggregate.userId);
+          if (!isFriend) {
+            return res.status(403).json({ error: 'Viewer does not have access' });
+          }
+        } else if (visibility !== 'public') {
+          return res.status(403).json({ error: 'Viewer does not have access' });
+        }
+      }
+
       const resolvedShelfId = aggregate.shelfId;
       let shelf = null;
       if (!isCheckIn && resolvedShelfId) {

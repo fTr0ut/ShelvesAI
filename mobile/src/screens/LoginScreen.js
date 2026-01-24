@@ -14,7 +14,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, saveToken } from '../services/api';
 
-export default function LoginScreen() {
+export default function LoginScreen({ navigation }) {
     const { setToken, apiBase, setNeedsOnboarding, setUser } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -151,6 +151,15 @@ export default function LoginScreen() {
                             editable={!loading}
                         />
                     </View>
+
+                    {!isRegister && (
+                        <TouchableOpacity
+                            style={styles.forgotPassword}
+                            onPress={() => navigation.navigate('ForgotPassword')}
+                        >
+                            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+                        </TouchableOpacity>
+                    )}
 
                     {isRegister && (
                         <View style={styles.inputGroup}>
@@ -298,5 +307,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     toggleLink: {
         color: colors.primary,
         fontWeight: '600',
+    },
+    forgotPassword: {
+        alignSelf: 'flex-end',
+        marginTop: -spacing.xs,
+        marginBottom: spacing.md,
+    },
+    forgotPasswordText: {
+        fontSize: 13,
+        color: colors.primary,
     },
 });

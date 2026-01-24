@@ -3,6 +3,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const fs = require('fs');
 const cookie = require('cookie');
 const signature = require('cookie-signature');
@@ -130,6 +131,12 @@ app.use((req, _res, next) => {
 });
 
 app.use(express.json({ limit: '10mb' }));
+
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow media to be loaded cross-origin
+  contentSecurityPolicy: false, // API-only, CSP not needed
+}));
 
 const rawMediaRoot =
   process.env.MEDIA_CACHE_DIR ||

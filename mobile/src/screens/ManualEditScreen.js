@@ -23,13 +23,36 @@ export default function ManualEditScreen({ route, navigation }) {
 
     const manual = item?.manual || item?.manualSnapshot || {};
 
-    const [title, setTitle] = useState(manual?.title || '');
-    const [author, setAuthor] = useState(manual?.author || '');
+    // Basic info
+    const [title, setTitle] = useState(manual?.title || manual?.name || '');
+    const [author, setAuthor] = useState(manual?.author || manual?.primaryCreator || '');
     const [publisher, setPublisher] = useState(manual?.publisher || '');
     const [year, setYear] = useState(manual?.year?.toString() || '');
+    const [format, setFormat] = useState(manual?.format || '');
+
+    // Special attributes
+    const [edition, setEdition] = useState(manual?.edition || '');
+    const [limitedEdition, setLimitedEdition] = useState(manual?.limitedEdition || manual?.limited_edition || '');
+    const [ageStatement, setAgeStatement] = useState(manual?.ageStatement || manual?.age_statement || '');
+    const [specialMarkings, setSpecialMarkings] = useState(manual?.specialMarkings || manual?.special_markings || '');
+    const [labelColor, setLabelColor] = useState(manual?.labelColor || manual?.label_color || '');
+    const [regionalItem, setRegionalItem] = useState(manual?.regionalItem || manual?.regional_item || '');
+    const [barcode, setBarcode] = useState(manual?.barcode || '');
+
+    // Details
     const [description, setDescription] = useState(manual?.description || '');
+    const [itemSpecificText, setItemSpecificText] = useState(manual?.itemSpecificText || manual?.item_specific_text || '');
+    const [genre, setGenre] = useState(
+        Array.isArray(manual?.genre) ? manual.genre.join(', ') : (manual?.genre || '')
+    );
+
+    // Personal
     const [notes, setNotes] = useState(item?.notes || '');
     const [saving, setSaving] = useState(false);
+
+    // Track which optional sections have data to show them expanded
+    const hasSpecialAttributes = !!(edition || limitedEdition || ageStatement || specialMarkings || labelColor || regionalItem || barcode);
+    const [showSpecialAttributes, setShowSpecialAttributes] = useState(hasSpecialAttributes);
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
@@ -39,6 +62,11 @@ export default function ManualEditScreen({ route, navigation }) {
             return;
         }
 
+        // Parse genre string into array
+        const genreArray = genre.trim()
+            ? genre.split(',').map(g => g.trim()).filter(Boolean)
+            : [];
+
         try {
             setSaving(true);
             await apiRequest({
@@ -47,12 +75,26 @@ export default function ManualEditScreen({ route, navigation }) {
                 method: 'PUT',
                 token,
                 body: {
-                    title: title.trim(),
-                    author: author.trim(),
-                    publisher: publisher.trim(),
+                    // Basic info
+                    name: title.trim(),
+                    author: author.trim() || null,
+                    publisher: publisher.trim() || null,
                     year: year ? parseInt(year, 10) : null,
-                    description: description.trim(),
-                    notes: notes.trim(),
+                    format: format.trim() || null,
+                    // Special attributes
+                    edition: edition.trim() || null,
+                    limitedEdition: limitedEdition.trim() || null,
+                    ageStatement: ageStatement.trim() || null,
+                    specialMarkings: specialMarkings.trim() || null,
+                    labelColor: labelColor.trim() || null,
+                    regionalItem: regionalItem.trim() || null,
+                    barcode: barcode.trim() || null,
+                    // Details
+                    description: description.trim() || null,
+                    itemSpecificText: itemSpecificText.trim() || null,
+                    genre: genreArray.length > 0 ? genreArray : null,
+                    // Personal
+                    notes: notes.trim() || null,
                 },
             });
             navigation.goBack();
@@ -61,7 +103,11 @@ export default function ManualEditScreen({ route, navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, shelfId, item, title, author, publisher, year, description, notes, token, navigation]);
+    }, [
+        apiBase, shelfId, item, title, author, publisher, year, format,
+        edition, limitedEdition, ageStatement, specialMarkings, labelColor,
+        regionalItem, barcode, description, itemSpecificText, genre, notes, token, navigation
+    ]);
 
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
@@ -130,6 +176,149 @@ export default function ManualEditScreen({ route, navigation }) {
                             />
                         </View>
                     </View>
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Format</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={format}
+                            onChangeText={setFormat}
+                            placeholder="e.g., Hardcover, Vinyl, DVD"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving}
+                        />
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                        <Text style={styles.label}>Genre</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={genre}
+                            onChangeText={setGenre}
+                            placeholder="Comma-separated genres"
+                            placeholderTextColor={colors.textMuted}
+                            editable={!saving}
+                        />
+                    </View>
+
+                    {/* Special Attributes Section */}
+                    <TouchableOpacity
+                        style={styles.sectionHeader}
+                        onPress={() => setShowSpecialAttributes(!showSpecialAttributes)}
+                    >
+                        <Text style={styles.sectionTitle}>Special Attributes</Text>
+                        <Ionicons
+                            name={showSpecialAttributes ? 'chevron-up' : 'chevron-down'}
+                            size={20}
+                            color={colors.textSecondary}
+                        />
+                    </TouchableOpacity>
+
+                    {showSpecialAttributes && (
+                        <View style={styles.sectionContent}>
+                            <View style={styles.row}>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Edition</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={edition}
+                                        onChangeText={setEdition}
+                                        placeholder="e.g., First Edition"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Limited Edition</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={limitedEdition}
+                                        onChangeText={setLimitedEdition}
+                                        placeholder="e.g., #42 of 500"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.row}>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Age Statement</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={ageStatement}
+                                        onChangeText={setAgeStatement}
+                                        placeholder="e.g., 12 Year Old"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Label Color</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={labelColor}
+                                        onChangeText={setLabelColor}
+                                        placeholder="e.g., Black Label"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Special Markings</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    value={specialMarkings}
+                                    onChangeText={setSpecialMarkings}
+                                    placeholder="Unique markings or identifiers"
+                                    placeholderTextColor={colors.textMuted}
+                                    editable={!saving}
+                                />
+                            </View>
+
+                            <View style={styles.row}>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Regional Item</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={regionalItem}
+                                        onChangeText={setRegionalItem}
+                                        placeholder="e.g., Japan Import"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Barcode</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        value={barcode}
+                                        onChangeText={setBarcode}
+                                        placeholder="UPC / EAN"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving}
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Item Specific Text</Text>
+                                <TextInput
+                                    style={[styles.input, styles.textArea]}
+                                    value={itemSpecificText}
+                                    onChangeText={setItemSpecificText}
+                                    placeholder="Label text, inscriptions, etc."
+                                    placeholderTextColor={colors.textMuted}
+                                    multiline
+                                    numberOfLines={2}
+                                    textAlignVertical="top"
+                                    editable={!saving}
+                                />
+                            </View>
+                        </View>
+                    )}
 
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Description</Text>
@@ -233,6 +422,25 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     row: {
         flexDirection: 'row',
         gap: spacing.md,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.sm,
+        marginTop: spacing.sm,
+        marginBottom: spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    sectionTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.textSecondary,
+    },
+    sectionContent: {
+        marginBottom: spacing.md,
     },
     footer: {
         position: 'absolute',

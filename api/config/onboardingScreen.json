@@ -8,20 +8,28 @@
         "body": "Scan, catalog, and show off the collections you love with a little magic.",
         "icon": "sparkles"
       },
+            {
+        "key": "organize",
+        "title": "Organize Faster",
+        "subtitle": "Capture items in seconds",
+        "body": "Snap a photo of your whole shelf, or search, to fill your digital catalog without the manual work.",
+        "icon": "camera"
+      },
       {
         "key": "discover",
         "title": "Discover & Connect",
         "subtitle": "Follow collectors like you",
-        "body": "See what friends add, trade recommendations, and build your collector circle.",
+        "body": "See what friends add, discover new passions, and build your collector circle.",
         "icon": "people"
       },
       {
-        "key": "organize",
-        "title": "Organize Faster",
-        "subtitle": "Capture items in seconds",
-        "body": "Snap a photo or search to fill shelves without the manual work.",
-        "icon": "camera"
+        "key": "Checkin",
+        "title": "Check-in & Track",
+        "subtitle": "Share what you're up to",
+        "body": "Let your friends or the world know what you're currently watching, reading, or playing.",
+        "icon": "checkmark-circle"
       }
+
     ],
     "nextButtonLabel": "Next",
     "startButtonLabel": "Get Started"

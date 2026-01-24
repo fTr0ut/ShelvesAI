@@ -15,6 +15,8 @@ import * as SplashScreen from 'expo-splash-screen'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import LoginScreen from './screens/LoginScreen'
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen'
+import ResetPasswordScreen from './screens/ResetPasswordScreen'
 import SocialFeedScreen from './screens/SocialFeedScreen'
 import FeedDetailScreen from './screens/FeedDetailScreen'
 import ShelvesScreen from './screens/ShelvesScreen'
@@ -290,7 +292,11 @@ function AppNavigator({ token, needsOnboarding, navigationRef }) {
     <NavigationContainer ref={navigationRef} theme={navTheme} linking={linkingConfig}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!token ? (
-          <Stack.Screen name="Login" component={LoginScreen} />
+          <>
+            <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+          </>
         ) : needsOnboarding ? (
           <>
             <Stack.Screen name="OnboardingIntro" component={OnboardingPagerScreen} />

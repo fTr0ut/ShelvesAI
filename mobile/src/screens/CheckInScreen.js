@@ -312,7 +312,7 @@ export default function CheckInScreen() {
                                                 onPress={() => setVisibility('friends')}
                                             >
                                                 <Ionicons name="people-outline" size={16} color={visibility === 'friends' ? colors.textInverted : colors.text} />
-                                                <Text style={[styles.visibilityText, visibility === 'friends' && styles.visibilityTextActive]}>Friends</Text>
+                                                <Text style={[styles.visibilityText, visibility === 'friends' && styles.visibilityTextActive]}>Friends-only</Text>
                                             </TouchableOpacity>
                                         </View>
                                     </View>

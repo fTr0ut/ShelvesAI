@@ -3,6 +3,12 @@ const { Pool } = require('pg');
 // Parse DATABASE_URL or use individual env vars
 const connectionString = process.env.DATABASE_URL;
 
+// Validate required database configuration
+if (!connectionString && !process.env.DB_PASSWORD) {
+  console.error('FATAL: Database configuration missing. Set DATABASE_URL or DB_PASSWORD environment variable.');
+  process.exit(1);
+}
+
 const poolConfig = connectionString
   ? { connectionString, ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false }
   : {
@@ -10,7 +16,7 @@ const poolConfig = connectionString
       port: parseInt(process.env.DB_PORT || '5432', 10),
       database: process.env.DB_NAME || 'shelvesai',
       user: process.env.DB_USER || 'shelves',
-      password: process.env.DB_PASSWORD || 'localdev123',
+      password: process.env.DB_PASSWORD,
       max: parseInt(process.env.DB_POOL_MAX || '20', 10),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,

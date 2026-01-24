@@ -6,9 +6,78 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { URL } = require('url');
 const fetch = require('node-fetch');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
+
+// SSRF protection: blocked IP ranges and hostnames
+const BLOCKED_HOSTNAMES = new Set([
+    'localhost',
+    '127.0.0.1',
+    '0.0.0.0',
+    '::1',
+    'metadata.google.internal',
+    'metadata.google',
+    '169.254.169.254', // AWS/GCP metadata
+]);
+
+/**
+ * Check if an IP address is in a private range
+ */
+function isPrivateIP(ip) {
+    // IPv4 private ranges
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p))) return false;
+
+    // 10.0.0.0/8
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 127.0.0.0/8 (loopback)
+    if (parts[0] === 127) return true;
+    // 169.254.0.0/16 (link-local, includes cloud metadata)
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 0.0.0.0/8
+    if (parts[0] === 0) return true;
+
+    return false;
+}
+
+/**
+ * Validate URL for SSRF protection
+ */
+function validateUrlForSSRF(urlString) {
+    let parsed;
+    try {
+        parsed = new URL(urlString);
+    } catch {
+        throw new Error('Invalid URL format');
+    }
+
+    // Only allow http/https
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Only HTTP and HTTPS URLs are allowed');
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Check blocked hostnames
+    if (BLOCKED_HOSTNAMES.has(hostname)) {
+        throw new Error('URL hostname is not allowed');
+    }
+
+    // Check if hostname looks like an IP address
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+        if (isPrivateIP(hostname)) {
+            throw new Error('Private IP addresses are not allowed');
+        }
+    }
+
+    return parsed;
+}
 
 // Media storage configuration - use same cache directory as server.js
 const API_ROOT = path.resolve(__dirname, '..', '..');
@@ -169,6 +238,9 @@ async function deleteOldForUser(userId, keepId) {
  * Upload profile photo from URL
  */
 async function uploadFromUrl({ userId, sourceUrl }) {
+    // SSRF protection: validate URL before fetching
+    validateUrlForSSRF(sourceUrl);
+
     // Download the image
     const checksum = crypto.createHash('sha256').update(sourceUrl).digest('hex').slice(0, 16);
     const ext = '.jpg'; // Will be updated after download

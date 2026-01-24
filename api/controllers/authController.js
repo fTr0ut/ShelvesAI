@@ -1,4 +1,6 @@
 const authQueries = require('../database/queries/auth');
+const passwordResetQueries = require('../database/queries/passwordReset');
+const emailService = require('../services/emailService');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -37,6 +39,9 @@ async function register(req, res) {
     if (!isValidEmail(normalizedEmail)) {
       return res.status(400).json({ error: 'Invalid email address' });
     }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
 
     const result = await authQueries.register({ username, password, email: normalizedEmail });
     return res.status(201).json({
@@ -55,7 +60,7 @@ async function register(req, res) {
       return res.status(400).json({ error: 'Username taken' });
     }
     console.error('Register error:', err);
-    return res.status(500).json({ error: 'Server error', details: err.message, stack: err.stack });
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -129,4 +134,88 @@ async function setUsername(req, res) {
   }
 }
 
-module.exports = { login, register, me, consumeAuth0, setUsername };
+// POST /api/auth/forgot-password
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body ?? {};
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+
+    if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
+    // Find user by email
+    const user = await authQueries.findByEmail(normalizedEmail);
+
+    // Always return success to prevent email enumeration attacks
+    if (!user) {
+      console.log(`[ForgotPassword] No user found for email: ${normalizedEmail}`);
+      return res.json({ message: 'If an account exists, a reset link has been sent' });
+    }
+
+    // Create reset token
+    const { token } = await passwordResetQueries.createResetToken(user.id);
+
+    // Send email
+    try {
+      await emailService.sendPasswordResetEmail(
+        normalizedEmail,
+        token,
+        user.first_name
+      );
+    } catch (emailError) {
+      console.error('[ForgotPassword] Failed to send email:', emailError);
+      return res.status(500).json({ error: 'Failed to send reset email. Please try again.' });
+    }
+
+    return res.json({ message: 'If an account exists, a reset link has been sent' });
+  } catch (err) {
+    console.error('ForgotPassword error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// POST /api/auth/reset-password
+async function resetPassword(req, res) {
+  try {
+    const { token, password } = req.body ?? {};
+
+    if (!token) {
+      return res.status(400).json({ error: 'Reset token is required' });
+    }
+
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const result = await passwordResetQueries.resetPassword(token, password);
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.json({ message: 'Password has been reset successfully' });
+  } catch (err) {
+    console.error('ResetPassword error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// GET /api/auth/validate-reset-token
+async function validateResetToken(req, res) {
+  try {
+    const { token } = req.query ?? {};
+
+    if (!token) {
+      return res.status(400).json({ valid: false, error: 'Token is required' });
+    }
+
+    const result = await passwordResetQueries.validateResetToken(token);
+    return res.json(result);
+  } catch (err) {
+    console.error('ValidateResetToken error:', err);
+    return res.status(500).json({ valid: false, error: 'Server error' });
+  }
+}
+
+module.exports = { login, register, me, consumeAuth0, setUsername, forgotPassword, resetPassword, validateResetToken };

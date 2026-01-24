@@ -32,6 +32,7 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
     const { token, apiBase } = useContext(AuthContext);
 
     const [status, setStatus] = useState(null);
+    const [visibility, setVisibility] = useState('public');
     const [note, setNote] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -39,6 +40,7 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
     React.useEffect(() => {
         if (visible) {
             setStatus(null);
+            setVisibility('public');
             setNote('');
             setLoading(false);
         }
@@ -86,6 +88,7 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
                 body: {
                     collectableId,
                     status,
+                    visibility,
                     note: note.trim() || null,
                 },
             });
@@ -225,6 +228,33 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
         },
         statusTextSelected: {
             color: colors.primary,
+        },
+        visibilityToggle: {
+            flexDirection: 'row',
+            backgroundColor: colors.background,
+            borderRadius: 12,
+            padding: 4,
+            marginBottom: spacing.lg,
+        },
+        visibilityOption: {
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingVertical: spacing.sm,
+            borderRadius: 10,
+            gap: spacing.xs,
+        },
+        visibilityOptionActive: {
+            backgroundColor: colors.primary,
+        },
+        visibilityText: {
+            ...typography.body2,
+            color: colors.text,
+            fontWeight: '600',
+        },
+        visibilityTextActive: {
+            color: colors.textInverted,
         },
         noteInput: {
             borderWidth: 1,
@@ -372,6 +402,53 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
                                     </Text>
                                 </TouchableOpacity>
                             ))}
+                        </View>
+
+                        {/* Visibility Toggle */}
+                        <Text style={styles.sectionLabel}>Share with</Text>
+                        <View style={styles.visibilityToggle}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.visibilityOption,
+                                    visibility === 'public' && styles.visibilityOptionActive,
+                                ]}
+                                onPress={() => setVisibility('public')}
+                            >
+                                <Ionicons
+                                    name="globe-outline"
+                                    size={16}
+                                    color={visibility === 'public' ? colors.textInverted : colors.text}
+                                />
+                                <Text
+                                    style={[
+                                        styles.visibilityText,
+                                        visibility === 'public' && styles.visibilityTextActive,
+                                    ]}
+                                >
+                                    Everyone
+                                </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[
+                                    styles.visibilityOption,
+                                    visibility === 'friends' && styles.visibilityOptionActive,
+                                ]}
+                                onPress={() => setVisibility('friends')}
+                            >
+                                <Ionicons
+                                    name="people-outline"
+                                    size={16}
+                                    color={visibility === 'friends' ? colors.textInverted : colors.text}
+                                />
+                                <Text
+                                    style={[
+                                        styles.visibilityText,
+                                        visibility === 'friends' && styles.visibilityTextActive,
+                                    ]}
+                                >
+                                    Friends-only
+                                </Text>
+                            </TouchableOpacity>
                         </View>
 
                         {/* Note Input */}

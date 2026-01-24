@@ -831,6 +831,8 @@ async function updateManualEntry(req, res) {
       specialMarkings: 'special_markings',
       labelColor: 'label_color',
       regionalItem: 'regional_item',
+      limitedEdition: 'limited_edition',
+      itemSpecificText: 'item_specific_text',
     };
 
     const allowedFields = [
@@ -848,6 +850,8 @@ async function updateManualEntry(req, res) {
       'edition',
       'barcode',
       'genre',
+      'limitedEdition',
+      'itemSpecificText',
     ];
 
     for (const field of allowedFields) {
@@ -865,13 +869,16 @@ async function updateManualEntry(req, res) {
       updates.author = String(body.primaryCreator).trim();
     }
 
-    if (Object.keys(updates).length === 0) {
+    // Handle notes separately (stored on user_collections, not user_manuals)
+    const notesValue = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : undefined;
+
+    if (Object.keys(updates).length === 0 && notesValue === undefined) {
       return res.status(400).json({ error: 'No valid fields to update' });
     }
 
     // Get the collection entry with manual
     const entryResult = await query(
-      `SELECT uc.id, uc.manual_id, um.* 
+      `SELECT uc.id, uc.manual_id, uc.notes, um.*
        FROM user_collections uc
        JOIN user_manuals um ON um.id = uc.manual_id
        WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
@@ -884,16 +891,31 @@ async function updateManualEntry(req, res) {
 
     const entry = entryResult.rows[0];
 
-    // Build update query for user_manuals
-    const setClause = Object.keys(updates).map((k, i) => `${k} = $${i + 1}`).join(', ');
-    const values = [...Object.values(updates), entry.manual_id];
+    let manualData = rowToCamelCase(entry);
 
-    const updateResult = await query(
-      `UPDATE user_manuals SET ${setClause} WHERE id = $${values.length} RETURNING *`,
-      values
-    );
+    // Update user_manuals if there are manual field updates
+    if (Object.keys(updates).length > 0) {
+      const setClause = Object.keys(updates).map((k, i) => `${k} = $${i + 1}`).join(', ');
+      const values = [...Object.values(updates), entry.manual_id];
 
-    res.json({ item: { id: entry.id, manual: rowToCamelCase(updateResult.rows[0]) } });
+      const updateResult = await query(
+        `UPDATE user_manuals SET ${setClause} WHERE id = $${values.length} RETURNING *`,
+        values
+      );
+      manualData = rowToCamelCase(updateResult.rows[0]);
+    }
+
+    // Update notes on user_collections if provided
+    let updatedNotes = entry.notes;
+    if (notesValue !== undefined) {
+      await query(
+        `UPDATE user_collections SET notes = $1 WHERE id = $2`,
+        [notesValue, entry.id]
+      );
+      updatedNotes = notesValue;
+    }
+
+    res.json({ item: { id: entry.id, notes: updatedNotes, manual: manualData } });
   } catch (err) {
     console.error('updateManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
