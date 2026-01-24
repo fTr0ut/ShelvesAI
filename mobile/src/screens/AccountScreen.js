@@ -14,11 +14,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { usePush } from '../context/PushContext';
 import { apiRequest, clearToken } from '../services/api';
 
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
+  const { unregisterPush } = usePush();
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -69,13 +71,19 @@ export default function AccountScreen({ navigation }) {
         text: 'Log Out',
         style: 'destructive',
         onPress: async () => {
+          // Unregister push notifications before logging out
+          try {
+            await unregisterPush();
+          } catch (e) {
+            console.warn('Failed to unregister push:', e);
+          }
           await clearToken();
           setNeedsOnboarding(false);
           setToken('');
         },
       },
     ]);
-  }, [setToken, setNeedsOnboarding]);
+  }, [setToken, setNeedsOnboarding, unregisterPush]);
 
   if (loading) {
     return (
@@ -182,6 +190,17 @@ export default function AccountScreen({ navigation }) {
             <View style={styles.settingsLeft}>
               <Ionicons name="person-add" size={20} color={colors.text} />
               <Text style={styles.settingsLabel}>Find Friends</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsRow}
+            onPress={() => navigation.navigate('NotificationSettings')}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="notifications" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>Notification Settings</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
           </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react'
+import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { Appearance, KeyboardAvoidingView, Platform } from 'react-native'
@@ -43,6 +43,7 @@ import ListCreateScreen from './screens/ListCreateScreen'
 import ListDetailScreen from './screens/ListDetailScreen'
 import UnmatchedScreen from './screens/UnmatchedScreen'
 import NotificationScreen from './screens/NotificationScreen'
+import NotificationSettingsScreen from './screens/NotificationSettingsScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 import CheckInScreen from './screens/CheckInScreen'
 import linkingConfig from './navigation/linkingConfig'
@@ -50,6 +51,7 @@ import linkingConfig from './navigation/linkingConfig'
 
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
+import { PushProvider } from './context/PushContext'
 import { apiRequest, setAuthErrorHandler } from './services/api'
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
@@ -100,6 +102,7 @@ function guessApiBase() {
 }
 
 export default function App() {
+  const navigationRef = useRef(null)
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -243,13 +246,15 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           <AuthContext.Provider value={authValue}>
-            <KeyboardAvoidingView
-              style={{ flex: 1 }}
-              behavior={Platform.OS === 'android' ? 'height' : undefined}
-            >
-              <AppNavigator token={token} needsOnboarding={needsOnboarding} />
-              <ToastContainer />
-            </KeyboardAvoidingView>
+            <PushProvider navigationRef={navigationRef}>
+              <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'android' ? 'height' : undefined}
+              >
+                <AppNavigator token={token} needsOnboarding={needsOnboarding} navigationRef={navigationRef} />
+                <ToastContainer />
+              </KeyboardAvoidingView>
+            </PushProvider>
           </AuthContext.Provider>
         </ToastProvider>
       </ThemeProvider>
@@ -258,7 +263,7 @@ export default function App() {
 }
 
 // Separate component to use theme context
-function AppNavigator({ token, needsOnboarding }) {
+function AppNavigator({ token, needsOnboarding, navigationRef }) {
   const { colors, isDark, typography } = useTheme()
   const baseTheme = isDark ? DarkTheme : DefaultTheme
 
@@ -282,7 +287,7 @@ function AppNavigator({ token, needsOnboarding }) {
   }
 
   return (
-    <NavigationContainer theme={navTheme} linking={linkingConfig}>
+    <NavigationContainer ref={navigationRef} theme={navTheme} linking={linkingConfig}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!token ? (
           <Stack.Screen name="Login" component={LoginScreen} />
@@ -328,6 +333,7 @@ function AppNavigator({ token, needsOnboarding }) {
             <Stack.Screen name="ListDetail" component={ListDetailScreen} />
             <Stack.Screen name="Unmatched" component={UnmatchedScreen} />
             <Stack.Screen name="Notifications" component={NotificationScreen} />
+            <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
           </>
         )}
       </Stack.Navigator>

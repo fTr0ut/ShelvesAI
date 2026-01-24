@@ -14,9 +14,11 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.shelvesai.app",
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Shelves.AI to capture your shelves.",
-        "NSPhotoLibraryUsageDescription": "Allow Shelves.AI to import shelf photos."
+        "NSPhotoLibraryUsageDescription": "Allow Shelves.AI to import shelf photos.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -39,6 +41,14 @@
         {
           "photosPermission": "Allow Shelves.AI to access your collection photos.",
           "cameraPermission": "Allow Shelves.AI to capture your shelves."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff",
+          "sounds": []
         }
       ]
     ],

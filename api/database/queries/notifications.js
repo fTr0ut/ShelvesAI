@@ -1,9 +1,33 @@
 const { query } = require('../pg');
 const { rowToCamelCase, parsePagination } = require('./utils');
 
+// Lazy load push service to avoid circular dependencies
+let pushNotificationService = null;
+function getPushService() {
+    if (!pushNotificationService) {
+        pushNotificationService = require('../../services/pushNotificationService');
+    }
+    return pushNotificationService;
+}
+
 function normalizeMetadata(metadata) {
     if (!metadata || typeof metadata !== 'object') return {};
     return metadata;
+}
+
+/**
+ * Get actor name for push notification
+ */
+async function getActorName(actorId) {
+    if (!actorId) return 'Someone';
+    const result = await query(
+        `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+        [actorId]
+    );
+    if (!result.rows[0]) return 'Someone';
+    const row = result.rows[0];
+    const fullName = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    return fullName || row.username || 'Someone';
 }
 
 async function create({ userId, actorId, type, entityId, entityType, metadata = {} }) {
@@ -17,6 +41,8 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
         normalizedMetadata,
     ];
 
+    let notification = null;
+
     if (type === 'like') {
         const result = await query(
             `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
@@ -27,10 +53,8 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
              RETURNING *`,
             values
         );
-        return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
-    }
-
-    if (type === 'friend_request') {
+        notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    } else if (type === 'friend_request') {
         const result = await query(
             `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -40,17 +64,39 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
              RETURNING *`,
             values
         );
-        return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+        notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    } else {
+        const result = await query(
+            `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            values
+        );
+        notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
     }
 
-    const result = await query(
-        `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING *`,
-        values
-    );
+    // Fire-and-forget push notification
+    if (notification) {
+        (async () => {
+            try {
+                const actorName = await getActorName(actorId);
+                const pushService = getPushService();
+                await pushService.sendPushNotification({
+                    id: notification.id,
+                    userId,
+                    type,
+                    actorName,
+                    metadata: normalizedMetadata,
+                    entityId: String(entityId),
+                    entityType,
+                });
+            } catch (err) {
+                console.warn('Push notification failed:', err.message);
+            }
+        })();
+    }
 
-    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    return notification;
 }
 
 async function getForUser(userId, options = {}) {
