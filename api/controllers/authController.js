@@ -21,6 +21,15 @@ async function login(req, res) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
+    // Handle suspended user
+    if (result.suspended) {
+      return res.status(403).json({
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED',
+        reason: result.suspensionReason || null,
+      });
+    }
+
     return res.json(result);
   } catch (err) {
     console.error('Login error:', err);

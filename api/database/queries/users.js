@@ -96,8 +96,8 @@ async function setOnboardingCompleted(id, value) {
 async function getPublicProfile(username, viewerId = null) {
     // First get the user's basic info
     const userResult = await query(
-        `SELECT u.id, u.username, u.first_name, u.last_name, u.bio, 
-                u.picture, u.city, u.state, u.country, u.is_private, u.created_at,
+        `SELECT u.id, u.username, u.first_name, u.last_name, u.bio,
+                u.picture, u.city, u.state, u.country, u.is_private, u.is_suspended, u.created_at,
                 pm.local_path as profile_media_path
          FROM users u
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -110,6 +110,11 @@ async function getPublicProfile(username, viewerId = null) {
     }
 
     const user = userResult.rows[0];
+
+    // Return null for suspended users (unless viewer is the user themselves)
+    if (user.is_suspended && user.id !== viewerId) {
+        return null;
+    }
 
     // Check if viewer is the owner
     const isOwner = viewerId && user.id === viewerId;

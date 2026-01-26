@@ -92,8 +92,8 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
 async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
     WITH friend_ids AS (
-      SELECT 
-        CASE 
+      SELECT
+        CASE
           WHEN requester_id = $1 THEN addressee_id
           ELSE requester_id
         END as friend_id
@@ -101,7 +101,7 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
       WHERE status = 'accepted'
       AND (requester_id = $1 OR addressee_id = $1)
     )
-    SELECT a.*, 
+    SELECT a.*,
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
@@ -121,6 +121,7 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN media cm ON cm.id = c.cover_media_id
     LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id != $1 -- Exclude self
+    AND u.is_suspended = false -- Filter out suspended users
     AND (
       (a.shelf_id IS NOT NULL AND (
         s.visibility = 'public'
@@ -159,8 +160,8 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
 async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
     WITH friend_ids AS (
-      SELECT 
-        CASE 
+      SELECT
+        CASE
           WHEN requester_id = $1 THEN addressee_id
           ELSE requester_id
         END as friend_id
@@ -168,7 +169,7 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
       WHERE status = 'accepted'
       AND (requester_id = $1 OR addressee_id = $1)
     )
-    SELECT a.*, 
+    SELECT a.*,
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
@@ -187,7 +188,8 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN collectables c ON c.id = a.collectable_id
     LEFT JOIN media cm ON cm.id = c.cover_media_id
     LEFT JOIN user_manuals um ON um.id = a.manual_id
-    WHERE (
+    WHERE (u.is_suspended = false OR a.user_id = $1) -- Filter suspended users except self
+    AND (
       a.user_id = $1 -- Include self (all own events)
       OR
       -- Shelf-based events from others
@@ -226,8 +228,8 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
 async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
   let sql = `
     WITH friend_ids AS (
-      SELECT 
-        CASE 
+      SELECT
+        CASE
           WHEN requester_id = $1 THEN addressee_id
           ELSE requester_id
         END as friend_id
@@ -235,7 +237,7 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
       WHERE status = 'accepted'
       AND (requester_id = $1 OR addressee_id = $1)
     )
-    SELECT a.*, 
+    SELECT a.*,
            u.username, u.picture as user_picture,
            pm.local_path as profile_media_path,
            u.first_name, u.last_name, u.city, u.state, u.country,
@@ -255,6 +257,7 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN media cm ON cm.id = c.cover_media_id
     LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id IN (SELECT friend_id FROM friend_ids) -- Friends only, no self
+    AND u.is_suspended = false -- Filter out suspended users
     AND (
       -- Shelf-based events
       (a.shelf_id IS NOT NULL AND s.visibility IN ('public', 'friends'))

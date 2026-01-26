@@ -6,7 +6,9 @@
       "Bash(node -e:*)",
       "Bash(npm install:*)",
       "Bash(npx expo install:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(head:*)",
+      "Bash(wc:*)"
     ]
   }
 }

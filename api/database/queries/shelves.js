@@ -35,7 +35,9 @@ async function getById(shelfId, userId) {
 async function getForViewing(shelfId, viewerId) {
     const result = await query(
         `SELECT s.* FROM shelves s
+     JOIN users u ON u.id = s.owner_id
      WHERE s.id = $1
+     AND (u.is_suspended = false OR s.owner_id = $2)
      AND (
        s.owner_id = $2
        OR s.visibility = 'public'
@@ -377,11 +379,20 @@ async function listVisibleForUser(ownerId, viewerId = null) {
         return listForUser(ownerId);
     }
 
+    // Check if owner is suspended - return empty if viewing someone else's suspended profile
+    const ownerResult = await query(
+        'SELECT is_suspended FROM users WHERE id = $1',
+        [ownerId]
+    );
+    if (ownerResult.rows[0]?.is_suspended) {
+        return [];
+    }
+
     // Check if they're friends
     let isFriend = false;
     if (viewerId) {
         const friendResult = await query(
-            `SELECT 1 FROM friendships 
+            `SELECT 1 FROM friendships
              WHERE status = 'accepted'
         AND((requester_id = $1 AND addressee_id = $2)
         OR(requester_id = $2 AND addressee_id = $1))`,

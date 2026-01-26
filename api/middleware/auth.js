@@ -17,7 +17,7 @@ async function auth(req, res, next) {
 
   try {
     const result = await query(
-      'SELECT id, username, is_premium FROM users WHERE id = $1',
+      'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
       [payload.id]
     );
 
@@ -26,7 +26,22 @@ async function auth(req, res, next) {
     }
 
     const user = result.rows[0];
-    req.user = { id: user.id, username: user.username, isPremium: !!user.is_premium };
+
+    // Check if user is suspended
+    if (user.is_suspended) {
+      return res.status(403).json({
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED',
+        reason: user.suspension_reason || null,
+      });
+    }
+
+    req.user = {
+      id: user.id,
+      username: user.username,
+      isPremium: !!user.is_premium,
+      isAdmin: !!user.is_admin,
+    };
     next();
   } catch (err) {
     console.error('auth middleware error:', err);
@@ -58,13 +73,23 @@ async function optionalAuth(req, res, next) {
 
   try {
     const result = await query(
-      'SELECT id, username, is_premium FROM users WHERE id = $1',
+      'SELECT id, username, is_premium, is_admin, is_suspended FROM users WHERE id = $1',
       [payload.id]
     );
 
     if (result.rows.length) {
       const user = result.rows[0];
-      req.user = { id: user.id, username: user.username, isPremium: !!user.is_premium };
+      // For optional auth, suspended users are treated as unauthenticated
+      if (user.is_suspended) {
+        req.user = null;
+      } else {
+        req.user = {
+          id: user.id,
+          username: user.username,
+          isPremium: !!user.is_premium,
+          isAdmin: !!user.is_admin,
+        };
+      }
     } else {
       req.user = null;
     }

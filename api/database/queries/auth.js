@@ -62,11 +62,19 @@ async function register({ username, password, email }) {
 
 /**
  * Login user with username/password
- * @returns {{ user: object, token: string } | null}
+ * @returns {{ user: object, token: string, suspended?: boolean, suspensionReason?: string } | null}
  */
 async function login({ username, password }) {
     const user = await findByUsername(username);
     if (!user) return null;
+
+    // Check if user is suspended before validating password
+    if (user.is_suspended) {
+        return {
+            suspended: true,
+            suspensionReason: user.suspension_reason || null,
+        };
+    }
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return null;

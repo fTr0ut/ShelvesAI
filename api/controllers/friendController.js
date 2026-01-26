@@ -40,6 +40,7 @@ async function searchUsers(req, res) {
         `SELECT id, username, first_name, last_name, picture, city, state, country
          FROM users
          WHERE id != $1
+         AND is_suspended = false
          AND (
            username ILIKE $2
            OR first_name ILIKE $2
@@ -59,6 +60,7 @@ async function searchUsers(req, res) {
                 similarity(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''), $1) as name_sim
          FROM users
          WHERE id != $2
+         AND is_suspended = false
          AND (
            username % $1
            OR first_name % $1

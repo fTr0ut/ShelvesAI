@@ -26,22 +26,41 @@ const notificationsRoutes = require('./routes/notifications');
 const ratingsRoutes = require('./routes/ratings');
 const discoverRoutes = require('./routes/discover');
 const pushRoutes = require('./routes/push');
+const adminRoutes = require('./routes/admin');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
 
 const app = express();
 
+const normalizeIp = (ip) => {
+  if (!ip || typeof ip !== 'string') return ip;
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+};
+
+const getClientIp = (req) => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+    return normalizeIp(forwardedFor.split(',')[0].trim());
+  }
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.length > 0) {
+    return normalizeIp(realIp.trim());
+  }
+  return normalizeIp(req.socket?.remoteAddress || req.ip);
+};
+
 // Minimal request log (dev only)
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     const start = process.hrtime.bigint();
+    const clientIp = getClientIp(req) || '-';
 
     res.on('finish', () => {
       const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
       const contentLength = res.get('Content-Length') || 0;
       const logLine = [
-        req.ip,
+        clientIp,
         req.method,
         req.originalUrl,
         res.statusCode,
@@ -177,6 +196,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/ratings', ratingsRoutes);
 app.use('/api/discover', discoverRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use((err, _req, res, next) => {
   if (err && (err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large')) {
