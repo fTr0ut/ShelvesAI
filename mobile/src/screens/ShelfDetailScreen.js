@@ -729,6 +729,49 @@ export default function ShelfDetailScreen({ route, navigation }) {
             Alert.alert('Scan complete', `Detected ${detected} items.`);
         } catch (e) {
             const requiresPremium = e?.data?.requiresPremium;
+            const quotaExceeded = e?.data?.quotaExceeded;
+
+            if (quotaExceeded) {
+                // Show alert and auto-fallback to MLKit
+                Alert.alert(
+                    'Quota Exceeded',
+                    'Monthly Vision scan quota exceeded. Using on-device scanning instead.',
+                    [{ text: 'OK' }]
+                );
+
+                // Perform MLKit fallback scan
+                try {
+                    const { text } = await extractTextFromImage(asset.uri);
+                    if (!text || text.trim().length < 5) {
+                        Alert.alert('No text found', 'Try a clearer photo.');
+                        return;
+                    }
+
+                    const parsedItems = parseTextToItems(text, shelfType);
+                    if (!parsedItems.length) {
+                        Alert.alert('No items detected', 'Try a clearer photo.');
+                        return;
+                    }
+
+                    const fallbackData = await apiRequest({
+                        apiBase,
+                        path: `/api/shelves/${id}/catalog-lookup`,
+                        method: 'POST',
+                        token,
+                        body: { items: parsedItems, autoApply: true },
+                    });
+
+                    if (Array.isArray(fallbackData?.items)) {
+                        setItems(fallbackData.items);
+                    }
+                    const detected = fallbackData?.analysis?.items?.length || parsedItems.length;
+                    Alert.alert('Scan complete', `Detected ${detected} items using on-device scanning.`);
+                } catch (fallbackErr) {
+                    Alert.alert('Error', fallbackErr.message || 'On-device scan failed');
+                }
+                return;
+            }
+
             const message = requiresPremium
                 ? 'Premium is required for cloud vision scanning.'
                 : (e.message || 'Scan failed');

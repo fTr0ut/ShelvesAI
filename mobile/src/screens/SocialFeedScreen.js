@@ -25,6 +25,8 @@ import { apiRequest } from '../services/api';
 import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
 
+const checkInBadge = require('../../assets/checkin_badge.png');
+
 const FILTERS = [
     { key: 'all', label: 'All' },
     { key: 'friends', label: 'Friends' },
@@ -53,20 +55,56 @@ function formatRelativeTime(dateString) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function buildMediaUri(value, apiBase = '') {
+    if (!value) return null;
+    if (/^https?:/i.test(value)) return value;
+    const trimmed = String(value).replace(/^\/+/, '');
+    const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+    if (!apiBase) return `/${resource}`;
+    return `${apiBase.replace(/\/+$/, '')}/${resource}`;
+}
+
+function resolveCollectableCoverUrl(collectable, apiBase = '') {
+    if (!collectable) return null;
+    const coverImageUrl = collectable.coverImageUrl;
+    const coverImageSource = collectable.coverImageSource;
+
+    if (coverImageUrl) {
+        if (coverImageSource === 'external' || /^https?:/i.test(coverImageUrl)) {
+            return coverImageUrl;
+        }
+        return buildMediaUri(coverImageUrl, apiBase);
+    }
+
+    if (collectable.coverMediaPath) {
+        return buildMediaUri(collectable.coverMediaPath, apiBase);
+    }
+
+    if (collectable.coverUrl) {
+        return /^https?:/i.test(collectable.coverUrl)
+            ? collectable.coverUrl
+            : buildMediaUri(collectable.coverUrl, apiBase);
+    }
+
+    const images = Array.isArray(collectable.images) ? collectable.images : [];
+    for (const image of images) {
+        const url = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
+        if (url) return url;
+    }
+
+    return null;
+}
+
 function getItemPreview(entry, apiBase = '') {
     const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
     const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
     const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
     const collectableId = collectable?.id || entry?.collectableId || entry?.collectable_id || null;
 
-    // Extract cover URL with priority: local media path > external URL
-    let coverUrl = null;
-    if (collectable?.coverMediaPath && apiBase) {
-        coverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
-    } else if (collectable?.coverUrl) {
-        coverUrl = collectable.coverUrl;
-    } else if (entry?.coverImageUrl) {
-        coverUrl = entry.coverImageUrl;
+    // Extract cover URL with priority: provider-agnostic cover > legacy fields
+    let coverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+    if (!coverUrl && entry?.coverImageUrl) {
+        coverUrl = buildMediaUri(entry.coverImageUrl, apiBase);
     }
 
     return { title, coverUrl, collectableId };
@@ -635,12 +673,7 @@ export default function SocialFeedScreen({ navigation, route }) {
             const statusLabel = statusLabels[checkinStatus] || checkinStatus;
             const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
 
-            let collectableCoverUrl = null;
-            if (collectable?.coverMediaPath) {
-                collectableCoverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
-            } else if (collectable?.coverUrl) {
-                collectableCoverUrl = collectable.coverUrl;
-            }
+            const collectableCoverUrl = resolveCollectableCoverUrl(collectable, apiBase);
 
             const handleCheckinCollectablePress = () => {
                 if (collectable?.id) {
@@ -654,6 +687,9 @@ export default function SocialFeedScreen({ navigation, route }) {
                     onPress={handlePress}
                     style={styles.feedCard}
                 >
+                    {/* Check-in Badge */}
+                    <Image source={checkInBadge} style={styles.checkinBadge} resizeMode="contain" />
+
                     {/* Header */}
                     <View style={styles.cardHeader}>
                         <View style={styles.avatar}>
@@ -743,12 +779,7 @@ export default function SocialFeedScreen({ navigation, route }) {
             // Get cover items with ratings
             const ratingPreviews = ratingItems.slice(0, 3).map(e => {
                 const collectable = e.collectable || {};
-                let coverUrl = null;
-                if (collectable.coverMediaPath && apiBase) {
-                    coverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
-                } else if (collectable.coverUrl) {
-                    coverUrl = collectable.coverUrl;
-                }
+                const coverUrl = resolveCollectableCoverUrl(collectable, apiBase);
                 return {
                     title: collectable.title || e.title || 'Untitled',
                     coverUrl,
@@ -1672,6 +1703,16 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         alignItems: 'center',
         gap: 4,
         marginTop: 2,
+    },
+    checkinBadge: {
+        position: 'absolute',
+        top: -8,
+        right: 0,
+        width: 180,
+        height: 60,
+        zIndex: 10,
+        borderRadius: 14,
+        backgroundColor: 'transparent',
     },
     checkinPreview: {
         flexDirection: 'row',

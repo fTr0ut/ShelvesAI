@@ -1,5 +1,6 @@
 const { query } = require('../database/pg');
 const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils');
+const visionQuotaQueries = require('../database/queries/visionQuota');
 
 async function getAccount(req, res) {
   try {
@@ -19,7 +20,16 @@ async function getAccount(req, res) {
     }
 
     const user = rowToCamelCase(result.rows[0]);
-    res.json({ user });
+
+    // Get vision quota info
+    let visionQuota = null;
+    try {
+      visionQuota = await visionQuotaQueries.getQuota(req.user.id);
+    } catch (quotaErr) {
+      console.warn('Failed to get vision quota:', quotaErr.message);
+    }
+
+    res.json({ user, visionQuota });
   } catch (err) {
     console.error('getAccount error:', err);
     res.status(500).json({ error: 'Server error' });

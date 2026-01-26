@@ -175,12 +175,40 @@ export default function FeedDetailScreen({ route, navigation }) {
   const statusLabel = statusLabels[checkinStatus] || statusFallback;
   const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
 
-  let collectableCoverUrl = null;
-  if (collectable?.coverMediaPath && apiBase) {
-    collectableCoverUrl = `${apiBase}/media/${collectable.coverMediaPath}`;
-  } else if (collectable?.coverUrl) {
-    collectableCoverUrl = collectable.coverUrl;
-  }
+  const buildMediaUri = (value) => {
+    if (!value) return null;
+    if (/^https?:/i.test(value)) return value;
+    const trimmed = String(value).replace(/^\/+/, '');
+    const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+    if (!apiBase) return `/${resource}`;
+    return `${apiBase.replace(/\/+$/, '')}/${resource}`;
+  };
+
+  const resolveCollectableCoverUrl = (target) => {
+    if (!target) return null;
+    if (target.coverImageUrl) {
+      if (target.coverImageSource === 'external' || /^https?:/i.test(target.coverImageUrl)) {
+        return target.coverImageUrl;
+      }
+      return buildMediaUri(target.coverImageUrl);
+    }
+    if (target.coverMediaPath) {
+      return buildMediaUri(target.coverMediaPath);
+    }
+    if (target.coverUrl) {
+      return /^https?:/i.test(target.coverUrl)
+        ? target.coverUrl
+        : buildMediaUri(target.coverUrl);
+    }
+    const images = Array.isArray(target.images) ? target.images : [];
+    for (const image of images) {
+      const url = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
+      if (url) return url;
+    }
+    return null;
+  };
+
+  const collectableCoverUrl = resolveCollectableCoverUrl(collectable);
 
   const formatRelativeTime = (dateString) => {
     if (!dateString) return '';
@@ -204,12 +232,7 @@ export default function FeedDetailScreen({ route, navigation }) {
     const title = c?.title || m?.title || item?.title || payload?.title || payload?.name || 'Unknown item';
 
     // Extract cover URL with priority: local media path > external URL
-    let coverUrl = null;
-    if (c?.coverMediaPath && apiBase) {
-      coverUrl = `${apiBase}/media/${c.coverMediaPath}`;
-    } else if (c?.coverUrl) {
-      coverUrl = c.coverUrl;
-    }
+    const coverUrl = resolveCollectableCoverUrl(c);
 
     // Extract rating for rating events
     const rating = item?.rating || payload?.rating || null;

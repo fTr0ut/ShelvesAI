@@ -125,6 +125,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [premiumEnabled, setPremiumEnabledState] = useState(false)
   const [onboardingConfig, setOnboardingConfig] = useState(null)
+  const [visionQuota, setVisionQuota] = useState(null)
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
 
@@ -214,6 +215,9 @@ export default function App() {
           if (typeof data?.user?.isPremium === 'boolean') {
             setPremiumEnabled(data.user.isPremium)
           }
+          if (data?.visionQuota) {
+            setVisionQuota(data.visionQuota)
+          }
         }
       } catch (err) {
         // ignore errors and keep existing onboarding state
@@ -239,7 +243,9 @@ export default function App() {
     setPremiumEnabled,
     onboardingConfig,
     setOnboardingConfig,
-  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled, onboardingConfig])
+    visionQuota,
+    setVisionQuota,
+  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled, onboardingConfig, visionQuota])
 
   if (!ready || !fontsLoaded) return null
 

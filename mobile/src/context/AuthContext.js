@@ -13,4 +13,6 @@ export const AuthContext = createContext({
     setUser: () => { },
     onboardingConfig: null,
     setOnboardingConfig: () => { },
+    visionQuota: null,
+    setVisionQuota: () => { },
 });

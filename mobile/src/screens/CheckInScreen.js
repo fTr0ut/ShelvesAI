@@ -47,7 +47,7 @@ export default function CheckInScreen() {
     // Multi-step state
     const [step, setStep] = useState(STEPS.STATUS);
     const [selectedStatus, setSelectedStatus] = useState(null);
-    const [selectedCollectable, setSelectedCollectable] = useState(null);
+    const [selectedItem, setSelectedItem] = useState(null);
     const [visibility, setVisibility] = useState('public');
     const [note, setNote] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -83,7 +83,7 @@ export default function CheckInScreen() {
                 // Search collectables only (internal database)
                 const data = await apiRequest({
                     apiBase,
-                    path: `/api/collectables?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
+                    path: `/api/checkin/search?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
                     token,
                 });
                 setSearchResults(data?.results || []);
@@ -101,8 +101,8 @@ export default function CheckInScreen() {
         setStep(STEPS.SEARCH);
     }, []);
 
-    const handleCollectableSelect = useCallback((collectable) => {
-        setSelectedCollectable(collectable);
+    const handleItemSelect = useCallback((item) => {
+        setSelectedItem(item);
         setStep(STEPS.CONFIRM);
     }, []);
 
@@ -117,17 +117,19 @@ export default function CheckInScreen() {
     }, [step]);
 
     const handleSubmit = useCallback(async () => {
-        if (!selectedStatus || !selectedCollectable) return;
+        if (!selectedStatus || !selectedItem) return;
 
         try {
             setSubmitting(true);
+            const isManual = selectedItem?.source === 'manual';
             await apiRequest({
                 apiBase,
                 path: '/api/checkin',
                 method: 'POST',
                 token,
                 body: {
-                    collectableId: selectedCollectable.id,
+                    collectableId: isManual ? undefined : selectedItem.id,
+                    manualId: isManual ? selectedItem.id : undefined,
                     status: selectedStatus.key,
                     visibility,
                     note: note.trim() || undefined,
@@ -141,7 +143,7 @@ export default function CheckInScreen() {
         } finally {
             setSubmitting(false);
         }
-    }, [apiBase, token, selectedStatus, selectedCollectable, visibility, note, navigation]);
+    }, [apiBase, token, selectedStatus, selectedItem, visibility, note, navigation]);
 
     // Get cover URL for display
     const getCoverUrl = (item) => {
@@ -218,9 +220,9 @@ export default function CheckInScreen() {
                                 const coverUrl = getCoverUrl(item);
                                 return (
                                     <TouchableOpacity
-                                        key={item.id}
+                                        key={`${item.source || 'collectable'}-${item.id}`}
                                         style={styles.searchResultItem}
-                                        onPress={() => handleCollectableSelect(item)}
+                                        onPress={() => handleItemSelect(item)}
                                     >
                                         {coverUrl ? (
                                             <Image source={{ uri: coverUrl }} style={styles.resultCover} />
@@ -254,7 +256,7 @@ export default function CheckInScreen() {
                 );
 
             case STEPS.CONFIRM:
-                const coverUrl = getCoverUrl(selectedCollectable);
+                const coverUrl = getCoverUrl(selectedItem);
                 return (
                     <Animated.View entering={SlideInRight} exiting={SlideOutLeft} style={styles.stepContent}>
                         <View style={styles.searchHeader}>
@@ -288,9 +290,9 @@ export default function CheckInScreen() {
                                                 </View>
                                             )}
                                             <View style={styles.previewInfo}>
-                                                <Text style={styles.previewTitle} numberOfLines={2}>{selectedCollectable?.title}</Text>
-                                                {selectedCollectable?.primaryCreator && (
-                                                    <Text style={styles.previewSubtitle}>{selectedCollectable.primaryCreator}</Text>
+                                                <Text style={styles.previewTitle} numberOfLines={2}>{selectedItem?.title}</Text>
+                                                {selectedItem?.primaryCreator && (
+                                                    <Text style={styles.previewSubtitle}>{selectedItem.primaryCreator}</Text>
                                                 )}
                                             </View>
                                         </View>

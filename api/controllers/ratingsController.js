@@ -76,6 +76,8 @@ async function setRating(req, res) {
                             title: collectable.title || 'Unknown',
                             primaryCreator: collectable.primaryCreator || null,
                             coverUrl: collectable.coverUrl || null,
+                            coverImageUrl: collectable.coverImageUrl || null,
+                            coverImageSource: collectable.coverImageSource || null,
                             coverMediaPath: collectable.coverMediaPath || null,
                             rating: result.rating,
                             type: collectable.kind || 'item',

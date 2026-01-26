@@ -438,6 +438,8 @@ async function getItemById(itemId, userId, shelfId) {
             c.subtitle as collectable_subtitle,
             c.primary_creator as collectable_creator,
             c.cover_url as collectable_cover,
+            c.cover_image_url as collectable_cover_image_url,
+            c.cover_image_source as collectable_cover_image_source,
             c.kind as collectable_kind,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,

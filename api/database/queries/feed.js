@@ -107,14 +107,19 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
            c.title as collectable_title, c.primary_creator as collectable_creator,
-           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
-           cm.local_path as collectable_cover_media_path
+           c.cover_url as collectable_cover_url,
+           c.cover_image_url as collectable_cover_image_url,
+           c.cover_image_source as collectable_cover_image_source,
+           c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path,
+           um.name as manual_name, um.author as manual_author, um.type as manual_type
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
     LEFT JOIN collectables c ON c.id = a.collectable_id
     LEFT JOIN media cm ON cm.id = c.cover_media_id
+    LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id != $1 -- Exclude self
     AND (
       (a.shelf_id IS NOT NULL AND (
@@ -169,14 +174,19 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
            c.title as collectable_title, c.primary_creator as collectable_creator,
-           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
-           cm.local_path as collectable_cover_media_path
+           c.cover_url as collectable_cover_url,
+           c.cover_image_url as collectable_cover_image_url,
+           c.cover_image_source as collectable_cover_image_source,
+           c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path,
+           um.name as manual_name, um.author as manual_author, um.type as manual_type
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
     LEFT JOIN collectables c ON c.id = a.collectable_id
     LEFT JOIN media cm ON cm.id = c.cover_media_id
+    LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE (
       a.user_id = $1 -- Include self (all own events)
       OR
@@ -231,14 +241,19 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
            c.title as collectable_title, c.primary_creator as collectable_creator,
-           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
-           cm.local_path as collectable_cover_media_path
+           c.cover_url as collectable_cover_url,
+           c.cover_image_url as collectable_cover_image_url,
+           c.cover_image_source as collectable_cover_image_source,
+           c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path,
+           um.name as manual_name, um.author as manual_author, um.type as manual_type
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
     LEFT JOIN collectables c ON c.id = a.collectable_id
     LEFT JOIN media cm ON cm.id = c.cover_media_id
+    LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id IN (SELECT friend_id FROM friend_ids) -- Friends only, no self
     AND (
       -- Shelf-based events
@@ -277,14 +292,19 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
            u.first_name, u.last_name, u.city, u.state, u.country,
            s.name as shelf_name, s.type as shelf_type, s.description as shelf_description,
            c.title as collectable_title, c.primary_creator as collectable_creator,
-           c.cover_url as collectable_cover_url, c.kind as collectable_kind,
-           cm.local_path as collectable_cover_media_path
+           c.cover_url as collectable_cover_url,
+           c.cover_image_url as collectable_cover_image_url,
+           c.cover_image_source as collectable_cover_image_source,
+           c.kind as collectable_kind,
+           cm.local_path as collectable_cover_media_path,
+           um.name as manual_name, um.author as manual_author, um.type as manual_type
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
     LEFT JOIN shelves s ON s.id = a.shelf_id
     LEFT JOIN collectables c ON c.id = a.collectable_id
     LEFT JOIN media cm ON cm.id = c.cover_media_id
+    LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id = $1
   `;
   const params = [userId];
@@ -379,9 +399,11 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
 /**
  * Log a check-in event (user is starting/continuing/completed with a collectable)
  */
-async function logCheckIn({ userId, collectableId, status, visibility = 'public', note = null }) {
-  if (!userId || !collectableId || !status) {
-    throw new Error('userId, collectableId, and status are required for check-in');
+async function logCheckIn({ userId, collectableId = null, manualId = null, status, visibility = 'public', note = null }) {
+  const hasCollectable = !!collectableId;
+  const hasManual = !!manualId;
+  if (!userId || !status || (!hasCollectable && !hasManual) || (hasCollectable && hasManual)) {
+    throw new Error('userId, status, and either collectableId or manualId are required for check-in');
   }
 
   const validStatuses = ['starting', 'continuing', 'completed'];
@@ -397,12 +419,12 @@ async function logCheckIn({ userId, collectableId, status, visibility = 'public'
   // Check-in events don't aggregate like shelf events - each is unique
   const result = await query(
     `INSERT INTO event_aggregates (
-      user_id, event_type, collectable_id, checkin_status, visibility, note,
+      user_id, event_type, collectable_id, manual_id, checkin_status, visibility, note,
       window_start_utc, window_end_utc, item_count
     )
-    VALUES ($1, 'checkin.activity', $2, $3, $4, $5, NOW(), NOW(), 1)
+    VALUES ($1, 'checkin.activity', $2, $3, $4, $5, $6, NOW(), NOW(), 1)
     RETURNING *`,
-    [userId, collectableId, status, visibility, note]
+    [userId, collectableId, manualId, status, visibility, note]
   );
 
   if (FEED_AGGREGATE_DEBUG) {
@@ -410,6 +432,7 @@ async function logCheckIn({ userId, collectableId, status, visibility = 'public'
       aggregateId: result.rows[0]?.id,
       userId,
       collectableId,
+      manualId,
       status,
       visibility,
     });

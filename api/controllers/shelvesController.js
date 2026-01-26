@@ -23,6 +23,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const needsReviewQueries = require('../database/queries/needsReview');
+const visionQuotaQueries = require('../database/queries/visionQuota');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const {
   normalizeOtherManualItem,
@@ -942,6 +943,24 @@ async function processShelfVision(req, res) {
       });
     }
 
+    // Quota Check (only for cloud vision, not MLKit fallback)
+    const isCloudVision = !rawItems || rawItems.length === 0;
+    if (isCloudVision) {
+      const quota = await visionQuotaQueries.getQuota(req.user.id);
+      if (quota.scansRemaining <= 0) {
+        return res.status(429).json({
+          error: 'Monthly vision scan quota exceeded',
+          quotaExceeded: true,
+          quota: {
+            scansUsed: quota.scansUsed,
+            scansRemaining: 0,
+            daysRemaining: quota.daysRemaining,
+            monthlyLimit: quota.monthlyLimit,
+          },
+        });
+      }
+    }
+
     console.log(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
 
     // Generate job ID and create job entry
@@ -957,10 +976,21 @@ async function processShelfVision(req, res) {
 
     // If async mode (default), return immediately with jobId
     if (asyncMode) {
+      // Capture userId for background task
+      const userId = req.user.id;
       // Start processing in background
       (async () => {
         try {
-          const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, pipelineOptions);
+          const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, pipelineOptions);
+
+          // Increment quota on successful cloud vision processing
+          if (isCloudVision) {
+            try {
+              await visionQuotaQueries.incrementUsage(userId);
+            } catch (quotaErr) {
+              console.warn('[Vision] Failed to increment quota:', quotaErr.message);
+            }
+          }
 
           // Mark job complete with result
           processingStatus.completeJob(jobId, {
@@ -992,6 +1022,16 @@ async function processShelfVision(req, res) {
 
     // Synchronous mode (for backwards compatibility)
     const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, pipelineOptions);
+
+    // Increment quota on successful cloud vision processing
+    if (isCloudVision) {
+      try {
+        await visionQuotaQueries.incrementUsage(req.user.id);
+      } catch (quotaErr) {
+        console.warn('[Vision] Failed to increment quota:', quotaErr.message);
+      }
+    }
+
     processingStatus.completeJob(jobId, result);
 
     // Get updated shelf items
@@ -1375,6 +1415,8 @@ async function rateShelfItem(req, res) {
           title: fullItem?.collectableTitle || 'Unknown',
           primaryCreator: fullItem?.collectableCreator || null,
           coverUrl: fullItem?.collectableCover || null,
+          coverImageUrl: fullItem?.collectableCoverImageUrl || null,
+          coverImageSource: fullItem?.collectableCoverImageSource || null,
           coverMediaPath: fullItem?.collectableCoverMediaPath || null,
           rating: validRating,
           type: fullItem?.collectableKind || shelf.type,

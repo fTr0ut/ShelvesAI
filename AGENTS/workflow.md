@@ -158,6 +158,7 @@ hooks.register(HOOK_TYPES.AFTER_VISION_OCR, async (ctx) => {
 | `VISION_OCR_ENABLED` | `true` | Enable/disable Gemini Vision OCR |
 | `VISION_CATALOG_ENABLED` | `true` | Enable/disable catalog API lookups |
 | `VISION_ENRICHMENT_ENABLED` | `true` | Enable/disable Gemini enrichment |
+| `VISION_MONTHLY_QUOTA` | `50` | Monthly cloud vision scans allowed per user |
 | `USE_CATALOG_ROUTER` | `false` | Enable config-driven API routing |
 | `DISABLE_HARDCOVER` | `false` | Skip Hardcover API (env override) |
 | `DISABLE_OPENLIBRARY` | `false` | Skip OpenLibrary API (env override) |
@@ -178,6 +179,88 @@ Each type also has a custom prompt that tells Gemini what metadata to expect (e.
 Prompts may include `{shelfDescription}` to inject the shelf description; when absent, no description is added.
 
 The `nameSearchThreshold` is used for movies/TV where the secondary lookup uses trigram similarity on title only (instead of fuzzy fingerprints).
+
+### Vision OCR Quota
+
+Premium users have a monthly quota for cloud Vision (Gemini) scans. When exceeded, requests automatically fall back to on-device MLKit OCR.
+
+#### Database Table: `user_vision_quota`
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `user_id` | UUID (PK, FK) | User reference |
+| `scans_used` | INTEGER | Scans consumed this period |
+| `period_start` | TIMESTAMPTZ | Start of current 30-day rolling period |
+| `created_at` | TIMESTAMPTZ | Row creation time |
+| `updated_at` | TIMESTAMPTZ | Last update time |
+
+#### Quota Flow
+
+```mermaid
+flowchart TD
+    A[Vision Request] --> B{Premium?}
+    B -->|No| C[403 Premium Required]
+    B -->|Yes| D{Quota Remaining?}
+    D -->|No| E[429 Quota Exceeded]
+    E --> F[Mobile: Auto-fallback to MLKit]
+    D -->|Yes| G[Process with Cloud Vision]
+    G --> H[Increment Quota]
+    H --> I[Return Results]
+```
+
+#### Period Reset Logic
+- Period is 30 days rolling from `period_start`
+- When `period_start` is older than 30 days, reset `scans_used=0` and `period_start=NOW()`
+- Reset happens automatically on next quota check
+
+#### API Responses
+
+**429 Quota Exceeded:**
+```json
+{
+  "error": "Monthly vision scan quota exceeded",
+  "quotaExceeded": true,
+  "quota": {
+    "scansUsed": 50,
+    "scansRemaining": 0,
+    "daysRemaining": 12,
+    "monthlyLimit": 50
+  }
+}
+```
+
+**Account Endpoint (GET /api/account):**
+```json
+{
+  "user": { ... },
+  "visionQuota": {
+    "scansUsed": 12,
+    "scansRemaining": 38,
+    "monthlyLimit": 50,
+    "daysRemaining": 18,
+    "periodStart": "2026-01-10T00:00:00Z"
+  }
+}
+```
+
+#### Mobile Behavior
+- Account screen shows quota info when premium is enabled
+- ShelfDetailScreen handles 429 by automatically falling back to MLKit scan
+- User sees alert: "Monthly Vision scan quota exceeded. Using on-device scanning instead."
+
+#### Environment Variable
+| Env Variable | Default | Purpose |
+|--------------|---------|---------|
+| `VISION_MONTHLY_QUOTA` | `50` | Monthly scans allowed per user |
+
+#### Key Files
+| File | Purpose |
+|------|---------|
+| [visionQuota.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/visionQuota.js) | Quota queries (getQuota, incrementUsage) |
+| [accountController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/accountController.js) | Returns quota in account response |
+| [shelvesController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/shelvesController.js) | Quota check + increment in processShelfVision |
+| [AccountScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/AccountScreen.js) | Displays quota info |
+| [ShelfDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/ShelfDetailScreen.js) | Handles 429 with MLKit fallback |
 
 ### Shelf Type Configuration
 

@@ -264,19 +264,21 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
     } else if (eventType === 'item.rated') {
       // Rating events - include the rating value
       const collectableId = payload.collectableId || payload.collectable_id || null;
-      items.push({
-        id: payload.itemId || payload.id || null,
-        collectableId,
-        rating: payload.rating || null,
-        collectable: {
-          id: collectableId,
-          title: payload.title || payload.name || null,
-          primaryCreator: payload.primaryCreator || payload.author || null,
-          coverUrl: payload.coverUrl || null,
-          coverMediaPath: payload.coverMediaPath || null,
-          kind: payload.type || payload.kind || null,
-        },
-      });
+        items.push({
+          id: payload.itemId || payload.id || null,
+          collectableId,
+          rating: payload.rating || null,
+          collectable: {
+            id: collectableId,
+            title: payload.title || payload.name || null,
+            primaryCreator: payload.primaryCreator || payload.author || null,
+            coverUrl: payload.coverUrl || null,
+            coverImageUrl: payload.coverImageUrl || null,
+            coverImageSource: payload.coverImageSource || null,
+            coverMediaPath: payload.coverMediaPath || null,
+            kind: payload.type || payload.kind || null,
+          },
+        });
     }
     if (items.length >= maxItems) break;
   }
@@ -473,14 +475,28 @@ async function getFeed(req, res) {
         entry.checkinStatus = e.checkinStatus;
         entry.visibility = e.visibility;
         entry.note = e.note;
-        entry.collectable = {
+        const manual = e.manualId ? {
+          id: e.manualId,
+          title: e.manualName,
+          primaryCreator: e.manualAuthor,
+          coverUrl: null,
+          coverMediaPath: null,
+          kind: e.manualType || 'manual',
+        } : null;
+        const collectable = e.collectableId ? {
           id: e.collectableId,
           title: e.collectableTitle,
           primaryCreator: e.collectableCreator,
           coverUrl: e.collectableCoverUrl,
+          coverImageUrl: e.collectableCoverImageUrl,
+          coverImageSource: e.collectableCoverImageSource,
           coverMediaPath: e.collectableCoverMediaPath,
           kind: e.collectableKind,
-        };
+        } : null;
+        entry.collectable = collectable || manual;
+        if (manual) {
+          entry.manual = manual;
+        }
       } else {
         // Shelf-based event: include shelf and items info
         const payloads = Array.isArray(e.previewPayloads) ? e.previewPayloads : [];
@@ -551,14 +567,19 @@ async function getFeedEntryDetails(req, res) {
                 s.id as shelf_id, s.owner_id as shelf_owner_id,
                 s.name as shelf_name, s.type as shelf_type, s.description as shelf_description, s.visibility as shelf_visibility,
                 c.title as collectable_title, c.primary_creator as collectable_creator,
-                c.cover_url as collectable_cover_url, c.kind as collectable_kind,
-                cm.local_path as collectable_cover_media_path
+                c.cover_url as collectable_cover_url,
+                c.cover_image_url as collectable_cover_image_url,
+                c.cover_image_source as collectable_cover_image_source,
+                c.kind as collectable_kind,
+                cm.local_path as collectable_cover_media_path,
+                um.name as manual_name, um.author as manual_author, um.type as manual_type
          FROM event_aggregates a
          LEFT JOIN users u ON u.id = a.user_id
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
          LEFT JOIN shelves s ON s.id = a.shelf_id
          LEFT JOIN collectables c ON c.id = a.collectable_id
          LEFT JOIN media cm ON cm.id = c.cover_media_id
+         LEFT JOIN user_manuals um ON um.id = a.manual_id
          WHERE a.id = $1`,
         [aggregateId]
       );
@@ -696,14 +717,28 @@ async function getFeedEntryDetails(req, res) {
         entry.checkinStatus = aggregate.checkinStatus;
         entry.visibility = aggregate.visibility;
         entry.note = aggregate.note;
-        entry.collectable = {
+        const manual = aggregate.manualId ? {
+          id: aggregate.manualId,
+          title: aggregate.manualName,
+          primaryCreator: aggregate.manualAuthor,
+          coverUrl: null,
+          coverMediaPath: null,
+          kind: aggregate.manualType || 'manual',
+        } : null;
+        const collectable = aggregate.collectableId ? {
           id: aggregate.collectableId,
           title: aggregate.collectableTitle,
           primaryCreator: aggregate.collectableCreator,
           coverUrl: aggregate.collectableCoverUrl,
+          coverImageUrl: aggregate.collectableCoverImageUrl,
+          coverImageSource: aggregate.collectableCoverImageSource,
           coverMediaPath: aggregate.collectableCoverMediaPath,
           kind: aggregate.collectableKind,
-        };
+        } : null;
+        entry.collectable = collectable || manual;
+        if (manual) {
+          entry.manual = manual;
+        }
       } else {
         entry.itemCount = Math.max(
           Number.isFinite(payloadItemCount) ? payloadItemCount : 0,

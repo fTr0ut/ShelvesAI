@@ -1,23 +1,23 @@
 const { Pool } = require('pg');
 
-// Parse DATABASE_URL or use individual env vars
-const connectionString = process.env.DATABASE_URL;
+// Parse POSTGRES_HOST or use individual env vars
+const connectionString = process.env.POSTGRES_URL;
 
 // Validate required database configuration
-if (!connectionString && !process.env.DB_PASSWORD) {
-  console.error('FATAL: Database configuration missing. Set DATABASE_URL or DB_PASSWORD environment variable.');
+if (!connectionString && !process.env.POSTGRES_PASSWORD) {
+  console.error('FATAL: Database configuration missing. Set POSTGRES_HOST or POSTGRES_PASSWORD environment variable.');
   process.exit(1);
 }
 
 const poolConfig = connectionString
   ? { connectionString, ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false }
   : {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432', 10),
-      database: process.env.DB_NAME || 'shelvesai',
-      user: process.env.DB_USER || 'shelves',
-      password: process.env.DB_PASSWORD,
-      max: parseInt(process.env.DB_POOL_MAX || '20', 10),
+      host: process.env.POSTGRES_HOST,
+      port: parseInt(process.env.POSTGRES_PORT, 10),
+      database: process.env.POSTGRES_DB,
+      user: process.env.POSTGRES_USER,
+      password: process.env.POSTGRES_PASSWORD,
+      max: parseInt(process.env.POSTGRES_POOL_MAX, 10),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
     };

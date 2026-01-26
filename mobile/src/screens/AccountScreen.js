@@ -18,7 +18,7 @@ import { usePush } from '../context/PushContext';
 import { apiRequest, clearToken } from '../services/api';
 
 export default function AccountScreen({ navigation }) {
-  const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled } = useContext(AuthContext);
+  const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled, visionQuota, setVisionQuota } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
   const { unregisterPush } = usePush();
 
@@ -36,13 +36,16 @@ export default function AccountScreen({ navigation }) {
         if (typeof data.user?.isPremium === 'boolean') {
           setPremiumEnabled(data.user.isPremium);
         }
+        if (data.visionQuota) {
+          setVisionQuota(data.visionQuota);
+        }
       } catch (e) {
         console.warn('Failed to load account:', e);
       } finally {
         setLoading(false);
       }
     })();
-  }, [apiBase, token, setPremiumEnabled]);
+  }, [apiBase, token, setPremiumEnabled, setVisionQuota]);
 
   const handlePremiumToggle = useCallback(async (value) => {
     const previous = premiumEnabled;
@@ -147,6 +150,23 @@ export default function AccountScreen({ navigation }) {
               thumbColor={premiumEnabled ? colors.primary : colors.surfaceElevated}
             />
           </View>
+
+          {premiumEnabled && visionQuota && (
+            <View style={styles.quotaSection}>
+              <View style={styles.quotaHeader}>
+                <Ionicons name="scan" size={18} color={colors.text} />
+                <Text style={styles.quotaLabel}>Vision Scans</Text>
+              </View>
+              <View style={styles.quotaContent}>
+                <Text style={styles.quotaValue}>
+                  {visionQuota.scansRemaining} / {visionQuota.monthlyLimit} remaining
+                </Text>
+                <Text style={styles.quotaHint}>
+                  Resets in {visionQuota.daysRemaining} day{visionQuota.daysRemaining !== 1 ? 's' : ''}
+                </Text>
+              </View>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.settingsRow} onPress={toggleTheme}>
             <View style={styles.settingsLeft}>
@@ -335,6 +355,36 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     color: colors.text,
   },
   settingsHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  quotaSection: {
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  quotaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  quotaLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  quotaContent: {
+    marginLeft: 26,
+  },
+  quotaValue: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: colors.primary,
+  },
+  quotaHint: {
     fontSize: 12,
     color: colors.textMuted,
     marginTop: 2,
