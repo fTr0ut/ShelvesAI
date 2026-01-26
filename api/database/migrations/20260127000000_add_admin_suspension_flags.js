@@ -12,7 +12,7 @@ exports.up = async function (knex) {
 
   // Partial index for efficient lookup of suspended users
   await knex.raw(`
-    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_is_suspended
+    CREATE INDEX IF NOT EXISTS idx_users_is_suspended
     ON users (is_suspended)
     WHERE is_suspended = true
   `);
