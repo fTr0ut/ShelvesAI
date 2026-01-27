@@ -2,6 +2,7 @@ const friendshipQueries = require('../database/queries/friendships');
 const notificationsQueries = require('../database/queries/notifications');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 
 function formatUser(user) {
   if (!user) return null;
@@ -173,6 +174,7 @@ async function listFriendships(req, res) {
         name: [row.req_first_name, row.req_last_name].filter(Boolean).join(' ').trim() || undefined,
         picture: row.req_picture,
         profileMediaPath: row.req_profile_media_path,
+        profileMediaUrl: resolveMediaUrl(row.req_profile_media_path),
       },
       addressee: {
         id: row.addr_id,
@@ -180,6 +182,7 @@ async function listFriendships(req, res) {
         name: [row.addr_first_name, row.addr_last_name].filter(Boolean).join(' ').trim() || undefined,
         picture: row.addr_picture,
         profileMediaPath: row.addr_profile_media_path,
+        profileMediaUrl: resolveMediaUrl(row.addr_profile_media_path),
       },
       isRequester: row.requester_id === req.user.id,
       createdAt: row.created_at,

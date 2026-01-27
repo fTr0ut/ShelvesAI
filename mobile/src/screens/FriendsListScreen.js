@@ -128,9 +128,11 @@ export default function FriendsListScreen({ navigation }) {
         const friend = getFriend(item);
         const initial = (friend.name?.[0] || friend.username?.[0] || '?').toUpperCase();
 
-        // Build avatar source from profile media path or picture
+        // Build avatar source from profile media URL or path
         let avatarSource = null;
-        if (friend.profileMediaPath) {
+        if (friend.profileMediaUrl) {
+            avatarSource = { uri: friend.profileMediaUrl };
+        } else if (friend.profileMediaPath) {
             avatarSource = { uri: `${apiBase}/media/${friend.profileMediaPath}` };
         } else if (friend.picture) {
             avatarSource = { uri: friend.picture };
@@ -167,9 +169,11 @@ export default function FriendsListScreen({ navigation }) {
         const friend = getFriend(item);
         const initial = (friend.name?.[0] || friend.username?.[0] || '?').toUpperCase();
 
-        // Build avatar source from profile media path or picture
+        // Build avatar source from profile media URL or path
         let avatarSource = null;
-        if (friend.profileMediaPath) {
+        if (friend.profileMediaUrl) {
+            avatarSource = { uri: friend.profileMediaUrl };
+        } else if (friend.profileMediaPath) {
             avatarSource = { uri: `${apiBase}/media/${friend.profileMediaPath}` };
         } else if (friend.picture) {
             avatarSource = { uri: friend.picture };

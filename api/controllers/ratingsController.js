@@ -6,6 +6,7 @@ const ratingsQueries = require('../database/queries/ratings');
 const collectablesQueries = require('../database/queries/collectables');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 
 /**
  * GET /api/ratings/:itemId
@@ -79,6 +80,7 @@ async function setRating(req, res) {
                             coverImageUrl: collectable.coverImageUrl || null,
                             coverImageSource: collectable.coverImageSource || null,
                             coverMediaPath: collectable.coverMediaPath || null,
+                            coverMediaUrl: resolveMediaUrl(collectable.coverMediaPath),
                             rating: result.rating,
                             type: collectable.kind || 'item',
                         },

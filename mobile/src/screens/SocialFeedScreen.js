@@ -66,6 +66,12 @@ function buildMediaUri(value, apiBase = '') {
 
 function resolveCollectableCoverUrl(collectable, apiBase = '') {
     if (!collectable) return null;
+
+    // Prefer pre-resolved URL from API (handles S3/CloudFront)
+    if (collectable.coverMediaUrl) {
+        return collectable.coverMediaUrl;
+    }
+
     const coverImageUrl = collectable.coverImageUrl;
     const coverImageSource = collectable.coverImageSource;
 
@@ -593,7 +599,9 @@ export default function SocialFeedScreen({ navigation, route }) {
         const initial = displayName.charAt(0).toUpperCase();
 
         let avatarSource = null;
-        if (owner?.profileMediaPath) {
+        if (owner?.profileMediaUrl) {
+            avatarSource = { uri: owner.profileMediaUrl };
+        } else if (owner?.profileMediaPath) {
             avatarSource = { uri: `${apiBase}/media/${owner.profileMediaPath}` };
         } else if (owner?.picture) {
             avatarSource = { uri: owner.picture };

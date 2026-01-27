@@ -43,9 +43,11 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
         : user?.firstName || user?.username || 'User';
     const username = user?.username ? `@${user.username}` : '';
 
-    // Build avatar URL from profileMediaPath or picture
+    // Build avatar URL from profileMediaUrl, profileMediaPath, or picture
     let avatarUri = null;
-    if (user?.profileMediaPath && apiBase) {
+    if (user?.profileMediaUrl) {
+        avatarUri = user.profileMediaUrl;
+    } else if (user?.profileMediaPath && apiBase) {
         avatarUri = `${apiBase}/media/${user.profileMediaPath}`;
     } else if (user?.picture) {
         avatarUri = user.picture;

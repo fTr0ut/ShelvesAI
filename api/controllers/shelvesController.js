@@ -22,6 +22,7 @@ const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 const needsReviewQueries = require('../database/queries/needsReview');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
@@ -278,6 +279,7 @@ function formatShelfItem(row) {
     attribution: row.collectableAttribution || null,
     coverMediaId: row.collectableCoverMediaId || null,
     coverMediaPath: row.collectableCoverMediaPath || null,
+    coverMediaUrl: resolveMediaUrl(row.collectableCoverMediaPath),
     type: row.collectableKind || null,
     kind: row.collectableKind || null,
     fingerprint: row.collectableFingerprint || null,
@@ -1418,6 +1420,7 @@ async function rateShelfItem(req, res) {
           coverImageUrl: fullItem?.collectableCoverImageUrl || null,
           coverImageSource: fullItem?.collectableCoverImageSource || null,
           coverMediaPath: fullItem?.collectableCoverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(fullItem?.collectableCoverMediaPath),
           rating: validRating,
           type: fullItem?.collectableKind || shelf.type,
         },

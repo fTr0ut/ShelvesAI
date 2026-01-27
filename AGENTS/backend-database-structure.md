@@ -116,9 +116,13 @@ Cached media assets for collectables (covers, thumbnails, etc.). Supports both l
 
 **Indexes:** `collectable_id`, `kind`, `collectable_id+source_url` (unique)
 
-**Storage:** When S3 is configured, `local_path` stores the S3 object key. URL is resolved at runtime:
-- S3: `${S3_PUBLIC_URL}/${local_path}`
-- Local: `${API_BASE}/media/${local_path}`
+**Storage:** When S3 is configured, `local_path` stores the S3 object key. URL is resolved at runtime via `mediaUrl.js`:
+- S3: `${S3_PUBLIC_URL}/${local_path}` (auto-adds `https://` if missing)
+- Local: `/media/${local_path}` (client prepends API base)
+
+**API Response:** Controllers use `resolveMediaUrl()` to add resolved URL fields:
+- `coverMediaPath` (raw path) + `coverMediaUrl` (resolved URL)
+- Mobile clients should prefer `coverMediaUrl` when available
 
 ---
 

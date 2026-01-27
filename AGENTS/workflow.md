@@ -617,11 +617,47 @@ node api/scripts/migrate-media-to-s3.js
 #   --skip=N        Skip first N records (for resuming)
 ```
 
+### Media URL Resolution
+
+The API uses a centralized media URL resolver to generate proper URLs for profile pictures and cover images. This handles the difference between local development (Express static files) and production (S3/CloudFront).
+
+**Resolution Logic:**
+
+```mermaid
+flowchart TD
+    A[resolveMediaUrl] --> B{S3 Enabled?}
+    B -->|Yes| C{S3_PUBLIC_URL set?}
+    C -->|Yes| D[Return: https://{S3_PUBLIC_URL}/{path}]
+    C -->|No| E[Return: https://{bucket}.s3.{region}.amazonaws.com/{path}]
+    B -->|No| F[Return: /media/{path}]
+```
+
+**Protocol Handling:** The resolver automatically adds `https://` if the `S3_PUBLIC_URL` is missing the protocol prefix.
+
+**API Response Fields:**
+
+| Path Field | URL Field | Description |
+|------------|-----------|-------------|
+| `profileMediaPath` | `profileMediaUrl` | User profile pictures |
+| `coverMediaPath` | `coverMediaUrl` | Collectable cover images |
+| `collectableCoverMediaPath` | `collectableCoverMediaUrl` | Cover images in feed context |
+
+The API returns **both** the raw path and the resolved URL. Mobile clients should prefer the URL field when available, falling back to path-based construction for backwards compatibility.
+
+**Mobile Usage:**
+```javascript
+// Prefer pre-resolved URL, fallback to path construction
+const avatarUrl = user.profileMediaUrl
+  || (user.profileMediaPath && `${apiBase}/media/${user.profileMediaPath}`)
+  || user.picture;
+```
+
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | [s3.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/s3.js) | S3 client: `uploadBuffer`, `getPublicUrl`, `deleteObject`, `isEnabled` |
+| [mediaUrl.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/mediaUrl.js) | URL resolver: `resolveMediaUrl`, `addMediaUrls`, `isUsingS3` |
 | [media.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/media.js) | Cover caching with S3/local fallback |
 | [profileMedia.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/profileMedia.js) | Profile photo uploads with S3/local fallback |
 | [migrate-media-to-s3.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/scripts/migrate-media-to-s3.js) | Migration script for existing files |

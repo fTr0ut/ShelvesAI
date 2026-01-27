@@ -153,7 +153,9 @@ export default function FeedDetailScreen({ route, navigation }) {
   const isOwner = !!(user?.id && owner?.id && user.id === owner.id);
 
   let avatarSource = null;
-  if (owner?.profileMediaPath) {
+  if (owner?.profileMediaUrl) {
+    avatarSource = { uri: owner.profileMediaUrl };
+  } else if (owner?.profileMediaPath) {
     avatarSource = { uri: `${apiBase}/media/${owner.profileMediaPath}` };
   } else if (owner?.picture) {
     avatarSource = { uri: owner.picture };
@@ -186,6 +188,10 @@ export default function FeedDetailScreen({ route, navigation }) {
 
   const resolveCollectableCoverUrl = (target) => {
     if (!target) return null;
+    // Prefer pre-resolved URL from API (handles S3/CloudFront)
+    if (target.coverMediaUrl) {
+      return target.coverMediaUrl;
+    }
     if (target.coverImageUrl) {
       if (target.coverImageSource === 'external' || /^https?:/i.test(target.coverImageUrl)) {
         return target.coverImageUrl;

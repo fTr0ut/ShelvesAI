@@ -329,6 +329,11 @@ export default function ProfileScreen({ navigation, route }) {
     }, [apiBase, token, profile, navigation]);
 
     const getProfileImageSource = () => {
+        // Prefer pre-resolved URL from API (handles S3/CloudFront)
+        if (profile?.profileMediaUrl) {
+            return { uri: profile.profileMediaUrl };
+        }
+        // Fallback to constructing URL from path (local development)
         if (profile?.profileMediaPath) {
             return { uri: `${apiBase}/media/${profile.profileMediaPath}` };
         }

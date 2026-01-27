@@ -8,6 +8,7 @@ const usersQueries = require('../database/queries/users');
 const shelvesQueries = require('../database/queries/shelves');
 const profileMediaQueries = require('../database/queries/profileMedia');
 const { rowToCamelCase } = require('../database/queries/utils');
+const { addMediaUrls } = require('../services/mediaUrl');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -33,7 +34,7 @@ async function getMyProfile(req, res) {
         response.shelfCount = shelves.length;
         response.isOwner = true;
 
-        res.json({ profile: response });
+        res.json({ profile: addMediaUrls(response) });
     } catch (err) {
         console.error('getMyProfile error:', err);
         res.status(500).json({ error: 'Server error' });
@@ -147,7 +148,7 @@ async function getPublicProfile(req, res) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        res.json({ profile });
+        res.json({ profile: addMediaUrls(profile) });
     } catch (err) {
         console.error('getPublicProfile error:', err);
         res.status(500).json({ error: 'Server error' });

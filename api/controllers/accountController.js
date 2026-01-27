@@ -1,6 +1,7 @@
 const { query } = require('../database/pg');
 const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils');
 const visionQuotaQueries = require('../database/queries/visionQuota');
+const { addMediaUrls } = require('../services/mediaUrl');
 
 async function getAccount(req, res) {
   try {
@@ -19,7 +20,7 @@ async function getAccount(req, res) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = rowToCamelCase(result.rows[0]);
+    const user = addMediaUrls(rowToCamelCase(result.rows[0]));
 
     // Get vision quota info
     let visionQuota = null;

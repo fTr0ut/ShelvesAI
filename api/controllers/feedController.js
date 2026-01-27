@@ -6,6 +6,7 @@ const { markNewsItemsSeen } = require('../database/queries/newsSeen');
 const { query } = require('../database/pg');
 const { getNewsRecommendationsForUser } = require('../services/discovery/newsRecommendations');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 
 const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
 const NEWS_FEED_GROUP_LIMIT = parseInt(process.env.NEWS_FEED_GROUP_LIMIT || '3', 10);
@@ -357,6 +358,7 @@ async function summarizeItems(shelfIds) {
           coverUrl: row.cover_url,
           coverMediaId: row.cover_media_id,
           coverMediaPath: row.cover_media_path,
+          coverMediaUrl: resolveMediaUrl(row.cover_media_path),
           kind: row.kind,
         } : null,
         manual: row.manual_id ? {
@@ -467,6 +469,7 @@ async function getFeed(req, res) {
           country: e.country,
           picture: e.userPicture,
           profileMediaPath: e.profileMediaPath,
+          profileMediaUrl: resolveMediaUrl(e.profileMediaPath),
         },
       };
 
@@ -491,6 +494,7 @@ async function getFeed(req, res) {
           coverImageUrl: e.collectableCoverImageUrl,
           coverImageSource: e.collectableCoverImageSource,
           coverMediaPath: e.collectableCoverMediaPath,
+          coverMediaUrl: resolveMediaUrl(e.collectableCoverMediaPath),
           kind: e.collectableKind,
         } : null;
         entry.collectable = collectable || manual;
@@ -710,6 +714,7 @@ async function getFeedEntryDetails(req, res) {
           country: aggregate.country,
           picture: aggregate.picture,
           profileMediaPath: aggregate.profileMediaPath,
+          profileMediaUrl: resolveMediaUrl(aggregate.profileMediaPath),
         },
       };
 
@@ -733,6 +738,7 @@ async function getFeedEntryDetails(req, res) {
           coverImageUrl: aggregate.collectableCoverImageUrl,
           coverImageSource: aggregate.collectableCoverImageSource,
           coverMediaPath: aggregate.collectableCoverMediaPath,
+          coverMediaUrl: resolveMediaUrl(aggregate.collectableCoverMediaPath),
           kind: aggregate.collectableKind,
         } : null;
         entry.collectable = collectable || manual;
@@ -839,6 +845,7 @@ async function getFeedEntryDetails(req, res) {
         country: owner.country,
         picture: owner.picture,
         profileMediaPath: owner.profile_media_path,
+        profileMediaUrl: resolveMediaUrl(owner.profile_media_path),
       },
       items: itemsResult.rows.map(row => ({
         id: row.id,
@@ -849,6 +856,7 @@ async function getFeedEntryDetails(req, res) {
           coverUrl: row.cover_url,
           coverMediaId: row.cover_media_id,
           coverMediaPath: row.cover_media_path,
+          coverMediaUrl: resolveMediaUrl(row.cover_media_path),
           kind: row.kind,
           description: row.collectable_description,
           year: row.year,
