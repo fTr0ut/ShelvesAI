@@ -152,17 +152,14 @@ async function listUserFavorites(req, res) {
         const isOwner = targetUserId === viewerId;
 
         if (!isOwner) {
-            // Check privacy settings
+            // Check privacy settings (normalize error responses to prevent user enumeration)
             const user = await usersQueries.findById(targetUserId);
-            if (!user) {
-                return res.status(404).json({ error: 'User not found' });
-            }
 
-            // If private, must be friends
-            if (user.is_private) {
-                const areFriends = await friendshipsQueries.areFriends(viewerId, targetUserId);
+            // If user doesn't exist or is private, check friendship before returning error
+            if (!user || user.is_private) {
+                const areFriends = user ? await friendshipsQueries.areFriends(viewerId, targetUserId) : false;
                 if (!areFriends) {
-                    return res.status(403).json({ error: 'This profile is private' });
+                    return res.status(403).json({ error: 'Profile not accessible' });
                 }
             }
         }

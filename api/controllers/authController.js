@@ -37,6 +37,38 @@ async function login(req, res) {
   }
 }
 
+// POST /api/admin/login
+async function adminLogin(req, res) {
+  try {
+    const { username, password } = req.body ?? {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Missing credentials' });
+    }
+
+    const result = await authQueries.loginAdmin({ username, password });
+    if (!result) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    if (result.notAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    if (result.suspended) {
+      return res.status(403).json({
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED',
+        reason: result.suspensionReason || null,
+      });
+    }
+
+    return res.json(result);
+  } catch (err) {
+    console.error('Admin login error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 // POST /api/register
 async function register(req, res) {
   try {
@@ -227,4 +259,4 @@ async function validateResetToken(req, res) {
   }
 }
 
-module.exports = { login, register, me, consumeAuth0, setUsername, forgotPassword, resetPassword, validateResetToken };
+module.exports = { login, adminLogin, register, me, consumeAuth0, setUsername, forgotPassword, resetPassword, validateResetToken };

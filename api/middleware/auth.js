@@ -1,6 +1,32 @@
 const jwt = require('jsonwebtoken');
 const { query } = require('../database/pg');
 
+const AUTH_CACHE_TTL_MS = process.env.AUTH_CACHE_TTL_MS ? parseInt(process.env.AUTH_CACHE_TTL_MS, 10) : 5000;
+const AUTH_CACHE_MAX_ENTRIES = process.env.AUTH_CACHE_MAX ? parseInt(process.env.AUTH_CACHE_MAX, 10) : 1000;
+const authCache = new Map();
+
+function getCachedUser(userId) {
+  if (AUTH_CACHE_TTL_MS <= 0) return null;
+  const entry = authCache.get(userId);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    authCache.delete(userId);
+    return null;
+  }
+  return entry.user;
+}
+
+function setCachedUser(userId, user) {
+  if (AUTH_CACHE_TTL_MS <= 0) return;
+  authCache.set(userId, { user, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
+
+  // Prevent unbounded growth in long-lived dev sessions
+  if (authCache.size > AUTH_CACHE_MAX_ENTRIES) {
+    const oldestKey = authCache.keys().next().value;
+    if (oldestKey) authCache.delete(oldestKey);
+  }
+}
+
 async function auth(req, res, next) {
   const header = req.headers['authorization'] || '';
   const [scheme, token] = header.split(' ');
@@ -16,16 +42,22 @@ async function auth(req, res, next) {
   }
 
   try {
-    const result = await query(
-      'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
-      [payload.id]
-    );
+    let user = getCachedUser(payload.id);
 
-    if (!result.rows.length) {
-      return res.status(401).json({ error: 'Invalid token' });
+    if (!user) {
+      const result = await query(
+        'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        [payload.id]
+      );
+
+      if (!result.rows.length) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+
+      user = result.rows[0];
+      setCachedUser(payload.id, user);
     }
 
-    const user = result.rows[0];
 
     // Check if user is suspended
     if (user.is_suspended) {
@@ -72,26 +104,35 @@ async function optionalAuth(req, res, next) {
   }
 
   try {
-    const result = await query(
-      'SELECT id, username, is_premium, is_admin, is_suspended FROM users WHERE id = $1',
-      [payload.id]
-    );
+    let user = getCachedUser(payload.id);
 
-    if (result.rows.length) {
-      const user = result.rows[0];
-      // For optional auth, suspended users are treated as unauthenticated
-      if (user.is_suspended) {
-        req.user = null;
-      } else {
-        req.user = {
-          id: user.id,
-          username: user.username,
-          isPremium: !!user.is_premium,
-          isAdmin: !!user.is_admin,
-        };
+    if (!user) {
+      const result = await query(
+        'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        [payload.id]
+      );
+
+      if (result.rows.length) {
+        user = result.rows[0];
+        setCachedUser(payload.id, user);
       }
-    } else {
+    }
+
+    if (!user) {
       req.user = null;
+      return next();
+    }
+
+    // For optional auth, suspended users are treated as unauthenticated
+    if (user.is_suspended) {
+      req.user = null;
+    } else {
+      req.user = {
+        id: user.id,
+        username: user.username,
+        isPremium: !!user.is_premium,
+        isAdmin: !!user.is_admin,
+      };
     }
     next();
   } catch (err) {
@@ -102,5 +143,4 @@ async function optionalAuth(req, res, next) {
 }
 
 module.exports = { auth, optionalAuth };
-
 

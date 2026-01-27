@@ -12,7 +12,14 @@
         "backfill:feed-payloads": "node scripts/backfill-event-payloads.js",
         "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000",
         "cache-covers": "node scripts/cache-collectable-covers.js",
-        "test:tmdb": "node scripts/test-tmdb.js"
+        "test:tmdb": "node scripts/test-tmdb.js",
+        "generate-token": "node scripts/generate-token.js",
+        "init-db": "node scripts/init-db.js",
+        "init-db:check": "node scripts/init-db.js --check",
+        "init-db:fresh": "node scripts/init-db.js --fresh",
+        "drop-db": "node scripts/drop-db.js",
+        "drop-db:confirm": "node scripts/drop-db.js --confirm",
+        "restore-db": "node scripts/restore-db.js"
     },
     "keywords": [],
     "author": "",

@@ -8,7 +8,9 @@
       "Bash(npx expo install:*)",
       "WebSearch",
       "Bash(head:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(npm run init-db:*)"
     ]
   }
 }

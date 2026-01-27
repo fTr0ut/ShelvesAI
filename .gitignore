@@ -45,3 +45,6 @@ api/credentials/*.json
 # Data files
 *.jsonl
 backup/**
+
+# Misc
+nul

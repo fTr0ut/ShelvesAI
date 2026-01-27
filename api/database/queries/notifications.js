@@ -1,6 +1,11 @@
 const { query } = require('../pg');
 const { rowToCamelCase, parsePagination } = require('./utils');
 
+const UNREAD_COUNT_CACHE_TTL_MS = process.env.UNREAD_COUNT_CACHE_TTL_MS
+    ? parseInt(process.env.UNREAD_COUNT_CACHE_TTL_MS, 10)
+    : 5000;
+const unreadCountCache = new Map();
+
 // Lazy load push service to avoid circular dependencies
 let pushNotificationService = null;
 function getPushService() {
@@ -13,6 +18,29 @@ function getPushService() {
 function normalizeMetadata(metadata) {
     if (!metadata || typeof metadata !== 'object') return {};
     return metadata;
+}
+
+function getCachedUnreadCount(userId) {
+    if (UNREAD_COUNT_CACHE_TTL_MS <= 0) return null;
+    const entry = unreadCountCache.get(userId);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        unreadCountCache.delete(userId);
+        return null;
+    }
+    return entry.count;
+}
+
+function setCachedUnreadCount(userId, count) {
+    if (UNREAD_COUNT_CACHE_TTL_MS <= 0) return;
+    unreadCountCache.set(userId, {
+        count,
+        expiresAt: Date.now() + UNREAD_COUNT_CACHE_TTL_MS,
+    });
+}
+
+function invalidateUnreadCount(userId) {
+    unreadCountCache.delete(userId);
 }
 
 /**
@@ -74,6 +102,9 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
         );
         notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
     }
+
+    // Any change to notifications should invalidate the unread-count cache.
+    invalidateUnreadCount(userId);
 
     // Fire-and-forget push notification
     if (notification) {
@@ -159,9 +190,13 @@ async function markAsRead(userId, notificationIds) {
          WHERE user_id = $1
            AND id = ANY($2::uuid[])
            AND deleted_at IS NULL
-         RETURNING id`,
+        RETURNING id`,
         [userId, ids]
     );
+
+    if (result.rowCount > 0) {
+        invalidateUnreadCount(userId);
+    }
 
     return { updated: result.rowCount, ids: result.rows.map((row) => row.id) };
 }
@@ -177,10 +212,19 @@ async function markAllAsRead(userId) {
         [userId]
     );
 
+    if (result.rowCount > 0) {
+        invalidateUnreadCount(userId);
+    }
+
     return { updated: result.rowCount };
 }
 
 async function getUnreadCount(userId) {
+    const cached = getCachedUnreadCount(userId);
+    if (cached != null) {
+        return cached;
+    }
+
     const result = await query(
         `SELECT COUNT(*)::int AS unread_count
          FROM notifications
@@ -189,7 +233,10 @@ async function getUnreadCount(userId) {
            AND deleted_at IS NULL`,
         [userId]
     );
-    return result.rows[0]?.unread_count || 0;
+
+    const count = result.rows[0]?.unread_count || 0;
+    setCachedUnreadCount(userId, count);
+    return count;
 }
 
 async function softDeleteLike({ userId, actorId, entityId }) {
@@ -204,6 +251,9 @@ async function softDeleteLike({ userId, actorId, entityId }) {
          RETURNING id`,
         [userId, actorId || null, String(entityId)]
     );
+    if (result.rowCount > 0) {
+        invalidateUnreadCount(userId);
+    }
     return result.rowCount > 0;
 }
 

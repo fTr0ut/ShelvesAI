@@ -1,5 +1,21 @@
-const { query } = require('../pg');
+const { query, transaction } = require('../pg');
 const { rowToCamelCase } = require('./utils');
+
+async function logAdminAction(client, {
+  adminId,
+  action,
+  targetUserId = null,
+  metadata = {},
+  ipAddress = null,
+  userAgent = null,
+}) {
+  const safeMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  await client.query(
+    `INSERT INTO admin_action_logs (admin_id, action, target_user_id, metadata, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [adminId, action, targetUserId, JSON.stringify(safeMetadata), ipAddress, userAgent]
+  );
+}
 
 /**
  * Get system-wide statistics for admin dashboard
@@ -127,72 +143,106 @@ async function getUserById(userId) {
 /**
  * Suspend a user
  */
-async function suspendUser(userId, reason = null, adminId) {
+async function suspendUser(userId, reason = null, adminId, context = {}) {
   // Prevent admin from suspending themselves
   if (userId === adminId) {
     return { error: 'Cannot suspend yourself' };
   }
 
-  const result = await query(
-    `UPDATE users
-     SET is_suspended = true,
-         suspended_at = NOW(),
-         suspension_reason = $2
-     WHERE id = $1
-     RETURNING id, username, is_suspended, suspended_at, suspension_reason`,
-    [userId, reason]
-  );
+  return transaction(async (client) => {
+    const result = await client.query(
+      `UPDATE users
+       SET is_suspended = true,
+           suspended_at = NOW(),
+           suspension_reason = $2
+       WHERE id = $1
+       RETURNING id, username, is_suspended, suspended_at, suspension_reason`,
+      [userId, reason]
+    );
 
-  if (result.rows.length === 0) {
-    return { error: 'User not found' };
-  }
+    if (result.rows.length === 0) {
+      return { error: 'User not found' };
+    }
 
-  return { user: rowToCamelCase(result.rows[0]) };
+    await logAdminAction(client, {
+      adminId,
+      action: 'USER_SUSPENDED',
+      targetUserId: userId,
+      metadata: { reason: reason || null },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { user: rowToCamelCase(result.rows[0]) };
+  });
 }
 
 /**
  * Unsuspend a user
  */
-async function unsuspendUser(userId) {
-  const result = await query(
-    `UPDATE users
-     SET is_suspended = false,
-         suspended_at = NULL,
-         suspension_reason = NULL
-     WHERE id = $1
-     RETURNING id, username, is_suspended`,
-    [userId]
-  );
+async function unsuspendUser(userId, adminId, context = {}) {
+  return transaction(async (client) => {
+    const result = await client.query(
+      `UPDATE users
+       SET is_suspended = false,
+           suspended_at = NULL,
+           suspension_reason = NULL
+       WHERE id = $1
+       RETURNING id, username, is_suspended`,
+      [userId]
+    );
 
-  if (result.rows.length === 0) {
-    return { error: 'User not found' };
-  }
+    if (result.rows.length === 0) {
+      return { error: 'User not found' };
+    }
 
-  return { user: rowToCamelCase(result.rows[0]) };
+    await logAdminAction(client, {
+      adminId,
+      action: 'USER_UNSUSPENDED',
+      targetUserId: userId,
+      metadata: {},
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { user: rowToCamelCase(result.rows[0]) };
+  });
 }
 
 /**
  * Toggle admin status for a user
  */
-async function toggleAdmin(userId, adminId) {
+async function toggleAdmin(userId, adminId, context = {}) {
   // Prevent admin from removing their own admin status
   if (userId === adminId) {
     return { error: 'Cannot modify your own admin status' };
   }
 
-  const result = await query(
-    `UPDATE users
-     SET is_admin = NOT is_admin
-     WHERE id = $1
-     RETURNING id, username, is_admin`,
-    [userId]
-  );
+  return transaction(async (client) => {
+    const result = await client.query(
+      `UPDATE users
+       SET is_admin = NOT is_admin
+       WHERE id = $1
+       RETURNING id, username, is_admin`,
+      [userId]
+    );
 
-  if (result.rows.length === 0) {
-    return { error: 'User not found' };
-  }
+    if (result.rows.length === 0) {
+      return { error: 'User not found' };
+    }
 
-  return { user: rowToCamelCase(result.rows[0]) };
+    const updated = result.rows[0];
+    await logAdminAction(client, {
+      adminId,
+      action: updated.is_admin ? 'ADMIN_GRANTED' : 'ADMIN_REVOKED',
+      targetUserId: userId,
+      metadata: { isAdmin: !!updated.is_admin },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { user: rowToCamelCase(updated) };
+  });
 }
 
 /**

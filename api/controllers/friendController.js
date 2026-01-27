@@ -210,10 +210,10 @@ async function sendFriendRequest(req, res) {
       return res.status(400).json({ error: 'You cannot befriend yourself' });
     }
 
-    // Check target exists
-    const targetResult = await query('SELECT id FROM users WHERE id = $1', [targetUserId]);
+    // Check target exists (return generic error to prevent user enumeration)
+    const targetResult = await query('SELECT id FROM users WHERE id = $1 AND is_suspended = false', [targetUserId]);
     if (!targetResult.rows.length) {
-      return res.status(404).json({ error: 'Target user not found' });
+      return res.status(403).json({ error: 'Unable to complete request' });
     }
 
     // Check for reverse request (they sent us one)

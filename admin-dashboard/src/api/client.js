@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
+const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
 
 const client = axios.create({
   baseURL: API_URL,
@@ -12,7 +13,7 @@ const client = axios.create({
 // Request interceptor to add auth token
 client.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('adminToken');
+    const token = storage?.getItem('adminToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -26,7 +27,8 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('adminToken');
+      storage?.removeItem('adminToken');
+      storage?.removeItem('adminUser');
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -35,7 +37,7 @@ client.interceptors.response.use(
 
 // Auth
 export const login = (username, password) =>
-  client.post('/login', { username, password });
+  client.post('/admin/login', { username, password });
 
 // Admin endpoints
 export const getStats = () => client.get('/admin/stats');

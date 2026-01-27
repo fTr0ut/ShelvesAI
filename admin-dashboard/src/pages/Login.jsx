@@ -24,7 +24,7 @@ export default function Login() {
       await login(username, password);
       navigate('/');
     } catch (err) {
-      const errorMessage = err.response?.data?.error || 'Login failed';
+      const errorMessage = err.response?.data?.error || err.message || 'Login failed';
       const code = err.response?.data?.code;
 
       if (code === 'ACCOUNT_SUSPENDED') {

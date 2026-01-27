@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { login as apiLogin } from '../api/client';
 
+const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -9,14 +11,20 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     // Check for existing token on mount
-    const token = localStorage.getItem('adminToken');
-    const userData = localStorage.getItem('adminUser');
+    const token = storage?.getItem('adminToken');
+    const userData = storage?.getItem('adminUser');
     if (token && userData) {
       try {
-        setUser(JSON.parse(userData));
+        const parsed = JSON.parse(userData);
+        if (parsed?.isAdmin) {
+          setUser(parsed);
+        } else {
+          storage?.removeItem('adminToken');
+          storage?.removeItem('adminUser');
+        }
       } catch (e) {
-        localStorage.removeItem('adminToken');
-        localStorage.removeItem('adminUser');
+        storage?.removeItem('adminToken');
+        storage?.removeItem('adminUser');
       }
     }
     setLoading(false);
@@ -26,16 +34,22 @@ export function AuthProvider({ children }) {
     const response = await apiLogin(username, password);
     const { token, user: userData } = response.data;
 
-    localStorage.setItem('adminToken', token);
-    localStorage.setItem('adminUser', JSON.stringify(userData));
+    if (!userData?.isAdmin) {
+      storage?.removeItem('adminToken');
+      storage?.removeItem('adminUser');
+      throw new Error('Admin access required');
+    }
+
+    storage?.setItem('adminToken', token);
+    storage?.setItem('adminUser', JSON.stringify(userData));
     setUser(userData);
 
     return userData;
   };
 
   const logout = () => {
-    localStorage.removeItem('adminToken');
-    localStorage.removeItem('adminUser');
+    storage?.removeItem('adminToken');
+    storage?.removeItem('adminUser');
     setUser(null);
   };
 

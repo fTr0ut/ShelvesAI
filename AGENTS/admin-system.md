@@ -7,9 +7,10 @@ This document describes the admin privileges system and dashboard implementation
 The admin system provides a separate web dashboard for managing users, monitoring system health, and performing moderation actions. It consists of:
 
 1. **Database schema additions** - `is_admin` and `is_suspended` flags on users table
-2. **API endpoints** - Protected admin routes at `/api/admin/*`
-3. **Admin middleware** - Authorization layer requiring `isAdmin` flag
-4. **Web dashboard** - React/Vite app with Tailwind CSS
+2. **Audit logging** - `admin_action_logs` table for admin activity
+3. **API endpoints** - Protected admin routes at `/api/admin/*`
+4. **Admin middleware** - Authorization layer requiring `isAdmin` flag
+5. **Web dashboard** - React/Vite app with Tailwind CSS
 
 ---
 
@@ -28,6 +29,20 @@ Adds the following columns to the `users` table:
 
 **Index**: Partial index on `is_suspended` WHERE `is_suspended = true` for efficient lookup of suspended users.
 
+### Migration: `20260127010000_add_admin_action_logs.js`
+
+Adds audit logging for admin actions:
+
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| `admin_id` | UUID | null | Admin who performed the action |
+| `action` | text | - | Action name (`USER_SUSPENDED`, `USER_UNSUSPENDED`, `ADMIN_GRANTED`, `ADMIN_REVOKED`) |
+| `target_user_id` | UUID | null | Affected user |
+| `metadata` | jsonb | `{}` | Additional context (e.g., suspension reason) |
+| `ip_address` | text | null | Admin client IP (best-effort) |
+| `user_agent` | text | null | Admin user agent |
+| `created_at` | timestamptz | now | Action timestamp |
+
 ---
 
 ## API Endpoints
@@ -35,6 +50,12 @@ Adds the following columns to the `users` table:
 All admin endpoints are mounted at `/api/admin` and require:
 1. Valid JWT authentication (`auth` middleware)
 2. `isAdmin = true` on the user (`requireAdmin` middleware)
+
+### Admin Login
+```
+POST /api/admin/login
+```
+Authenticate an admin user and return a short-lived admin token.
 
 ### Dashboard Statistics
 ```
@@ -189,11 +210,11 @@ admin-dashboard/
 ### Authentication Flow
 
 1. Admin logs in via `/login` page using existing app credentials
-2. JWT token stored in `localStorage` as `adminToken`
+2. JWT token stored in `sessionStorage` as `adminToken`
 3. Axios interceptor attaches token to all requests
 4. 401 responses clear token and redirect to login
 
-**Note**: The dashboard uses the same `/api/login` endpoint as the mobile app. Users must have `is_admin = true` in the database to access admin endpoints after login.
+**Note**: The dashboard uses the `/api/admin/login` endpoint. Users must have `is_admin = true` in the database to access admin endpoints after login.
 
 ### Pages
 

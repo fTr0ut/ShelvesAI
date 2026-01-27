@@ -1,6 +1,30 @@
 const adminQueries = require('../database/queries/admin');
 const { parsePagination } = require('../database/queries/utils');
 
+const normalizeIp = (ip) => {
+  if (!ip || typeof ip !== 'string') return ip;
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+};
+
+const getClientIp = (req) => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+    return normalizeIp(forwardedFor.split(',')[0].trim());
+  }
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.length > 0) {
+    return normalizeIp(realIp.trim());
+  }
+  return normalizeIp(req.socket?.remoteAddress || req.ip);
+};
+
+function getAdminContext(req) {
+  return {
+    ipAddress: getClientIp(req) || null,
+    userAgent: req.get('user-agent') || null,
+  };
+}
+
 /**
  * GET /api/admin/stats
  * Get dashboard statistics
@@ -84,7 +108,12 @@ async function suspendUser(req, res) {
     const { userId } = req.params;
     const { reason } = req.body || {};
 
-    const result = await adminQueries.suspendUser(userId, reason, req.user.id);
+    const result = await adminQueries.suspendUser(
+      userId,
+      reason,
+      req.user.id,
+      getAdminContext(req)
+    );
 
     if (result.error) {
       const status = result.error === 'User not found' ? 404 : 400;
@@ -106,7 +135,11 @@ async function unsuspendUser(req, res) {
   try {
     const { userId } = req.params;
 
-    const result = await adminQueries.unsuspendUser(userId);
+    const result = await adminQueries.unsuspendUser(
+      userId,
+      req.user.id,
+      getAdminContext(req)
+    );
 
     if (result.error) {
       return res.status(404).json({ error: result.error });
@@ -127,7 +160,11 @@ async function toggleAdmin(req, res) {
   try {
     const { userId } = req.params;
 
-    const result = await adminQueries.toggleAdmin(userId, req.user.id);
+    const result = await adminQueries.toggleAdmin(
+      userId,
+      req.user.id,
+      getAdminContext(req)
+    );
 
     if (result.error) {
       const status = result.error === 'User not found' ? 404 : 400;

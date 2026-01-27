@@ -1,25 +1,49 @@
+/**
+ * PostgreSQL Connection Pool
+ *
+ * This module provides a shared connection pool for database operations.
+ * Schema management is handled by Knex migrations - run `npx knex migrate:latest`
+ */
+
 const { Pool } = require('pg');
 
-// Parse POSTGRES_HOST or use individual env vars
-const connectionString = process.env.POSTGRES_URL;
+// Build connection config from environment variables
+// Supports DATABASE_URL / POSTGRES_URL or individual POSTGRES_* variables
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const sslEnabled = process.env.POSTGRES_SSL === 'true' || process.env.POSTGRES_SSL === 'require';
+const sslConfig = sslEnabled ? { rejectUnauthorized: false } : false;
+const poolMax = process.env.POSTGRES_POOL_MAX ? parseInt(process.env.POSTGRES_POOL_MAX, 10) : 10;
+const idleTimeoutMillis = 30000;
+const connectionTimeoutMillis = 5000;
+const slowQueryThresholdMs = process.env.SLOW_QUERY_MS ? parseInt(process.env.SLOW_QUERY_MS, 10) : 250;
 
 // Validate required database configuration
 if (!connectionString && !process.env.POSTGRES_PASSWORD) {
-  console.error('FATAL: Database configuration missing. Set POSTGRES_HOST or POSTGRES_PASSWORD environment variable.');
+  console.error('FATAL: Database configuration missing.');
+  console.error('Set DATABASE_URL or POSTGRES_HOST/POSTGRES_PASSWORD environment variables.');
   process.exit(1);
 }
 
 const poolConfig = connectionString
-  ? { connectionString, ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false }
+  ? {
+      connectionString,
+      ssl: sslConfig,
+      max: poolMax,
+      idleTimeoutMillis,
+      connectionTimeoutMillis,
+      keepAlive: true,
+    }
   : {
       host: process.env.POSTGRES_HOST,
-      port: parseInt(process.env.POSTGRES_PORT, 10),
-      database: process.env.POSTGRES_DB,
+      port: process.env.POSTGRES_PORT ? parseInt(process.env.POSTGRES_PORT, 10) : 5432,
+      database: process.env.POSTGRES_NAME || process.env.POSTGRES_DB,
       user: process.env.POSTGRES_USER,
       password: process.env.POSTGRES_PASSWORD,
-      max: parseInt(process.env.POSTGRES_POOL_MAX, 10),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      max: poolMax,
+      idleTimeoutMillis,
+      connectionTimeoutMillis,
+      ssl: sslConfig,
+      keepAlive: true,
     };
 
 const pool = new Pool(poolConfig);
@@ -31,72 +55,12 @@ pool.on('error', (err) => {
 
 // Test connection on startup
 pool.query('SELECT NOW()')
-  .then(async () => {
+  .then(() => {
     console.log('PostgreSQL connected');
-    try {
-      await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT FALSE');
-    } catch (err) {
-      console.warn('Failed to ensure users.is_premium column:', err.message);
-    }
-    try {
-      await pool.query(
-        `CREATE TABLE IF NOT EXISTS media (
-          id SERIAL PRIMARY KEY,
-          collectable_id INTEGER NOT NULL REFERENCES collectables(id) ON DELETE CASCADE,
-          kind TEXT NOT NULL,
-          variant TEXT,
-          provider TEXT,
-          source_url TEXT NOT NULL,
-          local_path TEXT,
-          content_type TEXT,
-          size_bytes INTEGER,
-          checksum TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )`,
-      );
-      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS local_path TEXT');
-      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS content_type TEXT');
-      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS size_bytes INTEGER');
-      await pool.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS checksum TEXT');
-      await pool.query('ALTER TABLE collectables ADD COLUMN IF NOT EXISTS cover_media_id INTEGER');
-      await pool.query(
-        `DO $$
-         BEGIN
-           IF EXISTS (
-             SELECT 1
-             FROM information_schema.columns
-             WHERE table_name = 'media' AND column_name = 'bytes'
-           ) THEN
-             ALTER TABLE media ALTER COLUMN bytes DROP NOT NULL;
-           END IF;
-         END $$`,
-      );
-      await pool.query(
-        `DO $$
-         BEGIN
-           IF NOT EXISTS (
-             SELECT 1
-             FROM pg_constraint
-             WHERE conname = 'collectables_cover_media_id_fkey'
-           ) THEN
-             ALTER TABLE collectables
-               ADD CONSTRAINT collectables_cover_media_id_fkey
-               FOREIGN KEY (cover_media_id)
-               REFERENCES media(id)
-               ON DELETE SET NULL;
-           END IF;
-         END $$`,
-      );
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_media_collectable ON media(collectable_id)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_media_kind ON media(kind)');
-      await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_media_collectable_url ON media(collectable_id, source_url)');
-      await pool.query('CREATE INDEX IF NOT EXISTS idx_collectables_cover_media ON collectables(cover_media_id)');
-    } catch (err) {
-      console.warn('Failed to ensure media tables:', err.message);
-    }
   })
-  .catch((err) => console.error('PostgreSQL connection error:', err));
+  .catch((err) => {
+    console.error('PostgreSQL connection error:', err.message);
+  });
 
 /**
  * Execute a query with parameters
@@ -109,14 +73,14 @@ async function query(text, params) {
   try {
     const result = await pool.query(text, params);
     const duration = Date.now() - start;
-    
-    if (process.env.NODE_ENV !== 'production' && duration > 100) {
-      console.log('Slow query:', { text, duration, rows: result.rowCount });
+
+    if (process.env.NODE_ENV !== 'production' && duration > slowQueryThresholdMs) {
+      console.log('Slow query:', { text: text.substring(0, 100), duration, rows: result.rowCount });
     }
-    
+
     return result;
   } catch (err) {
-    console.error('Query error:', { text, error: err.message });
+    console.error('Query error:', { text: text.substring(0, 100), error: err.message });
     throw err;
   }
 }
@@ -128,10 +92,10 @@ async function query(text, params) {
 async function getClient() {
   const client = await pool.connect();
   const originalRelease = client.release.bind(client);
-  
+
   // Track if client has been released
   let released = false;
-  
+
   // Monkey-patch release to prevent double-release
   client.release = () => {
     if (released) {
@@ -141,7 +105,7 @@ async function getClient() {
     released = true;
     return originalRelease();
   };
-  
+
   return client;
 }
 
@@ -165,9 +129,72 @@ async function transaction(fn) {
   }
 }
 
+/**
+ * Execute a query with RLS user context
+ * Sets the app.current_user_id session variable for Row Level Security policies
+ * @param {string} userId - Current user's UUID
+ * @param {string} text - SQL query
+ * @param {Array} params - Query parameters
+ * @returns {Promise<QueryResult>}
+ */
+async function queryWithContext(userId, text, params) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (userId) {
+      await client.query('SET LOCAL "app.current_user_id" = $1', [userId]);
+    }
+    const result = await client.query(text, params);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Run a function within a transaction with RLS user context
+ * Sets the app.current_user_id session variable for Row Level Security policies
+ * @param {string} userId - Current user's UUID
+ * @param {Function} fn - Function receiving client
+ * @returns {Promise<any>}
+ */
+async function transactionWithContext(userId, fn) {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    if (userId) {
+      await client.query('SET LOCAL "app.current_user_id" = $1', [userId]);
+    }
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Gracefully close the pool
+ * @returns {Promise<void>}
+ */
+async function close() {
+  await pool.end();
+  console.log('PostgreSQL pool closed');
+}
+
 module.exports = {
   pool,
   query,
   getClient,
   transaction,
+  queryWithContext,
+  transactionWithContext,
+  close,
 };

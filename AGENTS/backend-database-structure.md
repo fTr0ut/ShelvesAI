@@ -27,10 +27,18 @@ Stores user account information and profile details.
 | state | TEXT | | Location: State |
 | city | TEXT | | Location: City |
 | is_private | BOOLEAN | `DEFAULT FALSE` | Privacy setting |
+| is_premium | BOOLEAN | `DEFAULT FALSE` | Premium access flag |
+| bio | TEXT | | Profile bio |
+| profile_media_id | INTEGER | `FK -> profile_media(id)` | Linked profile media |
+| onboarding_completed | BOOLEAN | `DEFAULT FALSE` | Onboarding gate |
+| is_admin | BOOLEAN | `DEFAULT FALSE` | Admin privileges |
+| is_suspended | BOOLEAN | `DEFAULT FALSE` | Suspension flag |
+| suspended_at | TIMESTAMPTZ | | Suspension timestamp |
+| suspension_reason | TEXT | | Suspension reason |
 | created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
 | updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
 
-**Indexes:** `email`, `username`
+**Indexes:** `email`, `username`, partial `is_suspended = true`
 
 ---
 
@@ -176,11 +184,31 @@ Manages social connections between users.
 - Unique (`requester_id`, `addressee_id`)
 - Requester != Addressee
 
-**Indexes:** `requester_id`, `addressee_id`, `status`
+**Indexes:** `requester_id`, `addressee_id`, `status`, `(status, requester_id)`, `(status, addressee_id)`
 
 ---
 
-### 8. **event_logs**
+### 8. **notifications**
+User-facing notifications (likes, friend requests, etc.) with soft-delete support.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | UUID | `PK` | Unique notification ID |
+| user_id | UUID | `FK -> users(id)` | Recipient |
+| actor_id | UUID | `FK -> users(id)` | Actor (nullable) |
+| type | TEXT | `NOT NULL` | Notification type |
+| entity_id | TEXT | `NOT NULL` | Target entity identifier |
+| entity_type | TEXT | `NOT NULL` | Target entity type |
+| metadata | JSONB | `DEFAULT {}` | Notification payload |
+| is_read | BOOLEAN | `DEFAULT FALSE` | Read flag |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+| deleted_at | TIMESTAMPTZ | | Soft-delete timestamp |
+
+**Indexes:** `(user_id, is_read, created_at)`, `(user_id, created_at)`, partial `(user_id, is_read, created_at DESC) WHERE deleted_at IS NULL`, and partial unique dedup indexes for `like` and `friend_request`.
+
+---
+
+### 9. **event_logs**
 Activity feed system.
 
 | Column | Type | Constraints | Description |
@@ -196,7 +224,7 @@ Activity feed system.
 
 ---
 
-### 9. **event_aggregates**
+### 10. **event_aggregates**
 Aggregated feed events for efficient feed display.
 
 | Column | Type | Constraints | Description |
@@ -220,7 +248,7 @@ Aggregated feed events for efficient feed display.
 
 ---
 
-### 10. **user_ratings** (Proposed)
+### 11. **user_ratings** (Proposed)
 Decoupled user ratings for collectables. This table allows users to rate any collectable without requiring it to be on their shelf.
 
 > **Note:** This table is planned to replace the `rating` column in `user_collections`. The current design couples ratings to shelf membership, preventing users from rating items they don't own (e.g., items on a friend's shelf).

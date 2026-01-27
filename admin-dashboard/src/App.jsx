@@ -21,6 +21,10 @@ function ProtectedRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
+  if (!user.isAdmin) {
+    return <Navigate to="/login" replace />;
+  }
+
   return children;
 }
 
