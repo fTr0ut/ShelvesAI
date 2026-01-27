@@ -234,7 +234,7 @@ export default function ProfileScreen({ navigation, route }) {
             }
 
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                mediaTypes: ['images'],
                 allowsEditing: Platform.OS === 'ios',
                 aspect: [1, 1],
                 quality: 1,

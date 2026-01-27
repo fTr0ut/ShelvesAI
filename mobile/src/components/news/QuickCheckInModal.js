@@ -26,7 +26,7 @@ const STATUS_OPTIONS = [
 
 const NOTE_MAX_LENGTH = 280;
 
-const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
+const QuickCheckInModal = ({ visible, onClose, onSuccess, newsItem }) => {
     const { colors, spacing, typography, shadows } = useTheme();
     const { showToast } = useToast();
     const { token, apiBase } = useContext(AuthContext);
@@ -97,6 +97,10 @@ const QuickCheckInModal = ({ visible, onClose, newsItem }) => {
                 message: `Checked in to "${newsItem.title}"`,
                 type: 'success',
             });
+
+            if (onSuccess) {
+                onSuccess();
+            }
 
             onClose();
         } catch (err) {

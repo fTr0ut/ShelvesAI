@@ -11,7 +11,9 @@
       "Bash(wc:*)",
       "Bash(docker-compose exec:*)",
       "Bash(npm run init-db:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(dir:*)",
+      "mcp__context7__resolve-library-id"
     ]
   }
 }

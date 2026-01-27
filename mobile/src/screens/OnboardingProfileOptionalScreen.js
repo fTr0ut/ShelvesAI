@@ -72,7 +72,7 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
             }
 
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                mediaTypes: ['images'],
                 allowsEditing: Platform.OS === 'ios',
                 aspect: [1, 1],
                 quality: 1,

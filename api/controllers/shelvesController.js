@@ -25,6 +25,7 @@ const { rowToCamelCase, parsePagination } = require('../database/queries/utils')
 const { resolveMediaUrl } = require('../services/mediaUrl');
 const needsReviewQueries = require('../database/queries/needsReview');
 const visionQuotaQueries = require('../database/queries/visionQuota');
+const manualMediaQueries = require('../database/queries/manualMedia');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const {
   normalizeOtherManualItem,
@@ -309,6 +310,8 @@ function formatShelfItem(row) {
     manualFingerprint: row.manualFingerprint || null,
     tags: Array.isArray(row.manualTags) ? row.manualTags : [],
     genre: Array.isArray(row.manualGenre) ? row.manualGenre : [],
+    coverMediaPath: row.manualCoverMediaPath || null,
+    coverMediaUrl: resolveMediaUrl(row.manualCoverMediaPath),
   } : null;
 
   return {
@@ -925,6 +928,59 @@ async function updateManualEntry(req, res) {
   }
 }
 
+/**
+ * Upload a cover image for a manual item
+ */
+async function uploadManualCover(req, res) {
+  try {
+    const { shelfId, itemId } = req.params;
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    // Validate file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ error: "No image file provided" });
+    }
+
+    // Get the collection entry to verify ownership and get manual_id
+    const entryResult = await query(
+      `SELECT uc.id, uc.manual_id, um.id as manual_exists
+       FROM user_collections uc
+       JOIN user_manuals um ON um.id = uc.manual_id
+       WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
+      [itemId, req.user.id, shelf.id]
+    );
+
+    if (!entryResult.rows.length) {
+      return res.status(404).json({ error: "Manual item not found" });
+    }
+
+    const entry = entryResult.rows[0];
+
+    // Upload the cover image
+    const updatedManual = await manualMediaQueries.uploadFromBuffer({
+      userId: req.user.id,
+      manualId: entry.manual_id,
+      buffer: req.file.buffer,
+      contentType: req.file.mimetype,
+    });
+
+    // Build response with resolved URL
+    const coverMediaUrl = resolveMediaUrl(updatedManual.coverMediaPath);
+
+    res.json({
+      success: true,
+      manual: {
+        ...updatedManual,
+        coverMediaUrl,
+      },
+    });
+  } catch (err) {
+    console.error('uploadManualCover error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 // Vision processing (simplified - preserves core logic)
 // Vision processing (using VisionPipelineService with async job tracking)
 async function processShelfVision(req, res) {
@@ -1456,6 +1512,7 @@ module.exports = {
   processCatalogLookup,
   processCatalogLookup,
   updateManualEntry,
+  uploadManualCover,
   listReviewItems,
   completeReviewItem,
   dismissReviewItem,

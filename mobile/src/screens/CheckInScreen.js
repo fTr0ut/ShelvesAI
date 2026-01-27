@@ -136,7 +136,16 @@ export default function CheckInScreen() {
                 },
             });
             Alert.alert('Posted!', 'Your check-in has been shared.', [
-                { text: 'OK', onPress: () => navigation.goBack() }
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        navigation.goBack();
+                        navigation.navigate('Main', {
+                            screen: 'Home',
+                            params: { resetTab: Date.now() }
+                        });
+                    }
+                }
             ]);
         } catch (err) {
             Alert.alert('Error', err.message);

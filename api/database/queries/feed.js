@@ -112,7 +112,8 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
            c.cover_image_source as collectable_cover_image_source,
            c.kind as collectable_kind,
            cm.local_path as collectable_cover_media_path,
-           um.name as manual_name, um.author as manual_author, um.type as manual_type
+           um.name as manual_name, um.author as manual_author, um.type as manual_type,
+           um.cover_media_path as manual_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -180,7 +181,8 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
            c.cover_image_source as collectable_cover_image_source,
            c.kind as collectable_kind,
            cm.local_path as collectable_cover_media_path,
-           um.name as manual_name, um.author as manual_author, um.type as manual_type
+           um.name as manual_name, um.author as manual_author, um.type as manual_type,
+           um.cover_media_path as manual_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -248,7 +250,8 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
            c.cover_image_source as collectable_cover_image_source,
            c.kind as collectable_kind,
            cm.local_path as collectable_cover_media_path,
-           um.name as manual_name, um.author as manual_author, um.type as manual_type
+           um.name as manual_name, um.author as manual_author, um.type as manual_type,
+           um.cover_media_path as manual_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -300,7 +303,8 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
            c.cover_image_source as collectable_cover_image_source,
            c.kind as collectable_kind,
            cm.local_path as collectable_cover_media_path,
-           um.name as manual_name, um.author as manual_author, um.type as manual_type
+           um.name as manual_name, um.author as manual_author, um.type as manual_type,
+           um.cover_media_path as manual_cover_media_path
     FROM event_aggregates a
     LEFT JOIN users u ON u.id = a.user_id
     LEFT JOIN profile_media pm ON pm.id = u.profile_media_id

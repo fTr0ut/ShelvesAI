@@ -1,9 +1,25 @@
 const express = require('express');
+const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { requireFields } = require('../middleware/validate');
 const ctrl = require('../controllers/shelvesController');
 
 const router = express.Router();
+
+// Configure multer for cover image uploads
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed'));
+        }
+    },
+});
 
 // All routes here require local JWT
 router.use(auth);
@@ -23,7 +39,7 @@ router.post('/:shelfId/items/from-api', ctrl.addCollectableFromApi);
 router.delete('/:shelfId/items/:itemId', ctrl.removeShelfItem);
 router.put('/:shelfId/items/:itemId/rating', ctrl.rateShelfItem);
 router.put('/:shelfId/manual/:itemId', ctrl.updateManualEntry);
-
+router.post('/:shelfId/manual/:itemId/cover', upload.single('cover'), ctrl.uploadManualCover);
 
 router.get('/:shelfId/search', ctrl.searchCollectablesForShelf);
 router.post('/:shelfId/vision', requireFields(['imageBase64']), ctrl.processShelfVision);

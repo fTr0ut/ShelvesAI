@@ -101,14 +101,35 @@ function resolveCollectableCoverUrl(collectable, apiBase = '') {
     return null;
 }
 
+function resolveManualCoverUrl(manual, apiBase = '') {
+    if (!manual) return null;
+
+    // Prefer pre-resolved URL from API (handles S3/CloudFront)
+    if (manual.coverMediaUrl) {
+        return manual.coverMediaUrl;
+    }
+
+    if (manual.coverMediaPath) {
+        return buildMediaUri(manual.coverMediaPath, apiBase);
+    }
+
+    return null;
+}
+
 function getItemPreview(entry, apiBase = '') {
     const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
     const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
     const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
     const collectableId = collectable?.id || entry?.collectableId || entry?.collectable_id || null;
 
-    // Extract cover URL with priority: provider-agnostic cover > legacy fields
+    // Extract cover URL with priority: collectable cover > manual cover > legacy fields
     let coverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+
+    // Fallback to manual cover if no collectable cover
+    if (!coverUrl && manual) {
+        coverUrl = resolveManualCoverUrl(manual, apiBase);
+    }
+
     if (!coverUrl && entry?.coverImageUrl) {
         coverUrl = buildMediaUri(entry.coverImageUrl, apiBase);
     }
@@ -681,7 +702,14 @@ export default function SocialFeedScreen({ navigation, route }) {
             const statusLabel = statusLabels[checkinStatus] || checkinStatus;
             const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
 
-            const collectableCoverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+            // Get manual from entry for check-ins
+            const manual = item.manual || item.manualItem || item.manualSnapshot || null;
+
+            // Resolve cover URL with manual fallback
+            let collectableCoverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+            if (!collectableCoverUrl && manual) {
+                collectableCoverUrl = resolveManualCoverUrl(manual, apiBase);
+            }
 
             const handleCheckinCollectablePress = () => {
                 if (collectable?.id) {
@@ -1209,6 +1237,7 @@ export default function SocialFeedScreen({ navigation, route }) {
             <QuickCheckInModal
                 visible={checkInModalVisible}
                 onClose={handleCloseCheckIn}
+                onSuccess={() => onRefresh()}
                 newsItem={selectedNewsItem}
             />
         </SafeAreaView>

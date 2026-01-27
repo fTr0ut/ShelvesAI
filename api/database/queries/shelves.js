@@ -155,12 +155,13 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             um.manual_fingerprint as manual_fingerprint,
             um.limited_edition as manual_limited_edition,
             um.item_specific_text as manual_item_specific_text,
-            um.tags as manual_tags
+            um.tags as manual_tags,
+            um.cover_media_path as manual_cover_media_path
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
-     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id 
+     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
         AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1 AND uc.user_id = $2
      ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC
@@ -217,12 +218,13 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             um.manual_fingerprint as manual_fingerprint,
             um.limited_edition as manual_limited_edition,
             um.item_specific_text as manual_item_specific_text,
-            um.tags as manual_tags
+            um.tags as manual_tags,
+            um.cover_media_path as manual_cover_media_path
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
-     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id 
+     LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
         AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1
      ORDER BY uc.position ASC NULLS LAST, uc.created_at DESC

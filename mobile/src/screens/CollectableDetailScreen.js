@@ -9,9 +9,11 @@ import {
     View,
     StatusBar,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
@@ -39,6 +41,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [ownerRating, setOwnerRating] = useState(initialOwnerRating); // Shelf owner's rating
     const [aggregateRating, setAggregateRating] = useState(null); // Average rating from all users
     const [isFavorited, setIsFavorited] = useState(false);
+    const [isUploadingCover, setIsUploadingCover] = useState(false);
+    const [manualCoverUrl, setManualCoverUrl] = useState(null);
 
     const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
     const baseCollectable = item?.collectable
@@ -225,6 +229,80 @@ export default function CollectableDetailScreen({ route, navigation }) {
         } catch (e) {
             console.warn('Failed to toggle favorite:', e);
             setIsFavorited(previousState); // Revert
+        }
+    };
+
+    const handlePickCoverImage = async () => {
+        if (!shelfId || !item?.id) {
+            Alert.alert('Error', 'Cannot upload cover: missing item information');
+            return;
+        }
+
+        try {
+            // Request permission
+            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permissionResult.granted) {
+                Alert.alert('Permission Required', 'Please grant photo library access to upload a cover image.');
+                return;
+            }
+
+            // Launch image picker
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [3, 4], // Portrait for cover images
+                quality: 0.8,
+            });
+
+            if (result.canceled) return;
+
+            const selectedImage = result.assets[0];
+            if (!selectedImage?.uri) return;
+
+            setIsUploadingCover(true);
+
+            // Create form data for upload
+            const formData = new FormData();
+            const filename = selectedImage.uri.split('/').pop() || 'cover.jpg';
+            const mimeType = selectedImage.mimeType || 'image/jpeg';
+
+            formData.append('cover', {
+                uri: selectedImage.uri,
+                name: filename,
+                type: mimeType,
+            });
+
+            // Upload to API
+            const response = await fetch(`${apiBase}/api/shelves/${shelfId}/manual/${item.id}/cover`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Upload failed');
+            }
+
+            const data = await response.json();
+
+            // Update local state with the new cover URL
+            if (data.manual?.coverMediaUrl) {
+                setManualCoverUrl(data.manual.coverMediaUrl);
+            } else if (data.manual?.coverMediaPath) {
+                // Build URL from path
+                const trimmed = data.manual.coverMediaPath.replace(/^\/+/, '');
+                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+                setManualCoverUrl(`${apiBase.replace(/\/+$/, '')}/${resource}`);
+            }
+
+        } catch (e) {
+            console.warn('Failed to upload cover:', e);
+            Alert.alert('Upload Failed', e.message || 'Failed to upload cover image');
+        } finally {
+            setIsUploadingCover(false);
         }
     };
 
@@ -444,6 +522,24 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
 
     const resolveCoverUri = () => {
+        // Check local state for recently uploaded manual cover first
+        if (manualCoverUrl) {
+            return manualCoverUrl;
+        }
+
+        // Check manual cover from item data
+        if (isManual && manual) {
+            if (manual.coverMediaUrl) {
+                return manual.coverMediaUrl;
+            }
+            if (manual.coverMediaPath) {
+                const trimmed = manual.coverMediaPath.replace(/^\/+/, '');
+                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+            }
+        }
+
+        // Check collectable cover
         const c = collectable;
         if (!c?.coverImageUrl) {
             if (c?.coverMediaPath) {
@@ -530,6 +626,20 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             <View style={styles.coverFallback}>
                                 <CategoryIcon type={type} size={48} />
                             </View>
+                        )}
+                        {/* Camera overlay for manual items */}
+                        {isManual && !readOnly && (
+                            <TouchableOpacity
+                                style={styles.coverEditButton}
+                                onPress={handlePickCoverImage}
+                                disabled={isUploadingCover}
+                            >
+                                {isUploadingCover ? (
+                                    <ActivityIndicator size="small" color={colors.surface} />
+                                ) : (
+                                    <Ionicons name="camera" size={18} color={colors.surface} />
+                                )}
+                            </TouchableOpacity>
                         )}
                     </View>
                     <Text style={styles.title}>{title}</Text>
@@ -691,10 +801,23 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginBottom: spacing.md,
         backgroundColor: colors.surface,
         ...shadows.md,
+        position: 'relative',
     },
     coverImage: {
         width: '100%',
         height: '100%',
+    },
+    coverEditButton: {
+        position: 'absolute',
+        bottom: 8,
+        right: 8,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...shadows.sm,
     },
     coverFallback: {
         width: '100%',

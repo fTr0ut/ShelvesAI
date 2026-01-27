@@ -333,7 +333,8 @@ async function summarizeItems(shelfIds) {
             uc.id, uc.collectable_id, uc.manual_id, uc.position, uc.notes, uc.rating,
             c.title as collectable_title, c.primary_creator, c.cover_url, c.cover_media_id, c.kind,
             m.local_path as cover_media_path,
-            um.name as manual_name, um.author as manual_author, um.limited_edition, um.item_specific_text
+            um.name as manual_name, um.author as manual_author, um.limited_edition, um.item_specific_text,
+            um.cover_media_path as manual_cover_media_path
      FROM user_collections uc
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -367,6 +368,8 @@ async function summarizeItems(shelfIds) {
           author: row.manual_author,
           limitedEdition: row.limited_edition,
           itemSpecificText: row.item_specific_text,
+          coverMediaPath: row.manual_cover_media_path || null,
+          coverMediaUrl: resolveMediaUrl(row.manual_cover_media_path),
         } : null,
         position: row.position,
         notes: row.notes,
@@ -483,7 +486,8 @@ async function getFeed(req, res) {
           title: e.manualName,
           primaryCreator: e.manualAuthor,
           coverUrl: null,
-          coverMediaPath: null,
+          coverMediaPath: e.manualCoverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(e.manualCoverMediaPath),
           kind: e.manualType || 'manual',
         } : null;
         const collectable = e.collectableId ? {
@@ -648,7 +652,8 @@ async function getFeedEntryDetails(req, res) {
                     um.edition as manual_edition,
                     um.barcode as manual_barcode,
                     um.limited_edition,
-                    um.item_specific_text
+                    um.item_specific_text,
+                    um.cover_media_path as manual_cover_media_path
              FROM user_collections uc
              LEFT JOIN collectables c ON c.id = uc.collectable_id
              LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -684,6 +689,8 @@ async function getFeedEntryDetails(req, res) {
                 barcode: row.manual_barcode || null,
                 limitedEdition: row.limited_edition || null,
                 itemSpecificText: row.item_specific_text || null,
+                coverMediaPath: row.manual_cover_media_path || null,
+                coverMediaUrl: resolveMediaUrl(row.manual_cover_media_path),
               } : null,
             };
           });
@@ -727,7 +734,8 @@ async function getFeedEntryDetails(req, res) {
           title: aggregate.manualName,
           primaryCreator: aggregate.manualAuthor,
           coverUrl: null,
-          coverMediaPath: null,
+          coverMediaPath: aggregate.manualCoverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(aggregate.manualCoverMediaPath),
           kind: aggregate.manualType || 'manual',
         } : null;
         const collectable = aggregate.collectableId ? {
@@ -815,7 +823,8 @@ async function getFeedEntryDetails(req, res) {
               um.edition as manual_edition,
               um.barcode as manual_barcode,
               um.limited_edition,
-              um.item_specific_text
+              um.item_specific_text,
+              um.cover_media_path as manual_cover_media_path
        FROM user_collections uc
        LEFT JOIN collectables c ON c.id = uc.collectable_id
        LEFT JOIN user_manuals um ON um.id = uc.manual_id
@@ -876,6 +885,8 @@ async function getFeedEntryDetails(req, res) {
           barcode: row.manual_barcode,
           limitedEdition: row.limited_edition,
           itemSpecificText: row.item_specific_text,
+          coverMediaPath: row.manual_cover_media_path || null,
+          coverMediaUrl: resolveMediaUrl(row.manual_cover_media_path),
         } : null,
         position: row.position,
         notes: row.notes,
