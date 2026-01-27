@@ -33,12 +33,32 @@ const adminRoutes = require('./routes/admin');
 
 const app = express();
 
+// Render/Cloudflare sit behind one or more proxies. Express-rate-limit (and req.ip)
+// require trust proxy to be enabled when X-Forwarded-For is present.
+const parseTrustProxy = (value) => {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
+  const numeric = Number(trimmed);
+  if (!Number.isNaN(numeric)) return numeric;
+  return trimmed;
+};
+
+const trustProxySetting =
+  parseTrustProxy(process.env.TRUST_PROXY) ?? (process.env.NODE_ENV === 'production' ? 1 : 0);
+app.set('trust proxy', trustProxySetting);
+
 const normalizeIp = (ip) => {
   if (!ip || typeof ip !== 'string') return ip;
   return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
 };
 
 const getClientIp = (req) => {
+  const cfConnectingIp = req.headers['cf-connecting-ip'];
+  if (typeof cfConnectingIp === 'string' && cfConnectingIp.length > 0) {
+    return normalizeIp(cfConnectingIp.trim());
+  }
   const forwardedFor = req.headers['x-forwarded-for'];
   if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
     return normalizeIp(forwardedFor.split(',')[0].trim());

@@ -510,10 +510,13 @@ To comply with API Terms of Service, cover art and attribution are handled per-p
 
 ```mermaid
 flowchart LR
-    A[ensureCoverMediaForCollectable] --> B{coverImageSource->}
+    A[ensureCoverMediaForCollectable] --> B{coverImageSource?}
     B -->|'external'| C[Skip caching]
-    B -->|null| D[Download & cache]
-    D --> E[Update cover_image_url, set source='local']
+    B -->|null| D{S3 enabled?}
+    D -->|Yes| E[Upload to S3]
+    D -->|No| F[Save to local filesystem]
+    E --> G[Update cover_image_url, set source='local']
+    F --> G
 ```
 
 ### Key Files
@@ -523,7 +526,8 @@ flowchart LR
 | [openLibrary.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/openLibrary.js) | Sets `coverImageSource: 'external'`, attribution link |
 | [tmdb.adapter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/adapters/tmdb.adapter.js) | Sets `coverImageSource: null`, logo + disclaimer |
 | [hardcover.adapter.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/adapters/hardcover.adapter.js) | Sets `coverImageSource: null`, no attribution |
-| [media.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/media.js) | `ensureCoverMediaForCollectable` respects source |
+| [media.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/media.js) | `ensureCoverMediaForCollectable` respects source, uploads to S3 or local |
+| [s3.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/s3.js) | S3 client service for media uploads |
 | [collectables.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/collectables.js) | `upsert` includes cover + attribution fields |
 | [visionPipeline.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/visionPipeline.js) | `saveToShelf` passes cover/attribution to upsert |
 | [CollectableDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/CollectableDetailScreen.js) | Renders attribution (logo, link, disclaimer) |
@@ -536,4 +540,89 @@ flowchart LR
    - Add SVG to `mobile/src/assets/`
    - Import in `CollectableDetailScreen.js`
    - Add `logoKey` condition in `renderAttribution()`
+
+---
+
+## Media Storage (S3 Integration)
+
+ShelvesAI supports AWS S3 for media storage, enabling horizontal scaling and CDN integration.
+
+### Storage Architecture
+
+```mermaid
+flowchart LR
+    A[Media Upload] --> B{S3 Configured?}
+    B -->|Yes| C[Upload to S3]
+    B -->|No| D[Save to Local Filesystem]
+    C --> E[Store S3 key in local_path]
+    D --> E
+    E --> F[Mobile App]
+    F -->|S3| G[CloudFront CDN / S3 URL]
+    F -->|Local| H[Express /media route]
+```
+
+### Configuration
+
+| Env Variable | Required | Description |
+|--------------|----------|-------------|
+| `AWS_REGION` | Yes (for S3) | AWS region (default: `us-east-1`) |
+| `AWS_ACCESS_KEY_ID` | Yes (for S3) | AWS IAM access key |
+| `AWS_SECRET_ACCESS_KEY` | Yes (for S3) | AWS IAM secret key |
+| `S3_BUCKET_NAME` | Yes (for S3) | S3 bucket name |
+| `S3_PUBLIC_URL` | Recommended | CloudFront CDN URL or S3 public URL |
+
+**Feature Toggle:** S3 is enabled only when `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `S3_BUCKET_NAME` are all set. Otherwise, local filesystem is used.
+
+### S3 Bucket Structure
+
+```
+shelvesai-media/
+├── books/{title}/{checksum}.jpg
+├── movies/{title}/{checksum}.jpg
+├── games/{title}/{checksum}.jpg
+├── albums/{title}/{checksum}.jpg
+└── profiles/{userId}/{checksum}.jpg
+```
+
+### URL Resolution
+
+The `local_path` column stores the same path structure regardless of storage backend:
+- **S3 mode:** Full URL = `${S3_PUBLIC_URL}/${local_path}`
+- **Local mode:** Full URL = `${API_BASE}/media/${local_path}`
+
+### CloudFront Integration
+
+For production, use CloudFront CDN in front of S3:
+1. Keep S3 bucket **private** (no public access)
+2. Configure CloudFront with Origin Access Control (OAC)
+3. Set `S3_PUBLIC_URL` to CloudFront distribution URL
+
+**Benefits:** Better security, lower latency, DDoS protection, reduced S3 costs.
+
+### Migration Script
+
+Migrate existing local files to S3:
+
+```bash
+# Dry run first
+node api/scripts/migrate-media-to-s3.js --dry-run
+
+# Run migration
+node api/scripts/migrate-media-to-s3.js
+
+# Options:
+#   --dry-run       Show what would be migrated
+#   --batch=N       Process N files at a time (default: 10)
+#   --table=NAME    'media', 'profile_media', or 'all'
+#   --skip=N        Skip first N records (for resuming)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| [s3.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/services/s3.js) | S3 client: `uploadBuffer`, `getPublicUrl`, `deleteObject`, `isEnabled` |
+| [media.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/media.js) | Cover caching with S3/local fallback |
+| [profileMedia.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/profileMedia.js) | Profile photo uploads with S3/local fallback |
+| [migrate-media-to-s3.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/scripts/migrate-media-to-s3.js) | Migration script for existing files |
 

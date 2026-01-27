@@ -10,7 +10,8 @@
       "Bash(head:*)",
       "Bash(wc:*)",
       "Bash(docker-compose exec:*)",
-      "Bash(npm run init-db:*)"
+      "Bash(npm run init-db:*)",
+      "Bash(find:*)"
     ]
   }
 }

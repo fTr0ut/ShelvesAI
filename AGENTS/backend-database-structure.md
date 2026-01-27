@@ -97,7 +97,7 @@ The trusted global catalog of items (movies, games, books, etc.).
 ---
 
 ### 4. **media**
-Cached media assets stored on disk (covers, thumbnails, etc.).
+Cached media assets for collectables (covers, thumbnails, etc.). Supports both local filesystem and AWS S3 storage.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
@@ -107,7 +107,7 @@ Cached media assets stored on disk (covers, thumbnails, etc.).
 | variant | TEXT | | Size/variant (small, medium, large) |
 | provider | TEXT | | Source provider |
 | source_url | TEXT | `NOT NULL` | Original source URL |
-| local_path | TEXT | | Relative file path under /media (e.g., books/Oathbringer/sha1.jpg) |
+| local_path | TEXT | | S3 key or local path (e.g., `books/Oathbringer/sha1.jpg`) |
 | content_type | TEXT | | MIME type |
 | size_bytes | INTEGER | | Payload size |
 | checksum | TEXT | | Content hash (sha1) |
@@ -115,6 +115,31 @@ Cached media assets stored on disk (covers, thumbnails, etc.).
 | updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
 
 **Indexes:** `collectable_id`, `kind`, `collectable_id+source_url` (unique)
+
+**Storage:** When S3 is configured, `local_path` stores the S3 object key. URL is resolved at runtime:
+- S3: `${S3_PUBLIC_URL}/${local_path}`
+- Local: `${API_BASE}/media/${local_path}`
+
+---
+
+### 4b. **profile_media**
+Profile photos and avatars for users. Supports both local filesystem and AWS S3 storage.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| **id** | SERIAL | `PK` | Unique media ID |
+| user_id | UUID | `FK -> users(id)` | Owning user |
+| kind | TEXT | `DEFAULT 'avatar'` | Media kind (avatar) |
+| source_url | TEXT | | Original source URL or filename |
+| local_path | TEXT | | S3 key or local path (e.g., `profiles/{userId}/{hash}.jpg`) |
+| content_type | TEXT | | MIME type |
+| size_bytes | INTEGER | | Payload size |
+| checksum | TEXT | | Content hash (sha256, first 16 chars) |
+| created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Creation timestamp |
+
+**Indexes:** `user_id`
+
+**Related:** `users.profile_media_id` references this table for the active profile photo.
 
 ---
 
@@ -285,6 +310,7 @@ erDiagram
     users ||--o{ friendships : initiates
     users ||--o{ friendships : receives
     users ||--o{ event_logs : generates
+    users ||--o{ profile_media : "has photos"
 
     shelves ||--o{ user_collections : contains
     shelves ||--o{ user_manuals : "contains manual"
@@ -300,6 +326,7 @@ erDiagram
         UUID id PK
         string username
         string email
+        int profile_media_id FK
     }
 
     shelves {
@@ -321,7 +348,14 @@ erDiagram
         int id PK
         int collectable_id FK
         string kind
-        string source_url
+        string local_path "S3 key or local path"
+    }
+
+    profile_media {
+        int id PK
+        UUID user_id FK
+        string kind
+        string local_path "S3 key or local path"
     }
 
     user_collections {

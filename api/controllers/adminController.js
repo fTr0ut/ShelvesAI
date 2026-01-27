@@ -7,6 +7,10 @@ const normalizeIp = (ip) => {
 };
 
 const getClientIp = (req) => {
+  const cfConnectingIp = req.headers['cf-connecting-ip'];
+  if (typeof cfConnectingIp === 'string' && cfConnectingIp.length > 0) {
+    return normalizeIp(cfConnectingIp.trim());
+  }
   const forwardedFor = req.headers['x-forwarded-for'];
   if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
     return normalizeIp(forwardedFor.split(',')[0].trim());

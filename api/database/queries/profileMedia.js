@@ -10,6 +10,7 @@ const { URL } = require('url');
 const fetch = require('node-fetch');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
+const s3 = require('../../services/s3');
 
 // SSRF protection: blocked IP ranges and hostnames
 const BLOCKED_HOSTNAMES = new Set([
@@ -131,14 +132,9 @@ async function fileExists(filePath) {
 }
 
 /**
- * Download image from URL and save locally
+ * Download image from URL and save to S3 or local filesystem
  */
 async function downloadAndSave(url, localPath) {
-    const absolutePath = toAbsolutePath(localPath);
-    const dir = path.dirname(absolutePath);
-
-    await fs.mkdir(dir, { recursive: true });
-
     const response = await fetch(url, { timeout: 15000 });
     if (!response.ok) {
         throw new Error(`Failed to download from ${url}: ${response.status}`);
@@ -148,7 +144,15 @@ async function downloadAndSave(url, localPath) {
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
     const contentType = response.headers.get('content-type') || 'image/jpeg';
 
-    await fs.writeFile(absolutePath, buffer);
+    // Upload to S3 if configured, otherwise fall back to local filesystem
+    if (s3.isEnabled()) {
+        await s3.uploadBuffer(buffer, localPath, contentType);
+    } else {
+        const absolutePath = toAbsolutePath(localPath);
+        const dir = path.dirname(absolutePath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(absolutePath, buffer);
+    }
 
     return {
         sizeBytes: buffer.length,
@@ -158,21 +162,27 @@ async function downloadAndSave(url, localPath) {
 }
 
 /**
- * Save uploaded buffer to local path
+ * Save uploaded buffer to S3 or local filesystem
  */
 async function saveBuffer(buffer, localPath, contentType) {
-    const absolutePath = toAbsolutePath(localPath);
-    const dir = path.dirname(absolutePath);
+    const finalContentType = contentType || 'image/jpeg';
 
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(absolutePath, buffer);
+    // Upload to S3 if configured, otherwise fall back to local filesystem
+    if (s3.isEnabled()) {
+        await s3.uploadBuffer(buffer, localPath, finalContentType);
+    } else {
+        const absolutePath = toAbsolutePath(localPath);
+        const dir = path.dirname(absolutePath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(absolutePath, buffer);
+    }
 
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
 
     return {
         sizeBytes: buffer.length,
         checksum,
-        contentType: contentType || 'image/jpeg',
+        contentType: finalContentType,
     };
 }
 
@@ -220,11 +230,16 @@ async function deleteOldForUser(userId, keepId) {
         [userId, keepId]
     );
 
-    // Clean up files
+    // Clean up files from S3 or local filesystem
+    const useS3 = s3.isEnabled();
     for (const row of result.rows) {
         if (row.local_path) {
             try {
-                await fs.unlink(toAbsolutePath(row.local_path));
+                if (useS3) {
+                    await s3.deleteObject(row.local_path);
+                } else {
+                    await fs.unlink(toAbsolutePath(row.local_path));
+                }
             } catch {
                 // Ignore file deletion errors
             }

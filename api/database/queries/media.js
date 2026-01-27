@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { query } = require('../pg');
+const s3 = require('../../services/s3');
 
 const RAW_TIMEOUT_MS = parseInt(process.env.MEDIA_FETCH_TIMEOUT_MS || '15000', 10);
 const RAW_MAX_BYTES = parseInt(process.env.MEDIA_MAX_BYTES || '5242880', 10);
@@ -236,6 +237,8 @@ async function ensureCoverMediaForCollectable({
 
   try {
     const allowReuse = !forceRefresh;
+    const useS3 = s3.isEnabled();
+
     if (allowReuse && coverMediaId) {
       const existing = await query(
         'SELECT id, source_url, local_path FROM media WHERE id = $1',
@@ -244,6 +247,10 @@ async function ensureCoverMediaForCollectable({
       const row = existing.rows[0];
       if (row?.source_url === candidate.url) {
         if (row.local_path) {
+          // For S3, trust the DB record; for local, verify file exists
+          if (useS3) {
+            return { id: coverMediaId, localPath: row.local_path };
+          }
           const absolutePath = toAbsolutePath(row.local_path);
           if (await fileExistsWithContent(absolutePath)) {
             return { id: coverMediaId, localPath: row.local_path };
@@ -261,8 +268,9 @@ async function ensureCoverMediaForCollectable({
         const existingId = existingByUrl.rows[0].id;
         const existingPath = existingByUrl.rows[0].local_path || null;
         if (existingPath) {
-          const absolutePath = toAbsolutePath(existingPath);
-          if (await fileExistsWithContent(absolutePath)) {
+          // For S3, trust the DB record; for local, verify file exists
+          const fileValid = useS3 || (await fileExistsWithContent(toAbsolutePath(existingPath)));
+          if (fileValid) {
             await query(
               'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
               [existingId, collectableId],
@@ -283,13 +291,19 @@ async function ensureCoverMediaForCollectable({
       checksum,
       ext,
     });
-    const absolutePath = toAbsolutePath(localPath);
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    if (!(await fileExistsWithContent(absolutePath))) {
-      await fs.writeFile(absolutePath, buffer);
-      // Verify the file was written with content
+
+    // Upload to S3 if configured, otherwise fall back to local filesystem
+    if (s3.isEnabled()) {
+      await s3.uploadBuffer(buffer, localPath, contentType);
+    } else {
+      const absolutePath = toAbsolutePath(localPath);
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       if (!(await fileExistsWithContent(absolutePath))) {
-        throw new Error('file write verification failed: 0 bytes on disk');
+        await fs.writeFile(absolutePath, buffer);
+        // Verify the file was written with content
+        if (!(await fileExistsWithContent(absolutePath))) {
+          throw new Error('file write verification failed: 0 bytes on disk');
+        }
       }
     }
 
