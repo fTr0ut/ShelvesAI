@@ -384,37 +384,47 @@ export default function ShelfDetailScreen({ route, navigation }) {
     // Provider-agnostic cover resolution
     const resolveCoverUri = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
-        if (!collectable) return null;
-
-        // Use new provider-agnostic fields if available
-        if (collectable.coverImageUrl) {
-            if (collectable.coverImageSource === 'external') {
-                // External URL, use directly
-                return collectable.coverImageUrl;
+        if (collectable) {
+            // Use new provider-agnostic fields if available
+            if (collectable.coverImageUrl) {
+                if (collectable.coverImageSource === 'external') {
+                    // External URL, use directly
+                    return collectable.coverImageUrl;
+                }
+                // Local path, resolve via media endpoint
+                const trimmed = collectable.coverImageUrl.replace(/^\/+/, '');
+                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
             }
-            // Local path, resolve via media endpoint
-            const trimmed = collectable.coverImageUrl.replace(/^\/+/, '');
-            const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-            return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+
+            // Fallback to legacy fields
+            if (collectable.coverMediaPath) {
+                const trimmed = collectable.coverMediaPath.replace(/^\/+/, '');
+                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+            }
+
+            if (collectable.coverUrl && /^https?:/i.test(collectable.coverUrl)) {
+                return collectable.coverUrl;
+            }
+
+            // Check images array for URLs
+            const images = Array.isArray(collectable.images) ? collectable.images : [];
+            for (const image of images) {
+                const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
+                if (typeof url === 'string' && url.trim()) {
+                    return url.trim();
+                }
+            }
         }
 
-        // Fallback to legacy fields
-        if (collectable.coverMediaPath) {
-            const trimmed = collectable.coverMediaPath.replace(/^\/+/, '');
-            const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-            return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
-        }
-
-        if (collectable.coverUrl && /^https?:/i.test(collectable.coverUrl)) {
-            return collectable.coverUrl;
-        }
-
-        // Check images array for URLs
-        const images = Array.isArray(collectable.images) ? collectable.images : [];
-        for (const image of images) {
-            const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
-            if (typeof url === 'string' && url.trim()) {
-                return url.trim();
+        const manual = item.manual || item.manualSnapshot;
+        if (manual) {
+            if (manual.coverMediaUrl) {
+                return buildCoverUri(manual.coverMediaUrl);
+            }
+            if (manual.coverMediaPath) {
+                return buildCoverUri(manual.coverMediaPath);
             }
         }
 

@@ -277,28 +277,33 @@ Aggregated feed events for efficient feed display.
 
 ---
 
-### 11. **user_ratings** (Proposed)
-Decoupled user ratings for collectables. This table allows users to rate any collectable without requiring it to be on their shelf.
+### 11. **user_ratings**
+Decoupled user ratings for collectables and manual items. This table allows users to rate any item without requiring it to be on their shelf.
 
-> **Note:** This table is planned to replace the `rating` column in `user_collections`. The current design couples ratings to shelf membership, preventing users from rating items they don't own (e.g., items on a friend's shelf).
+> **Note:** This table replaces the `rating` column in `user_collections`. The decoupled design allows users to rate items they don't own (e.g., items on a friend's shelf viewed from the feed).
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | **id** | SERIAL | `PK` | Unique rating ID |
 | user_id | UUID | `FK -> users(id)` | User who rated |
-| collectable_id | INTEGER | `FK -> collectables(id)` | Rated item |
+| collectable_id | INTEGER | `FK -> collectables(id)` | Rated catalog item (nullable) |
+| manual_id | INTEGER | `FK -> user_manuals(id)` | Rated manual item (nullable) |
 | rating | DECIMAL(2,1) | `CHECK (rating >= 0 AND rating <= 5)` | Rating value (0.0 - 5.0) |
 | created_at | TIMESTAMPTZ | `DEFAULT NOW()` | Rating creation timestamp |
 | updated_at | TIMESTAMPTZ | `DEFAULT NOW()` | Last update timestamp |
 
 **Constraints:**
-- Unique (`user_id`, `collectable_id`)
+- Unique (`user_id`, `collectable_id`) when collectable_id is not null
+- Unique (`user_id`, `manual_id`) when manual_id is not null
+- Check: Must have either `collectable_id` OR `manual_id`, but not both
 
-**Indexes:** `user_id`, `collectable_id`
+**Indexes:** `user_id`, `collectable_id`, `manual_id`
 
-**Migration Notes:**
-- Existing ratings will be migrated from `user_collections.rating`
-- The `rating` column in `user_collections` will be deprecated
+**API Usage:**
+- `GET /api/ratings/:itemId` - Get your rating (add `?type=manual` for manual items)
+- `PUT /api/ratings/:itemId` - Set rating (add `?type=manual` for manual items)
+- `GET /api/ratings/:itemId/user/:userId` - Get another user's rating (add `?type=manual` for manual items)
+- `GET /api/ratings/:collectableId/aggregate` - Get community average (collectables only)
 
 ---
 
@@ -310,7 +315,7 @@ erDiagram
     users ||--o{ shelves : owns
     users ||--o{ user_collections : "has items"
     users ||--o{ user_manuals : creates
-    users ||--o{ user_ratings : rates
+    users ||--o{ user_ratings : "rates items"
     users ||--o{ friendships : initiates
     users ||--o{ friendships : receives
     users ||--o{ event_logs : generates
@@ -322,6 +327,7 @@ erDiagram
 
     collectables ||--o{ user_collections : "referenced by"
     collectables ||--o{ user_ratings : "rated in"
+    user_manuals ||--o{ user_ratings : "rated in"
     collectables ||--o{ media : "has media"
 
     user_manuals ||--o{ user_collections : "referenced by"
@@ -382,6 +388,7 @@ erDiagram
         int id PK
         UUID user_id FK
         int collectable_id FK
+        int manual_id FK
         decimal rating
     }
 

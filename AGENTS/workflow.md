@@ -352,15 +352,66 @@ This project now batches item-level feed events into time-window aggregates and 
 - Friends/Discover exclude the viewer's own events, while All includes them.
 - `readOnly` shelves hide edit/add actions in the UI.
 
+### Combined Check-in + Rating Events
+
+When a user checks in AND rates the same item within 30 minutes, the feed controller merges these into a single `checkin.rated` event:
+
+```mermaid
+flowchart LR
+    A[Feed Entries Built] --> B[mergeCheckinRatingPairs]
+    B --> C{Match Found?}
+    C -->|Yes| D[Create checkin.rated]
+    C -->|No| E[Keep Separate]
+    D --> F[Remove Rating Item]
+```
+
+**Matching criteria:**
+- Same user
+- Same item (collectableId, manualId, or title)
+- Within configurable time window (default: 30 minutes via `CHECKIN_RATING_MERGE_WINDOW_MINUTES`)
+
+**Display:** Combined card shows check-in badge + rating stars in both header and item preview.
+
+### Manual Items in Feed
+
+Manual items (user-created entries not in the global catalog) are fully supported in the feed system:
+
+**Rating Events for Manual Items:**
+- Rating a manual item logs an `item.rated` event with `manualId` in the payload
+- Feed displays manual items with their cover images (via `coverMediaUrl`)
+- Tapping a manual item in FeedDetailScreen navigates to CollectableDetailScreen
+
+**Feed Detail → CollectableDetail Flow:**
+```mermaid
+flowchart LR
+    A[FeedDetailScreen] --> B{Item Type?}
+    B -->|Collectable| C[Navigate with collectableId]
+    B -->|Manual| D[Navigate with item object]
+    C --> E[CollectableDetailScreen]
+    D --> E
+    E --> F{Has manual.id?}
+    F -->|Yes| G[Fetch GET /api/manuals/:id]
+    G --> H[Display full manual details]
+    F -->|No| I[Display payload data only]
+```
+
+**Owner Rating Display:**
+- When viewing a manual item from another user's feed, the screen fetches:
+  - Your rating: `GET /api/ratings/:manualId?type=manual`
+  - Owner's rating: `GET /api/ratings/:manualId/user/:ownerId?type=manual`
+- Both ratings display in the detail screen's rating section
+
 ### Key Files
 | File | Purpose |
 |------|---------|
 | [feed.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/feed.js) | Aggregate lookup + event logging |
 | [eventSocial.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/database/queries/eventSocial.js) | Likes/comments queries |
-| [feedController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/feedController.js) | Feed list + aggregate detail |
+| [feedController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/feedController.js) | Feed list + aggregate detail + checkin/rating merge |
 | [eventSocialController.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/controllers/eventSocialController.js) | Social endpoints |
-| [SocialFeedScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/SocialFeedScreen.js) | Feed list UI + filtering |
-| [FeedDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/FeedDetailScreen.js) | Aggregate detail + likes/comments |
+| [SocialFeedScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/SocialFeedScreen.js) | Feed list UI + filtering + checkin.rated cards |
+| [FeedDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/FeedDetailScreen.js) | Aggregate detail + likes/comments + checkin.rated view |
+| [CollectableDetailScreen.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/CollectableDetailScreen.js) | Item detail + manual fetching + owner ratings |
+| [manuals.js](file:///c:/Users/johna/Documents/Projects/ShelvesAI/api/routes/manuals.js) | Manual item detail endpoint |
 
 ### Backfill Scripts
 - `node api/scripts/backfill-event-aggregates.js`
@@ -371,6 +422,7 @@ This project now batches item-level feed events into time-window aggregates and 
 |--------------|---------|------------|
 | `FEED_AGGREGATE_WINDOW_MINUTES` | `15` | Time window for aggregates |
 | `FEED_AGGREGATE_PREVIEW_LIMIT` | `5` | Preview payload cap per aggregate |
+| `CHECKIN_RATING_MERGE_WINDOW_MINUTES` | `30` | Time window for merging check-in + rating pairs |
 
 ---
 

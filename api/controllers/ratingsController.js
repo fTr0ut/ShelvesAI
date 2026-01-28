@@ -52,13 +52,15 @@ async function setRating(req, res) {
                 if (manual) {
                     await feedQueries.logEvent({
                         userId: req.user.id,
-                        shelfId: manual.shelfId || null,
+                        shelfId: null, // Global aggregation for ratings, prevents "item added" grouping
                         eventType: 'item.rated',
                         payload: {
                             manualId: manual.id,
                             title: manual.name || 'Unknown',
                             primaryCreator: manual.author || null,
                             coverUrl: null,
+                            coverMediaPath: manual.coverMediaPath || null,
+                            coverMediaUrl: resolveMediaUrl(manual.coverMediaPath),
                             rating: result.rating,
                             type: manual.type || 'item',
                         },

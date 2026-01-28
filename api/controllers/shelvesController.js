@@ -1496,6 +1496,34 @@ async function rateShelfItem(req, res) {
 
 
 
+/**
+ * GET /api/manuals/:manualId
+ * Get manual item details by ID (public endpoint for viewing from feed)
+ */
+async function getManualItem(req, res) {
+  try {
+    const manualId = parseInt(req.params.manualId, 10);
+    if (isNaN(manualId)) {
+      return res.status(400).json({ error: 'Invalid manual id' });
+    }
+
+    const manual = await shelvesQueries.getManualById(manualId);
+    if (!manual) {
+      return res.status(404).json({ error: 'Manual item not found' });
+    }
+
+    // Resolve cover media URL
+    if (manual.coverMediaPath) {
+      manual.coverMediaUrl = resolveMediaUrl(manual.coverMediaPath);
+    }
+
+    res.json({ manual });
+  } catch (err) {
+    console.error('getManualItem error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   listShelves,
   createShelf,
@@ -1520,4 +1548,5 @@ module.exports = {
   getVisionStatus,
   abortVision,
   addCollectableFromApi,
+  getManualItem,
 };

@@ -614,8 +614,9 @@ export default function SocialFeedScreen({ navigation, route }) {
     const renderItem = ({ item }) => {
         const { shelf, owner, items, eventType, collectable, checkinStatus, note } = item;
         const isCheckIn = eventType === 'checkin.activity';
+        const isCheckinRated = eventType === 'checkin.rated';
         const isNewsRecommendation = eventType === 'news.recommendation';
-        const timeAgo = formatRelativeTime(isCheckIn ? item.createdAt : shelf?.updatedAt);
+        const timeAgo = formatRelativeTime((isCheckIn || isCheckinRated) ? item.createdAt : shelf?.updatedAt);
         const displayName = isNewsRecommendation ? 'Discover' : (owner?.name || owner?.username || 'Someone');
         const initial = displayName.charAt(0).toUpperCase();
 
@@ -814,10 +815,23 @@ export default function SocialFeedScreen({ navigation, route }) {
 
             // Get cover items with ratings
             const ratingPreviews = ratingItems.slice(0, 3).map(e => {
-                const collectable = e.collectable || {};
-                const coverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+                let coverUrl = resolveCollectableCoverUrl(e.collectable, apiBase);
+
+                // Fallback to item itself (manual items often have flattened props)
+                if (!coverUrl) {
+                    coverUrl = resolveCollectableCoverUrl(e, apiBase);
+                }
+
+                // Fallback to manual property if present
+                if (!coverUrl && e.manual) {
+                    coverUrl = resolveManualCoverUrl(e.manual, apiBase);
+                }
+
+                // Determine title with multiple fallbacks
+                const title = e.collectable?.title || e.title || e.manual?.title || 'Untitled';
+
                 return {
-                    title: collectable.title || e.title || 'Untitled',
+                    title,
                     coverUrl,
                     rating: e.rating || 0
                 };
@@ -883,6 +897,131 @@ export default function SocialFeedScreen({ navigation, route }) {
                             )}
                         </View>
                     )}
+
+                    {renderSocialActions(item)}
+                </TouchableOpacity>
+            );
+        }
+
+        // Combined check-in + rating event rendering
+        if (isCheckinRated) {
+            const statusLabels = {
+                starting: 'started',
+                continuing: 'is continuing',
+                completed: 'finished',
+            };
+            const statusLabel = statusLabels[checkinStatus] || checkinStatus;
+            const rating = item.rating || 0;
+
+            // Get manual from entry for check-ins
+            const manual = item.manual || item.manualItem || item.manualSnapshot || null;
+
+            // Resolve cover URL with manual fallback
+            let collectableCoverUrl = resolveCollectableCoverUrl(collectable, apiBase);
+            if (!collectableCoverUrl && manual) {
+                collectableCoverUrl = resolveManualCoverUrl(manual, apiBase);
+            }
+
+            // Helper to render star rating inline
+            const renderInlineStars = (ratingValue, size = 14) => {
+                const fullStars = Math.floor(ratingValue);
+                const hasHalf = ratingValue % 1 >= 0.5;
+                const stars = [];
+                for (let i = 0; i < 5; i++) {
+                    if (i < fullStars) {
+                        stars.push(<Ionicons key={i} name="star" size={size} color="#FFD700" />);
+                    } else if (i === fullStars && hasHalf) {
+                        stars.push(<Ionicons key={i} name="star-half" size={size} color="#FFD700" />);
+                    } else {
+                        stars.push(<Ionicons key={i} name="star-outline" size={size} color="#FFD700" />);
+                    }
+                }
+                return <View style={{ flexDirection: 'row' }}>{stars}</View>;
+            };
+
+            const handleCheckinRatedPress = () => {
+                navigation.navigate('FeedDetail', { entry: item });
+            };
+
+            const handleCheckinRatedCollectablePress = () => {
+                if (collectable?.id) {
+                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                }
+            };
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handleCheckinRatedPress}
+                    style={styles.feedCard}
+                >
+                    {/* Check-in Badge */}
+                    <Image source={checkInBadge} style={styles.checkinBadge} resizeMode="contain" />
+
+                    {/* Header with stars */}
+                    <View style={styles.cardHeader}>
+                        <View style={styles.avatar}>
+                            {avatarSource ? (
+                                <Image source={avatarSource} style={styles.avatarImage} />
+                            ) : (
+                                <Text style={styles.avatarText}>{initial}</Text>
+                            )}
+                        </View>
+                        <View style={styles.headerContent}>
+                            <View style={styles.headerTop}>
+                                <Text style={styles.username}>{displayName}</Text>
+                                <Text style={styles.timestamp}>{timeAgo}</Text>
+                            </View>
+                            <View style={styles.checkinRatedAction}>
+                                <Text style={styles.shelfAction}>
+                                    {statusLabel}{' '}
+                                </Text>
+                                {renderInlineStars(rating, 12)}
+                                <Text style={[styles.shelfAction, { marginLeft: 4 }]}>
+                                    <Text style={styles.shelfName}>{collectable?.title || 'something'}</Text>
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* Collectable preview with rating stars */}
+                    <TouchableOpacity
+                        style={styles.checkinPreview}
+                        onPress={handleCheckinRatedCollectablePress}
+                        activeOpacity={0.9}
+                    >
+                        {collectableCoverUrl ? (
+                            <Image
+                                source={{ uri: collectableCoverUrl }}
+                                style={styles.checkinCover}
+                                resizeMode="cover"
+                            />
+                        ) : (
+                            <View style={[styles.checkinCover, styles.checkinCoverFallback]}>
+                                <Ionicons name="book" size={24} color={colors.primary} />
+                            </View>
+                        )}
+                        <View style={styles.checkinInfo}>
+                            <Text style={styles.checkinTitle} numberOfLines={2}>{collectable?.title}</Text>
+                            {collectable?.primaryCreator && (
+                                <Text style={styles.checkinCreator} numberOfLines={1}>{collectable.primaryCreator}</Text>
+                            )}
+                            {/* Stars below the item info */}
+                            <View style={styles.checkinRatingRow}>
+                                {renderInlineStars(rating, 16)}
+                            </View>
+                            {collectable?.kind && (
+                                <View style={styles.kindBadge}>
+                                    <Text style={styles.kindText}>{collectable.kind}</Text>
+                                </View>
+                            )}
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* Note if present */}
+                    {note ? (
+                        <Text style={styles.checkinNote} numberOfLines={3}>{note}</Text>
+                    ) : null}
 
                     {renderSocialActions(item)}
                 </TouchableOpacity>
@@ -1321,7 +1460,7 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     feedCard: {
         backgroundColor: colors.surface,
         borderRadius: 12,
-        padding: spacing.md,
+        padding: spacing.lg, // Increased from md
         ...shadows.sm,
     },
     separator: {
@@ -1329,16 +1468,16 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     cardHeader: {
         flexDirection: 'row',
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md, // Increased from sm
     },
     avatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 48, // Increased from 40
+        height: 48, // Increased from 40
+        borderRadius: 24,
         backgroundColor: colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: spacing.sm,
+        marginRight: spacing.md, // Increased from sm
         overflow: 'hidden', // Ensure image clips to border radius
     },
     avatarImage: {
@@ -1347,19 +1486,21 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     avatarText: {
         color: colors.textInverted,
-        fontSize: 16,
+        fontSize: 18, // Increased from 16
         fontWeight: '600',
     },
     headerContent: {
         flex: 1,
+        justifyContent: 'center', // Added to help align with larger avatar
     },
     headerTop: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+        marginBottom: 2, // Added spacing
     },
     username: {
-        fontSize: 15,
+        fontSize: 16, // Increased from 15
         fontWeight: '600',
         color: colors.text,
     },
@@ -1368,7 +1509,7 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.textMuted,
     },
     shelfAction: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         color: colors.textSecondary,
         marginTop: 2,
     },
@@ -1377,33 +1518,33 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.text,
     },
     description: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         color: colors.textSecondary,
-        lineHeight: 20,
-        marginBottom: spacing.sm,
+        lineHeight: 22, // Increased form 20
+        marginBottom: spacing.md, // Increased from sm
     },
     itemsPreview: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: spacing.xs,
-        marginBottom: spacing.sm,
+        gap: spacing.sm, // Increased from xs
+        marginBottom: spacing.md, // Increased from sm
     },
     itemChip: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: colors.surfaceElevated,
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 4,
-        borderRadius: 16,
-        gap: 4,
+        paddingHorizontal: spacing.md, // Increased from sm
+        paddingVertical: 6, // Increased from 4
+        borderRadius: 18, // Increased from 16
+        gap: 6,
     },
     itemTitle: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.textSecondary,
-        maxWidth: 120,
+        maxWidth: 140, // Increased from 120
     },
     moreItems: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.primary,
         fontWeight: '500',
         alignSelf: 'center',
@@ -1411,13 +1552,13 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     coverRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md, // Increased from sm
         paddingLeft: 4,
     },
     coverThumb: {
-        width: 32,
-        height: 48,
-        borderRadius: 4,
+        width: 80, // Increased to match checkin-ish size (was 52)
+        height: 112, // Increased to match checkin-ish size (was 75)
+        borderRadius: 8, // Increased from 6
         backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
@@ -1426,37 +1567,37 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         backgroundColor: colors.surfaceElevated,
     },
     moreCoversChip: {
-        width: 32,
-        height: 48,
-        borderRadius: 4,
+        width: 80, // Matched coverThumb
+        height: 112, // Matched coverThumb
+        borderRadius: 8, // Increased from 6
         backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
-        marginLeft: -8,
+        marginLeft: -12,
         justifyContent: 'center',
         alignItems: 'center',
     },
     moreCoversText: {
-        fontSize: 11,
+        fontSize: 13, // Increased from 11
         fontWeight: '600',
         color: colors.textMuted,
     },
     socialRow: {
         marginBottom: spacing.sm,
-        gap: spacing.xs,
+        gap: spacing.sm, // Increased from xs
     },
     socialActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
+        gap: spacing.md, // Increased from sm
     },
     socialButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 6,
-        borderRadius: 16,
+        gap: 8, // Increased from 6
+        paddingHorizontal: spacing.md, // Increased from sm
+        paddingVertical: 8, // Increased from 6
+        borderRadius: 20, // Increased from 16
         backgroundColor: colors.surfaceElevated,
     },
     socialButtonActive: {
@@ -1466,7 +1607,7 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         opacity: 0.6,
     },
     socialButtonText: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.textMuted,
         fontWeight: '500',
     },
@@ -1474,29 +1615,29 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.primary,
     },
     commentPreview: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.textSecondary,
     },
     cardFooter: {
         flexDirection: 'row',
-        gap: spacing.md,
-        paddingTop: spacing.sm,
+        gap: spacing.lg, // Increased from md
+        paddingTop: spacing.md, // Increased from sm
         borderTopWidth: 1,
         borderTopColor: colors.border,
     },
     // Inline comment styles
     commentPreviewContainer: {
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md, // Increased from sm
     },
     commentPreviewRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: 10, // Increased from 8
     },
     commentAvatar: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
+        width: 24, // Increased from 20
+        height: 24, // Increased from 20
+        borderRadius: 12,
         backgroundColor: colors.surfaceElevated,
         justifyContent: 'center',
         alignItems: 'center',
@@ -1507,23 +1648,23 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         height: '100%',
     },
     commentAvatarText: {
-        fontSize: 10,
+        fontSize: 11, // Increased from 10
         fontWeight: '600',
         color: colors.textMuted,
     },
     commentPreview: {
         flex: 1,
-        fontSize: 13,
+        fontSize: 14, // Increased from 13
         color: colors.textSecondary,
-        lineHeight: 18,
+        lineHeight: 20, // Increased from 18
     },
     commentContent: {
         color: colors.textSecondary,
     },
     commentTimestamp: {
-        fontSize: 11,
+        fontSize: 12, // Increased from 11
         color: colors.textMuted,
-        marginLeft: 4,
+        marginLeft: 6,
     },
     commentUsername: {
         fontWeight: '600',
@@ -1532,24 +1673,24 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     inlineCommentRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.sm,
-        marginTop: 4,
+        gap: spacing.md, // Increased from sm
+        marginTop: 6, // Increased from 4
     },
     inlineCommentInput: {
         flex: 1,
-        fontSize: 13,
-        paddingVertical: 4,
-        paddingHorizontal: spacing.sm,
+        fontSize: 14, // Increased from 13
+        paddingVertical: 6, // Increased from 4
+        paddingHorizontal: spacing.md, // Increased from sm
         backgroundColor: colors.surfaceElevated,
-        borderRadius: 16,
+        borderRadius: 20, // Increased from 16
         color: colors.text,
-        minHeight: 32,
-        maxHeight: 80,
+        minHeight: 36, // Increased from 32
+        maxHeight: 90, // Increased from 80
     },
     inlineCommentSend: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        width: 32, // Increased from 28
+        height: 32, // Increased from 28
+        borderRadius: 16,
         backgroundColor: colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
@@ -1561,10 +1702,10 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     footerStat: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: 6, // Increased from 4
     },
     footerText: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.textMuted,
     },
     loadingContainer: {
@@ -1604,7 +1745,7 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     errorBanner: {
         backgroundColor: colors.error + '15',
-        padding: spacing.sm,
+        padding: spacing.md, // Increased from sm
         margin: spacing.md,
         borderRadius: 8,
     },
@@ -1619,15 +1760,15 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         alignItems: 'center',
         backgroundColor: colors.surface,
         borderRadius: 20,
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 6,
-        width: Dimensions.get('window').width * 0.60,  // 45% of screen width
-        gap: 6,
+        paddingHorizontal: spacing.md, // Increased from sm
+        paddingVertical: 8, // Increased from 6
+        width: Dimensions.get('window').width * 0.60,
+        gap: 8,
         ...shadows.sm,
     },
     searchInput: {
         flex: 1,
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         color: colors.text,
         paddingVertical: 0,
     },
@@ -1642,13 +1783,13 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     searchDropdown: {
         position: 'absolute',
-        top: 120,
+        top: 130, // Adjusted
         left: spacing.md,
         right: spacing.md,
         backgroundColor: colors.surface,
-        borderRadius: 12,
+        borderRadius: 16, // Increased from 12
         ...shadows.lg,
-        maxHeight: 400,
+        maxHeight: 450, // Increased
         overflow: 'hidden',
     },
     searchLoadingContainer: {
@@ -1656,10 +1797,10 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         alignItems: 'center',
     },
     searchSection: {
-        paddingBottom: spacing.sm,
+        paddingBottom: spacing.md, // Increased from sm
     },
     searchSectionTitle: {
-        fontSize: 11,
+        fontSize: 12, // Increased from 11
         fontWeight: '600',
         color: colors.textMuted,
         textTransform: 'uppercase',
@@ -1672,13 +1813,13 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        gap: spacing.sm,
+        paddingVertical: spacing.md, // Increased from sm
+        gap: spacing.md, // Increased from sm
     },
     searchResultAvatar: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 40, // Increased from 36
+        height: 40,
+        borderRadius: 20,
         backgroundColor: colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
@@ -1686,12 +1827,12 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     searchResultAvatarText: {
         color: colors.textInverted,
         fontWeight: '600',
-        fontSize: 14,
+        fontSize: 16, // Increased from 14
     },
     searchResultCover: {
-        width: 36,
-        height: 48,
-        borderRadius: 4,
+        width: 40, // Increased from 36
+        height: 54, // Increased from 48
+        borderRadius: 6, // Increased from 4
         backgroundColor: colors.surfaceElevated,
     },
     searchResultCoverFallback: {
@@ -1702,35 +1843,35 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         flex: 1,
     },
     searchResultTitle: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         fontWeight: '600',
         color: colors.text,
     },
     searchResultSubtitle: {
-        fontSize: 12,
+        fontSize: 13, // Increased from 12
         color: colors.textMuted,
-        marginTop: 1,
+        marginTop: 2,
     },
     searchEmptyState: {
         alignItems: 'center',
-        padding: spacing.lg,
-        gap: spacing.sm,
+        padding: spacing.xl, // Increased from lg
+        gap: spacing.md, // Increased from sm
     },
     searchEmptyText: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         color: colors.textMuted,
     },
     seeMoreButton: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
-        paddingVertical: spacing.md,
+        gap: 8,
+        paddingVertical: spacing.lg, // Increased from md
         borderTopWidth: 1,
         borderTopColor: colors.border,
     },
     seeMoreText: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         fontWeight: '500',
         color: colors.primary,
     },
@@ -1738,15 +1879,15 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     checkinAction: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        marginTop: 2,
+        gap: 6, // Increased from 4
+        marginTop: 4, // Increased from 2
     },
     checkinBadge: {
         position: 'absolute',
-        top: -8,
+        top: -10, // Adjusted
         right: 0,
-        width: 180,
-        height: 60,
+        width: 200, // Increased from 180
+        height: 66, // Increased from 60
         zIndex: 10,
         borderRadius: 14,
         backgroundColor: 'transparent',
@@ -1754,12 +1895,12 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     checkinPreview: {
         flexDirection: 'row',
         gap: spacing.md,
-        marginBottom: spacing.sm,
+        marginBottom: spacing.md, // Increased from sm
     },
     checkinCover: {
-        width: 56,
-        height: 76,
-        borderRadius: 6,
+        width: 88, // Increased from 56
+        height: 120, // Increased from 76
+        borderRadius: 8, // Increased from 6
         backgroundColor: colors.surfaceElevated,
     },
     checkinCoverFallback: {
@@ -1771,34 +1912,47 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         justifyContent: 'center',
     },
     checkinTitle: {
-        fontSize: 15,
+        fontSize: 18, // Increased from 15
         fontWeight: '600',
         color: colors.text,
+        marginBottom: 4,
     },
     checkinCreator: {
-        fontSize: 13,
+        fontSize: 14, // Increased from 13
         color: colors.textMuted,
         marginTop: 2,
     },
     kindBadge: {
         alignSelf: 'flex-start',
         backgroundColor: colors.primary + '15',
-        paddingHorizontal: spacing.sm,
-        paddingVertical: 2,
-        borderRadius: 10,
-        marginTop: 6,
+        paddingHorizontal: spacing.md, // Increased from sm
+        paddingVertical: 4, // Increased from 2
+        borderRadius: 12, // Increased from 10
+        marginTop: 8, // Increased from 6
     },
     kindText: {
-        fontSize: 11,
+        fontSize: 12, // Increased from 11
         fontWeight: '500',
         color: colors.primary,
         textTransform: 'capitalize',
     },
     checkinNote: {
-        fontSize: 14,
+        fontSize: 15, // Increased from 14
         color: colors.textSecondary,
-        lineHeight: 20,
-        marginBottom: spacing.sm,
+        lineHeight: 22, // Increased from 20
+        marginBottom: spacing.md, // Increased from sm
         fontStyle: 'italic',
+    },
+    // Combined check-in + rating styles
+    checkinRatedAction: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        marginTop: 2,
+    },
+    checkinRatingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
     },
 });

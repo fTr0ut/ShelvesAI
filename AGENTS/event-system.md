@@ -60,6 +60,7 @@ Individual event records linked to aggregates.
 | `item.added` | Aggregated item event | Display type when mixed |
 | `item.rated` | Item rating set | Global (null shelfId) |
 | `checkin.activity` | User check-in | Per collectable |
+| `checkin.rated` | Combined check-in + rating | Merged from checkin + rating (virtual) |
 | `shelf.created` | New shelf created | Not aggregated |
 
 ---
@@ -192,6 +193,7 @@ Feed entries include a `displayHints` object that tells the frontend how to rend
 | `item.manual_added` | true | "Newly added collectibles" | `numbered` |
 | `item.rated` | false | "New ratings" | `rated` |
 | `checkin.activity` | false | null | `checkin` |
+| `checkin.rated` | false | null | `checkin-rated` |
 | `shelf.created` | true | "New shelf" | `numbered` |
 
 ### Item Display Modes
@@ -201,6 +203,7 @@ Feed entries include a `displayHints` object that tells the frontend how to rend
 | `numbered` | Shows: index number, cover image, title |
 | `rated` | Shows: cover image, title, star rating |
 | `checkin` | Special check-in card rendering |
+| `checkin-rated` | Combined check-in + rating card (badge + stars) |
 
 ### Frontend Fallback
 
@@ -225,6 +228,7 @@ const hints = displayHints || {
 Renders different card types based on `eventType`:
 - **Check-in**: Status icon, collectable preview, note
 - **Rating**: Star icons, cover thumbnails with ratings
+- **Check-in + Rating**: Combined badge + stars (see below)
 - **Item added**: Summary text, cover thumbnails
 
 ### FeedDetailScreen
@@ -252,3 +256,77 @@ For `item.rated` events, items are rendered with:
 | Social actions | `api/controllers/eventSocialController.js` |
 | Mobile feed screen | `mobile/src/screens/SocialFeedScreen.js` |
 | Mobile detail screen | `mobile/src/screens/FeedDetailScreen.js` |
+
+---
+
+## Combined Check-in + Rating Events
+
+When a user checks in to an item AND rates the same item within a configurable time window, the feed merges these into a single `checkin.rated` event for a cleaner display.
+
+### How It Works
+
+```
+Check-in Event + Rating Event → mergeCheckinRatingPairs() → checkin.rated Event
+```
+
+1. **Post-processing merge**: After feed entries are built, `mergeCheckinRatingPairs()` scans for matching pairs
+2. **Matching criteria**:
+   - Same user (`userId`)
+   - Same item (by `collectableId`, `manualId`, or title match)
+   - Within time window (default: 30 minutes)
+3. **Result**: Single `checkin.rated` entry with rating attached; standalone rating removed from feed
+
+### Configuration
+
+```env
+CHECKIN_RATING_MERGE_WINDOW_MINUTES=30  # Default: 30 minutes
+```
+
+### Matching Priority
+
+1. **collectableId match** (most reliable)
+2. **manualId match** (for manual-only items)
+3. **Title match** (fallback, case-insensitive)
+
+### Edge Cases
+
+| Scenario | Behavior |
+|----------|----------|
+| Rating has multiple items | Only matching item merged; others remain in rating event |
+| Rating becomes empty after merge | Rating event removed entirely |
+| Multiple check-ins for same item | Most recent check-in merges with rating |
+| Rate then check-in (reverse order) | Still merges (bidirectional matching) |
+
+### Card Display
+
+The combined card shows:
+- Check-in badge (top-right corner)
+- Header: "[User] started ★★★★☆ [Title]" with inline stars
+- Item preview with cover, title, creator, rating stars, and kind badge
+- Note (if present)
+- Social actions (like, comment)
+
+```
+┌──────────────────────────────────┐
+│ [Avatar] User started      [Badge]│
+│          ★★★★☆ The Great Gatsby  │
+├──────────────────────────────────┤
+│ [Cover Image]  Title             │
+│                Author            │
+│                ★★★★☆             │
+│                [Kind Badge]      │
+├──────────────────────────────────┤
+│ "Really enjoying this..."        │
+├──────────────────────────────────┤
+│ [Like] [Comment]                 │
+└──────────────────────────────────┘
+```
+
+### Implementation
+
+| File | Function/Component |
+|------|-------------------|
+| `api/controllers/feedController.js` | `mergeCheckinRatingPairs()` - merge logic |
+| `api/controllers/feedController.js` | `getDisplayHints()` - includes `checkin.rated` hints |
+| `mobile/src/screens/SocialFeedScreen.js` | `checkin.rated` card renderer |
+| `mobile/src/screens/FeedDetailScreen.js` | `checkin.rated` detail view |

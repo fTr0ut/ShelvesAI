@@ -10,6 +10,8 @@ import {
     StatusBar,
     Alert,
     ActivityIndicator,
+    Modal,
+    FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,21 +39,81 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const initialOwnerRating = isOwnerContext ? (item?.rating || 0) : null;
 
     const [resolvedCollectable, setResolvedCollectable] = useState(null);
+    const [resolvedManual, setResolvedManual] = useState(null);
     const [rating, setRating] = useState(initialRating); // User's own rating
     const [ownerRating, setOwnerRating] = useState(initialOwnerRating); // Shelf owner's rating
     const [aggregateRating, setAggregateRating] = useState(null); // Average rating from all users
     const [isFavorited, setIsFavorited] = useState(false);
     const [isUploadingCover, setIsUploadingCover] = useState(false);
     const [manualCoverUrl, setManualCoverUrl] = useState(null);
+    const [showWishlistModal, setShowWishlistModal] = useState(false);
+    const [wishlists, setWishlists] = useState([]);
 
     const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
     const baseCollectable = item?.collectable
         || item?.collectableSnapshot
         || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
     const collectable = resolvedCollectable || baseCollectable;
-    const manual = item?.manual || item?.manualSnapshot || {};
-    const isManual = !collectable?.title && manual?.title;
+    const baseManual = item?.manual || item?.manualSnapshot || {};
+    const manual = resolvedManual || baseManual;
+    // Detect manual items: either has manual data with content, or collectable is empty/missing
+    const hasManualContent = !!(manual?.id || manual?.title || manual?.name || manual?.coverMediaUrl || manual?.coverMediaPath);
+    const hasCollectableContent = !!(collectable?.id && collectable?.title);
+    const isManual = hasManualContent && !hasCollectableContent;
     const source = isManual ? manual : collectable;
+
+    // Fetch wishlists
+    const fetchWishlists = async () => {
+        try {
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/wishlists`,
+                token,
+            });
+            if (data?.wishlists) {
+                setWishlists(data.wishlists);
+            }
+        } catch (e) {
+            console.warn('Failed to fetch wishlists', e);
+        }
+    };
+
+    const handleOpenWishlistModal = () => {
+        fetchWishlists();
+        setShowWishlistModal(true);
+    };
+
+    const handleAddItemToWishlist = async (wishlistId) => {
+        try {
+            const targetCollectableId = collectable?.id;
+            const body = {};
+
+            if (targetCollectableId) {
+                body.collectableId = targetCollectableId;
+            } else {
+                // For manual items or unmatchable items, use the title
+                const itemTitle = manual?.title || manual?.name || title;
+                if (!itemTitle) {
+                    Alert.alert('Error', 'Cannot add item: missing title');
+                    return;
+                }
+                body.manualText = itemTitle;
+            }
+
+            await apiRequest({
+                apiBase,
+                path: `/api/wishlists/${wishlistId}/items`,
+                method: 'POST',
+                token,
+                body,
+            });
+            Alert.alert('Success', 'Added to wishlist!');
+            setShowWishlistModal(false);
+        } catch (e) {
+            console.warn('Failed to add to wishlist', e);
+            Alert.alert('Error', 'Failed to add to wishlist');
+        }
+    };
 
     // Fetch collectable details
     useEffect(() => {
@@ -78,7 +140,32 @@ export default function CollectableDetailScreen({ route, navigation }) {
         return () => { isActive = false; };
     }, [apiBase, token, baseCollectable?.id]);
 
-    // NEW: Fetch all rating data
+    // Fetch manual item details
+    useEffect(() => {
+        let isActive = true;
+        const targetId = baseManual?.id;
+
+        if (!targetId || !apiBase || !token) return;
+        if (resolvedManual && String(resolvedManual.id) === String(targetId)) return;
+
+        (async () => {
+            try {
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/manuals/${targetId}`,
+                    token,
+                });
+                if (!isActive || !data?.manual) return;
+                setResolvedManual(data.manual);
+            } catch (err) {
+                console.warn('Failed to refresh manual details:', err?.message || err);
+            }
+        })();
+
+        return () => { isActive = false; };
+    }, [apiBase, token, baseManual?.id]);
+
+    // Fetch all rating data
     useEffect(() => {
         let isActive = true;
         const targetCollectableId = collectable?.id;
@@ -111,11 +198,11 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 });
                 if (isActive) setRating(myData.rating || 0);
 
-                // 3. Get Owner's Rating (Scenario B, C) - only for collectables
-                if (!isManualItem && ownerId && user?.id && ownerId !== user.id) {
+                // 3. Get Owner's Rating (Scenario B, C) - for both collectables and manuals
+                if (ownerId && user?.id && ownerId !== user.id) {
                     const ownerData = await apiRequest({
                         apiBase,
-                        path: `/api/ratings/${targetId}/user/${ownerId}`,
+                        path: `/api/ratings/${targetId}/user/${ownerId}${queryParam}`,
                         token,
                     });
                     if (isActive) setOwnerRating(ownerData.rating || 0);
@@ -133,26 +220,38 @@ export default function CollectableDetailScreen({ route, navigation }) {
     // Check favorite status
     useEffect(() => {
         let isActive = true;
+
         const checkFavoriteStatus = async () => {
-            if (!collectable?.id || !token) return;
+            const targetCollectableId = collectable?.id;
+            const targetManualId = manual?.id;
+
+            if ((!targetCollectableId && !targetManualId) || !token) return;
+
             try {
-                const response = await apiRequest({
-                    apiBase,
-                    path: '/api/favorites/check-batch',
-                    method: 'POST',
-                    token,
-                    body: { collectableIds: [collectable.id] },
-                });
-                if (isActive && response.status) {
-                    setIsFavorited(!!response.status[collectable.id]);
+                // Use single check for simplicity and consistency with manual updates
+                if (targetCollectableId) {
+                    const response = await apiRequest({
+                        apiBase,
+                        path: `/api/favorites/${targetCollectableId}/check`,
+                        token,
+                    });
+                    if (isActive) setIsFavorited(!!response.isFavorite);
+                } else if (targetManualId) {
+                    const response = await apiRequest({
+                        apiBase,
+                        path: `/api/favorites/${targetManualId}/check?type=manual`,
+                        token,
+                    });
+                    if (isActive) setIsFavorited(!!response.isFavorite);
                 }
             } catch (e) {
                 console.warn('Failed to check favorite status', e);
             }
         };
+
         checkFavoriteStatus();
         return () => { isActive = false; };
-    }, [apiBase, token, collectable?.id]);
+    }, [apiBase, token, collectable?.id, manual?.id]);
 
     const handleRateItem = async (newRating) => {
         // Allow rating even if readOnly (because it's now decoupled!)
@@ -203,7 +302,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     const handleToggleFavorite = async () => {
-        if (!collectable?.id) return;
+        const targetCollectableId = collectable?.id;
+        const targetManualId = manual?.id;
+
+        if (!targetCollectableId && !targetManualId) return;
 
         const previousState = isFavorited;
         // Optimistic update
@@ -211,19 +313,34 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         try {
             if (previousState) {
-                await apiRequest({
-                    apiBase,
-                    path: `/api/favorites/${collectable.id}`,
-                    method: 'DELETE',
-                    token,
-                });
+                // Removing favorite
+                if (targetCollectableId) {
+                    await apiRequest({
+                        apiBase,
+                        path: `/api/favorites/${targetCollectableId}`,
+                        method: 'DELETE',
+                        token,
+                    });
+                } else {
+                    await apiRequest({
+                        apiBase,
+                        path: `/api/favorites/${targetManualId}?type=manual`,
+                        method: 'DELETE',
+                        token,
+                    });
+                }
             } else {
+                // Adding favorite
+                const body = targetCollectableId
+                    ? { collectableId: targetCollectableId }
+                    : { manualId: targetManualId };
+
                 await apiRequest({
                     apiBase,
                     path: '/api/favorites',
                     method: 'POST',
                     token,
-                    body: { collectableId: collectable.id },
+                    body,
                 });
             }
         } catch (e) {
@@ -350,6 +467,14 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'createdAt',
             'updatedAt',
         ]);
+
+        // Hide internal metadata fields for manual items
+        if (isManual) {
+            excludedKeys.add('coverMediaUrl');
+            excludedKeys.add('userId');
+            excludedKeys.add('shelfId');
+            excludedKeys.add('coverContentType');
+        }
 
         const labelOverrides = {
             primaryCreator: 'Creator',
@@ -521,21 +646,28 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
 
 
+    const buildMediaUri = (pathOrUrl) => {
+        if (!pathOrUrl) return null;
+        if (/^https?:/i.test(pathOrUrl)) return pathOrUrl;
+        const trimmed = pathOrUrl.replace(/^\/+/, '');
+        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
+        return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+    };
+
     const resolveCoverUri = () => {
         // Check local state for recently uploaded manual cover first
         if (manualCoverUrl) {
             return manualCoverUrl;
         }
 
-        // Check manual cover from item data
-        if (isManual && manual) {
+        // Check manual cover from item data (check regardless of isManual flag for robustness)
+        // This handles cases where item comes from feed with manualSnapshot
+        if (manual) {
             if (manual.coverMediaUrl) {
-                return manual.coverMediaUrl;
+                return buildMediaUri(manual.coverMediaUrl);
             }
             if (manual.coverMediaPath) {
-                const trimmed = manual.coverMediaPath.replace(/^\/+/, '');
-                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+                return buildMediaUri(manual.coverMediaPath);
             }
         }
 
@@ -543,9 +675,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
         const c = collectable;
         if (!c?.coverImageUrl) {
             if (c?.coverMediaPath) {
-                const trimmed = c.coverMediaPath.replace(/^\/+/, '');
-                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+                return buildMediaUri(c.coverMediaPath);
             }
             if (c?.coverUrl && /^https?:/i.test(c.coverUrl)) {
                 return c.coverUrl;
@@ -557,9 +687,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return c.coverImageUrl;
         }
 
-        const trimmed = c.coverImageUrl.replace(/^\/+/, '');
-        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-        return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
+        return buildMediaUri(c.coverImageUrl);
     };
 
     const coverUri = resolveCoverUri();
@@ -686,19 +814,32 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             </View>
                         </View>
 
-                        {collectable?.id && (
+                        <View style={styles.actionButtonsColumn}>
+                            {(collectable?.id || manual?.id) && (
+                                <TouchableOpacity
+                                    onPress={handleToggleFavorite}
+                                    style={styles.actionIconBtn}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons
+                                        name={isFavorited ? 'heart' : 'heart-outline'}
+                                        size={28}
+                                        color={isFavorited ? colors.error : colors.textMuted}
+                                    />
+                                </TouchableOpacity>
+                            )}
                             <TouchableOpacity
-                                onPress={handleToggleFavorite}
-                                style={styles.favoriteBigButton}
+                                onPress={handleOpenWishlistModal}
+                                style={styles.actionIconBtn}
                                 activeOpacity={0.7}
                             >
                                 <Ionicons
-                                    name={isFavorited ? 'heart' : 'heart-outline'}
+                                    name="bookmark-outline"
                                     size={28}
-                                    color={isFavorited ? colors.error : colors.textMuted}
+                                    color={colors.textMuted}
                                 />
                             </TouchableOpacity>
-                        )}
+                        </View>
                     </View>
                 </View>
 
@@ -742,7 +883,58 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 {/* Provider attribution */}
                 {renderAttribution()}
             </ScrollView>
-        </SafeAreaView>
+
+            {/* Wishlist Selection Modal */}
+            <Modal
+                visible={showWishlistModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowWishlistModal(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setShowWishlistModal(false)}
+                >
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Add to Wishlist</Text>
+                            <TouchableOpacity onPress={() => setShowWishlistModal(false)}>
+                                <Ionicons name="close" size={24} color={colors.text} />
+                            </TouchableOpacity>
+                        </View>
+                        {wishlists.length === 0 ? (
+                            <View style={styles.emptyWishlistState}>
+                                <Text style={styles.emptyWishlistText}>No wishlists found.</Text>
+                                <Text style={styles.emptyWishlistSubtext}>Create one in your Profile.</Text>
+                            </View>
+                        ) : (
+                            <FlatList
+                                data={wishlists}
+                                keyExtractor={(item) => item.id.toString()}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        style={styles.wishlistItem}
+                                        onPress={() => handleAddItemToWishlist(item.id)}
+                                    >
+                                        <View style={styles.wishlistIcon}>
+                                            <Ionicons name="heart" size={16} color={colors.primary} />
+                                        </View>
+                                        <View style={styles.wishlistInfo}>
+                                            <Text style={styles.wishlistName}>{item.name}</Text>
+                                            <Text style={styles.wishlistCount}>
+                                                {item.itemCount || 0} items
+                                            </Text>
+                                        </View>
+                                        <Ionicons name="add-circle-outline" size={24} color={colors.primary} />
+                                    </TouchableOpacity>
+                                )}
+                            />
+                        )}
+                    </View>
+                </TouchableOpacity>
+            </Modal>
+        </SafeAreaView >
     );
 }
 
@@ -873,7 +1065,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 13,
         color: colors.textSecondary,
     },
-    favoriteBigButton: {
+    actionButtonsColumn: {
+        alignItems: 'center',
+        gap: spacing.md,
+    },
+    actionIconBtn: {
         padding: 4,
     },
     section: {
@@ -963,5 +1159,69 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         textAlign: 'center',
         marginTop: spacing.sm,
         lineHeight: 16,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: colors.surface,
+        borderTopLeftRadius: radius.xl,
+        borderTopRightRadius: radius.xl,
+        padding: spacing.lg,
+        maxHeight: '60%',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    wishlistItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    wishlistIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    wishlistInfo: {
+        flex: 1,
+    },
+    wishlistName: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: colors.text,
+    },
+    wishlistCount: {
+        fontSize: 12,
+        color: colors.textSecondary,
+    },
+    emptyWishlistState: {
+        padding: spacing.xl,
+        alignItems: 'center',
+    },
+    emptyWishlistText: {
+        fontSize: 16,
+        color: colors.text,
+        marginBottom: 8,
+    },
+    emptyWishlistSubtext: {
+        fontSize: 14,
+        color: colors.textMuted,
     },
 });

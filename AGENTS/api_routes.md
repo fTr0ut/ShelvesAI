@@ -70,6 +70,7 @@ This document maps the mobile application screens to the backend API endpoints t
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/api/collectables/:id` | Get full catalog item details | - |
+| `GET` | `/api/manuals/:manualId` | Get full manual item details | - |
 | `PUT` | `/api/shelves/:shelfId/manual/:itemId` | Edit manual item details | `{ name, author, etc. }` |
 
 ## 5. Account & Social

@@ -27,6 +27,7 @@ const ratingsRoutes = require('./routes/ratings');
 const discoverRoutes = require('./routes/discover');
 const pushRoutes = require('./routes/push');
 const adminRoutes = require('./routes/admin');
+const manualsRoutes = require('./routes/manuals');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -217,6 +218,7 @@ app.use('/api/ratings', ratingsRoutes);
 app.use('/api/discover', discoverRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/manuals', manualsRoutes);
 
 app.use((err, _req, res, next) => {
   if (err && (err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large')) {

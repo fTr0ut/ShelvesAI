@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -11,12 +11,27 @@ import {
     View,
     StatusBar,
     Modal,
+    Dimensions,
+    TouchableWithoutFeedback,
+    Keyboard,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
+
+// Reuse usage of these if available, otherwise fallback to local impl
+// Assuming CachedImage is available based on ShelfDetailScreen usage
+
+const SORT_OPTIONS = [
+    { key: 'title_asc', label: 'Title A-Z' },
+    { key: 'title_desc', label: 'Title Z-A' },
+    { key: 'date_desc', label: 'Date Added' },
+    { key: 'creator_asc', label: 'Creator A-Z' },
+];
 
 export default function WishlistScreen({ navigation, route }) {
     const { wishlistId } = route.params;
@@ -27,9 +42,18 @@ export default function WishlistScreen({ navigation, route }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [showAddModal, setShowAddModal] = useState(false);
-    const [manualText, setManualText] = useState('');
-    const [addingItem, setAddingItem] = useState(false);
+
+    // Local Search & Sort
+    const [localSearchQuery, setLocalSearchQuery] = useState('');
+    const [sortKey, setSortKey] = useState('date_desc');
+    const [sortOpen, setSortOpen] = useState(false);
+
+    // Global Search (FAB)
+    const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+    const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+    const [globalSearchResults, setGlobalSearchResults] = useState([]);
+    const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+    const searchTimeoutRef = useRef(null);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -58,79 +82,175 @@ export default function WishlistScreen({ navigation, route }) {
 
     const handleRefresh = () => loadWishlist(true);
 
-    const handleAddManualItem = async () => {
-        if (!manualText.trim()) return;
+    const handleDeleteItem = useCallback(async (itemId) => {
+        Alert.alert('Remove Item', 'Remove this item from the wishlist?', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Remove',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        await apiRequest({
+                            apiBase,
+                            path: `/api/wishlists/${wishlistId}/items/${itemId}`,
+                            method: 'DELETE',
+                            token,
+                        });
+                        setItems((prev) => prev.filter((i) => i.id !== itemId));
+                    } catch (e) {
+                        Alert.alert('Error', e.message);
+                    }
+                },
+            },
+        ]);
+    }, [apiBase, token, wishlistId]);
 
+    // --- Local List Logic ---
+
+    const visibleItems = useMemo(() => {
+        const query = localSearchQuery.trim().toLowerCase();
+        let filtered = items;
+
+        if (query) {
+            filtered = items.filter(item => {
+                const title = item.collectableTitle || item.manualText || '';
+                return title.toLowerCase().includes(query);
+            });
+        }
+
+        return [...filtered].sort((a, b) => {
+            const titleA = (a.collectableTitle || a.manualText || '').toLowerCase();
+            const titleB = (b.collectableTitle || b.manualText || '').toLowerCase();
+            const dateA = new Date(a.createdAt || 0).getTime();
+            const dateB = new Date(b.createdAt || 0).getTime();
+            const creatorA = (a.collectableCreator || '').toLowerCase();
+            const creatorB = (b.collectableCreator || '').toLowerCase();
+
+            switch (sortKey) {
+                case 'title_asc': return titleA.localeCompare(titleB);
+                case 'title_desc': return titleB.localeCompare(titleA);
+                case 'date_desc': return dateB - dateA;
+                case 'creator_asc': return creatorA.localeCompare(creatorB);
+                default: return 0;
+            }
+        });
+    }, [items, localSearchQuery, sortKey]);
+
+    const sortLabel = useMemo(() => {
+        const option = SORT_OPTIONS.find(o => o.key === sortKey);
+        return option ? option.label : 'Sort';
+    }, [sortKey]);
+
+    const renderItem = ({ item }) => {
+        // Resolve cover image - mimic ShelfDetailScreen logic
+        const imageUri = item.collectableCoverMediaPath
+            ? `${apiBase}/media/${item.collectableCoverMediaPath}`
+            : item.collectableCover;
+
+        const hasCollectable = !!(item.collectableId || item.collectableTitle);
+        const title = hasCollectable ? item.collectableTitle : item.manualText;
+        const subtitle = hasCollectable && item.collectableCreator ? item.collectableCreator : '';
+
+        return (
+            <TouchableOpacity
+                style={styles.itemCard}
+                onPress={() => hasCollectable && item.collectableId
+                    ? navigation.navigate('CollectableDetail', { item: { collectable: { id: item.collectableId } } })
+                    : null
+                }
+                activeOpacity={0.7}
+                disabled={!hasCollectable}
+            >
+                <View style={styles.itemCover}>
+                    {imageUri ? (
+                        <Image
+                            source={{ uri: imageUri }}
+                            style={styles.itemCoverImage}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <View style={styles.itemCoverFallback}>
+                            <Ionicons name="heart" size={24} color={colors.primary} />
+                        </View>
+                    )}
+                </View>
+                <View style={styles.itemContent}>
+                    <Text style={styles.itemTitle} numberOfLines={2}>{title}</Text>
+                    {subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{subtitle}</Text> : null}
+                    {item.notes ? (
+                        <Text style={styles.itemNotes} numberOfLines={1}>{item.notes}</Text>
+                    ) : null}
+                </View>
+                <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => handleDeleteItem(item.id)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <Ionicons name="trash-outline" size={20} color={colors.textMuted} />
+                </TouchableOpacity>
+            </TouchableOpacity>
+        );
+    };
+
+    // --- Global Search Logic (FAB) ---
+
+    const handleGlobalSearchChange = (text) => {
+        setGlobalSearchQuery(text);
+
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+
+        if (!text.trim()) {
+            setGlobalSearchResults([]);
+            return;
+        }
+
+        searchTimeoutRef.current = setTimeout(async () => {
+            setGlobalSearchLoading(true);
+            try {
+                // Only search collectables, explicitly excluding friends
+                const collectablesRes = await apiRequest({
+                    apiBase,
+                    path: `/api/collectables?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
+                    token
+                });
+                setGlobalSearchResults(collectablesRes?.results || []);
+            } catch (err) {
+                console.warn('Search error:', err);
+            } finally {
+                setGlobalSearchLoading(false);
+            }
+        }, 300);
+    };
+
+    const handleAddSearchResult = async (collectable) => {
         try {
-            setAddingItem(true);
             await apiRequest({
                 apiBase,
                 path: `/api/wishlists/${wishlistId}/items`,
                 method: 'POST',
                 token,
-                body: { manualText: manualText.trim() },
+                body: { collectableId: collectable.id }
             });
-            setManualText('');
-            setShowAddModal(false);
+            // Reset and reload
+            setGlobalSearchQuery('');
+            setGlobalSearchResults([]);
+            setShowGlobalSearch(false);
             loadWishlist(true);
+            Alert.alert('Success', 'Item added to wishlist');
         } catch (e) {
-            Alert.alert('Error', e.message);
-        } finally {
-            setAddingItem(false);
+            Alert.alert('Error', e.message || 'Failed to add item');
         }
     };
 
-    const handleDeleteItem = useCallback(async (itemId) => {
-        try {
-            await apiRequest({
-                apiBase,
-                path: `/api/wishlists/${wishlistId}/items/${itemId}`,
-                method: 'DELETE',
-                token,
-            });
-            setItems((prev) => prev.filter((i) => i.id !== itemId));
-        } catch (e) {
-            Alert.alert('Error', e.message);
-        }
-    }, [apiBase, token, wishlistId]);
-
-    const renderItem = ({ item }) => {
-        const hasCollectable = item.collectableId || item.collectableTitle;
-        const imageUri = item.collectableCoverMediaPath
-            ? `${apiBase}/media/${item.collectableCoverMediaPath}`
-            : item.collectableCover;
-
-        return (
-            <View style={styles.itemCard}>
-                {hasCollectable && imageUri ? (
-                    <Image source={{ uri: imageUri }} style={styles.itemImage} />
-                ) : (
-                    <View style={styles.itemImagePlaceholder}>
-                        <Ionicons name="heart" size={20} color={colors.primary} />
-                    </View>
-                )}
-                <View style={styles.itemInfo}>
-                    <Text style={styles.itemTitle} numberOfLines={2}>
-                        {hasCollectable ? item.collectableTitle : item.manualText}
-                    </Text>
-                    {hasCollectable && item.collectableCreator && (
-                        <Text style={styles.itemCreator}>{item.collectableCreator}</Text>
-                    )}
-                    {item.notes && (
-                        <Text style={styles.itemNotes} numberOfLines={1}>{item.notes}</Text>
-                    )}
-                </View>
-                <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={() => handleDeleteItem(item.id)}
-                >
-                    <Ionicons name="trash-outline" size={18} color={colors.error} />
-                </TouchableOpacity>
-            </View>
-        );
+    const openGlobalSearch = () => {
+        setGlobalSearchQuery('');
+        setGlobalSearchResults([]);
+        setShowGlobalSearch(true);
     };
 
-    if (loading) {
+    if (loading && !refreshing) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -149,41 +269,44 @@ export default function WishlistScreen({ navigation, route }) {
                 </TouchableOpacity>
                 <View style={styles.headerCenter}>
                     <Text style={styles.headerTitle} numberOfLines={1}>{wishlist?.name || 'Wishlist'}</Text>
-                    {wishlist?.visibility && (
-                        <View style={styles.visibilityBadge}>
-                            <Ionicons
-                                name={wishlist.visibility === 'public' ? 'globe' : wishlist.visibility === 'friends' ? 'people' : 'lock-closed'}
-                                size={12}
-                                color={colors.textMuted}
-                            />
-                        </View>
-                    )}
+                    <Text style={styles.headerSubtitle}>{items.length} item{items.length !== 1 ? 's' : ''}</Text>
                 </View>
-                <TouchableOpacity onPress={() => setShowAddModal(true)} style={styles.addButton}>
-                    <Ionicons name="add" size={24} color={colors.primary} />
+                <View style={{ width: 40 }} />
+            </View>
+
+            {/* Controls Row (Search + Sort) */}
+            <View style={[styles.controlsRow, items.length > 5 ? null : styles.controlsRowRight]}>
+                {items.length > 0 && (
+                    <View style={styles.searchBox}>
+                        <Ionicons name="search" size={18} color={colors.textMuted} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Filter wishlist..."
+                            placeholderTextColor={colors.textMuted}
+                            value={localSearchQuery}
+                            onChangeText={setLocalSearchQuery}
+                        />
+                    </View>
+                )}
+                <TouchableOpacity
+                    style={styles.sortButton}
+                    onPress={() => setSortOpen(true)}
+                >
+                    <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
+                    <Text style={styles.sortButtonText} numberOfLines={1}>{sortLabel}</Text>
                 </TouchableOpacity>
             </View>
 
-            {wishlist?.description && (
-                <Text style={styles.description}>{wishlist.description}</Text>
-            )}
-
+            {/* Main List */}
             {items.length === 0 ? (
                 <View style={styles.emptyState}>
                     <Ionicons name="heart-outline" size={48} color={colors.textMuted} />
                     <Text style={styles.emptyTitle}>No items yet</Text>
-                    <Text style={styles.emptySubtitle}>Add items you want to this wishlist</Text>
-                    <TouchableOpacity
-                        style={styles.addItemButton}
-                        onPress={() => setShowAddModal(true)}
-                    >
-                        <Ionicons name="add" size={20} color={colors.textInverted} />
-                        <Text style={styles.addItemButtonText}>Add Item</Text>
-                    </TouchableOpacity>
+                    <Text style={styles.emptySubtitle}>Tap the + button to search and add items</Text>
                 </View>
             ) : (
                 <FlatList
-                    data={items}
+                    data={visibleItems}
                     keyExtractor={(item) => item.id.toString()}
                     renderItem={renderItem}
                     contentContainerStyle={styles.listContent}
@@ -192,57 +315,126 @@ export default function WishlistScreen({ navigation, route }) {
                 />
             )}
 
-            {/* Add Item Modal */}
-            <Modal
-                visible={showAddModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowAddModal(false)}
+            {/* FAB */}
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={openGlobalSearch}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Add Item</Text>
-                            <TouchableOpacity onPress={() => setShowAddModal(false)}>
-                                <Ionicons name="close" size={24} color={colors.text} />
-                            </TouchableOpacity>
+                <Ionicons name="add" size={28} color={colors.textInverted} />
+            </TouchableOpacity>
+
+            {/* Sort Modal */}
+            <Modal
+                visible={sortOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setSortOpen(false)}
+            >
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setSortOpen(false)}
+                >
+                    <TouchableOpacity activeOpacity={1} style={styles.sortModal}>
+                        <Text style={styles.sortModalTitle}>Sort by</Text>
+                        {SORT_OPTIONS.map(option => {
+                            const isSelected = option.key === sortKey;
+                            return (
+                                <TouchableOpacity
+                                    key={option.key}
+                                    style={[styles.sortOption, isSelected && styles.sortOptionSelected]}
+                                    onPress={() => {
+                                        setSortKey(option.key);
+                                        setSortOpen(false);
+                                    }}
+                                >
+                                    <Text style={[styles.sortOptionText, isSelected && styles.sortOptionTextSelected]}>
+                                        {option.label}
+                                    </Text>
+                                    {isSelected ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
+
+            {/* Global Search Modal - Mimicking Social Feed Search */}
+            <Modal
+                visible={showGlobalSearch}
+                animationType="slide"
+                presentationStyle="pageSheet"
+                onRequestClose={() => setShowGlobalSearch(false)}
+            >
+                <View style={styles.globalSearchContainer}>
+                    <View style={styles.globalSearchHeader}>
+                        <View style={styles.searchInputContainer}>
+                            <Ionicons name="search" size={16} color={colors.textMuted} />
+                            <TextInput
+                                style={styles.globalSearchInput}
+                                placeholder="Search catalog to add..."
+                                placeholderTextColor={colors.textMuted}
+                                value={globalSearchQuery}
+                                onChangeText={handleGlobalSearchChange}
+                                autoFocus
+                            />
+                            {globalSearchQuery.length > 0 && (
+                                <TouchableOpacity onPress={() => setGlobalSearchQuery('')}>
+                                    <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                                </TouchableOpacity>
+                            )}
                         </View>
-
-                        <Text style={styles.modalLabel}>Item Description</Text>
-                        <TextInput
-                            style={styles.modalInput}
-                            value={manualText}
-                            onChangeText={setManualText}
-                            placeholder="What do you want?"
-                            placeholderTextColor={colors.textMuted}
-                            multiline
-                            numberOfLines={3}
-                        />
-
-                        <TouchableOpacity
-                            style={[styles.modalButton, (!manualText.trim() || addingItem) && styles.modalButtonDisabled]}
-                            onPress={handleAddManualItem}
-                            disabled={!manualText.trim() || addingItem}
-                        >
-                            <Text style={styles.modalButtonText}>
-                                {addingItem ? 'Adding...' : 'Add to Wishlist'}
-                            </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={styles.searchButton}
-                            onPress={() => {
-                                setShowAddModal(false);
-                                navigation.navigate('ItemSearch', {
-                                    mode: 'wishlist',
-                                    wishlistId: wishlistId
-                                });
-                            }}
-                        >
-                            <Ionicons name="search" size={18} color={colors.primary} />
-                            <Text style={styles.searchButtonText}>Search Catalog</Text>
+                        <TouchableOpacity onPress={() => setShowGlobalSearch(false)}>
+                            <Text style={styles.cancelButtonText}>Cancel</Text>
                         </TouchableOpacity>
                     </View>
+
+                    {globalSearchLoading ? (
+                        <View style={styles.loaderContainer}>
+                            <ActivityIndicator size="small" color={colors.primary} />
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={globalSearchResults}
+                            keyExtractor={(item) => item.id.toString()}
+                            contentContainerStyle={styles.listContent}
+                            renderItem={({ item }) => {
+                                // Resolving cover for search results
+                                const coverUrl = item.coverMediaPath
+                                    ? `${apiBase}/media/${item.coverMediaPath}`
+                                    : item.coverUrl;
+
+                                return (
+                                    <TouchableOpacity
+                                        style={styles.searchResultItem}
+                                        onPress={() => handleAddSearchResult(item)}
+                                    >
+                                        {coverUrl ? (
+                                            <Image source={{ uri: coverUrl }} style={styles.searchResultCover} />
+                                        ) : (
+                                            <View style={[styles.searchResultCover, styles.searchResultCoverFallback]}>
+                                                <Ionicons name="book" size={20} color={colors.primary} />
+                                            </View>
+                                        )}
+                                        <View style={styles.searchResultInfo}>
+                                            <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title}</Text>
+                                            {item.primaryCreator && (
+                                                <Text style={styles.searchResultSubtitle} numberOfLines={1}>{item.primaryCreator}</Text>
+                                            )}
+                                        </View>
+                                        <Ionicons name="add-circle-outline" size={24} color={colors.primary} />
+                                    </TouchableOpacity>
+                                );
+                            }}
+                            ListEmptyComponent={
+                                globalSearchQuery.trim().length > 0 ? (
+                                    <View style={styles.emptyState}>
+                                        <Text style={styles.emptyText}>No items found</Text>
+                                    </View>
+                                ) : null
+                            }
+                        />
+                    )}
                 </View>
             </Modal>
         </SafeAreaView>
@@ -262,8 +454,9 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
         header: {
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: spacing.md,
+            paddingHorizontal: spacing.md,
+            paddingTop: spacing.lg,
+            paddingBottom: spacing.md,
         },
         backButton: {
             width: 40,
@@ -274,75 +467,104 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             alignItems: 'center',
             ...shadows.sm,
         },
-        addButton: {
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: colors.surface,
-            justifyContent: 'center',
-            alignItems: 'center',
-            ...shadows.sm,
-        },
         headerCenter: {
             flex: 1,
-            flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'center',
-            gap: spacing.xs,
         },
         headerTitle: {
             fontSize: 18,
             fontWeight: '600',
             color: colors.text,
         },
-        visibilityBadge: {
-            backgroundColor: colors.surface,
-            padding: 4,
-            borderRadius: radius.sm,
+        headerSubtitle: {
+            fontSize: 13,
+            color: colors.textMuted,
+            marginTop: 2,
         },
-        description: {
-            fontSize: 14,
-            color: colors.textSecondary,
+        // Controls Row
+        controlsRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
             paddingHorizontal: spacing.md,
-            marginBottom: spacing.md,
+            paddingBottom: spacing.sm,
         },
+        controlsRowRight: {
+            justifyContent: 'flex-end',
+        },
+        searchBox: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: colors.surface,
+            borderRadius: radius.lg,
+            paddingHorizontal: spacing.md,
+            height: 40,
+            gap: spacing.sm,
+            ...shadows.sm,
+            flex: 1,
+        },
+        searchInput: {
+            flex: 1,
+            fontSize: 14,
+            color: colors.text,
+        },
+        sortButton: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: colors.surface,
+            borderRadius: radius.lg,
+            paddingHorizontal: spacing.md,
+            height: 40,
+            gap: spacing.xs,
+            ...shadows.sm,
+            maxWidth: 120, // Reduced max width since options are short
+        },
+        sortButtonText: {
+            fontSize: 12,
+            color: colors.textMuted,
+        },
+        // List Items
         listContent: {
             padding: spacing.md,
-            paddingTop: 0,
+            paddingBottom: 100,
         },
         itemCard: {
             flexDirection: 'row',
             alignItems: 'center',
             backgroundColor: colors.surface,
-            padding: spacing.sm,
-            borderRadius: radius.md,
+            borderRadius: radius.lg,
+            padding: spacing.md,
             marginBottom: spacing.sm,
             ...shadows.sm,
         },
-        itemImage: {
-            width: 50,
-            height: 70,
-            borderRadius: radius.sm,
-            backgroundColor: colors.background,
+        itemCover: {
+            width: 48,
+            height: 64,
+            borderRadius: radius.md,
+            overflow: 'hidden',
+            marginRight: spacing.md,
+            backgroundColor: colors.surface,
         },
-        itemImagePlaceholder: {
-            width: 50,
-            height: 70,
-            borderRadius: radius.sm,
-            backgroundColor: colors.primary + '20',
+        itemCoverImage: {
+            width: '100%',
+            height: '100%',
+        },
+        itemCoverFallback: {
+            width: '100%',
+            height: '100%',
+            backgroundColor: colors.primary + '15',
             justifyContent: 'center',
             alignItems: 'center',
         },
-        itemInfo: {
+        itemContent: {
             flex: 1,
-            marginLeft: spacing.sm,
         },
         itemTitle: {
             fontSize: 15,
-            fontWeight: '600',
+            fontWeight: '500',
             color: colors.text,
         },
-        itemCreator: {
+        itemSubtitle: {
             fontSize: 13,
             color: colors.textMuted,
             marginTop: 2,
@@ -373,85 +595,137 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             color: colors.textMuted,
             textAlign: 'center',
             marginTop: spacing.xs,
-            marginBottom: spacing.lg,
         },
-        addItemButton: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: spacing.sm,
+        emptyText: {
+            fontSize: 14,
+            color: colors.textMuted,
+            textAlign: 'center',
+        },
+        fab: {
+            position: 'absolute',
+            right: spacing.md,
+            bottom: spacing.xl,
+            width: 56,
+            height: 56,
+            borderRadius: 28,
             backgroundColor: colors.primary,
-            paddingHorizontal: spacing.lg,
-            paddingVertical: spacing.sm + 2,
-            borderRadius: radius.md,
+            justifyContent: 'center',
+            alignItems: 'center',
+            ...shadows.lg,
         },
-        addItemButtonText: {
-            fontSize: 15,
-            fontWeight: '600',
-            color: colors.textInverted,
-        },
+        // Sort Modal
         modalOverlay: {
             flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            justifyContent: 'flex-end',
-        },
-        modalContent: {
-            backgroundColor: colors.surface,
-            borderTopLeftRadius: radius.xl,
-            borderTopRightRadius: radius.xl,
-            padding: spacing.lg,
-            paddingBottom: spacing.xl + 20,
-        },
-        modalHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: spacing.lg,
-        },
-        modalTitle: {
-            fontSize: 20,
-            fontWeight: '700',
-            color: colors.text,
-        },
-        modalLabel: {
-            fontSize: 13,
-            color: colors.textMuted,
-            marginBottom: spacing.xs,
-        },
-        modalInput: {
-            backgroundColor: colors.background,
-            borderRadius: radius.md,
-            padding: spacing.sm,
-            fontSize: 15,
-            color: colors.text,
-            minHeight: 80,
-            textAlignVertical: 'top',
-            marginBottom: spacing.md,
-        },
-        modalButton: {
-            backgroundColor: colors.primary,
-            paddingVertical: spacing.md,
-            borderRadius: radius.md,
-            alignItems: 'center',
-        },
-        modalButtonDisabled: {
-            opacity: 0.5,
-        },
-        modalButtonText: {
-            color: colors.textInverted,
-            fontWeight: '600',
-            fontSize: 16,
-        },
-        searchButton: {
-            flexDirection: 'row',
-            alignItems: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.4)',
             justifyContent: 'center',
-            gap: spacing.sm,
-            paddingVertical: spacing.md,
-            marginTop: spacing.sm,
+            alignItems: 'center',
+            padding: spacing.md,
         },
-        searchButtonText: {
+        sortModal: {
+            width: '100%',
+            maxWidth: 300,
+            backgroundColor: colors.surface,
+            borderRadius: radius.lg,
+            padding: spacing.md,
+            ...shadows.lg,
+        },
+        sortModalTitle: {
+            fontSize: 14,
+            fontWeight: '600',
+            color: colors.textMuted,
+            marginBottom: spacing.sm,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            textAlign: 'center',
+        },
+        sortOption: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingVertical: spacing.sm,
+            paddingHorizontal: spacing.sm,
+            borderRadius: radius.md,
+        },
+        sortOptionSelected: {
+            backgroundColor: colors.primary + '15',
+        },
+        sortOptionText: {
             fontSize: 15,
+            color: colors.text,
+        },
+        sortOptionTextSelected: {
+            color: colors.primary,
+            fontWeight: '600',
+        },
+        // Global Search Modal Styles (matching SocialFeedScreen style)
+        globalSearchContainer: {
+            flex: 1,
+            backgroundColor: colors.background,
+        },
+        globalSearchHeader: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: spacing.md,
+            gap: spacing.md,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+        },
+        searchInputContainer: {
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            paddingHorizontal: spacing.md,
+            paddingVertical: 8,
+            gap: 8,
+        },
+        globalSearchInput: {
+            flex: 1,
+            fontSize: 15,
+            color: colors.text,
+            paddingVertical: 0,
+        },
+        cancelButtonText: {
+            fontSize: 16,
             color: colors.primary,
             fontWeight: '500',
         },
+        loaderContainer: {
+            padding: spacing.xl,
+            alignItems: 'center',
+        },
+        // Search Result Items
+        searchResultItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: spacing.md,
+            gap: spacing.md,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border + '40', // light separator
+        },
+        searchResultCover: {
+            width: 48,
+            height: 64, // Shelf item ratio
+            borderRadius: 6,
+            backgroundColor: colors.surfaceElevated,
+        },
+        searchResultCoverFallback: {
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        searchResultInfo: {
+            flex: 1,
+        },
+        searchResultTitle: {
+            fontSize: 16,
+            fontWeight: '600',
+            color: colors.text,
+        },
+        searchResultSubtitle: {
+            fontSize: 14,
+            color: colors.textMuted,
+            marginTop: 2,
+        },
     });
+

@@ -81,13 +81,13 @@ function isTruthy(value) {
 }
 
 function guessApiBase() {
-  const envApiBase = process.env.EXPO_PUBLIC_API_BASE
-  if (envApiBase) return envApiBase
-
   const envUseNgrok = process.env.EXPO_PUBLIC_USE_NGROK
   const envNgrokUrl = process.env.EXPO_PUBLIC_NGROK_URL
   console.log('[guessApiBase] envUseNgrok:', envUseNgrok, 'envNgrokUrl:', envNgrokUrl)
   if (isTruthy(envUseNgrok) && envNgrokUrl) return envNgrokUrl
+
+  const envApiBase = process.env.EXPO_PUBLIC_API_BASE
+  if (envApiBase) return envApiBase
 
   const extra = getExtraConfig()
   const extraUseNgrok = isTruthy(extra?.USE_NGROK)

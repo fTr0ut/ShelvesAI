@@ -140,8 +140,9 @@ export default function FeedDetailScreen({ route, navigation }) {
   }, [apiBase, token, targetId, commentText, commentLoading, loadComments]);
 
   const resolvedEntry = detailEntry || entry || {};
-  const { shelf, owner, items, eventType, collectable, checkinStatus, note, displayHints } = resolvedEntry;
+  const { shelf, owner, items, eventType, collectable, checkinStatus, note, displayHints, rating } = resolvedEntry;
   const isCheckIn = eventType === 'checkin.activity';
+  const isCheckinRated = eventType === 'checkin.rated';
 
   // Use displayHints with fallback defaults
   const hints = displayHints || {
@@ -231,14 +232,21 @@ export default function FeedDetailScreen({ route, navigation }) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
+  const resolveManualCoverUrl = (manual) => {
+    if (!manual) return null;
+    if (manual.coverMediaUrl) return manual.coverMediaUrl;
+    if (manual.coverMediaPath) return buildMediaUri(manual.coverMediaPath);
+    return null;
+  };
+
   const getItemInfo = (item) => {
     const c = item?.collectable || item?.collectableSnapshot;
     const m = item?.manual || item?.manualSnapshot;
     const payload = item?.payload || null;
-    const title = c?.title || m?.title || item?.title || payload?.title || payload?.name || 'Unknown item';
+    const title = c?.title || m?.title || m?.name || item?.title || payload?.title || payload?.name || 'Unknown item';
 
-    // Extract cover URL with priority: local media path > external URL
-    const coverUrl = resolveCollectableCoverUrl(c);
+    // Extract cover URL with priority: collectable cover, then manual cover
+    const coverUrl = resolveCollectableCoverUrl(c) || resolveManualCoverUrl(m);
 
     // Extract rating for rating events
     const rating = item?.rating || payload?.rating || null;
@@ -468,10 +476,10 @@ export default function FeedDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          {isCheckIn ? (
+          {(isCheckIn || isCheckinRated) ? (
             <View style={styles.checkinCard}>
               <View style={styles.checkinHeader}>
-                <Text style={styles.checkinLabel}>Check-in</Text>
+                <Text style={styles.checkinLabel}>{isCheckinRated ? 'Check-in + Rating' : 'Check-in'}</Text>
                 {checkinStatus ? (
                   <View style={styles.checkinStatusBadge}>
                     <Ionicons name={statusIcon} size={14} color={colors.primary} />
@@ -508,6 +516,12 @@ export default function FeedDetailScreen({ route, navigation }) {
                     <Text style={styles.checkinCreator} numberOfLines={1}>
                       {collectable.primaryCreator}
                     </Text>
+                  ) : null}
+                  {/* Rating stars for combined check-in + rating */}
+                  {isCheckinRated && rating ? (
+                    <View style={styles.checkinRatingRow}>
+                      {renderStars(rating)}
+                    </View>
                   ) : null}
                   {collectable?.kind ? (
                     <View style={styles.checkinKindBadge}>
@@ -821,6 +835,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     color: colors.textSecondary,
     lineHeight: 18,
     fontStyle: 'italic',
+  },
+  checkinRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
   },
   sectionTitle: {
     fontSize: 14,

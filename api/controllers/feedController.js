@@ -35,6 +35,11 @@ function getDisplayHints(eventType) {
       sectionTitle: null,
       itemDisplayMode: 'checkin',
     },
+    'checkin.rated': {
+      showShelfCard: false,
+      sectionTitle: null,
+      itemDisplayMode: 'checkin-rated',
+    },
     'shelf.created': {
       showShelfCard: true,
       sectionTitle: 'New shelf',
@@ -265,21 +270,36 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
     } else if (eventType === 'item.rated') {
       // Rating events - include the rating value
       const collectableId = payload.collectableId || payload.collectable_id || null;
-        items.push({
-          id: payload.itemId || payload.id || null,
-          collectableId,
-          rating: payload.rating || null,
-          collectable: {
-            id: collectableId,
-            title: payload.title || payload.name || null,
-            primaryCreator: payload.primaryCreator || payload.author || null,
-            coverUrl: payload.coverUrl || null,
-            coverImageUrl: payload.coverImageUrl || null,
-            coverImageSource: payload.coverImageSource || null,
-            coverMediaPath: payload.coverMediaPath || null,
-            kind: payload.type || payload.kind || null,
-          },
-        });
+      const manualId = payload.manualId || payload.manual_id || null;
+      const item = {
+        id: payload.itemId || payload.id || null,
+        collectableId,
+        rating: payload.rating || null,
+        collectable: {
+          id: collectableId,
+          title: payload.title || payload.name || null,
+          primaryCreator: payload.primaryCreator || payload.author || null,
+          coverUrl: payload.coverUrl || null,
+          coverImageUrl: payload.coverImageUrl || null,
+          coverImageSource: payload.coverImageSource || null,
+          coverMediaPath: payload.coverMediaPath || null,
+          coverMediaUrl: payload.coverMediaUrl || null,
+          kind: payload.type || payload.kind || null,
+        },
+      };
+      // For manual items, also include a manual object for frontend fallback
+      if (manualId) {
+        item.manualId = manualId;
+        item.manual = {
+          id: manualId,
+          title: payload.title || payload.name || null,
+          name: payload.title || payload.name || null,
+          author: payload.primaryCreator || payload.author || null,
+          coverMediaPath: payload.coverMediaPath || null,
+          coverMediaUrl: payload.coverMediaUrl || null,
+        };
+      }
+      items.push(item);
     }
     if (items.length >= maxItems) break;
   }
@@ -392,6 +412,136 @@ async function getShelfCounts(shelfIds) {
   );
 
   return new Map(result.rows.map(r => [String(r.shelf_id), parseInt(r.total)]));
+}
+
+const CHECKIN_RATING_MERGE_WINDOW_MINUTES = parseInt(
+  process.env.CHECKIN_RATING_MERGE_WINDOW_MINUTES || '30',
+  10
+);
+
+/**
+ * Merges check-in events with matching rating events into combined 'checkin.rated' entries.
+ * Matching criteria: same user, same item (by collectableId, manualId, or title), within time window.
+ */
+function mergeCheckinRatingPairs(entries, options = {}) {
+  const { windowMinutes = CHECKIN_RATING_MERGE_WINDOW_MINUTES } = options;
+  const windowMs = windowMinutes * 60 * 1000;
+
+  // Separate check-ins and rating events
+  const checkins = [];
+  const ratings = [];
+  const others = [];
+
+  for (const entry of entries) {
+    if (entry.eventType === 'checkin.activity') {
+      checkins.push(entry);
+    } else if (entry.eventType === 'item.rated') {
+      ratings.push(entry);
+    } else {
+      others.push(entry);
+    }
+  }
+
+  // Track which rating items have been merged
+  const mergedRatingItems = new Map(); // Map<ratingEntryId, Set<itemIndex>>
+
+  // Process each check-in to find matching ratings
+  const mergedCheckins = checkins.map((checkin) => {
+    const checkinUserId = String(checkin.owner?.id || '');
+    const checkinTime = new Date(checkin.createdAt).getTime();
+    const checkinCollectableId = checkin.collectable?.id || null;
+    const checkinManualId = checkin.manual?.id || null;
+    const checkinTitle = (checkin.collectable?.title || checkin.manual?.title || '').toLowerCase().trim();
+
+    // Find matching rating from same user within time window
+    for (const rating of ratings) {
+      const ratingUserId = String(rating.owner?.id || '');
+      if (ratingUserId !== checkinUserId) continue;
+
+      const ratingTime = new Date(rating.createdAt).getTime();
+      const timeDiff = Math.abs(ratingTime - checkinTime);
+      if (timeDiff > windowMs) continue;
+
+      // Check each item in the rating for a match
+      const ratingItems = rating.items || [];
+      for (let i = 0; i < ratingItems.length; i++) {
+        const ratingItem = ratingItems[i];
+        const ratingCollectableId = ratingItem.collectableId || ratingItem.collectable?.id || null;
+        const ratingManualId = ratingItem.manualId || ratingItem.manual?.id || null;
+        const ratingTitle = (
+          ratingItem.collectable?.title ||
+          ratingItem.manual?.title ||
+          ratingItem.title ||
+          ''
+        ).toLowerCase().trim();
+
+        // Match by collectableId, manualId, or title
+        const matchByCollectable = checkinCollectableId && ratingCollectableId &&
+          String(checkinCollectableId) === String(ratingCollectableId);
+        const matchByManual = checkinManualId && ratingManualId &&
+          String(checkinManualId) === String(ratingManualId);
+        const matchByTitle = checkinTitle && ratingTitle && checkinTitle === ratingTitle;
+
+        if (matchByCollectable || matchByManual || matchByTitle) {
+          // Found a match - create merged entry
+          const mergedEntry = {
+            ...checkin,
+            eventType: 'checkin.rated',
+            rating: ratingItem.rating,
+            ratingEventId: rating.id,
+            displayHints: getDisplayHints('checkin.rated'),
+          };
+
+          // Track this rating item as merged
+          if (!mergedRatingItems.has(rating.id)) {
+            mergedRatingItems.set(rating.id, new Set());
+          }
+          mergedRatingItems.get(rating.id).add(i);
+
+          return mergedEntry;
+        }
+      }
+    }
+
+    // No match found, return original check-in
+    return checkin;
+  });
+
+  // Process ratings - remove merged items or entire entries
+  const processedRatings = [];
+  for (const rating of ratings) {
+    const mergedIndices = mergedRatingItems.get(rating.id);
+    if (!mergedIndices) {
+      // No items were merged, keep as-is
+      processedRatings.push(rating);
+      continue;
+    }
+
+    // Filter out merged items
+    const remainingItems = (rating.items || []).filter((_, idx) => !mergedIndices.has(idx));
+
+    if (remainingItems.length === 0) {
+      // All items were merged, remove entire entry
+      continue;
+    }
+
+    // Update entry with remaining items
+    processedRatings.push({
+      ...rating,
+      items: remainingItems,
+      eventItemCount: remainingItems.length,
+    });
+  }
+
+  // Combine all entries back together and sort by createdAt
+  const allEntries = [...mergedCheckins, ...processedRatings, ...others];
+  allEntries.sort((a, b) => {
+    const timeA = new Date(a.createdAt).getTime();
+    const timeB = new Date(b.createdAt).getTime();
+    return timeB - timeA; // Descending (newest first)
+  });
+
+  return allEntries;
 }
 
 async function getFeed(req, res) {
@@ -531,6 +681,9 @@ async function getFeed(req, res) {
       return entry;
     });
 
+    // Merge check-in + rating pairs into combined entries
+    entries = mergeCheckinRatingPairs(entries);
+
     if (scope === 'all' && offset === 0 && (!typeFilter || typeFilter === 'news.recommendation')) {
       try {
         const groups = await getNewsRecommendationsForUser(viewerId, {
@@ -667,6 +820,7 @@ async function getFeedEntryDetails(req, res) {
             return {
               id: row.id,
               collectableId: row.collectable_id || null,
+              manualId: row.manual_id || null,
               collectable: row.collectable_id ? {
                 id: row.collectable_id,
                 title: resolvedTitle,
@@ -675,6 +829,7 @@ async function getFeedEntryDetails(req, res) {
                 kind: row.collectable_kind || null,
               } : null,
               manual: row.manual_id ? {
+                id: row.manual_id,
                 name: resolvedTitle,
                 title: resolvedTitle,
                 author: row.manual_author || null,
@@ -684,7 +839,6 @@ async function getFeedEntryDetails(req, res) {
                 specialMarkings: row.manual_special_markings || null,
                 labelColor: row.manual_label_color || null,
                 regionalItem: row.manual_regional_item || null,
-                edition: row.manual_edition || null,
                 edition: row.manual_edition || null,
                 barcode: row.manual_barcode || null,
                 limitedEdition: row.limited_edition || null,

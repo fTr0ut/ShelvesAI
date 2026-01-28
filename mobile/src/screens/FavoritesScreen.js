@@ -84,7 +84,10 @@ export default function FavoritesScreen({ navigation, route }) {
         loadFavorites();
     };
 
-    const handleRemoveFavorite = async (collectableId) => {
+    const handleRemoveFavorite = async (item) => {
+        const targetId = item.collectable?.id || item.manual?.id;
+        const isManual = !!item.manual;
+
         Alert.alert('Remove Favorite', 'Remove this item from your favorites?', [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -92,13 +95,17 @@ export default function FavoritesScreen({ navigation, route }) {
                 style: 'destructive',
                 onPress: async () => {
                     try {
+                        const path = isManual
+                            ? `/api/favorites/${targetId}?type=manual`
+                            : `/api/favorites/${targetId}`;
+
                         await apiRequest({
                             apiBase,
-                            path: `/api/favorites/${collectableId}`,
+                            path,
                             method: 'DELETE',
                             token,
                         });
-                        setFavorites(prev => prev.filter(f => f.collectable?.id !== collectableId));
+                        setFavorites(prev => prev.filter(f => (f.collectable?.id || f.manual?.id) !== targetId));
                     } catch (e) {
                         Alert.alert('Error', e.message);
                     }
@@ -119,13 +126,27 @@ export default function FavoritesScreen({ navigation, route }) {
     };
 
     const renderItem = ({ item }) => {
-        const collectable = item.collectable || {};
-        const coverUri = buildCoverUri(collectable.coverMediaPath || collectable.coverUrl);
+        const displayItem = item.collectable || item.manual || {};
+        const isManual = !!item.manual;
+        const coverUri = buildCoverUri(displayItem.coverMediaPath || displayItem.coverUrl);
+
+        // Navigation params: Handle both types
+        // CollectableDetailScreen expects { item: { collectable: ... } } or { item: { manual: ... } } 
+        // to merge with route params correctly? 
+        // Let's check CollectableDetailScreen.
+        // It reads: const { item, shelfId, ... } = route.params
+        // baseCollectable = item?.collectable ...
+        // baseManual = item?.manual ...
+        // So passing { item: item } works because 'item' from API response has structure { collectable:..., manual:... }
+        // Actually, the API response has structure { collectable: {...} } OR { manual: {...} } at the top level?
+        // Wait, listFavorites returns array of objects with structure:
+        // { id, userId, collectable: {...}, manual: {...} }
+        // So passing the whole `item` object is correct.
 
         return (
             <TouchableOpacity
                 style={styles.itemCard}
-                onPress={() => navigation.navigate('CollectableDetail', { item: { collectable } })}
+                onPress={() => navigation.navigate('CollectableDetail', { item })}
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>
@@ -137,14 +158,14 @@ export default function FavoritesScreen({ navigation, route }) {
                         />
                     ) : (
                         <View style={styles.itemCoverFallback}>
-                            <CategoryIcon type={collectable.kind} size={22} />
+                            <CategoryIcon type={displayItem.kind} size={22} />
                         </View>
                     )}
                 </View>
                 <View style={styles.itemContent}>
-                    <Text style={styles.itemTitle} numberOfLines={1}>{collectable.title || 'Untitled'}</Text>
-                    {collectable.primaryCreator ? (
-                        <Text style={styles.itemSubtitle} numberOfLines={1}>{collectable.primaryCreator}</Text>
+                    <Text style={styles.itemTitle} numberOfLines={1}>{displayItem.title || displayItem.name || 'Untitled'}</Text>
+                    {displayItem.primaryCreator || displayItem.author ? (
+                        <Text style={styles.itemSubtitle} numberOfLines={1}>{displayItem.primaryCreator || displayItem.author}</Text>
                     ) : null}
                     <View style={styles.itemMeta}>
                         <Ionicons name="heart" size={14} color={colors.error} />
@@ -153,7 +174,7 @@ export default function FavoritesScreen({ navigation, route }) {
                 </View>
                 {!isViewingOther && (
                     <TouchableOpacity
-                        onPress={() => handleRemoveFavorite(collectable.id)}
+                        onPress={() => handleRemoveFavorite(item)}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                         <Ionicons name="close" size={18} color={colors.textMuted} />
