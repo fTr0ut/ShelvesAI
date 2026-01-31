@@ -4,6 +4,7 @@ require('dotenv').config();
 const app = require('./server');
 const { pool } = require('./database/pg');
 const { startNewsCacheScheduler } = require('./services/newsCacheScheduler');
+const { startNewsSeenCleanupScheduler } = require('./services/newsSeenCleanupScheduler');
 
 const PORT = process.env.PORT || 5001;
 
@@ -15,6 +16,7 @@ pool.query('SELECT NOW()')
         app.listen(PORT, () => {
             console.log(`API listening on http://localhost:${PORT}`);
             startNewsCacheScheduler();
+            startNewsSeenCleanupScheduler();
         });
     })
     .catch((err) => {

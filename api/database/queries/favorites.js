@@ -32,7 +32,9 @@ async function listForUser(userId) {
             um.author as manual_author,
             um.description as manual_description,
             um.type as manual_type,
-            um.year as manual_year
+            um.year as manual_year,
+            um.cover_media_path as manual_cover_media_path
+            -- um.cover_media_url as manual_cover_url
             
          FROM user_favorites uf
          LEFT JOIN collectables c ON c.id = uf.collectable_id
@@ -81,6 +83,7 @@ async function listForUser(userId) {
                     year: base.manualYear,
                     // Manual covers are usually fetched via separate API or need to be joined from media if stored there
                     // For now, assume basic metadata is enough for list, or frontend fetches details
+                    coverMediaPath: base.manualCoverMediaPath,
                 }
             };
         }

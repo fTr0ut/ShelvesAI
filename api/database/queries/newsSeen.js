@@ -82,9 +82,25 @@ async function clearSeenNewsItems(userId) {
     return result.rowCount;
 }
 
+/**
+ * Delete seen records older than a specified age
+ * @param {number} hours - Age threshold in hours (default: 48)
+ * @returns {Promise<number>} - Number of rows deleted
+ */
+async function deleteOldSeenRecords(hours = 48) {
+    const result = await query(
+        `DELETE FROM user_news_seen
+         WHERE created_at < NOW() - INTERVAL '1 hour' * $1`,
+        [hours]
+    );
+
+    return result.rowCount;
+}
+
 module.exports = {
     markNewsItemSeen,
     markNewsItemsSeen,
     getSeenNewsItemIds,
     clearSeenNewsItems,
+    deleteOldSeenRecords,
 };

@@ -118,8 +118,9 @@ export default function FavoritesScreen({ navigation, route }) {
 
     const buildCoverUri = (pathOrUrl) => {
         if (!pathOrUrl) return null;
-        if (/^https?:/i.test(pathOrUrl)) return pathOrUrl;
-        const trimmed = pathOrUrl.replace(/^\/+/, '');
+        const normalized = pathOrUrl.replace(/\\/g, '/');
+        if (/^https?:/i.test(normalized)) return normalized;
+        const trimmed = normalized.replace(/^\/+/, '');
         const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
         if (!apiBase) return `/${resource}`;
         return `${apiBase.replace(/\/+$/, '')}/${resource}`;
@@ -128,7 +129,7 @@ export default function FavoritesScreen({ navigation, route }) {
     const renderItem = ({ item }) => {
         const displayItem = item.collectable || item.manual || {};
         const isManual = !!item.manual;
-        const coverUri = buildCoverUri(displayItem.coverMediaPath || displayItem.coverUrl);
+        const coverUri = buildCoverUri(displayItem.coverMediaUrl || displayItem.coverMediaPath || displayItem.coverUrl);
 
         // Navigation params: Handle both types
         // CollectableDetailScreen expects { item: { collectable: ... } } or { item: { manual: ... } } 

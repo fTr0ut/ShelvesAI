@@ -26,6 +26,7 @@ const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAda
 const NytBooksDiscoveryAdapter = require('../services/discovery/NytBooksDiscoveryAdapter');
 const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
 const { BookCatalogService } = require('../services/catalog/BookCatalogService');
+const collectablesQueries = require('../database/queries/collectables');
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -428,39 +429,58 @@ async function refreshNytBooks(adapter) {
     });
 
     for (const item of uniqueBooks) {
-      // Enrich via BookCatalogService (OpenLibrary → Hardcover fallback) FIRST
+      let collectableId = null;
+      let existingCollectable = null;
+
+      // Check collectables before hitting external book APIs
+      if (item?.external_id) {
+        try {
+          existingCollectable = await collectablesQueries.findBySourceId(item.external_id);
+          if (existingCollectable) {
+            collectableId = existingCollectable.id;
+            console.log(`[News Cache] Existing collectable found for NYT book: ${existingCollectable.id} "${existingCollectable.title}"`);
+          }
+        } catch (lookupErr) {
+          console.warn('[News Cache] Collectable pre-check failed for NYT book:', lookupErr.message);
+        }
+      }
+
+      // Enrich via BookCatalogService (OpenLibrary → Hardcover fallback) only when not already collected
       let enrichedData = null;
       let enrichmentSource = 'nyt';
-      try {
-        const lookupItem = {
-          title: item.title,
-          author: item.creators?.[0],
-          identifiers: {
-            isbn13: item.payload?.primary_isbn13 ? [item.payload.primary_isbn13] : [],
-            isbn10: item.payload?.primary_isbn10 ? [item.payload.primary_isbn10] : []
+      if (!existingCollectable) {
+        try {
+          const lookupItem = {
+            title: item.title,
+            author: item.creators?.[0],
+            identifiers: {
+              isbn13: item.payload?.primary_isbn13 ? [item.payload.primary_isbn13] : [],
+              isbn10: item.payload?.primary_isbn10 ? [item.payload.primary_isbn10] : []
+            }
+          };
+          enrichedData = await bookCatalog.safeLookup(lookupItem);
+          if (enrichedData) {
+            enrichmentSource = enrichedData.provider || 'openlibrary';
           }
-        };
-        enrichedData = await bookCatalog.safeLookup(lookupItem);
-        if (enrichedData) {
-          enrichmentSource = enrichedData.provider || 'openlibrary';
+        } catch (enrichErr) {
+          console.warn('[News Cache] Book enrichment failed:', enrichErr.message);
         }
-      } catch (enrichErr) {
-        console.warn('[News Cache] Book enrichment failed:', enrichErr.message);
       }
 
       // Hook: Add book to collectables table to get collectable.id
-      let collectableId = null;
-      try {
-        const hook = getCollectableDiscoveryHook();
-        const hookResult = await hook.processEnrichedItem({
-          source: enrichmentSource,
-          kind: 'books',
-          enrichment: enrichedData || item.payload,
-          originalItem: item
-        });
-        collectableId = hookResult.collectable?.id || null;
-      } catch (hookErr) {
-        console.warn('[News Cache] Collectable hook failed for NYT book:', hookErr.message);
+      if (!existingCollectable) {
+        try {
+          const hook = getCollectableDiscoveryHook();
+          const hookResult = await hook.processEnrichedItem({
+            source: enrichmentSource,
+            kind: 'books',
+            enrichment: enrichedData || item.payload,
+            originalItem: item
+          });
+          collectableId = hookResult.collectable?.id || null;
+        } catch (hookErr) {
+          console.warn('[News Cache] Collectable hook failed for NYT book:', hookErr.message);
+        }
       }
 
       if (await upsertNewsItem(item, collectableId)) {

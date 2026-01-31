@@ -9,13 +9,30 @@ const feedQueries = require('../database/queries/feed');
 const usersQueries = require('../database/queries/users');
 const friendshipsQueries = require('../database/queries/friendships');
 const shelvesQueries = require('../database/queries/shelves');
+const { addMediaUrls } = require('../services/mediaUrl');
+
+function hydrateFavoriteMedia(favorite) {
+    if (!favorite || typeof favorite !== 'object') return favorite;
+    const hydrated = { ...favorite };
+
+    if (favorite.collectable) {
+        hydrated.collectable = addMediaUrls(favorite.collectable, ['coverMediaPath']);
+    }
+
+    if (favorite.manual) {
+        hydrated.manual = addMediaUrls(favorite.manual, ['coverMediaPath']);
+    }
+
+    return hydrated;
+}
 
 /**
  * GET /favorites - List all favorites for current user
  */
 async function listFavorites(req, res) {
     try {
-        const favorites = await favoritesQueries.listForUser(req.user.id);
+        const favorites = (await favoritesQueries.listForUser(req.user.id))
+            .map(hydrateFavoriteMedia);
         res.json({ favorites });
     } catch (err) {
         console.error('listFavorites error:', err);
@@ -226,7 +243,8 @@ async function listUserFavorites(req, res) {
             }
         }
 
-        const favorites = await favoritesQueries.listForUser(targetUserId);
+        const favorites = (await favoritesQueries.listForUser(targetUserId))
+            .map(hydrateFavoriteMedia);
         res.json({ favorites });
     } catch (err) {
         console.error('listUserFavorites error:', err);

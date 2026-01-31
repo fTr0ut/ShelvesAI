@@ -5,7 +5,7 @@ This document describes the News/Discover feature implementation for ShelvesAI, 
 ## Overview
 
 The feature consists of:
-1. **Daily background job** that fetches content from catalog APIs (TMDB, IGDB)
+1. **Daily background job** that fetches content from catalog APIs (TMDB, IGDB, Blu-ray.com, NYT Books)
 2. **Database cache** (`news_items` table) storing normalized content
 3. **API endpoint** serving personalized content to users
 4. **Personalization logic** based on user's shelf types, creators, and genres
@@ -227,6 +227,12 @@ node jobs/refreshNewsCache.js
 | `NEWS_CACHE_EXPIRY_HOURS` | `36` | Hours until items expire |
 | `NEWS_CACHE_ITEMS_PER_TYPE` | `20` | Max items fetched per type |
 
+**NYT Books order of operations:**
+1. Check `collectables` by `external_id` (`nyt:*`) to avoid unnecessary API calls.
+2. If missing, enrich via `BookCatalogService` (OpenLibrary -> Hardcover fallback / CatalogRouter).
+3. Run `CollectableDiscoveryHook` to upsert collectable data.
+4. Upsert `news_items` with `collectable_id` when available.
+
 **Output Example:**
 ```
 ============================================================
@@ -239,6 +245,8 @@ node jobs/refreshNewsCache.js
 [News Cache] TMDB TV: 40 items stored
 [News Cache] Fetching IGDB games...
 [News Cache] IGDB games: 60 items stored
+[News Cache] Fetching NYT bestsellers...
+[News Cache] NYT Books: 40 items stored (22 enriched)
 [News Cache] Cleaned up 0 expired items
 
 [News Cache] Current cache contents:
@@ -358,7 +366,7 @@ api/
 | `movies` | TMDB | `trending`, `upcoming`, `now_playing` |
 | `tv` | TMDB | `trending`, `now_playing` |
 | `games` | IGDB | `trending`, `upcoming`, `recent`, `now_playing` |
-| `books` | (future) | `trending`, `upcoming` |
+| `books` | NYT Books (enriched via OpenLibrary/Hardcover) | `bestseller`, `new_release`, `trending` |
 | `vinyl` | (future) | `trending`, `recent` |
 
 ## Future Enhancements
@@ -378,7 +386,7 @@ For personalized editorial summaries, a secondary job could:
 
 ### Additional Sources
 
-- **Hardcover** - Book trending/upcoming (if API supports it)
+- **Hardcover** - Direct book discovery beyond NYT (optional)
 - **Discogs** - Vinyl new releases
 - **RSS Feeds** - Entertainment news aggregation
 
@@ -403,5 +411,6 @@ If content seems outdated:
 
 - **TMDB**: 40 requests/second (well within limits)
 - **IGDB**: 4 requests/second (configured in adapter)
+- **NYT Books**: 5 requests/minute, 500/day (adapter enforces ~12s delay)
 
-The daily job makes ~10 API calls total, well under any rate limits.
+Total calls vary by enabled adapters and item counts; check job logs for exact usage.
