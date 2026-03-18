@@ -98,4 +98,113 @@ describe('shelvesController', () => {
             expect(shelvesQueries.getItems).toHaveBeenCalled();
         });
     });
+
+    describe('processCatalogLookup', () => {
+        beforeEach(() => {
+            req.body = {
+                items: [
+                    { name: 'Dune', author: 'Frank Herbert', type: 'book' },
+                    { name: 'Foundation', author: 'Isaac Asimov', type: 'book' },
+                ],
+            };
+        });
+
+        it('should return 404 if shelf is not found', async () => {
+            shelvesQueries.getById.mockResolvedValue(null);
+            await shelvesController.processCatalogLookup(req, res);
+            expect(res.status).toHaveBeenCalledWith(404);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Shelf not found' });
+        });
+
+        it('should return 400 if items array is missing', async () => {
+            req.body = {};
+            await shelvesController.processCatalogLookup(req, res);
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({ error: 'items array is required' });
+        });
+
+        it('should return 400 if items array is empty', async () => {
+            req.body = { items: [] };
+            await shelvesController.processCatalogLookup(req, res);
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({ error: 'items array is required' });
+        });
+
+        it('should call pipeline.processImage with null imageBase64 and rawItems option', async () => {
+            await shelvesController.processCatalogLookup(req, res);
+
+            expect(mockPipelineInstance.processImage).toHaveBeenCalledWith(
+                null,
+                expect.objectContaining({ id: 10, type: 'book' }),
+                1,
+                null,
+                expect.objectContaining({
+                    rawItems: expect.any(Array),
+                    ocrProvider: 'mlkit',
+                })
+            );
+        });
+
+        it('should normalize name -> title and set kind from shelf type with confidence 1.0', async () => {
+            await shelvesController.processCatalogLookup(req, res);
+
+            const callArgs = mockPipelineInstance.processImage.mock.calls[0];
+            const passedOptions = callArgs[4];
+            expect(passedOptions.rawItems).toEqual([
+                { title: 'Dune', author: 'Frank Herbert', kind: 'book', confidence: 1.0 },
+                { title: 'Foundation', author: 'Isaac Asimov', kind: 'book', confidence: 1.0 },
+            ]);
+        });
+
+        it('should return addedCount, needsReviewCount, analysis, and hydrated items', async () => {
+            mockPipelineInstance.processImage.mockResolvedValue({
+                analysis: { shelfConfirmed: true },
+                addedItems: [{ id: 1 }, { id: 2 }],
+                needsReview: [{ id: 3 }],
+            });
+
+            await shelvesController.processCatalogLookup(req, res);
+
+            expect(res.json).toHaveBeenCalledWith({
+                addedCount: 2,
+                needsReviewCount: 1,
+                analysis: { shelfConfirmed: true },
+                items: expect.any(Array),
+            });
+        });
+
+        it('should handle pipeline result with no addedItems or needsReview gracefully', async () => {
+            mockPipelineInstance.processImage.mockResolvedValue({
+                analysis: null,
+                addedItems: undefined,
+                needsReview: undefined,
+            });
+
+            await shelvesController.processCatalogLookup(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                addedCount: 0,
+                needsReviewCount: 0,
+            }));
+        });
+
+        it('should return 500 if pipeline throws', async () => {
+            mockPipelineInstance.processImage.mockRejectedValue(new Error('pipeline error'));
+            await shelvesController.processCatalogLookup(req, res);
+            expect(res.status).toHaveBeenCalledWith(500);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Catalog lookup failed' });
+        });
+
+        it('should use title field if name is absent', async () => {
+            req.body = {
+                items: [{ title: 'Neuromancer', author: 'William Gibson', type: 'book' }],
+            };
+
+            await shelvesController.processCatalogLookup(req, res);
+
+            const callArgs = mockPipelineInstance.processImage.mock.calls[0];
+            const passedOptions = callArgs[4];
+            expect(passedOptions.rawItems[0].title).toBe('Neuromancer');
+        });
+    });
 });

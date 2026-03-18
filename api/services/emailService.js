@@ -1,23 +1,21 @@
 /**
- * Email service using SendGrid for transactional emails.
+ * Email service using Resend for transactional emails.
  *
  * Required env variables:
- *   SENDGRID_API_KEY - SendGrid API key
- *   SENDGRID_FROM_EMAIL - Verified sender email (e.g., noreply@yourapp.com)
+ *   RESEND_API_KEY - Resend API key
+ *   RESEND_FROM_EMAIL - Verified sender email (e.g., noreply@yourapp.com)
  *   APP_NAME - Application name for email templates
  *   APP_URL - Base URL for reset links (e.g., https://yourapp.com)
  */
 
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 
-const API_KEY = process.env.SENDGRID_API_KEY;
-const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'noreply@shelvesai.com';
+const API_KEY = process.env.RESEND_API_KEY;
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@shelvesai.com';
 const APP_NAME = process.env.APP_NAME || 'ShelvesAI';
 const APP_URL = process.env.APP_URL || 'https://shelvesai.com';
 
-if (API_KEY) {
-    sgMail.setApiKey(API_KEY);
-}
+const resend = API_KEY ? new Resend(API_KEY) : null;
 
 /**
  * Send a password reset email with a reset link.
@@ -31,11 +29,11 @@ async function sendPasswordResetEmail(to, token, firstName = null) {
         const isDevLike = env === 'development' || env === 'test';
 
         if (!isDevLike) {
-            console.error(`[EmailService] SENDGRID_API_KEY not configured - cannot send password reset email to ${to}`);
+            console.error(`[EmailService] RESEND_API_KEY not configured - cannot send password reset email to ${to}`);
             throw new Error('Email transport unavailable');
         }
 
-        console.warn(`[EmailService] SENDGRID_API_KEY not configured - simulating password reset email to ${to}`);
+        console.warn(`[EmailService] RESEND_API_KEY not configured - simulating password reset email to ${to}`);
         return { success: true, simulated: true };
     }
 
@@ -43,11 +41,8 @@ async function sendPasswordResetEmail(to, token, firstName = null) {
     const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
 
     const msg = {
+        from: `${APP_NAME} <${FROM_EMAIL}>`,
         to,
-        from: {
-            email: FROM_EMAIL,
-            name: APP_NAME,
-        },
         subject: `Reset your ${APP_NAME} password`,
         text: `${greeting}
 
@@ -89,14 +84,14 @@ If you didn't request this, you can safely ignore this email.
     };
 
     try {
-        await sgMail.send(msg);
+        const response = await resend.emails.send(msg);
+        if (response?.error) {
+            throw new Error(response.error.message || 'Resend API error');
+        }
         console.log(`[EmailService] Password reset email sent to ${to}`);
         return { success: true };
     } catch (error) {
         console.error('[EmailService] Failed to send email:', error.message);
-        if (error.response) {
-            console.error('[EmailService] SendGrid error body:', error.response.body);
-        }
         throw new Error('Failed to send email');
     }
 }

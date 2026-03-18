@@ -699,9 +699,26 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
             if (Array.isArray(data?.items)) {
                 setItems(data.items);
+            } else {
+                loadShelf();
             }
-            const detected = data?.analysis?.items?.length || parsedItems.length;
-            Alert.alert('Scan complete', `Detected ${detected} items.`);
+            const addedCount = data?.addedCount || 0;
+            const needsReviewCount = data?.needsReviewCount || 0;
+
+            if (needsReviewCount > 0) {
+                Alert.alert(
+                    'Scan Complete',
+                    `${addedCount} item${addedCount !== 1 ? 's' : ''} added. ${needsReviewCount} item${needsReviewCount !== 1 ? 's' : ''} need review.`,
+                    [
+                        { text: 'Later', style: 'cancel' },
+                        { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
+                    ]
+                );
+            } else if (addedCount > 0) {
+                Alert.alert('Scan Complete', `${addedCount} item${addedCount !== 1 ? 's' : ''} added to your shelf.`);
+            } else {
+                Alert.alert('Scan Complete', 'No new items were added. They may already be on your shelf.');
+            }
         } catch (e) {
             const requiresPremium = e?.data?.requiresPremium;
             const quotaExceeded = e?.data?.quotaExceeded;
@@ -738,9 +755,26 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
                     if (Array.isArray(fallbackData?.items)) {
                         setItems(fallbackData.items);
+                    } else {
+                        loadShelf();
                     }
-                    const detected = fallbackData?.analysis?.items?.length || parsedItems.length;
-                    Alert.alert('Scan complete', `Detected ${detected} items using on-device scanning.`);
+                    const addedCount = fallbackData?.addedCount || 0;
+                    const needsReviewCount = fallbackData?.needsReviewCount || 0;
+
+                    if (needsReviewCount > 0) {
+                        Alert.alert(
+                            'Scan Complete',
+                            `${addedCount} item${addedCount !== 1 ? 's' : ''} added. ${needsReviewCount} item${needsReviewCount !== 1 ? 's' : ''} need review.`,
+                            [
+                                { text: 'Later', style: 'cancel' },
+                                { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
+                            ]
+                        );
+                    } else if (addedCount > 0) {
+                        Alert.alert('Scan Complete', `${addedCount} item${addedCount !== 1 ? 's' : ''} added to your shelf.`);
+                    } else {
+                        Alert.alert('Scan Complete', 'No new items were added. They may already be on your shelf.');
+                    }
                 } catch (fallbackErr) {
                     Alert.alert('Error', fallbackErr.message || 'On-device scan failed');
                 }
@@ -754,7 +788,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         } finally {
             setVisionLoading(false);
         }
-    }, [apiBase, id, premiumEnabled, shelfType, token, visionLoading]);
+    }, [apiBase, id, loadShelf, navigation, premiumEnabled, shelfType, token, visionLoading]);
 
     const handleOpenSearch = useCallback(() => {
         if (isReadOnly) return;

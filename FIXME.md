@@ -29,7 +29,7 @@ Audit scope: `api`, `mobile`, `admin-dashboard`, `AGENTS`, root config, docker-c
 - **Severity**: Critical
 - **Risk**: Credential token leakage in logs, monitoring dashboards, CI/CD output.
 - **File**: `api/services/emailService.js:31`
-- **Detail**: When `SENDGRID_API_KEY` is not configured, the password reset token is printed in plaintext:
+- **Detail**: When `RESEND_API_KEY` is not configured, the password reset token is printed in plaintext:
   ```javascript
   console.log(`[EmailService] Would send reset email to ${to} with token: ${token}`);
   ```

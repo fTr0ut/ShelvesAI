@@ -5,12 +5,9 @@ const {
   makeCollectableFingerprint,
   makeManualFingerprint,
 } = require('../services/collectables/fingerprint');
-const OpenAI = require("openai");
-
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
 const { GameCatalogService } = require("../services/catalog/GameCatalogService");
 const { MovieCatalogService } = require("../services/catalog/MovieCatalogService");
-const { GoogleGeminiService } = require('../services/googleGemini');
 // const { GoogleCloudVisionService } = require('../services/googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const { VisionPipelineService } = require('../services/visionPipeline');
 const { getVisionPipelineHooks } = require('../services/visionPipelineHooks');
@@ -43,8 +40,6 @@ const {
 
 
 
-let geminiService;
-
 // let visionService;
 // function getVisionService() {
 //   if (!visionService) {
@@ -52,13 +47,6 @@ let geminiService;
 //   }
 //   return visionService;
 // }
-
-function getGeminiService() {
-  if (!geminiService) {
-    geminiService = new GoogleGeminiService();
-  }
-  return geminiService;
-}
 
 const VISIBILITY_OPTIONS = ["private", "friends", "public"];
 
@@ -1156,37 +1144,35 @@ async function processCatalogLookup(req, res) {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { items: rawItems, autoApply = true } = req.body ?? {};
+    const { items: rawItems } = req.body ?? {};
     if (!Array.isArray(rawItems) || !rawItems.length) {
       return res.status(400).json({ error: "items array is required" });
     }
 
-    // Normalize items for enrichment
+    // Normalize mobile OCR items ({ name, author, type }) into pipeline shape ({ title, author, kind, confidence })
     const normalizedItems = rawItems.map(item => ({
       title: item.name || item.title,
       author: item.author || item.primaryCreator || null,
-      type: shelf.type,
-      // minimal fields
+      kind: shelf.type,
+      confidence: 1.0,
     }));
 
-    const geminiSvc = getGeminiService();
-    let finalItems = normalizedItems;
+    const userId = req.user.id;
+    const hooks = getVisionPipelineHooks();
+    const pipeline = new VisionPipelineService({ hooks });
 
-    if (geminiSvc.isConfigured()) {
-      console.log(`[CatalogLookup] Enriching ${normalizedItems.length} items with Gemini`);
-      finalItems = await geminiSvc.enrichShelfItems(normalizedItems, shelf.type);
-    }
+    const result = await pipeline.processImage(null, shelf, userId, null, {
+      rawItems: normalizedItems,
+      ocrProvider: 'mlkit',
+    });
 
-    // Return as analysis result
-    const parsed = {
-      shelfConfirmed: true,
-      items: finalItems
-    };
+    const items = await hydrateShelfItems(userId, shelf.id);
 
     res.json({
-      analysis: parsed,
-      results: [], // No database changes yet
-      items: await hydrateShelfItems(req.user.id, shelf.id),
+      addedCount: result.addedItems?.length || 0,
+      needsReviewCount: result.needsReview?.length || 0,
+      analysis: result.analysis,
+      items,
     });
 
   } catch (err) {

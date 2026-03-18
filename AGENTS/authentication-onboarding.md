@@ -40,12 +40,12 @@ Legacy aliases exist under `/api/*` because auth routes are mounted twice.
 1. `POST /api/auth/forgot-password` accepts email.
 2. API always returns generic success message (anti-enumeration).
 3. If user exists, token is created in `password_reset_tokens`.
-4. Email service sends reset link via SendGrid.
+4. Email service sends reset link via Resend.
 5. `POST /api/auth/reset-password` validates token and updates password hash.
 
 Security note:
 
-- Current fallback behavior logs reset tokens when SendGrid is not configured (`api/services/emailService.js`).
+- Current fallback behavior logs reset tokens when the email provider key is not configured (`api/services/emailService.js`).
 - This is tracked in `FIXME.md` and should be removed for non-dev usage.
 
 ## Onboarding Gate

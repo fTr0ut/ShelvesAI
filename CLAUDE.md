@@ -64,4 +64,5 @@ npm run dev
 - `AGENTS/api_routes.md`
 - `AGENTS/authentication-onboarding.md`
 - `AGENTS/admin-system.md`
+- `AGENTS/DependencyTree.md` — Full dependency tree for all components. **Agents must update this file when adding/removing/renaming files or changing imports.**
 - `docs/api-compliance.md`
