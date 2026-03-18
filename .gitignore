@@ -3,7 +3,6 @@
 .env.local
 .env.*.local
 api/.env
-.env.example
 
 # Database
 *.db
@@ -41,6 +40,7 @@ payload-logs/
 *-service-account.json
 credentials.json
 api/credentials/*.json
+mobile/android/sentry.properties
 
 # Data files
 *.jsonl

@@ -50,6 +50,14 @@
           "color": "#ffffff",
           "sounds": []
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "shelvesai",
+          "organization": "trout-pond-llc"
+        }
       ]
     ],
     "extra": {

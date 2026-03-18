@@ -14,6 +14,8 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, saveToken } from '../services/api';
 
+
+
 export default function LoginScreen({ navigation }) {
     const { setToken, apiBase, setNeedsOnboarding, setUser } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
@@ -94,6 +96,7 @@ export default function LoginScreen({ navigation }) {
                     <Text style={styles.appName}>ShelvesAI</Text>
                     <Text style={styles.tagline}>Organize your collections</Text>
                 </View>
+
 
                 {/* Form */}
                 <View style={styles.form}>

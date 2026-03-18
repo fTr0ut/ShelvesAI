@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as SecureStore from 'expo-secure-store'
+import * as Sentry from '@sentry/react-native'
 import { Buffer } from 'buffer'
 
 const TOKEN_KEY = 'token'
@@ -153,8 +154,22 @@ async function attemptRefresh(currentToken) {
     const newToken = data?.token
     if (!newToken || !isTokenFormatValid(newToken)) return null
     await saveToken(newToken)
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      level: 'info',
+      message: 'Auth token refreshed',
+      data: { endpoint: '/api/auth/refresh' },
+    })
     return newToken
-  } catch (_err) {
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: {
+        area: 'auth_refresh',
+      },
+      extra: {
+        endpoint: '/api/auth/refresh',
+      },
+    })
     return null
   }
 }
@@ -209,16 +224,32 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
   if (!path) throw new Error('Missing path for apiRequest')
 
   const authToken = await getValidToken(token)
-  const res = await fetch(`${apiBase}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res
+  try {
+    res = await fetch(`${apiBase}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: {
+        area: 'api_network',
+        method,
+      },
+      extra: {
+        path,
+        apiBase,
+      },
+    })
+    throw err
+  }
+
   const text = await res.text()
   let data
   try {
@@ -237,6 +268,21 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
     const err = new Error(errorMessage)
     err.status = res.status
     err.data = data
+
+    if (res.status >= 500) {
+      Sentry.captureException(err, {
+        tags: {
+          area: 'api_server',
+          method,
+        },
+        extra: {
+          path,
+          status: res.status,
+          response: data,
+        },
+      })
+    }
+
     throw err
   }
   return data

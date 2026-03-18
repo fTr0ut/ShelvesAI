@@ -49,7 +49,7 @@ import NotificationSettingsScreen from './screens/NotificationSettingsScreen'
 import BottomTabNavigator from './navigation/BottomTabNavigator'
 import CheckInScreen from './screens/CheckInScreen'
 import linkingConfig from './navigation/linkingConfig'
-
+import * as Sentry from '@sentry/react-native'
 
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
@@ -79,38 +79,71 @@ function isTruthy(value) {
   return typeof value === 'string' && truthyValues.has(value.toLowerCase())
 }
 
-function guessApiBase() {
+function guessApiBaseCandidate() {
   const envUseNgrok = process.env.EXPO_PUBLIC_USE_NGROK
   const envNgrokUrl = process.env.EXPO_PUBLIC_NGROK_URL
-  if (isTruthy(envUseNgrok) && envNgrokUrl) return enforceSecureApiBase(envNgrokUrl)
+  if (isTruthy(envUseNgrok) && envNgrokUrl) {
+    return { base: envNgrokUrl, source: 'env_ngrok' }
+  }
 
   const envApiBase = process.env.EXPO_PUBLIC_API_BASE
-  if (envApiBase) return enforceSecureApiBase(envApiBase)
+  if (envApiBase) {
+    return { base: envApiBase, source: 'env_api_base' }
+  }
 
   const extra = getExtraConfig()
   const extraUseNgrok = isTruthy(extra?.USE_NGROK)
   const extraNgrokUrl = extra?.NGROK_URL
-  if (extraUseNgrok && extraNgrokUrl) return enforceSecureApiBase(extraNgrokUrl)
+  if (extraUseNgrok && extraNgrokUrl) {
+    return { base: extraNgrokUrl, source: 'extra_ngrok' }
+  }
 
   const extraBase = extra?.API_BASE
-  if (extraBase) return enforceSecureApiBase(extraBase)
+  if (extraBase) {
+    return { base: extraBase, source: 'extra_api_base' }
+  }
+
   const hostUri = Constants?.expoConfig?.hostUri || ''
   const host = hostUri.split(':')[0]
-  if (host) return enforceSecureApiBase(`http://${host}:5001`)
-  if (Platform.OS === 'android') return enforceSecureApiBase('http://10.0.2.2:5001') // Android emulator
-  return enforceSecureApiBase('http://localhost:5001')
+  if (host) {
+    return { base: `http://${host}:5001`, source: 'host_fallback' }
+  }
+
+  if (Platform.OS === 'android') {
+    return { base: 'http://10.0.2.2:5001', source: 'android_emulator_fallback' }
+  }
+
+  return { base: 'http://localhost:5001', source: 'localhost_fallback' }
 }
 
-function enforceSecureApiBase(base) {
+function enforceSecureApiBase(base, source = 'unknown') {
   const normalized = String(base || '').trim()
   if (!normalized) return normalized
   if (!__DEV__ && /^http:\/\//i.test(normalized)) {
-    throw new Error('Production API base must use HTTPS')
+    const err = new Error('Production API base must use HTTPS')
+    Sentry.captureException(err, {
+      tags: {
+        area: 'api_config',
+        source,
+      },
+      extra: {
+        resolvedApiBase: normalized,
+      },
+    })
+    throw err
   }
   return normalized
 }
 
-export default function App() {
+function resolveApiBase() {
+  const { base, source } = guessApiBaseCandidate()
+  return {
+    apiBase: enforceSecureApiBase(base, source),
+    apiBaseSource: source,
+  }
+}
+
+export default Sentry.wrap(function App() {
   const navigationRef = useRef(null)
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
@@ -133,13 +166,22 @@ export default function App() {
   const [premiumEnabled, setPremiumEnabledState] = useState(false)
   const [onboardingConfig, setOnboardingConfig] = useState(null)
   const [visionQuota, setVisionQuota] = useState(null)
-  const apiBase = useMemo(() => guessApiBase(), [])
+  const { apiBase, apiBaseSource } = useMemo(() => resolveApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
 
   // Register apiBase with the api service so getValidToken() can call /api/auth/refresh.
   useEffect(() => {
     setApiBase(apiBase)
   }, [apiBase])
+
+  useEffect(() => {
+    Sentry.setTag('api_base_source', apiBaseSource)
+    Sentry.setContext('api_config', {
+      apiBase,
+      source: apiBaseSource,
+      useNgrok: process.env.EXPO_PUBLIC_USE_NGROK || extra?.USE_NGROK || '',
+    })
+  }, [apiBase, apiBaseSource, extra])
 
   useEffect(() => {
     (async () => {
@@ -161,6 +203,19 @@ export default function App() {
     })()
   }, [])
 
+  useEffect(() => {
+    if (!user) {
+      Sentry.setUser(null)
+      return
+    }
+
+    Sentry.setUser({
+      id: user?.id ? String(user.id) : undefined,
+      username: user?.username,
+      email: user?.email,
+    })
+  }, [user])
+
   // Set up global auth error handler to log out on invalid token
   useEffect(() => {
     setAuthErrorHandler(() => {
@@ -181,6 +236,12 @@ export default function App() {
           setOnboardingConfig(data)
         }
       } catch (err) {
+        Sentry.captureException(err, {
+          tags: {
+            area: 'app_bootstrap',
+            endpoint: '/api/config/onboarding',
+          },
+        })
         if (!cancelled) {
           setOnboardingConfig(null)
         }
@@ -226,7 +287,12 @@ export default function App() {
           }
         }
       } catch (err) {
-        // ignore errors and keep existing onboarding state
+        Sentry.captureException(err, {
+          tags: {
+            area: 'app_bootstrap',
+            endpoint: '/api/account',
+          },
+        })
       }
     }
 
@@ -274,7 +340,7 @@ export default function App() {
       </ThemeProvider>
     </SafeAreaProvider>
   )
-}
+});
 
 // Separate component to use theme context
 function AppNavigator({ token, needsOnboarding, navigationRef }) {
@@ -358,4 +424,3 @@ function AppNavigator({ token, needsOnboarding, navigationRef }) {
     </NavigationContainer>
   )
 }
-
