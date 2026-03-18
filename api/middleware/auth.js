@@ -1,8 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { query } = require('../database/pg');
-
-const AUTH_CACHE_TTL_MS = process.env.AUTH_CACHE_TTL_MS ? parseInt(process.env.AUTH_CACHE_TTL_MS, 10) : 5000;
-const AUTH_CACHE_MAX_ENTRIES = process.env.AUTH_CACHE_MAX ? parseInt(process.env.AUTH_CACHE_MAX, 10) : 1000;
+const { ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
+const { AUTH_CACHE_TTL_MS, AUTH_CACHE_MAX_ENTRIES } = require('../config/constants');
 const authCache = new Map();
 
 function getCachedUser(userId) {
@@ -13,30 +12,42 @@ function getCachedUser(userId) {
     authCache.delete(userId);
     return null;
   }
+
+  // Touch entry on read to preserve true LRU ordering.
+  authCache.delete(userId);
+  authCache.set(userId, entry);
+
   return entry.user;
 }
 
 function setCachedUser(userId, user) {
-  if (AUTH_CACHE_TTL_MS <= 0) return;
+  if (AUTH_CACHE_TTL_MS <= 0 || AUTH_CACHE_MAX_ENTRIES <= 0) return;
+  if (authCache.has(userId)) {
+    authCache.delete(userId);
+  }
+
   authCache.set(userId, { user, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
 
-  // Prevent unbounded growth in long-lived dev sessions
-  if (authCache.size > AUTH_CACHE_MAX_ENTRIES) {
+  // Evict least recently used entries while over capacity.
+  while (authCache.size > AUTH_CACHE_MAX_ENTRIES) {
     const oldestKey = authCache.keys().next().value;
-    if (oldestKey) authCache.delete(oldestKey);
+    if (oldestKey === undefined) break;
+    authCache.delete(oldestKey);
   }
 }
 
 async function auth(req, res, next) {
   const header = req.headers['authorization'] || '';
   const [scheme, token] = header.split(' ');
-  if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  const cookieToken = req.cookies?.[ADMIN_AUTH_COOKIE];
+  const resolvedToken = (scheme === 'Bearer' && token) ? token : cookieToken;
+  if (!resolvedToken) {
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
   let payload;
   try {
-    payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    payload = jwt.verify(resolvedToken, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });
   }
@@ -143,4 +154,3 @@ async function optionalAuth(req, res, next) {
 }
 
 module.exports = { auth, optionalAuth };
-

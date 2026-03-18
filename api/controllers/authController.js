@@ -1,6 +1,11 @@
+const jwt = require('jsonwebtoken');
 const authQueries = require('../database/queries/auth');
 const passwordResetQueries = require('../database/queries/passwordReset');
 const emailService = require('../services/emailService');
+const { setAdminAuthCookies } = require('../utils/adminAuth');
+
+// Grace period: accept tokens expired within the last 5 minutes for refresh
+const REFRESH_GRACE_SECONDS = 5 * 60;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -62,7 +67,12 @@ async function adminLogin(req, res) {
       });
     }
 
-    return res.json(result);
+    const csrfToken = setAdminAuthCookies(res, result.token);
+    return res.json({
+      user: result.user,
+      csrfToken,
+      onboardingCompleted: result.onboardingCompleted,
+    });
   } catch (err) {
     console.error('Admin login error:', err);
     return res.status(500).json({ error: 'Server error' });
@@ -259,4 +269,58 @@ async function validateResetToken(req, res) {
   }
 }
 
-module.exports = { login, adminLogin, register, me, consumeAuth0, setUsername, forgotPassword, resetPassword, validateResetToken };
+// POST /api/auth/refresh
+async function refresh(req, res) {
+  try {
+    const header = req.headers['authorization'] || '';
+    const [scheme, token] = header.split(' ');
+    if (scheme !== 'Bearer' || !token) {
+      return res.status(401).json({ error: 'Missing token' });
+    }
+
+    let payload;
+    try {
+      // First try strict verification (token still valid)
+      payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (err) {
+      if (err.name !== 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+      // Token is expired — allow if within grace period
+      try {
+        payload = jwt.verify(token, process.env.JWT_SECRET, {
+          algorithms: ['HS256'],
+          ignoreExpiration: true,
+        });
+      } catch (_innerErr) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (nowSeconds - payload.exp > REFRESH_GRACE_SECONDS) {
+        return res.status(401).json({ error: 'Token too old to refresh' });
+      }
+    }
+
+    if (!payload?.id) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    const result = await authQueries.refreshToken(payload.id);
+    if (!result) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    if (result.suspended) {
+      return res.status(403).json({
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED',
+      });
+    }
+
+    return res.json({ token: result.token });
+  } catch (err) {
+    console.error('Refresh error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+module.exports = { login, adminLogin, register, me, consumeAuth0, setUsername, forgotPassword, resetPassword, validateResetToken, refresh };

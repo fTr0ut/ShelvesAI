@@ -1,6 +1,6 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validate');
+const { validateUUID, validateIntParam } = require('../middleware/validate');
 const favoritesController = require('../controllers/favoritesController');
 
 const router = express.Router();
@@ -15,8 +15,8 @@ router.post('/', favoritesController.addFavorite);
 router.get('/user/:userId', validateUUID(['userId']), favoritesController.listUserFavorites);
 router.get('/user/:userId/check', validateUUID(['userId']), favoritesController.checkUserHasFavorites);
 
-router.delete('/:collectableId', favoritesController.removeFavorite);
-router.get('/:collectableId/check', favoritesController.checkFavorite);
+router.delete('/:collectableId', validateIntParam(['collectableId']), favoritesController.removeFavorite);
+router.get('/:collectableId/check', validateIntParam(['collectableId']), favoritesController.checkFavorite);
 router.post('/check-batch', favoritesController.checkFavoritesBatch);
 
 module.exports = router;

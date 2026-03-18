@@ -4,5 +4,8 @@ module.exports = {
   rootDir: '.',
   testMatch: ['**/__tests__/**/*.js?(x)', '**/?(*.)+(spec|test).js?(x)'],
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
-  testPathIgnorePatterns: ['<rootDir>/__tests__/setup.js']
+  testPathIgnorePatterns: [
+    '<rootDir>/__tests__/setup.js',
+    '<rootDir>/_archive/'
+  ]
 };

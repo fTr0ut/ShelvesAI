@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
 
 export default function ProfileEditScreen({ navigation }) {
@@ -120,11 +120,15 @@ export default function ProfileEditScreen({ navigation }) {
 
             const formData = new FormData();
             formData.append('photo', prepared);
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Session expired. Please sign in again.');
+            }
 
             const res = await fetch(`${apiBase}/api/profile/photo`, {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${authToken}`,
                     'ngrok-skip-browser-warning': 'true',
                 },
                 body: formData,

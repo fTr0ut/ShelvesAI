@@ -16,36 +16,36 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { usePush } from '../context/PushContext';
 import { apiRequest, clearToken } from '../services/api';
+import { useAsync } from '../hooks/useAsync';
 
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled, visionQuota, setVisionQuota } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
   const { unregisterPush } = usePush();
 
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [premiumSaving, setPremiumSaving] = useState(false);
 
   const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
+  const fetchAccount = useCallback(async () => {
+    const data = await apiRequest({ apiBase, path: '/api/account', token });
+    return data;
+  }, [apiBase, token]);
+
+  const { data: accountData, loading } = useAsync(fetchAccount, [fetchAccount]);
+
+  const user = accountData?.user ?? null;
+
+  // Sync premium and quota state from fetched account data.
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await apiRequest({ apiBase, path: '/api/account', token });
-        setUser(data.user);
-        if (typeof data.user?.isPremium === 'boolean') {
-          setPremiumEnabled(data.user.isPremium);
-        }
-        if (data.visionQuota) {
-          setVisionQuota(data.visionQuota);
-        }
-      } catch (e) {
-        console.warn('Failed to load account:', e);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [apiBase, token, setPremiumEnabled, setVisionQuota]);
+    if (!accountData) return;
+    if (typeof accountData.user?.isPremium === 'boolean') {
+      setPremiumEnabled(accountData.user.isPremium);
+    }
+    if (accountData.visionQuota) {
+      setVisionQuota(accountData.visionQuota);
+    }
+  }, [accountData, setPremiumEnabled, setVisionQuota]);
 
   const handlePremiumToggle = useCallback(async (value) => {
     const previous = premiumEnabled;

@@ -4,6 +4,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
+const { transaction } = require('../database/pg');
 const {
     makeCollectableFingerprint,
     makeLightweightFingerprint,
@@ -1235,13 +1236,44 @@ class VisionPipelineService {
                         ...hookContext,
                         payload: collectablePayload,
                     });
-                    collectable = await collectablesQueries.upsert(collectablePayload);
+                    // Wrap upsert + addCollectable in a transaction so a failure in addCollectable
+                    // rolls back the collectable insert, preventing orphaned records.
+                    const { savedCollectable, savedShelfItem } = await transaction(async (txClient) => {
+                        const upserted = await collectablesQueries.upsert(collectablePayload, txClient);
+                        const shelfEntry = await shelvesQueries.addCollectable({
+                            userId,
+                            shelfId,
+                            collectableId: upserted.id,
+                            // Note: format (user-specific) is intentionally not set during vision scan
+                            // Users can set their preferred format later via manual edit
+                        }, txClient);
+                        return { savedCollectable: upserted, savedShelfItem: shelfEntry };
+                    });
+                    collectable = savedCollectable;
                     console.log('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
+
+                    await this.executeHook(HOOK_TYPES.AFTER_SHELF_UPSERT, {
+                        ...hookContext,
+                        shelfItem: savedShelfItem,
+                        collectable,
+                    });
+
+                    added.push({
+                        ...item,
+                        itemId: savedShelfItem?.id,
+                        collectableId: collectable.id,
+                        title: collectable.title || item.title || item.name || null,
+                        primaryCreator: collectable.primaryCreator || item.primaryCreator || item.author || null,
+                        coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
+                        type: collectable.kind || item.type || item.kind || shelfType,
+                    });
+                    console.log('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
+                    continue;
                 } else {
                     console.log('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
                 }
 
-                // Add to shelf - format is user-specific and should be set manually, not during scan
+                // Add pre-matched collectable to shelf
                 console.log('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
                 const shelfItem = await shelvesQueries.addCollectable({
                     userId,
@@ -1393,25 +1425,30 @@ class VisionPipelineService {
         }
 
         console.log('[VisionPipeline.saveToReviewQueue] Adding', items.length, 'items to review queue');
-        const inserted = [];
-        for (const item of items) {
-            try {
-                console.log('[VisionPipeline.saveToReviewQueue] Adding:', item.title || item.name, '(confidence:', item.confidence, ')');
-                await needsReviewQueries.create({
-                    userId,
-                    shelfId,
-                    rawData: item,
-                    confidence: item.confidence
-                });
-                inserted.push(item);
-            } catch (err) {
-                if (isMissingRelationError(err, 'needs_review')) {
-                    this.reviewQueueAvailable = false;
-                    console.warn('[VisionPipelineService] needs_review table missing; skipping review queue.');
-                    break;
+        let inserted = [];
+        try {
+            // Wrap all inserts in a single transaction so a partial failure rolls back the whole batch.
+            inserted = await transaction(async (txClient) => {
+                const saved = [];
+                for (const item of items) {
+                    console.log('[VisionPipeline.saveToReviewQueue] Adding:', item.title || item.name, '(confidence:', item.confidence, ')');
+                    await needsReviewQueries.create({
+                        userId,
+                        shelfId,
+                        rawData: item,
+                        confidence: item.confidence,
+                    }, txClient);
+                    saved.push(item);
                 }
-                throw err;
+                return saved;
+            });
+        } catch (err) {
+            if (isMissingRelationError(err, 'needs_review')) {
+                this.reviewQueueAvailable = false;
+                console.warn('[VisionPipelineService] needs_review table missing; skipping review queue.');
+                return;
             }
+            throw err;
         }
 
         if (inserted.length > 0) {

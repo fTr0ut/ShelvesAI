@@ -1,8 +1,14 @@
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 
-async function create({ userId, shelfId, rawData, confidence }) {
-    const result = await query(
+/**
+ * Insert a needs-review record.
+ * @param {object} params
+ * @param {import('pg').PoolClient|null} [client] - Optional transaction client
+ */
+async function create({ userId, shelfId, rawData, confidence }, client = null) {
+    const q = client ? client.query.bind(client) : query;
+    const result = await q(
         `INSERT INTO needs_review (user_id, shelf_id, raw_data, confidence)
      VALUES ($1, $2, $3, $4) RETURNING *`,
         [userId, shelfId, JSON.stringify(rawData), confidence]

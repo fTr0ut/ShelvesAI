@@ -4,6 +4,7 @@
  */
 
 const { query } = require('../pg');
+const { verifyOwnership } = require('./ownership');
 const { rowToCamelCase } = require('./utils');
 
 const MAX_LIST_ITEMS = 10;
@@ -27,6 +28,8 @@ async function listForUser(userId) {
  * Get a list by ID with ownership check
  */
 async function getById(listId, userId) {
+    const owned = await verifyOwnership('user_lists', listId, userId);
+    if (!owned) return null;
     const result = await query(
         `SELECT ul.*,
             (SELECT COUNT(*) FROM user_list_items WHERE list_id = ul.id) as item_count
@@ -113,6 +116,8 @@ async function update(listId, userId, { name, description, visibility }) {
  * Delete a list
  */
 async function remove(listId, userId) {
+    const owned = await verifyOwnership('user_lists', listId, userId);
+    if (!owned) return false;
     const result = await query(
         `DELETE FROM user_lists 
          WHERE id = $1 AND user_id = $2

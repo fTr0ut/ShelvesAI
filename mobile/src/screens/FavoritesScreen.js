@@ -17,6 +17,8 @@ import { CategoryIcon } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { useAsync } from '../hooks/useAsync';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 
 export default function FavoritesScreen({ navigation, route }) {
     const { token, apiBase } = useContext(AuthContext);
@@ -31,58 +33,52 @@ export default function FavoritesScreen({ navigation, route }) {
     const isViewingOther = !!(targetUserId || targetUsername);
     const displayName = targetFirstName || targetUsername || 'User';
 
-    const [favorites, setFavorites] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
 
-    const loadFavorites = useCallback(async (isRefresh = false) => {
-        try {
-            if (!refreshing && !isRefresh) setLoading(true);
+    const fetchFavorites = useCallback(async () => {
+        let path = '/api/favorites';
 
-            let path = '/api/favorites';
-
-            if (targetUserId) {
-                path = `/api/favorites/user/${targetUserId}`;
-            } else if (targetUsername) {
-                // Determine ID if only username provided - similar logic to WishlistsScreen could apply, 
-                // but simpler to rely on ProfileScreen passing userId. 
-                // If we must support username-only deep links later, we'd need a profile lookup here first.
-                // For now, let's assume specific navigation from Profile passes userId or handle username lookup if critical.
-                // Re-using logic from WishlistsScreen for robustness:
-                const profileData = await apiRequest({ apiBase, path: `/api/profile/${targetUsername}`, token });
-                if (profileData.profile?.id) {
-                    path = `/api/favorites/user/${profileData.profile.id}`;
-                }
+        if (targetUserId) {
+            path = `/api/favorites/user/${targetUserId}`;
+        } else if (targetUsername) {
+            // Determine ID if only username provided - similar logic to WishlistsScreen could apply,
+            // but simpler to rely on ProfileScreen passing userId.
+            // If we must support username-only deep links later, we'd need a profile lookup here first.
+            // Re-using logic from WishlistsScreen for robustness:
+            const profileData = await apiRequest({ apiBase, path: `/api/profile/${targetUsername}`, token });
+            if (profileData.profile?.id) {
+                path = `/api/favorites/user/${profileData.profile.id}`;
             }
-
-            const data = await apiRequest({
-                apiBase,
-                path,
-                token,
-            });
-            setFavorites(data.favorites || []);
-        } catch (e) {
-            console.warn('Failed to load favorites:', e);
-            if (!isRefresh) Alert.alert('Error', 'Failed to load favorites');
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
         }
-    }, [apiBase, token, refreshing, targetUserId, targetUsername]);
+
+        const data = await apiRequest({ apiBase, path, token });
+        return data.favorites || [];
+    }, [apiBase, token, targetUserId, targetUsername]);
+
+    const { data: fetchedFavorites, loading, refresh } = useAsync(fetchFavorites, [fetchFavorites]);
+
+    // Local copy so we can optimistically remove items without re-fetching.
+    const [favorites, setFavorites] = useState([]);
+    const [refreshing, setRefreshing] = useState(false);
 
     useEffect(() => {
-        loadFavorites();
-    }, [loadFavorites]);
+        if (fetchedFavorites) {
+            setFavorites(fetchedFavorites);
+        }
+    }, [fetchedFavorites]);
 
-    const onRefresh = () => {
+    const onRefresh = useCallback(() => {
         setRefreshing(true);
-        loadFavorites();
-    };
+        refresh();
+    }, [refresh]);
+
+    // Clear the refreshing spinner once loading finishes.
+    useEffect(() => {
+        if (!loading) setRefreshing(false);
+    }, [loading]);
 
     const handleRemoveFavorite = async (item) => {
         const targetId = item.collectable?.id || item.manual?.id;
@@ -116,20 +112,12 @@ export default function FavoritesScreen({ navigation, route }) {
 
 
 
-    const buildCoverUri = (pathOrUrl) => {
-        if (!pathOrUrl) return null;
-        const normalized = pathOrUrl.replace(/\\/g, '/');
-        if (/^https?:/i.test(normalized)) return normalized;
-        const trimmed = normalized.replace(/^\/+/, '');
-        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-        if (!apiBase) return `/${resource}`;
-        return `${apiBase.replace(/\/+$/, '')}/${resource}`;
-    };
-
     const renderItem = ({ item }) => {
         const displayItem = item.collectable || item.manual || {};
         const isManual = !!item.manual;
-        const coverUri = buildCoverUri(displayItem.coverMediaUrl || displayItem.coverMediaPath || displayItem.coverUrl);
+        const coverUri =
+            resolveCollectableCoverUrl(item.collectable, apiBase) ||
+            resolveManualCoverUrl(item.manual, apiBase);
 
         // Navigation params: Handle both types
         // CollectableDetailScreen expects { item: { collectable: ... } } or { item: { manual: ... } } 

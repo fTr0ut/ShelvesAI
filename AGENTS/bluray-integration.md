@@ -1,96 +1,43 @@
-# Blu-ray.com News Source Integration
+# Blu-ray Discovery Integration
 
-## Overview
+Last updated: 2026-02-08 18:13:21 UTC
 
-This integration scrapes [blu-ray.com](https://www.blu-ray.com) for physical media releases (4K UHD and Blu-ray) and enriches them with TMDB metadata for display in the news feed.
+## Purpose
 
-## Data Flow
+This integration ingests Blu-ray and 4K release signals from blu-ray.com and enriches them with TMDB metadata for discover/feed usage.
 
-```mermaid
-flowchart TD
-    A[blu-ray.com] -->|HTTP scrape| B[BlurayDiscoveryAdapter]
-    B -->|title, url, date, format| C[refreshBluray]
-    C -->|search by title| D[TMDB API]
-    D -->|cover, description, genres| C
-    C -->|enriched item| E[(news_items table)]
-    C -->|CollectableDiscoveryHook| F[(collectables table)]
-    E -->|API query| G[News Feed]
-```
+## High-Level Flow
 
-## Item Types
+1. `BlurayDiscoveryAdapter` scrapes source pages and extracts title/date/url/format.
+2. News refresh jobs enrich matches with TMDB metadata when possible.
+3. Enriched rows are written to `news_items`.
+4. Collectable discovery hook may upsert into `collectables` for reuse.
 
-| item_type | Description |
-|-----------|-------------|
-| `preorder_4k` | Pre-orders for 4K UHD releases |
-| `preorder_bluray` | Pre-orders for Blu-ray releases |
-| `new_release_4k` | Recently released 4K UHD titles |
-| `new_release_bluray` | Recently released Blu-ray titles |
-| `upcoming_4k` | Upcoming 4K UHD releases |
-| `upcoming_bluray` | Upcoming Blu-ray releases |
+## Supported Item Types
 
-## Files
+- `preorder_4k`
+- `preorder_bluray`
+- `new_release_4k`
+- `new_release_bluray`
+- `upcoming_4k`
+- `upcoming_bluray`
 
-| File | Purpose |
-|------|---------|
-| `api/services/discovery/BlurayDiscoveryAdapter.js` | Scrapes blu-ray.com HTML |
-| `api/services/discovery/CollectableDiscoveryHook.js` | Upserts enriched items to collectables |
-| `api/jobs/refreshNewsCache.js` | Orchestrates fetch + TMDB enrichment |
-| `api/database/migrations/20260120100000_add_physical_release_date.js` | Adds `physical_release_date` column |
+## Key Files
 
-## Key Fields
+- `api/services/discovery/BlurayDiscoveryAdapter.js`
+- `api/services/discovery/CollectableDiscoveryHook.js`
+- `api/jobs/refreshNewsCache.js`
+- `api/database/migrations/20260120100000_add_physical_release_date.js`
 
-- `physical_release_date` — Date from blu-ray.com (when the disc ships)
-- `release_date` — Theatrical release from TMDB
-- `source_api` — `tmdb` when matched (falls back to `blu-ray.com` if no TMDB result)
-- `source_url` — TMDB title page when matched (blu-ray.com URL stored in `payload.original_source_url`)
-- `payload.tmdb_match` — Boolean indicating TMDB enrichment success
+## Stored Field Notes
 
-## Scraping Logic
+- `physical_release_date`: release date from blu-ray.com source data.
+- `release_date`: date from enrichment provider (TMDB).
+- `source_api`: enrichment provider used.
+- `source_url`: canonical provider/source URL.
 
-1. Fetch `https://www.blu-ray.com` homepage
-2. Parse HTML with Cheerio
-3. Extract tables from 3 sections:
-   - `newpreorderstabbody0` — Pre-orders
-   - `newmoviestabbody0` — New releases
-   - `upcomingmoviestabbody0` — Upcoming
-4. Detect 4K vs Blu-ray via URL pattern (`-4K-Blu-ray`) or title
-5. Extract title, date, and URL from table rows
+## Operational Notes
 
-## TMDB Enrichment
-
-- Search by **title only** (no year filter — physical release year differs from theatrical)
-- Use first result as match
-- Pull: `poster_path`, `overview`, `genre_ids`, `release_date`
-- ~90% match rate observed
-
-## CollectableDiscoveryHook
-
-When TMDB enrichment succeeds, the hook also upserts the movie to the `collectables` table:
-
-```javascript
-const hook = getCollectableDiscoveryHook();
-await hook.processEnrichedItem({
-  source: 'bluray',
-  kind: 'movie',
-  enrichment: tmdbData,
-  originalItem: blurayItem
-});
-```
-
-**Features:**
-- Fingerprint-based deduplication (`makeCollectableFingerprint`, `makeLightweightFingerprint`)
-- Format preservation (4K/Blu-ray stored in `formats[]`)
-- Source attribution (blu-ray.com stored in `sources[]`)
-- Disable via `COLLECTABLE_DISCOVERY_HOOK_ENABLED=false`
-
-**Reusable for:** IGDB games, direct TMDB, and future news sources.
-
-## Running the Job
-
-```bash
-cd api
-node jobs/refreshNewsCache.js
-```
-
-Scheduled: Daily at 4am via cron
-
+- Matching is title-first and can have false positives for ambiguous titles.
+- Keep refresh jobs idempotent; dedupe by source keys and normalized titles.
+- Validate scraping selectors when blu-ray.com markup changes.

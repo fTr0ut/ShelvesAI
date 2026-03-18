@@ -6,6 +6,9 @@
 
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
 const { tmdbMovieToCollectable } = require('../../../adapters/tmdb.adapter');
+const { withTimeout } = require('../../../utils/withTimeout');
+
+const DEFAULT_LOOKUP_TIMEOUT_MS = 10000;
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -23,6 +26,9 @@ class TmdbAdapter {
         this.name = 'tmdb';
         this._service = null;
         this._serviceOptions = options;
+        this.lookupTimeoutMs = Number.isFinite(options.lookupTimeoutMs)
+            ? options.lookupTimeoutMs
+            : Number.parseInt(process.env.TMDB_LOOKUP_TIMEOUT_MS || '', 10) || DEFAULT_LOOKUP_TIMEOUT_MS;
     }
 
     /**
@@ -63,7 +69,11 @@ class TmdbAdapter {
         }
 
         try {
-            const result = await service.safeLookup(item, options.retries || 2);
+            const result = await withTimeout(
+                () => service.safeLookup(item, options.retries || 2),
+                this.lookupTimeoutMs,
+                '[TmdbAdapter] lookup',
+            );
 
             if (result && result.movie) {
                 return this._toCollectable(result, item);

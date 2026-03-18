@@ -188,6 +188,28 @@ async function setUsername(userId, username) {
     return { user: formatUserForResponse(result.rows[0]) };
 }
 
+/**
+ * Issue a fresh JWT for an existing user (used by the refresh endpoint).
+ * @param {number} userId
+ * @returns {{ token: string } | null}
+ */
+async function refreshToken(userId) {
+    const result = await query(
+        'SELECT id, username, is_suspended FROM users WHERE id = $1',
+        [userId]
+    );
+    const user = result.rows[0];
+    if (!user) return null;
+    if (user.is_suspended) return { suspended: true };
+
+    const token = jwt.sign(
+        { id: user.id, username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+    );
+    return { token };
+}
+
 module.exports = {
     findByUsername,
     findByEmail,
@@ -197,4 +219,5 @@ module.exports = {
     loginAdmin,
     findOrCreateByAuth0,
     setUsername,
+    refreshToken,
 };

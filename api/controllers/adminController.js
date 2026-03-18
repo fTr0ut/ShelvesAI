@@ -1,5 +1,6 @@
 const adminQueries = require('../database/queries/admin');
 const { parsePagination } = require('../database/queries/utils');
+const { clearAdminAuthCookies } = require('../utils/adminAuth');
 
 const normalizeIp = (ip) => {
   if (!ip || typeof ip !== 'string') return ip;
@@ -27,6 +28,39 @@ function getAdminContext(req) {
     ipAddress: getClientIp(req) || null,
     userAgent: req.get('user-agent') || null,
   };
+}
+
+/**
+ * GET /api/admin/me
+ * Get current admin session user
+ */
+async function getMe(req, res) {
+  try {
+    res.json({
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        isAdmin: !!req.user.isAdmin,
+      },
+    });
+  } catch (err) {
+    console.error('Admin getMe error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * POST /api/admin/logout
+ * Clear admin auth cookies
+ */
+async function logout(req, res) {
+  try {
+    clearAdminAuthCookies(res);
+    res.status(204).send();
+  } catch (err) {
+    console.error('Admin logout error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
 }
 
 /**
@@ -229,6 +263,8 @@ async function getSystemInfo(req, res) {
 }
 
 module.exports = {
+  getMe,
+  logout,
   getStats,
   listUsers,
   getUser,

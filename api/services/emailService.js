@@ -27,8 +27,15 @@ if (API_KEY) {
  */
 async function sendPasswordResetEmail(to, token, firstName = null) {
     if (!API_KEY) {
-        console.warn('[EmailService] SENDGRID_API_KEY not configured - skipping email');
-        console.log(`[EmailService] Would send reset email to ${to} with token: ${token}`);
+        const env = String(process.env.NODE_ENV || '').toLowerCase();
+        const isDevLike = env === 'development' || env === 'test';
+
+        if (!isDevLike) {
+            console.error(`[EmailService] SENDGRID_API_KEY not configured - cannot send password reset email to ${to}`);
+            throw new Error('Email transport unavailable');
+        }
+
+        console.warn(`[EmailService] SENDGRID_API_KEY not configured - simulating password reset email to ${to}`);
         return { success: true, simulated: true };
     }
 

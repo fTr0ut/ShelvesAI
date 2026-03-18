@@ -5,7 +5,7 @@ const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
 const DEFAULT_BASE_URL = 'https://api.hardcover.app/v1/graphql';
-const DEFAULT_TIMEOUT_MS = 20000;
+const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_REQUESTS_PER_MINUTE = 55;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1000;

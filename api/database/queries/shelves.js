@@ -1,4 +1,14 @@
 const { query, transaction } = require('../pg');
+const { verifyOwnership } = require('./ownership');
+
+/**
+ * Resolve the query executor: use the provided client if given, otherwise use the shared pool query.
+ * @param {import('pg').PoolClient|null} client
+ * @returns {Function}
+ */
+function resolveQuery(client) {
+    return client ? client.query.bind(client) : query;
+}
 const { rowToCamelCase, parsePagination } = require('./utils');
 
 /**
@@ -22,6 +32,8 @@ async function listForUser(userId) {
  * Get a shelf by ID (with ownership check)
  */
 async function getById(shelfId, userId) {
+    const owned = await verifyOwnership('shelves', shelfId, userId);
+    if (!owned) return null;
     const result = await query(
         `SELECT * FROM shelves WHERE id = $1 AND owner_id = $2`,
         [shelfId, userId]
@@ -101,6 +113,8 @@ async function update(shelfId, userId, updates) {
  * Delete a shelf
  */
 async function remove(shelfId, userId) {
+    const owned = await verifyOwnership('shelves', shelfId, userId);
+    if (!owned) return false;
     const result = await query(
         `DELETE FROM shelves WHERE id = $1 AND owner_id = $2 RETURNING id`,
         [shelfId, userId]
@@ -236,9 +250,12 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
 
 /**
  * Add a collectable to a shelf
+ * @param {object} params
+ * @param {import('pg').PoolClient|null} [client] - Optional transaction client
  */
-async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }) {
-    const result = await query(
+async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }, client = null) {
+    const q = resolveQuery(client);
+    const result = await q(
         `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (user_id, shelf_id, collectable_id) DO UPDATE
@@ -253,6 +270,9 @@ async function addCollectable({ userId, shelfId, collectableId, format, notes, r
 
 /**
  * Add a manual entry to a shelf
+ * @param {object} params
+ * @param {import('pg').PoolClient|null} [client] - Optional transaction client; if provided the
+ *   caller owns the transaction and no new transaction is started internally.
  */
 async function addManual({
     userId,
@@ -275,10 +295,10 @@ async function addManual({
     tags,
     limitedEdition,
     itemSpecificText,
-}) {
-    return transaction(async (client) => {
+}, client = null) {
+    const runWithClient = async (c) => {
         // Create manual entry
-        const manualResult = await client.query(
+        const manualResult = await c.query(
             `INSERT INTO user_manuals (
         user_id, shelf_id, name, type, description, author, publisher, manufacturer, format, year,
         age_statement, special_markings, label_color, regional_item, edition, barcode, manual_fingerprint, tags,
@@ -312,7 +332,7 @@ async function addManual({
         const manual = manualResult.rows[0];
 
         // Add to user_collections
-        const collectionResult = await client.query(
+        const collectionResult = await c.query(
             `INSERT INTO user_collections (user_id, shelf_id, manual_id)
        VALUES ($1, $2, $3)
        RETURNING *`,
@@ -323,7 +343,14 @@ async function addManual({
             collection: rowToCamelCase(collectionResult.rows[0]),
             manual: rowToCamelCase(manual),
         };
-    });
+    };
+
+    // If a client is provided by the caller, reuse it (caller owns the transaction).
+    // Otherwise start a new transaction to keep the two inserts atomic.
+    if (client) {
+        return runWithClient(client);
+    }
+    return transaction(runWithClient);
 }
 
 async function findManualByFingerprint({ userId, shelfId, manualFingerprint }) {

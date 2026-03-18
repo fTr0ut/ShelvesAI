@@ -10,6 +10,7 @@ const usersQueries = require('../database/queries/users');
 const friendshipsQueries = require('../database/queries/friendships');
 const shelvesQueries = require('../database/queries/shelves');
 const { addMediaUrls } = require('../services/mediaUrl');
+const { sendError, logError } = require('../utils/errorHandler');
 
 function hydrateFavoriteMedia(favorite) {
     if (!favorite || typeof favorite !== 'object') return favorite;
@@ -35,8 +36,8 @@ async function listFavorites(req, res) {
             .map(hydrateFavoriteMedia);
         res.json({ favorites });
     } catch (err) {
-        console.error('listFavorites error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('listFavorites', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -86,9 +87,7 @@ async function addFavorite(req, res) {
             };
         }
 
-        // Log feed event
-        // Log feed event
-        /*
+        // Log feed event (non-blocking).
         try {
             await feedQueries.logEvent({
                 userId: req.user.id,
@@ -99,7 +98,6 @@ async function addFavorite(req, res) {
         } catch (e) {
             console.warn('Failed to log favorite event:', e.message);
         }
-        */
 
         res.status(201).json({
             success: true,
@@ -107,8 +105,8 @@ async function addFavorite(req, res) {
             isFavorite: true,
         });
     } catch (err) {
-        console.error('addFavorite error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('addFavorite', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -135,8 +133,8 @@ async function removeFavorite(req, res) {
 
         res.json({ success: true, isFavorite: false });
     } catch (err) {
-        console.error('removeFavorite error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('removeFavorite', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -159,8 +157,8 @@ async function checkFavorite(req, res) {
 
         res.json({ isFavorite });
     } catch (err) {
-        console.error('checkFavorite error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('checkFavorite', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -175,42 +173,33 @@ async function checkFavoritesBatch(req, res) {
         const status = {};
 
         if (collectableIds && Array.isArray(collectableIds) && collectableIds.length > 0) {
+            const parsedCollectableIds = collectableIds
+                .map(id => parseInt(id, 10))
+                .filter(Number.isInteger);
+
             const cStatus = await favoritesQueries.getFavoritesStatus(
                 req.user.id,
-                collectableIds.map(id => parseInt(id))
+                parsedCollectableIds
             );
             Object.assign(status, cStatus);
         }
 
         if (manualIds && Array.isArray(manualIds) && manualIds.length > 0) {
-            // Re-using getFavoritesStatus logic if I update it? 
-            // Or just allow getFavoritesStatus to handle manual IDs if I name column differently.
-            // Currently favoritesQueries.getFavoritesStatus expects collectableIds and queries collectable_id.
-            // I should add getManualFavoritesStatus or update query.
-            // Since I haven't updated query to handle manualIds for batch, I will skip or assume quick manual check implementation details.
-            // Actually, I should update favorites.js queries to include getManualFavoritesStatus if I want accurate batch checking for manuals.
-            // For now, I'll iterate or do a simple query here using manual_id.
+            const parsedManualIds = manualIds
+                .map(id => parseInt(id, 10))
+                .filter(Number.isInteger);
 
-            // NOTE: Since I didn't verify getManualFavoritesStatus in `favorites.js`, I'll perform a quick ad-hoc check 
-            // OR ideally I should have updated the queries file. 
-            // Let's assume for this task I might not need batch checking for manuals yet unless the UI needs it.
-            // But CollectableDetailScreen calls check-batch? No, it calls check-batch for collectables, but checkFavorite for single.
-            // Wait, the screen calls `check-batch` with `collectableIds: [id]`.
-            // The screen will need update to pass `manualIds` if `isManual`.
-
-            // I'll add a quick ad-hoc query here via raw query (bad practice) or just skip if I missed the update.
-            // No, I can call `favoritesQueries.isFavorite` in a loop (slow) or just add the missing function to queries.
-            // Given I can't update queries file easily without another tool call and I am in replace for controller...
-            // I will implement a loop for now or skip implementation if manualIds passed (but I should handle it).
-            // Actually, I can query directly using `favoritesQueries.query` if I imported `query`? No I imported `favoritesQueries` module.
-            // I'll leave a TODO or simple loop. 
-            // Actually better: I'll accept manualIds but if logic is missing, return false.
+            const mStatus = await favoritesQueries.getManualFavoritesStatus(
+                req.user.id,
+                parsedManualIds
+            );
+            Object.assign(status, mStatus);
         }
 
         res.json({ status });
     } catch (err) {
-        console.error('checkFavoritesBatch error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('checkFavoritesBatch', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -247,8 +236,8 @@ async function listUserFavorites(req, res) {
             .map(hydrateFavoriteMedia);
         res.json({ favorites });
     } catch (err) {
-        console.error('listUserFavorites error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('listUserFavorites', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 
@@ -287,8 +276,8 @@ async function checkUserHasFavorites(req, res) {
         const favorites = await favoritesQueries.listForUser(targetUserId);
         res.json({ hasFavorites: favorites.length > 0 });
     } catch (err) {
-        console.error('checkUserHasFavorites error:', err);
-        res.status(500).json({ error: 'Server error' });
+        logError('checkUserHasFavorites', err, { userId: req.user?.id });
+        return sendError(res, 500, 'Server error');
     }
 }
 

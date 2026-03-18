@@ -1,3 +1,12 @@
+// ARCHIVED: 2026-03-17
+// Reason: This test was written for a pre-PostgreSQL (Mongoose/MongoDB) era.
+// It references models (User, Shelf, UserManual, UserCollection) that no longer exist
+// in the PostgreSQL codebase. The models/ directory is empty. Additionally, it depends
+// on 'supertest' which is not installed in api/package.json.
+// The visibility enforcement logic it tested (public/friends/private shelf access in
+// GET /api/feed/:shelfId) is enforced by shelvesQueries.getForViewing(), which is
+// exercised via mock in other passing tests (needsReview.test.js, visionPipeline.test.js).
+// See FIXME.md DEBT-1 for context.
 const request = require('supertest')
 const jwt = require('jsonwebtoken')
 const app = require('../server')

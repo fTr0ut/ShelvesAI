@@ -1,5 +1,6 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
+const { validateIntParam } = require('../middleware/validate');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
@@ -69,11 +70,13 @@ router.delete('/all', async (req, res) => {
     }
 });
 
+const unmatchedIntParam = validateIntParam(['id']);
+
 /**
  * GET /api/unmatched/:id
  * Get a single review item
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', unmatchedIntParam, async (req, res) => {
     try {
         const item = await needsReviewQueries.getById(parseInt(req.params.id, 10), req.user.id);
         if (!item) {
@@ -96,7 +99,7 @@ router.get('/:id', async (req, res) => {
  * 3. Catalog API lookup (external APIs)
  * 4. Create new collectable (if all above fail)
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', unmatchedIntParam, async (req, res) => {
     try {
         const reviewItem = await needsReviewQueries.getById(parseInt(req.params.id, 10), req.user.id);
         if (!reviewItem) {
@@ -294,7 +297,7 @@ router.put('/:id', async (req, res) => {
  * DELETE /api/unmatched/:id
  * Dismiss a review item without adding to shelf
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', unmatchedIntParam, async (req, res) => {
     try {
         const result = await needsReviewQueries.dismiss(parseInt(req.params.id, 10), req.user.id);
         if (!result) {

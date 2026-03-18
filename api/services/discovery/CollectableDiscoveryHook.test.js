@@ -6,6 +6,7 @@ const { CollectableDiscoveryHook } = require('./CollectableDiscoveryHook');
 
 // Mock dependencies
 jest.mock('../../database/queries/collectables', () => ({
+    findBySourceId: jest.fn().mockResolvedValue(null),
     findByLightweightFingerprint: jest.fn(),
     findByFingerprint: jest.fn(),
     upsert: jest.fn()
@@ -22,9 +23,32 @@ const { makeCollectableFingerprint, makeLightweightFingerprint } = require('../c
 describe('CollectableDiscoveryHook', () => {
     let hook;
 
+    // Mock fetch to prevent real TMDB API calls and return controlled data
+    const mockTmdbData = {
+        id: 603,
+        title: 'The Matrix',
+        original_title: 'The Matrix',
+        overview: 'A computer hacker learns about the true nature of reality.',
+        poster_path: '/f89U3ADr1oiB1s9GkdPOEk5H.jpg',
+        release_date: '1999-03-30',
+        genre_ids: [28, 878]
+    };
+
+    const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue(mockTmdbData)
+    });
+
     beforeEach(() => {
-        hook = new CollectableDiscoveryHook({ enabled: true });
+        // Inject mock fetch so no real HTTP calls are made
+        hook = new CollectableDiscoveryHook({ enabled: true, fetch: mockFetch });
         jest.clearAllMocks();
+        // Re-apply mockFetch after clearAllMocks
+        mockFetch.mockResolvedValue({
+            ok: true,
+            json: jest.fn().mockResolvedValue(mockTmdbData)
+        });
+        collectablesQueries.findBySourceId.mockResolvedValue(null);
     });
 
     describe('processEnrichedItem', () => {
@@ -33,16 +57,6 @@ describe('CollectableDiscoveryHook', () => {
             source_url: 'https://www.blu-ray.com/movies/The-Matrix-4K/12345/',
             release_date: new Date('2026-03-15'),
             format: '4K'
-        };
-
-        const mockTmdbData = {
-            id: 603,
-            title: 'The Matrix',
-            original_title: 'The Matrix',
-            overview: 'A computer hacker learns about the true nature of reality.',
-            poster_path: '/f89U3ADr1oiB1s9GkdPOEpXUk5H.jpg',
-            release_date: '1999-03-30',
-            genre_ids: [28, 878]
         };
 
         it('should return disabled when hook is disabled', async () => {
@@ -126,13 +140,14 @@ describe('CollectableDiscoveryHook', () => {
 
             expect(makeCollectableFingerprint).toHaveBeenCalledWith({
                 title: 'The Matrix',
-                primaryCreator: undefined,
+                primaryCreator: null,
                 releaseYear: 1999,
                 mediaType: 'movie'
             });
 
             expect(makeLightweightFingerprint).toHaveBeenCalledWith({
                 title: 'The Matrix',
+                primaryCreator: null,
                 kind: 'movie'
             });
         });
@@ -162,7 +177,7 @@ describe('CollectableDiscoveryHook', () => {
                 expect(payload.description).toBe('Hacker discovers truth');
                 expect(payload.year).toBe(1999);
                 expect(payload.formats).toEqual(['4K']);
-                expect(payload.identifiers.tmdb).toBe('603');
+                expect(payload.identifiers.tmdb).toEqual({ movie: ['603'] });
                 expect(payload.identifiers.bluray_url).toBe('https://blu-ray.com/test');
             });
 
@@ -206,7 +221,7 @@ describe('CollectableDiscoveryHook', () => {
                 expect(payload.year).toBe(2015);
                 expect(payload.formats).toEqual(['PC', 'PlayStation 4']);
                 expect(payload.tags).toEqual(['RPG']);
-                expect(payload.identifiers.igdb).toBe('1942');
+                expect(payload.identifiers.igdb).toEqual({ game: ['1942'] });
             });
         });
 

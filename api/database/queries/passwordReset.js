@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { query } = require('../pg');
+const { query, transaction } = require('../pg');
 
 /**
  * Generate a secure random token for password reset.
@@ -75,23 +75,32 @@ async function validateResetToken(token) {
  * @returns {Promise<{success: boolean, error?: string}>}
  */
 async function resetPassword(token, newPassword) {
-    const validation = await validateResetToken(token);
-    if (!validation.valid) {
-        return { success: false, error: validation.error };
-    }
-
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    // Update password
-    await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
-        passwordHash,
-        validation.userId,
-    ]);
+    return transaction(async (client) => {
+        // Atomically consume a valid, unused token and fetch its user.
+        const consumeResult = await client.query(
+            `UPDATE password_reset_tokens
+             SET used_at = NOW()
+             WHERE token = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+             RETURNING user_id`,
+            [token]
+        );
 
-    // Mark token as used
-    await query(`UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1`, [token]);
+        if (consumeResult.rows.length === 0) {
+            const validation = await validateResetToken(token);
+            return { success: false, error: validation.error || 'Invalid reset token' };
+        }
 
-    return { success: true };
+        await client.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [
+            passwordHash,
+            consumeResult.rows[0].user_id,
+        ]);
+
+        return { success: true };
+    });
 }
 
 /**

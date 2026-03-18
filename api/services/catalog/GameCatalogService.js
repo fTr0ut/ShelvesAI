@@ -1288,25 +1288,40 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
     params.set('client_secret', this.clientSecret);
     params.set('grant_type', 'client_credentials');
 
-    const response = await fetch(this.authUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    });
+    const controller = AbortController ? new AbortController() : null;
+    const timeout = controller
+      ? setTimeout(() => controller.abort(), this.timeoutMs)
+      : null;
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(
-        `IGDB auth failed with ${response.status}: ${text.slice(0, 200)}`,
-      );
+    try {
+      const response = await this.fetch(this.authUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+        signal: controller ? controller.signal : undefined,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(
+          `IGDB auth failed with ${response.status}: ${text.slice(0, 200)}`,
+        );
+      }
+
+      const data = await response.json();
+      this._token = data.access_token || null;
+      this._tokenExpiresAt = data.expires_in
+        ? now + Number(data.expires_in) * 1000
+        : now + 3600 * 1000;
+      return this._token;
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error('IGDB auth request aborted');
+      }
+      throw err;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
-
-    const data = await response.json();
-    this._token = data.access_token || null;
-    this._tokenExpiresAt = data.expires_in
-      ? now + Number(data.expires_in) * 1000
-      : now + 3600 * 1000;
-    return this._token;
   }
 
   async _withRateLimit(task) {

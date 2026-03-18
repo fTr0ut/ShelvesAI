@@ -2,13 +2,29 @@ const eventSocialQueries = require('../database/queries/eventSocial');
 const notificationsQueries = require('../database/queries/notifications');
 const { parsePagination } = require('../database/queries/utils');
 
+async function ensureEventAccessible(eventId, userId, res) {
+  const exists = await eventSocialQueries.ensureEventExists(eventId);
+  if (!exists) {
+    res.status(404).json({ error: 'Feed entry not found' });
+    return false;
+  }
+
+  const canView = await eventSocialQueries.canUserViewEvent(eventId, userId);
+  if (!canView) {
+    res.status(403).json({ error: 'You do not have access to this feed entry' });
+    return false;
+  }
+
+  return true;
+}
+
 async function toggleLike(req, res) {
   try {
     const eventId = String(req.params.eventId || '').trim();
     if (!eventId) return res.status(400).json({ error: 'Invalid event id' });
 
-    const exists = await eventSocialQueries.ensureEventExists(eventId);
-    if (!exists) return res.status(404).json({ error: 'Feed entry not found' });
+    const canAccess = await ensureEventAccessible(eventId, req.user.id, res);
+    if (!canAccess) return;
 
     const result = await eventSocialQueries.toggleLike(eventId, req.user.id);
 
@@ -49,8 +65,8 @@ async function addComment(req, res) {
     if (!eventId) return res.status(400).json({ error: 'Invalid event id' });
     if (!content) return res.status(400).json({ error: 'content is required' });
 
-    const exists = await eventSocialQueries.ensureEventExists(eventId);
-    if (!exists) return res.status(404).json({ error: 'Feed entry not found' });
+    const canAccess = await ensureEventAccessible(eventId, req.user.id, res);
+    if (!canAccess) return;
 
     const comment = await eventSocialQueries.addComment(eventId, req.user.id, content);
     const { commentCount } = await eventSocialQueries.getComments(eventId, { limit: 1, offset: 0 });
@@ -86,8 +102,8 @@ async function getComments(req, res) {
     const eventId = String(req.params.eventId || '').trim();
     if (!eventId) return res.status(400).json({ error: 'Invalid event id' });
 
-    const exists = await eventSocialQueries.ensureEventExists(eventId);
-    if (!exists) return res.status(404).json({ error: 'Feed entry not found' });
+    const canAccess = await ensureEventAccessible(eventId, req.user.id, res);
+    if (!canAccess) return;
 
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
     const result = await eventSocialQueries.getComments(eventId, { limit, offset });
@@ -110,8 +126,8 @@ async function deleteComment(req, res) {
     if (!eventId) return res.status(400).json({ error: 'Invalid event id' });
     if (Number.isNaN(commentId)) return res.status(400).json({ error: 'Invalid comment id' });
 
-    const exists = await eventSocialQueries.ensureEventExists(eventId);
-    if (!exists) return res.status(404).json({ error: 'Feed entry not found' });
+    const canAccess = await ensureEventAccessible(eventId, req.user.id, res);
+    if (!canAccess) return;
 
     const deleted = await eventSocialQueries.deleteComment(commentId, eventId, req.user.id);
     if (!deleted) return res.status(404).json({ error: 'Comment not found' });

@@ -1,21 +1,43 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
-const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+if (import.meta.env.PROD && /^http:\/\//i.test(API_URL)) {
+  throw new Error('VITE_API_URL must use HTTPS in production builds');
+}
+
+const CSRF_COOKIE_NAME = 'admin_csrf';
+const SAFE_METHODS = new Set(['get', 'head', 'options']);
+
+function getCookieValue(name) {
+  if (typeof document === 'undefined') return null;
+  const encodedName = encodeURIComponent(name);
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    const [rawKey, ...rest] = part.split('=');
+    if (rawKey === encodedName) {
+      return decodeURIComponent(rest.join('='));
+    }
+  }
+  return null;
+}
 
 const client = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add CSRF token for state-changing admin requests.
 client.interceptors.request.use(
   (config) => {
-    const token = storage?.getItem('adminToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const method = String(config.method || 'get').toLowerCase();
+    if (!SAFE_METHODS.has(method)) {
+      const csrfToken = getCookieValue(CSRF_COOKIE_NAME);
+      if (csrfToken) {
+        config.headers['X-CSRF-Token'] = csrfToken;
+      }
     }
     return config;
   },
@@ -26,9 +48,10 @@ client.interceptors.request.use(
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      storage?.removeItem('adminToken');
-      storage?.removeItem('adminUser');
+    const status = error.response?.status;
+    const requestUrl = String(error.config?.url || '');
+    const isAuthBootstrap = requestUrl.includes('/admin/login') || requestUrl.includes('/admin/me');
+    if (status === 401 && !isAuthBootstrap) {
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -38,6 +61,12 @@ client.interceptors.response.use(
 // Auth
 export const login = (username, password) =>
   client.post('/admin/login', { username, password });
+
+export const getMe = () =>
+  client.get('/admin/me');
+
+export const logout = () =>
+  client.post('/admin/logout');
 
 // Admin endpoints
 export const getStats = () => client.get('/admin/stats');

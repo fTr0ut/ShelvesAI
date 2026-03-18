@@ -3,11 +3,13 @@ const { logPayload } = require('../utils/payloadLogger');
 const fs = require('fs');
 const path = require('path');
 const { normalizeCollectableKind } = require('./collectables/kind');
+const { withTimeout } = require('../utils/withTimeout');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
 // Higher output tokens for enrichment calls to prevent JSON truncation
 const ENRICHMENT_MAX_OUTPUT_TOKENS = 16384;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 
 // Load vision settings from config file
 let visionSettings = null;
@@ -95,8 +97,11 @@ function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
 }
 
 class GoogleGeminiService {
-    constructor() {
+    constructor(options = {}) {
         const apiKey = process.env.GOOGLE_GEN_AI_KEY;
+        this.requestTimeoutMs = Number.isFinite(options.requestTimeoutMs)
+            ? options.requestTimeoutMs
+            : Number.parseInt(process.env.GOOGLE_GEMINI_TIMEOUT_MS || '', 10) || DEFAULT_REQUEST_TIMEOUT_MS;
         if (apiKey) {
             this.genAI = new GoogleGenerativeAI(apiKey);
             const textModelName =
@@ -285,11 +290,19 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
         try {
             // Use higher maxOutputTokens to prevent truncation with many items
-            const result = await this.textModel.generateContent({
-                contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
-            });
-            const response = await result.response;
+            const result = await withTimeout(
+                () => this.textModel.generateContent({
+                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                    generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+                }),
+                this.requestTimeoutMs,
+                'Gemini schema enrichment request',
+            );
+            const response = await withTimeout(
+                () => result.response,
+                this.requestTimeoutMs,
+                'Gemini schema enrichment response',
+            );
             const text = response.text();
 
             logPayload({
@@ -426,11 +439,19 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
         try {
             // Use higher maxOutputTokens to prevent truncation with many items
-            const result = await this.textModel.generateContent({
-                contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
-            });
-            const response = await result.response;
+            const result = await withTimeout(
+                () => this.textModel.generateContent({
+                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                    generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+                }),
+                this.requestTimeoutMs,
+                'Gemini uncertain enrichment request',
+            );
+            const response = await withTimeout(
+                () => result.response,
+                this.requestTimeoutMs,
+                'Gemini uncertain enrichment response',
+            );
             const text = response.text();
 
             logPayload({
@@ -520,17 +541,25 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
         try {
             // STEP 1: Vision Extraction (No Tools)
-            const visionResult = await this.visionModel.generateContent({
-                contents: [
-                    {
-                        role: 'user', parts: [
-                            { text: visionPrompt },
-                            { inlineData: { data, mimeType } }
-                        ]
-                    }
-                ]
-            });
-            const visionResponse = await visionResult.response;
+            const visionResult = await withTimeout(
+                () => this.visionModel.generateContent({
+                    contents: [
+                        {
+                            role: 'user', parts: [
+                                { text: visionPrompt },
+                                { inlineData: { data, mimeType } }
+                            ]
+                        }
+                    ]
+                }),
+                this.requestTimeoutMs,
+                'Gemini vision extraction request',
+            );
+            const visionResponse = await withTimeout(
+                () => visionResult.response,
+                this.requestTimeoutMs,
+                'Gemini vision extraction response',
+            );
             const visionText = visionResponse.text();
 
             logPayload({
@@ -566,16 +595,24 @@ ${JSON.stringify(parsedItems)}
 Using this visual data, please follow these instructions to search for and refine the metadata.
 CRITICAL: You must extract "Visual Description" details from the input (like label color, special markings, bottle shape) and map them to the "labelColor" and "specialMarkings" fields in the output if applicable.
 
-${configPrompt}
+                ${configPrompt}
 
 CRITICAL: Return ONLY valid JSON. Do not include any conversational text before or after the JSON.`;
 
                 try {
-                    const searchResult = await this.textModel.generateContent({
-                        contents: [{ role: 'user', parts: [{ text: searchPrompt }] }],
-                        tools: [{ googleSearch: {} }]
-                    });
-                    const searchResponse = await searchResult.response;
+                    const searchResult = await withTimeout(
+                        () => this.textModel.generateContent({
+                            contents: [{ role: 'user', parts: [{ text: searchPrompt }] }],
+                            tools: [{ googleSearch: {} }]
+                        }),
+                        this.requestTimeoutMs,
+                        'Gemini search enrichment request',
+                    );
+                    const searchResponse = await withTimeout(
+                        () => searchResult.response,
+                        this.requestTimeoutMs,
+                        'Gemini search enrichment response',
+                    );
                     const searchText = searchResponse.text();
 
                     logPayload({

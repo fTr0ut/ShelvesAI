@@ -4,6 +4,11 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { query } = require('../pg');
 const s3 = require('../../services/s3');
+const {
+  validateImageBuffer,
+  isAllowedImageMimeType,
+  normalizeMimeType,
+} = require('../../utils/imageValidation');
 
 const RAW_TIMEOUT_MS = parseInt(process.env.MEDIA_FETCH_TIMEOUT_MS || '15000', 10);
 const RAW_MAX_BYTES = parseInt(process.env.MEDIA_MAX_BYTES || '5242880', 10);
@@ -195,6 +200,16 @@ async function downloadImage(url) {
     throw new Error(`http ${response.status}`);
   }
 
+  const finalUrl = response.url || url;
+  if (!isHttpUrl(finalUrl)) {
+    throw new Error('final URL protocol is not allowed');
+  }
+
+  const headerMime = normalizeMimeType(response.headers.get('content-type') || '');
+  if (headerMime && !isAllowedImageMimeType(headerMime)) {
+    throw new Error('remote response content-type is not an allowed image');
+  }
+
   const contentLength = parseInt(response.headers.get('content-length') || '', 10);
   if (Number.isFinite(contentLength) && contentLength > DEFAULT_MAX_BYTES) {
     throw new Error(`content-length exceeds ${DEFAULT_MAX_BYTES} bytes`);
@@ -208,10 +223,17 @@ async function downloadImage(url) {
     throw new Error(`download exceeds ${DEFAULT_MAX_BYTES} bytes`);
   }
 
+  const validated = await validateImageBuffer(buffer);
+  if (headerMime && headerMime !== validated.mime) {
+    throw new Error('remote response content-type does not match image bytes');
+  }
+
   return {
     buffer,
-    contentType: response.headers.get('content-type') || null,
+    contentType: validated.mime,
     sizeBytes: buffer.length,
+    width: validated.width,
+    height: validated.height,
   };
 }
 

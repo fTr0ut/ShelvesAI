@@ -2,29 +2,57 @@ import { useState, useEffect, useCallback } from 'react';
 import { getUsers } from '../api/client';
 import UserTable from '../components/UserTable';
 import UserDetailModal from '../components/UserDetailModal';
+import Pagination from '../components/Pagination';
+
+const SEARCH_DEBOUNCE_MS = 400;
+
+function toFilterOptionValue(value) {
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  return '';
+}
+
+function fromFilterOptionValue(value) {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
 
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ total: 0, hasMore: false });
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({
-    suspended: '',
-    admin: '',
+  const [queryState, setQueryState] = useState({
+    page: 0,
+    suspended: undefined,
+    admin: undefined,
   });
-  const [page, setPage] = useState(0);
   const limit = 20;
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const nextSearch = searchInput.trim();
+      setSearch(nextSearch);
+      setQueryState((prev) => (prev.page === 0 ? prev : { ...prev, page: 0 }));
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchInput]);
 
   const loadUsers = useCallback(async () => {
     try {
       setLoading(true);
       const params = {
         limit,
-        offset: page * limit,
+        offset: queryState.page * limit,
         search: search || undefined,
-        suspended: filters.suspended || undefined,
-        admin: filters.admin || undefined,
+        suspended: queryState.suspended,
+        admin: queryState.admin,
       };
       const response = await getUsers(params);
       setUsers(response.data.users);
@@ -34,7 +62,7 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, filters]);
+  }, [queryState.page, queryState.suspended, queryState.admin, search]);
 
   useEffect(() => {
     loadUsers();
@@ -42,13 +70,14 @@ export default function Users() {
 
   function handleSearch(e) {
     e.preventDefault();
-    setPage(0);
-    loadUsers();
+    const nextSearch = searchInput.trim();
+    setSearch(nextSearch);
+    setQueryState((prev) => (prev.page === 0 ? prev : { ...prev, page: 0 }));
   }
 
   function handleFilterChange(key, value) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
-    setPage(0);
+    const parsedValue = fromFilterOptionValue(value);
+    setQueryState((prev) => ({ ...prev, [key]: parsedValue, page: 0 }));
   }
 
   return (
@@ -66,14 +95,14 @@ export default function Users() {
           <div className="flex-1 min-w-[200px]">
             <input
               type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search users..."
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
             />
           </div>
           <select
-            value={filters.suspended}
+            value={toFilterOptionValue(queryState.suspended)}
             onChange={(e) => handleFilterChange('suspended', e.target.value)}
             className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
           >
@@ -82,7 +111,7 @@ export default function Users() {
             <option value="true">Suspended</option>
           </select>
           <select
-            value={filters.admin}
+            value={toFilterOptionValue(queryState.admin)}
             onChange={(e) => handleFilterChange('admin', e.target.value)}
             className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
           >
@@ -109,54 +138,13 @@ export default function Users() {
 
         {/* Pagination */}
         {!loading && users.length > 0 && (
-          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200">
-            <div className="flex-1 flex justify-between sm:hidden">
-              <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setPage((p) => p + 1)}
-                disabled={!pagination.hasMore}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm text-gray-700">
-                  Showing{' '}
-                  <span className="font-medium">{page * limit + 1}</span> to{' '}
-                  <span className="font-medium">
-                    {Math.min((page + 1) * limit, pagination.total)}
-                  </span>{' '}
-                  of <span className="font-medium">{pagination.total}</span> results
-                </p>
-              </div>
-              <div>
-                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                  <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
-                    className="relative inline-flex items-center px-4 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={!pagination.hasMore}
-                    className="relative inline-flex items-center px-4 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </nav>
-              </div>
-            </div>
-          </div>
+          <Pagination
+            page={queryState.page}
+            totalPages={Math.ceil(pagination.total / limit)}
+            onPageChange={(newPage) => setQueryState((prev) => ({ ...prev, page: newPage }))}
+            total={pagination.total}
+            pageSize={limit}
+          />
         )}
       </div>
 

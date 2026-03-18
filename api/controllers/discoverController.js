@@ -7,6 +7,8 @@
 
 const { query } = require('../database/pg');
 const { markNewsItemDismissed } = require('../database/queries/newsDismissed');
+const { parsePagination } = require('../database/queries/utils');
+const { sendError, logError } = require('../utils/errorHandler');
 
 /**
  * GET /api/discover
@@ -22,15 +24,12 @@ const { markNewsItemDismissed } = require('../database/queries/newsDismissed');
 async function getDiscover(req, res) {
   try {
     const userId = req.user?.id;
-    const {
-      category = 'all',
-      item_type = 'all',
-      limit = 50,
-      offset = 0
-    } = req.query;
+    const { category = 'all', item_type = 'all' } = req.query;
 
-    const safeLimit = Math.min(Math.max(1, parseInt(limit) || 50), 100);
-    const safeOffset = Math.max(0, parseInt(offset) || 0);
+    const { limit: safeLimit, offset: safeOffset } = parsePagination(req.query, {
+      defaultLimit: 50,
+      maxLimit: 100,
+    });
 
     // Get user's shelf types and top creators for personalization
     let userInterests = { categories: [], creators: [], genres: [] };
@@ -88,9 +87,13 @@ async function getDiscover(req, res) {
     // When fetching all categories, use window function to get balanced results per category/type
     // This ensures each category+item_type combination gets represented
     const isAllCategories = category === 'all';
-    // With ~9 category+item_type combinations (3 categories * ~3 types), divide limit accordingly
-    // Cap at 15 items per group for reasonable mobile performance
-    const itemsPerGroup = isAllCategories ? Math.min(15, Math.ceil(safeLimit / 9)) : safeLimit;
+    // With ~9 category+item_type combinations (3 categories * ~3 types), divide limit accordingly.
+    // The per-group cap must account for the outer OFFSET so that deep pages can still be served:
+    // each partition needs to produce enough rows to satisfy (offset + limit) total rows.
+    const groupCount = 9;
+    const itemsPerGroup = isAllCategories
+      ? Math.ceil((safeLimit + safeOffset) / groupCount)
+      : safeLimit;
 
     let sql;
     if (isAllCategories && item_type === 'all') {
@@ -103,6 +106,8 @@ async function getDiscover(req, res) {
       const p5 = paramIndex++;     // creators for OVER clause
       const p6 = paramIndex++;     // genres for OVER clause
       const p7 = paramIndex++;     // itemsPerGroup limit
+      const p8 = paramIndex++;     // safeLimit for outer query
+      const p9 = paramIndex++;     // safeOffset for outer query
 
       sql = `
         WITH ranked AS (
@@ -142,8 +147,9 @@ async function getDiscover(req, res) {
           END,
           relevance_score DESC,
           (payload->>'popularity')::float DESC NULLS LAST
+        LIMIT $${p8} OFFSET $${p9}
       `;
-      // Push parameters: 3 for SELECT, 3 for OVER clause, 1 for limit
+      // Push parameters: 3 for SELECT, 3 for OVER clause, 1 for group limit, 1 for outer limit, 1 for offset
       params.push(
         userInterests.categories,
         userInterests.creators,
@@ -151,7 +157,9 @@ async function getDiscover(req, res) {
         userInterests.categories,  // Duplicate for OVER clause
         userInterests.creators,    // Duplicate for OVER clause
         userInterests.genres,      // Duplicate for OVER clause
-        itemsPerGroup
+        itemsPerGroup,
+        safeLimit,
+        safeOffset
       );
     } else {
       // Standard query for single category or single item_type
@@ -257,11 +265,8 @@ async function getDiscover(req, res) {
     });
 
   } catch (err) {
-    console.error('[Discover] Error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch discover items'
-    });
+    logError('getDiscover', err, { userId: req.user?.id });
+    return sendError(res, 500, 'Failed to fetch discover items', { success: false });
   }
 }
 
@@ -304,11 +309,8 @@ async function getDiscoverStats(req, res) {
     });
 
   } catch (err) {
-    console.error('[Discover] Stats error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch discover stats'
-    });
+    logError('getDiscoverStats', err);
+    return sendError(res, 500, 'Failed to fetch discover stats', { success: false });
   }
 }
 
@@ -351,8 +353,8 @@ async function dismissDiscoverItem(req, res) {
 
     return res.json({ success: true, data: result.rows[0] });
   } catch (err) {
-    console.error('[Discover] Dismiss error:', err);
-    return res.status(500).json({ success: false, error: 'Failed to dismiss discover item' });
+    logError('dismissDiscoverItem', err, { userId: req.user?.id });
+    return sendError(res, 500, 'Failed to dismiss discover item', { success: false });
   }
 }
 

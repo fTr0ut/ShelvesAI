@@ -1,10 +1,13 @@
 const express = require("express");
 const { auth } = require("../middleware/auth");
+const { requireAdmin } = require("../middleware/admin");
+const { validateIntParam, validateStringLengths } = require("../middleware/validate");
 const collectablesQueries = require("../database/queries/collectables");
 const { query } = require("../database/pg");
 const { rowToCamelCase, parsePagination } = require("../database/queries/utils");
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../services/collectables/fingerprint");
 const { normalizeCollectableKind } = require("../services/collectables/kind");
+const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
 
 const router = express.Router();
 
@@ -23,46 +26,11 @@ function categoryToKind(category) {
   return CATEGORY_TO_KIND[category?.toLowerCase()] || 'other';
 }
 
-function normalizeTags(input) {
-  if (input == null) return [];
-  const source = Array.isArray(input)
-    ? input
-    : typeof input === "string"
-      ? input.split(/[\s,]+/)
-      : [];
-  const seen = new Set();
-  const tags = [];
-  for (const entry of source) {
-    const trimmed = String(entry ?? "").trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tags.push(trimmed);
-  }
-  return tags;
-}
-
-function normalizeStringArray(input) {
-  if (input == null) return [];
-  const source = Array.isArray(input)
-    ? input
-    : typeof input === "string"
-      ? input.split(/[;,]+/)
-      : [];
-  const seen = new Set();
-  const out = [];
-  for (const entry of source) {
-    const trimmed = String(entry ?? "").trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(trimmed);
-  }
-  return out;
-}
-
+/**
+ * Local wrapper: the shared normalizeString returns null for empty values,
+ * but this route file historically returned undefined. Keep that behaviour
+ * for the routes in this file so response shapes are unchanged.
+ */
 function normalizeString(value) {
   if (value == null) return undefined;
   const trimmed = String(value).trim();
@@ -70,7 +38,7 @@ function normalizeString(value) {
 }
 
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
-router.post("/", async (req, res) => {
+router.post("/", requireAdmin, async (req, res) => {
   try {
     if (String(process.env.ALLOW_CATALOG_WRITE).toLowerCase() !== "true") {
       return res.status(403).json({ error: "Catalog writes disabled" });
@@ -128,7 +96,7 @@ router.post("/", async (req, res) => {
 });
 
 // Resolve a news item to a collectable (find existing or create minimal)
-router.post("/from-news", async (req, res) => {
+router.post("/from-news", requireAdmin, async (req, res) => {
   try {
     const {
       externalId,
@@ -222,7 +190,7 @@ router.post("/from-news", async (req, res) => {
 });
 
 // Search catalog globally
-router.get("/", async (req, res) => {
+router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     const rawType = String(req.query.type || "").trim();
@@ -299,7 +267,7 @@ router.get("/", async (req, res) => {
 });
 
 // Retrieve a single collectable by id
-router.get("/:collectableId", async (req, res) => {
+router.get("/:collectableId", validateIntParam(['collectableId']), async (req, res) => {
   try {
     const collectable = await collectablesQueries.findById(parseInt(req.params.collectableId, 10));
     if (!collectable)
@@ -312,7 +280,7 @@ router.get("/:collectableId", async (req, res) => {
 });
 
 // Update a collectable's core metadata
-router.put("/:collectableId", async (req, res) => {
+router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']), async (req, res) => {
   try {
     const collectableId = parseInt(req.params.collectableId, 10);
     const existingResult = await query('SELECT * FROM collectables WHERE id = $1', [collectableId]);

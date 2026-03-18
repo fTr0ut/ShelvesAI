@@ -19,7 +19,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
@@ -388,12 +389,16 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 name: filename,
                 type: mimeType,
             });
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Session expired. Please sign in again.');
+            }
 
             // Upload to API
             const response = await fetch(`${apiBase}/api/shelves/${shelfId}/manual/${item.id}/cover`, {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${authToken}`,
                 },
                 body: formData,
             });
@@ -409,10 +414,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             if (data.manual?.coverMediaUrl) {
                 setManualCoverUrl(data.manual.coverMediaUrl);
             } else if (data.manual?.coverMediaPath) {
-                // Build URL from path
-                const trimmed = data.manual.coverMediaPath.replace(/^\/+/, '');
-                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-                setManualCoverUrl(`${apiBase.replace(/\/+$/, '')}/${resource}`);
+                setManualCoverUrl(buildMediaUri(data.manual.coverMediaPath, apiBase));
             }
 
         } catch (e) {
@@ -646,14 +648,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
 
 
-    const buildMediaUri = (pathOrUrl) => {
-        if (!pathOrUrl) return null;
-        if (/^https?:/i.test(pathOrUrl)) return pathOrUrl;
-        const trimmed = pathOrUrl.replace(/^\/+/, '');
-        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-        return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
-    };
-
     const resolveCoverUri = () => {
         // Check local state for recently uploaded manual cover first
         if (manualCoverUrl) {
@@ -662,32 +656,13 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         // Check manual cover from item data (check regardless of isManual flag for robustness)
         // This handles cases where item comes from feed with manualSnapshot
-        if (manual) {
-            if (manual.coverMediaUrl) {
-                return buildMediaUri(manual.coverMediaUrl);
-            }
-            if (manual.coverMediaPath) {
-                return buildMediaUri(manual.coverMediaPath);
-            }
+        const manualUrl = resolveManualCoverUrl(manual, apiBase);
+        if (manualUrl) {
+            return manualUrl;
         }
 
         // Check collectable cover
-        const c = collectable;
-        if (!c?.coverImageUrl) {
-            if (c?.coverMediaPath) {
-                return buildMediaUri(c.coverMediaPath);
-            }
-            if (c?.coverUrl && /^https?:/i.test(c.coverUrl)) {
-                return c.coverUrl;
-            }
-            return null;
-        }
-
-        if (c.coverImageSource === 'external') {
-            return c.coverImageUrl;
-        }
-
-        return buildMediaUri(c.coverImageUrl);
+        return resolveCollectableCoverUrl(collectable, apiBase);
     };
 
     const coverUri = resolveCoverUri();

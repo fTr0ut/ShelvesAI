@@ -46,18 +46,24 @@ export function ThemeProvider({ children }) {
 
     // Load saved theme preference on mount
     useEffect(() => {
+        let cancelled = false;
         (async () => {
             try {
                 const saved = await AsyncStorage.getItem(THEME_KEY);
-                if (saved && themes[saved]) {
+                if (!cancelled && saved && themes[saved]) {
                     setThemeName(saved);
                 }
             } catch (e) {
                 console.warn('Failed to load theme preference:', e);
             } finally {
-                setIsLoading(false);
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         })();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     // Toggle between light and dark

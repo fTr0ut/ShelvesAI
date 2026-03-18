@@ -3,16 +3,23 @@ const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+const { requireAdminCsrf } = require('../middleware/csrf');
 const adminController = require('../controllers/adminController');
 const { adminLogin } = require('../controllers/authController');
 const { requireFields } = require('../middleware/validate');
 
 const adminLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 3,
+  skipSuccessfulRequests: true,
   message: { error: 'Too many attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res, _next, options) => {
+    const ip = req.headers['cf-connecting-ip'] || req.ip;
+    console.warn(`[AdminLoginLimiter] Too many admin login attempts from ${ip}`);
+    res.status(options.statusCode).json(options.message);
+  },
 });
 
 const adminLimiter = rateLimit({
@@ -31,12 +38,19 @@ router.use(auth);
 router.use(requireAdmin);
 router.use(adminLimiter);
 
+router.get('/me', adminController.getMe);
+
 // Dashboard statistics
 router.get('/stats', adminController.getStats);
 
 // User management
 router.get('/users', adminController.listUsers);
 router.get('/users/:userId', adminController.getUser);
+
+// CSRF required for admin state-changing routes.
+router.use(requireAdminCsrf);
+
+router.post('/logout', adminController.logout);
 router.post('/users/:userId/suspend', adminController.suspendUser);
 router.post('/users/:userId/unsuspend', adminController.unsuspendUser);
 router.post('/users/:userId/toggle-admin', adminController.toggleAdmin);

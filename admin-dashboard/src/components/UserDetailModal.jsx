@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { getUser, suspendUser, unsuspendUser, toggleAdmin } from '../api/client';
+import UserAvatar from './UserAvatar';
+import UserBadge from './UserBadge';
+import { getErrorMessage } from '../utils/errorUtils';
 
 export default function UserDetailModal({ userId, onClose, onUpdate }) {
   const [user, setUser] = useState(null);
@@ -22,7 +25,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       const response = await getUser(userId);
       setUser(response.data.user);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load user');
+      setError(getErrorMessage(err, 'Failed to load user'));
     } finally {
       setLoading(false);
     }
@@ -30,6 +33,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
 
   async function handleSuspend() {
     try {
+      setError(null);
       setActionLoading(true);
       await suspendUser(userId, suspendReason);
       await loadUser();
@@ -37,20 +41,24 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       setSuspendReason('');
       onUpdate?.();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to suspend user');
+      setError(getErrorMessage(err, 'Failed to suspend user'));
     } finally {
       setActionLoading(false);
     }
   }
 
   async function handleUnsuspend() {
+    if (!confirm('Are you sure you want to unsuspend this user?')) {
+      return;
+    }
     try {
+      setError(null);
       setActionLoading(true);
       await unsuspendUser(userId);
       await loadUser();
       onUpdate?.();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to unsuspend user');
+      setError(getErrorMessage(err, 'Failed to unsuspend user'));
     } finally {
       setActionLoading(false);
     }
@@ -61,12 +69,13 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       return;
     }
     try {
+      setError(null);
       setActionLoading(true);
       await toggleAdmin(userId);
       await loadUser();
       onUpdate?.();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update admin status');
+      setError(getErrorMessage(err, 'Failed to update admin status'));
     } finally {
       setActionLoading(false);
     }
@@ -96,19 +105,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
             <div className="space-y-6">
               {/* User Info */}
               <div className="flex items-center space-x-4">
-                {user.picture ? (
-                  <img
-                    className="h-16 w-16 rounded-full object-cover"
-                    src={user.picture}
-                    alt=""
-                  />
-                ) : (
-                  <div className="h-16 w-16 rounded-full bg-gray-300 flex items-center justify-center">
-                    <span className="text-gray-600 text-xl font-medium">
-                      {user.username?.[0]?.toUpperCase() || '?'}
-                    </span>
-                  </div>
-                )}
+                <UserAvatar user={user} size="16" textSize="text-xl" />
                 <div>
                   <h4 className="text-xl font-semibold text-gray-900">
                     {user.username || 'No username'}
@@ -118,27 +115,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
               </div>
 
               {/* Status Badges */}
-              <div className="flex gap-2">
-                {user.isSuspended ? (
-                  <span className="px-3 py-1 text-sm font-semibold rounded-full bg-red-100 text-red-800">
-                    Suspended
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">
-                    Active
-                  </span>
-                )}
-                {user.isAdmin && (
-                  <span className="px-3 py-1 text-sm font-semibold rounded-full bg-purple-100 text-purple-800">
-                    Admin
-                  </span>
-                )}
-                {user.isPremium && (
-                  <span className="px-3 py-1 text-sm font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                    Premium
-                  </span>
-                )}
-              </div>
+              <UserBadge user={user} variant="md" />
 
               {/* Suspension Info */}
               {user.isSuspended && user.suspensionReason && (

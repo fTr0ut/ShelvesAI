@@ -1,3 +1,6 @@
+import UserAvatar from './UserAvatar';
+import { SuspendedBadge, AdminBadge } from './UserBadge';
+
 export default function UserTable({ users, onUserClick, loading }) {
   if (loading) {
     return (
@@ -47,19 +50,7 @@ export default function UserTable({ users, onUserClick, loading }) {
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center">
                   <div className="h-10 w-10 flex-shrink-0">
-                    {user.picture ? (
-                      <img
-                        className="h-10 w-10 rounded-full object-cover"
-                        src={user.picture}
-                        alt=""
-                      />
-                    ) : (
-                      <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                        <span className="text-gray-600 font-medium">
-                          {user.username?.[0]?.toUpperCase() || '?'}
-                        </span>
-                      </div>
-                    )}
+                    <UserAvatar user={user} size="10" />
                   </div>
                   <div className="ml-4">
                     <div className="text-sm font-medium text-gray-900">
@@ -77,26 +68,10 @@ export default function UserTable({ users, onUserClick, loading }) {
                 <div className="text-sm text-gray-900">{user.email || '-'}</div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {user.isSuspended ? (
-                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                    Suspended
-                  </span>
-                ) : (
-                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                    Active
-                  </span>
-                )}
+                <SuspendedBadge isSuspended={user.isSuspended} variant="sm" />
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                {user.isAdmin ? (
-                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
-                    Admin
-                  </span>
-                ) : (
-                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                    User
-                  </span>
-                )}
+                <AdminBadge isAdmin={user.isAdmin} variant="sm" />
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 {user.createdAt

@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
 
 export default function ProfileScreen({ navigation, route }) {
@@ -55,6 +55,13 @@ export default function ProfileScreen({ navigation, route }) {
     const [state, setState] = useState('');
     const [country, setCountry] = useState('');
     const [isPrivate, setIsPrivate] = useState(false);
+    const isMountedRef = useRef(false);
+
+    const setStateIfMounted = useCallback((setter, value) => {
+        if (isMountedRef.current) {
+            setter(value);
+        }
+    }, []);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -64,27 +71,35 @@ export default function ProfileScreen({ navigation, route }) {
     const isOwnProfile = !route.params?.username || profile?.username === currentUser?.username;
 
     useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    useEffect(() => {
         loadProfile();
     }, [username]);
 
     const loadProfile = async () => {
         try {
-            setLoading(true);
-            setError(null);
+            setStateIfMounted(setLoading, true);
+            setStateIfMounted(setError, null);
 
             const profilePath = route.params?.username ? `/api/profile/${username}` : '/api/profile';
             const profileData = await apiRequest({ apiBase, path: profilePath, token });
+            if (!isMountedRef.current) return;
             setProfile(profileData.profile);
 
             // Set editable fields
             if (profileData.profile) {
-                setFirstName(profileData.profile.firstName || '');
-                setLastName(profileData.profile.lastName || '');
-                setBio(profileData.profile.bio || '');
-                setCity(profileData.profile.city || '');
-                setState(profileData.profile.state || '');
-                setCountry(profileData.profile.country || '');
-                setIsPrivate(profileData.profile.isPrivate || false);
+                setStateIfMounted(setFirstName, profileData.profile.firstName || '');
+                setStateIfMounted(setLastName, profileData.profile.lastName || '');
+                setStateIfMounted(setBio, profileData.profile.bio || '');
+                setStateIfMounted(setCity, profileData.profile.city || '');
+                setStateIfMounted(setState, profileData.profile.state || '');
+                setStateIfMounted(setCountry, profileData.profile.country || '');
+                setStateIfMounted(setIsPrivate, profileData.profile.isPrivate || false);
             }
 
             // Load shelves and posts if not private or own profile
@@ -94,27 +109,27 @@ export default function ProfileScreen({ navigation, route }) {
                         ? `/api/profile/${username}/shelves`
                         : `/api/profile/${currentUser?.username}/shelves`;
                     const shelvesData = await apiRequest({ apiBase, path: shelvesPath, token });
-                    setShelves(shelvesData.shelves || []);
+                    setStateIfMounted(setShelves, shelvesData.shelves || []);
                 } catch (e) {
                     console.warn('Failed to load shelves:', e);
-                    setShelves([]);
+                    setStateIfMounted(setShelves, []);
                 }
 
                 // Load user's posts/activity
                 try {
-                    setPostsLoading(true);
+                    setStateIfMounted(setPostsLoading, true);
                     const userId = profileData.profile.id;
                     const feedData = await apiRequest({
                         apiBase,
                         path: `/api/feed?ownerId=${userId}`,
                         token
                     });
-                    setPosts(feedData.entries || []);
+                    setStateIfMounted(setPosts, feedData.entries || []);
                 } catch (e) {
                     console.warn('Failed to load posts:', e);
-                    setPosts([]);
+                    setStateIfMounted(setPosts, []);
                 } finally {
-                    setPostsLoading(false);
+                    setStateIfMounted(setPostsLoading, false);
                 }
 
                 // Check if this user has viewable wishlists (for friends)
@@ -125,10 +140,10 @@ export default function ProfileScreen({ navigation, route }) {
                             path: `/api/wishlists/user/${profileData.profile.id}/check`,
                             token
                         });
-                        setHasViewableWishlists(wishlistCheck.hasWishlists || false);
+                        setStateIfMounted(setHasViewableWishlists, wishlistCheck.hasWishlists || false);
                     } catch (e) {
                         console.warn('Failed to check wishlists:', e);
-                        setHasViewableWishlists(false);
+                        setStateIfMounted(setHasViewableWishlists, false);
                     }
 
                     // Check if user has viewable favorites
@@ -138,39 +153,39 @@ export default function ProfileScreen({ navigation, route }) {
                             path: `/api/favorites/user/${profileData.profile.id}/check`,
                             token
                         });
-                        setHasViewableFavorites(favoritesCheck.hasFavorites || false);
+                        setStateIfMounted(setHasViewableFavorites, favoritesCheck.hasFavorites || false);
                     } catch (e) {
                         console.warn('Failed to check favorites:', e);
-                        setHasViewableFavorites(false);
+                        setStateIfMounted(setHasViewableFavorites, false);
                     }
                 }
             }
         } catch (e) {
             console.error('Failed to load profile:', e);
-            setError(e.message);
+            setStateIfMounted(setError, e.message);
         } finally {
-            setLoading(false);
+            setStateIfMounted(setLoading, false);
         }
     };
 
     const loadFavorites = useCallback(async () => {
         if (!isOwnProfile) return; // Only show favorites on own profile
-        setFavoritesLoading(true);
+        setStateIfMounted(setFavoritesLoading, true);
         try {
             const favData = await apiRequest({
                 apiBase,
                 path: '/api/favorites',
                 token,
             });
-            setFavorites(favData.favorites || []);
-            setFavoritesLoaded(true);
+            setStateIfMounted(setFavorites, favData.favorites || []);
+            setStateIfMounted(setFavoritesLoaded, true);
         } catch (e) {
             console.warn('Failed to load favorites:', e);
-            setFavorites([]);
+            setStateIfMounted(setFavorites, []);
         } finally {
-            setFavoritesLoading(false);
+            setStateIfMounted(setFavoritesLoading, false);
         }
-    }, [apiBase, token, isOwnProfile]);
+    }, [apiBase, token, isOwnProfile, setStateIfMounted]);
 
     // Load favorites when tab switches to favorites
     useEffect(() => {
@@ -181,22 +196,22 @@ export default function ProfileScreen({ navigation, route }) {
 
     const loadLists = useCallback(async () => {
         if (!isOwnProfile) return; // Only show own lists on profile
-        setListsLoading(true);
+        setStateIfMounted(setListsLoading, true);
         try {
             const data = await apiRequest({
                 apiBase,
                 path: '/api/lists',
                 token,
             });
-            setLists(data.lists || []);
-            setListsLoaded(true);
+            setStateIfMounted(setLists, data.lists || []);
+            setStateIfMounted(setListsLoaded, true);
         } catch (e) {
             console.warn('Failed to load lists:', e);
-            setLists([]);
+            setStateIfMounted(setLists, []);
         } finally {
-            setListsLoading(false);
+            setStateIfMounted(setListsLoading, false);
         }
-    }, [apiBase, token, isOwnProfile]);
+    }, [apiBase, token, isOwnProfile, setStateIfMounted]);
 
     // Load lists when tab switches to lists
     useEffect(() => {
@@ -258,11 +273,15 @@ export default function ProfileScreen({ navigation, route }) {
 
             const formData = new FormData();
             formData.append('photo', prepared);
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Session expired. Please sign in again.');
+            }
 
             const res = await fetch(`${apiBase}/api/profile/photo`, {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${authToken}`,
                     'ngrok-skip-browser-warning': 'true',
                 },
                 body: formData,

@@ -19,6 +19,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { addComment, getComments, toggleLike } from '../services/feedApi';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 
 export default function FeedDetailScreen({ route, navigation }) {
   const { entry, id, feedId } = route.params || {};
@@ -178,44 +179,7 @@ export default function FeedDetailScreen({ route, navigation }) {
   const statusLabel = statusLabels[checkinStatus] || statusFallback;
   const statusIcon = statusIcons[checkinStatus] || 'checkbox-outline';
 
-  const buildMediaUri = (value) => {
-    if (!value) return null;
-    if (/^https?:/i.test(value)) return value;
-    const trimmed = String(value).replace(/^\/+/, '');
-    const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-    if (!apiBase) return `/${resource}`;
-    return `${apiBase.replace(/\/+$/, '')}/${resource}`;
-  };
-
-  const resolveCollectableCoverUrl = (target) => {
-    if (!target) return null;
-    // Prefer pre-resolved URL from API (handles S3/CloudFront)
-    if (target.coverMediaUrl) {
-      return target.coverMediaUrl;
-    }
-    if (target.coverImageUrl) {
-      if (target.coverImageSource === 'external' || /^https?:/i.test(target.coverImageUrl)) {
-        return target.coverImageUrl;
-      }
-      return buildMediaUri(target.coverImageUrl);
-    }
-    if (target.coverMediaPath) {
-      return buildMediaUri(target.coverMediaPath);
-    }
-    if (target.coverUrl) {
-      return /^https?:/i.test(target.coverUrl)
-        ? target.coverUrl
-        : buildMediaUri(target.coverUrl);
-    }
-    const images = Array.isArray(target.images) ? target.images : [];
-    for (const image of images) {
-      const url = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
-      if (url) return url;
-    }
-    return null;
-  };
-
-  const collectableCoverUrl = resolveCollectableCoverUrl(collectable);
+  const collectableCoverUrl = resolveCollectableCoverUrl(collectable, apiBase);
 
   const formatRelativeTime = (dateString) => {
     if (!dateString) return '';
@@ -232,13 +196,6 @@ export default function FeedDetailScreen({ route, navigation }) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
-  const resolveManualCoverUrl = (manual) => {
-    if (!manual) return null;
-    if (manual.coverMediaUrl) return manual.coverMediaUrl;
-    if (manual.coverMediaPath) return buildMediaUri(manual.coverMediaPath);
-    return null;
-  };
-
   const getItemInfo = (item) => {
     const c = item?.collectable || item?.collectableSnapshot;
     const m = item?.manual || item?.manualSnapshot;
@@ -246,7 +203,7 @@ export default function FeedDetailScreen({ route, navigation }) {
     const title = c?.title || m?.title || m?.name || item?.title || payload?.title || payload?.name || 'Unknown item';
 
     // Extract cover URL with priority: collectable cover, then manual cover
-    const coverUrl = resolveCollectableCoverUrl(c) || resolveManualCoverUrl(m);
+    const coverUrl = resolveCollectableCoverUrl(c, apiBase) || resolveManualCoverUrl(m, apiBase);
 
     // Extract rating for rating events
     const rating = item?.rating || payload?.rating || null;

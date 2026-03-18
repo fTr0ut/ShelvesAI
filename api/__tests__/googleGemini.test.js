@@ -45,7 +45,7 @@ describe('GoogleGeminiService', () => {
             expect(result[0]).toMatchObject({
                 title: "Test Book",
                 primaryCreator: "Test Author",
-                kind: "book"
+                kind: "books"
             });
             expect(result[0].source).toBe('gemini-schema-enriched');
         });

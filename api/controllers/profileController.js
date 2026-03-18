@@ -9,6 +9,7 @@ const shelvesQueries = require('../database/queries/shelves');
 const profileMediaQueries = require('../database/queries/profileMedia');
 const { rowToCamelCase } = require('../database/queries/utils');
 const { addMediaUrls } = require('../services/mediaUrl');
+const { validateImageBuffer } = require('../utils/imageValidation');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -104,10 +105,11 @@ async function uploadPhoto(req, res) {
 
         // Check if multipart upload
         if (req.file) {
+            const validated = await validateImageBuffer(req.file.buffer);
             media = await profileMediaQueries.uploadFromBuffer({
                 userId: req.user.id,
                 buffer: req.file.buffer,
-                contentType: req.file.mimetype,
+                contentType: validated.mime,
                 originalFilename: req.file.originalname,
             });
         }
@@ -130,7 +132,8 @@ async function uploadPhoto(req, res) {
         });
     } catch (err) {
         console.error('uploadPhoto error:', err);
-        res.status(500).json({ error: 'Failed to upload photo' });
+        const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
+        res.status(statusCode).json({ error: err?.message || 'Failed to upload photo' });
     }
 }
 

@@ -1,12 +1,19 @@
 const { query, transaction } = require('../pg');
 const { rowToCamelCase, parsePagination } = require('./utils');
+const { AGGREGATE_WINDOW_MINUTES, PREVIEW_PAYLOAD_LIMIT } = require('../../config/constants');
 
-const AGGREGATE_WINDOW_MINUTES = parseInt(process.env.FEED_AGGREGATE_WINDOW_MINUTES || '15', 10);
-const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
 const FEED_AGGREGATE_DEBUG = String(process.env.FEED_AGGREGATE_DEBUG || '').toLowerCase() === 'true';
 
 function normalizePayload(payload) {
   if (payload && typeof payload === 'object') return payload;
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_err) {
+      return {};
+    }
+  }
   return {};
 }
 

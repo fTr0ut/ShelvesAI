@@ -1,9 +1,80 @@
 const { query, transaction } = require('../pg');
-const { rowToCamelCase, parsePagination } = require('./utils');
+const { rowToCamelCase } = require('./utils');
 
 async function ensureEventExists(eventId) {
   const result = await query('SELECT 1 FROM event_aggregates WHERE id = $1', [eventId]);
   return result.rowCount > 0;
+}
+
+async function canUserViewEvent(eventId, viewerId) {
+  if (!eventId || !viewerId) return false;
+
+  const result = await query(
+    `WITH target AS (
+        SELECT a.id, a.user_id, a.shelf_id, a.event_type, a.visibility, s.visibility AS shelf_visibility
+        FROM event_aggregates a
+        LEFT JOIN shelves s ON s.id = a.shelf_id
+        WHERE a.id = $1
+     )
+     SELECT EXISTS(
+       SELECT 1
+       FROM target t
+       WHERE
+         t.user_id = $2
+         OR (
+           t.shelf_id IS NOT NULL
+           AND (
+             t.shelf_visibility = 'public'
+             OR (
+               t.shelf_visibility = 'friends'
+               AND EXISTS (
+                 SELECT 1
+                 FROM friendships f
+                 WHERE f.status = 'accepted'
+                   AND (
+                     (f.requester_id = $2 AND f.addressee_id = t.user_id)
+                     OR (f.addressee_id = $2 AND f.requester_id = t.user_id)
+                   )
+               )
+             )
+           )
+         )
+         OR (
+           t.event_type = 'checkin.activity'
+           AND (
+             t.visibility = 'public'
+             OR (
+               t.visibility = 'friends'
+               AND EXISTS (
+                 SELECT 1
+                 FROM friendships f
+                 WHERE f.status = 'accepted'
+                   AND (
+                     (f.requester_id = $2 AND f.addressee_id = t.user_id)
+                     OR (f.addressee_id = $2 AND f.requester_id = t.user_id)
+                   )
+               )
+             )
+           )
+         )
+         OR (
+           t.shelf_id IS NULL
+           AND t.event_type = 'item.rated'
+           AND EXISTS (
+             SELECT 1
+             FROM friendships f
+             WHERE f.status = 'accepted'
+               AND (
+                 (f.requester_id = $2 AND f.addressee_id = t.user_id)
+                 OR (f.addressee_id = $2 AND f.requester_id = t.user_id)
+               )
+           )
+         )
+     ) AS can_view`,
+    [eventId, viewerId]
+  );
+
+  return !!result.rows[0]?.can_view;
 }
 
 async function getEventOwner(eventId) {
@@ -193,6 +264,7 @@ async function getSocialSummaries(eventIds, userId) {
 
 module.exports = {
   ensureEventExists,
+  canUserViewEvent,
   getEventOwner,
   toggleLike,
   addComment,

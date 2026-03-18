@@ -20,6 +20,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
@@ -99,6 +100,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
     const autoAddHandledRef = useRef(false);
+    const isMountedRef = useRef(true);
+    const loadingMoreRef = useRef(false);
 
     // Pagination state
     const [hasMore, setHasMore] = useState(false);
@@ -112,13 +115,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const shelfType = shelf?.type || route?.params?.type || '';
     const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
 
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
     const loadShelf = useCallback(async () => {
         try {
-            if (!refreshing) setLoading(true);
+            if (!refreshing && isMountedRef.current) setLoading(true);
             const [shelfData, itemsData] = await Promise.all([
                 apiRequest({ apiBase, path: `/api/shelves/${id}`, token }),
                 apiRequest({ apiBase, path: `/api/shelves/${id}/items?limit=25&skip=0`, token }),
             ]);
+            if (!isMountedRef.current) return;
             setShelf(shelfData.shelf);
             const loadedItems = Array.isArray(itemsData.items) ? itemsData.items : [];
             setItems(loadedItems);
@@ -144,7 +154,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         token,
                         body: { collectableIds },
                     });
-                    setFavorites(favData.status || {});
+                    if (isMountedRef.current) {
+                        setFavorites(favData.status || {});
+                    }
                 } catch (e) {
                     console.warn('Failed to load favorites:', e);
                 }
@@ -152,13 +164,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
         } catch (e) {
             console.warn('Failed to load shelf:', e);
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (isMountedRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
     }, [apiBase, id, token, refreshing]);
 
     const loadMore = useCallback(async () => {
-        if (loadingMore || !hasMore) return;
+        if (loadingMoreRef.current || !hasMore) return;
+        loadingMoreRef.current = true;
         setLoadingMore(true);
         try {
             const skip = items.length;
@@ -167,6 +182,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 path: `/api/shelves/${id}/items?limit=25&skip=${skip}`,
                 token,
             });
+            if (!isMountedRef.current) return;
             const newItems = Array.isArray(itemsData.items) ? itemsData.items : [];
             setItems(prev => [...prev, ...newItems]);
             if (itemsData.pagination) {
@@ -177,9 +193,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
         } catch (e) {
             console.warn('Failed to load more items:', e);
         } finally {
-            setLoadingMore(false);
+            loadingMoreRef.current = false;
+            if (isMountedRef.current) {
+                setLoadingMore(false);
+            }
         }
-    }, [apiBase, id, token, items.length, loadingMore, hasMore]);
+    }, [apiBase, id, token, items.length, hasMore]);
 
     useEffect(() => { loadShelf(); }, [loadShelf]);
 
@@ -381,70 +400,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return config.icon;
     };
 
-    // Provider-agnostic cover resolution
+    // Provider-agnostic cover resolution using shared utilities
     const resolveCoverUri = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
-        if (collectable) {
-            // Use new provider-agnostic fields if available
-            if (collectable.coverImageUrl) {
-                if (collectable.coverImageSource === 'external') {
-                    // External URL, use directly
-                    return collectable.coverImageUrl;
-                }
-                // Local path, resolve via media endpoint
-                const trimmed = collectable.coverImageUrl.replace(/^\/+/, '');
-                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
-            }
-
-            // Fallback to legacy fields
-            if (collectable.coverMediaPath) {
-                const trimmed = collectable.coverMediaPath.replace(/^\/+/, '');
-                const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-                return apiBase ? `${apiBase.replace(/\/+$/, '')}/${resource}` : `/${resource}`;
-            }
-
-            if (collectable.coverUrl && /^https?:/i.test(collectable.coverUrl)) {
-                return collectable.coverUrl;
-            }
-
-            // Check images array for URLs
-            const images = Array.isArray(collectable.images) ? collectable.images : [];
-            for (const image of images) {
-                const url = image?.urlSmall || image?.urlMedium || image?.urlLarge;
-                if (typeof url === 'string' && url.trim()) {
-                    return url.trim();
-                }
-            }
-        }
-
         const manual = item.manual || item.manualSnapshot;
-        if (manual) {
-            if (manual.coverMediaUrl) {
-                return buildCoverUri(manual.coverMediaUrl);
-            }
-            if (manual.coverMediaPath) {
-                return buildCoverUri(manual.coverMediaPath);
-            }
-        }
 
-        return null;
-    };
-
-    const buildCoverUri = (pathOrUrl) => {
-        if (!pathOrUrl) return null;
-        // If it's already an http URL, use it directly
-        if (/^https?:/i.test(pathOrUrl)) {
-            return pathOrUrl;
-        }
-        // Build URI from local path via media endpoint
-        const trimmed = pathOrUrl.replace(/^\/+/, '');
-        const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-        if (!apiBase) {
-            return `/${resource}`;
-        }
-        const normalizedBase = apiBase.replace(/\/+$/, '');
-        return `${normalizedBase}/${resource}`;
+        return (
+            resolveCollectableCoverUrl(collectable, apiBase) ||
+            resolveManualCoverUrl(manual, apiBase) ||
+            null
+        );
     };
 
     const renderItem = ({ item }) => {

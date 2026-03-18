@@ -24,18 +24,17 @@ describe('Catalog Integration in VisionPipeline', () => {
         // Clear mocks
         jest.clearAllMocks();
 
-        // Setup service mocks
+        // Setup service mocks — no lookupFirstPass so the pipeline uses the search() fallback path
         mockBookService = {
             supportsShelfType: jest.fn(type => ['book', 'books'].includes(type)),
-            lookupFirstPass: jest.fn(),
-            search: jest.fn() // Add search mock if pipeline uses it directly (it was implemented to use search in loop)
+            search: jest.fn()
         };
         mockGameService = {
-            supportsShelfType: jest.fn(type => ['game'].includes(type)),
+            supportsShelfType: jest.fn(type => ['game', 'games'].includes(type)),
             search: jest.fn()
         };
         mockMovieService = {
-            supportsShelfType: jest.fn(type => ['movie'].includes(type)),
+            supportsShelfType: jest.fn(type => ['movie', 'movies'].includes(type)),
             search: jest.fn()
         };
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -26,6 +26,7 @@ import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { useSearch } from '../hooks/useSearch';
 
 const STEPS = {
     STATUS: 'status',
@@ -52,48 +53,37 @@ export default function CheckInScreen() {
     const [note, setNote] = useState('');
     const [submitting, setSubmitting] = useState(false);
 
-    // Search state
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState([]);
-    const [searchLoading, setSearchLoading] = useState(false);
-    const searchTimeoutRef = useRef(null);
-
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
     const overlayColor = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.35)';
 
-    // Debounced search handler
-    const handleSearchChange = useCallback((text) => {
-        setSearchQuery(text);
-
-        if (searchTimeoutRef.current) {
-            clearTimeout(searchTimeoutRef.current);
-        }
-
-        if (!text.trim()) {
-            setSearchResults([]);
-            return;
-        }
-
-        searchTimeoutRef.current = setTimeout(async () => {
-            setSearchLoading(true);
-            try {
-                // Search collectables only (internal database)
-                const data = await apiRequest({
-                    apiBase,
-                    path: `/api/checkin/search?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
-                    token,
-                });
-                setSearchResults(data?.results || []);
-            } catch (err) {
-                console.error('Search error:', err);
-            } finally {
-                setSearchLoading(false);
-            }
-        }, 300);
+    // Search via shared hook (handles debounce, cleanup, and BUG-19 blur cleanup).
+    const searchFn = useCallback(async (text) => {
+        const data = await apiRequest({
+            apiBase,
+            path: `/api/checkin/search?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
+            token,
+        });
+        return data?.results || [];
     }, [apiBase, token]);
+
+    const {
+        query: searchQuery,
+        setQuery: handleSearchChange,
+        results: searchResultsRaw,
+        loading: searchLoading,
+        clear: clearSearch,
+    } = useSearch(searchFn);
+
+    const searchResults = searchResultsRaw ?? [];
+
+    // BUG-19: clear pending search timeout on navigation blur.
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('blur', clearSearch);
+        return unsubscribe;
+    }, [navigation, clearSearch]);
 
     // Step handlers
     const handleStatusSelect = useCallback((status) => {
@@ -109,12 +99,11 @@ export default function CheckInScreen() {
     const handleBack = useCallback(() => {
         if (step === STEPS.SEARCH) {
             setStep(STEPS.STATUS);
-            setSearchQuery('');
-            setSearchResults([]);
+            clearSearch();
         } else if (step === STEPS.CONFIRM) {
             setStep(STEPS.SEARCH);
         }
-    }, [step]);
+    }, [step, clearSearch]);
 
     const handleSubmit = useCallback(async () => {
         if (!selectedStatus || !selectedItem) return;
@@ -140,10 +129,6 @@ export default function CheckInScreen() {
                     text: 'OK',
                     onPress: () => {
                         navigation.goBack();
-                        navigation.navigate('Main', {
-                            screen: 'Home',
-                            params: { resetTab: Date.now() }
-                        });
                     }
                 }
             ]);
@@ -212,7 +197,7 @@ export default function CheckInScreen() {
                                 autoFocus
                             />
                             {searchQuery.length > 0 && (
-                                <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+                                <TouchableOpacity onPress={clearSearch}>
                                     <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                                 </TouchableOpacity>
                             )}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getStats, getSystemInfo } from '../api/client';
 import StatsCard from '../components/StatsCard';
+import { getErrorMessage } from '../utils/errorUtils';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -22,7 +23,7 @@ export default function Dashboard() {
       setStats(statsResponse.data);
       setSystemInfo(systemResponse.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load dashboard data');
+      setError(getErrorMessage(err, 'Failed to load dashboard data'));
     } finally {
       setLoading(false);
     }

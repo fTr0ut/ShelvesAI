@@ -5,6 +5,9 @@
  */
 
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
+const { withTimeout } = require('../../../utils/withTimeout');
+
+const DEFAULT_LOOKUP_TIMEOUT_MS = 10000;
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -16,6 +19,9 @@ class IgdbAdapter {
         this.name = 'igdb';
         this._service = null;
         this._serviceOptions = options;
+        this.lookupTimeoutMs = Number.isFinite(options.lookupTimeoutMs)
+            ? options.lookupTimeoutMs
+            : Number.parseInt(process.env.IGDB_LOOKUP_TIMEOUT_MS || '', 10) || DEFAULT_LOOKUP_TIMEOUT_MS;
     }
 
     /**
@@ -57,7 +63,11 @@ class IgdbAdapter {
         }
 
         try {
-            const result = await service.safeLookup(item, options.retries || 2);
+            const result = await withTimeout(
+                () => service.safeLookup(item, options.retries || 2),
+                this.lookupTimeoutMs,
+                '[IgdbAdapter] lookup',
+            );
 
             if (result && result.game) {
                 return this._toCollectable(result, item);

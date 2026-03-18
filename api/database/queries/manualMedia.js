@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
+const { validateImageBuffer } = require('../../utils/imageValidation');
 
 // Media storage configuration - use same cache directory as server.js
 const API_ROOT = path.resolve(__dirname, '..', '..');
@@ -104,9 +105,11 @@ async function deleteOldCover(localPath) {
  * @returns {Promise<Object>} Updated manual with cover path
  */
 async function uploadFromBuffer({ userId, manualId, buffer, contentType }) {
+    const validated = await validateImageBuffer(buffer);
+
     // Generate checksum for filename
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-    const ext = extFromContentType(contentType);
+    const ext = extFromContentType(validated.mime);
     const localPath = buildLocalPath({ userId, manualId, checksum, ext });
 
     // Get existing cover path for cleanup
@@ -117,7 +120,7 @@ async function uploadFromBuffer({ userId, manualId, buffer, contentType }) {
     const oldPath = existingResult.rows[0]?.cover_media_path;
 
     // Save new file
-    const saveResult = await saveBuffer(buffer, localPath, contentType);
+    const saveResult = await saveBuffer(buffer, localPath, validated.mime);
 
     // Update database
     const updateResult = await query(

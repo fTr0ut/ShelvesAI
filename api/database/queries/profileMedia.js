@@ -11,6 +11,11 @@ const fetch = require('node-fetch');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
+const {
+    validateImageBuffer,
+    isAllowedImageMimeType,
+    normalizeMimeType,
+} = require('../../utils/imageValidation');
 
 // SSRF protection: blocked IP ranges and hostnames
 const BLOCKED_HOSTNAMES = new Set([
@@ -86,6 +91,9 @@ const RAW_CACHE_ROOT = process.env.MEDIA_CACHE_DIR || process.env.COVER_CACHE_DI
 const CACHE_ROOT = path.isAbsolute(RAW_CACHE_ROOT)
     ? RAW_CACHE_ROOT
     : path.resolve(API_ROOT, RAW_CACHE_ROOT);
+const RAW_MAX_BYTES = parseInt(process.env.MEDIA_MAX_BYTES || '5242880', 10);
+const MAX_PROFILE_IMAGE_BYTES =
+    Number.isFinite(RAW_MAX_BYTES) && RAW_MAX_BYTES > 0 ? RAW_MAX_BYTES : 5242880;
 
 const EXT_MAP = new Map([
     ['image/jpeg', '.jpg'],
@@ -120,45 +128,34 @@ function extFromContentType(contentType) {
 }
 
 /**
- * Check if file exists
+ * Download image from URL and validate content type + image bytes.
  */
-async function fileExists(filePath) {
-    try {
-        await fs.access(filePath);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Download image from URL and save to S3 or local filesystem
- */
-async function downloadAndSave(url, localPath) {
+async function downloadImageFromUrl(url) {
     const response = await fetch(url, { timeout: 15000 });
     if (!response.ok) {
         throw new Error(`Failed to download from ${url}: ${response.status}`);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-
-    // Upload to S3 if configured, otherwise fall back to local filesystem
-    if (s3.isEnabled()) {
-        await s3.uploadBuffer(buffer, localPath, contentType);
-    } else {
-        const absolutePath = toAbsolutePath(localPath);
-        const dir = path.dirname(absolutePath);
-        await fs.mkdir(dir, { recursive: true });
-        await fs.writeFile(absolutePath, buffer);
+    const headerMime = normalizeMimeType(response.headers.get('content-type') || '');
+    if (headerMime && !isAllowedImageMimeType(headerMime)) {
+        throw new Error('Remote URL did not return an allowed image type');
     }
 
-    return {
-        sizeBytes: buffer.length,
-        checksum,
-        contentType,
-    };
+    const contentLength = parseInt(response.headers.get('content-length') || '', 10);
+    if (Number.isFinite(contentLength) && contentLength > MAX_PROFILE_IMAGE_BYTES) {
+        throw new Error(`Remote image exceeds ${MAX_PROFILE_IMAGE_BYTES} bytes`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_PROFILE_IMAGE_BYTES) {
+        throw new Error(`Remote image exceeds ${MAX_PROFILE_IMAGE_BYTES} bytes`);
+    }
+    const validated = await validateImageBuffer(buffer);
+    if (headerMime && headerMime !== validated.mime) {
+        throw new Error('Remote image MIME mismatch');
+    }
+
+    return { buffer, contentType: validated.mime };
 }
 
 /**
@@ -256,12 +253,13 @@ async function uploadFromUrl({ userId, sourceUrl }) {
     // SSRF protection: validate URL before fetching
     validateUrlForSSRF(sourceUrl);
 
-    // Download the image
-    const checksum = crypto.createHash('sha256').update(sourceUrl).digest('hex').slice(0, 16);
-    const ext = '.jpg'; // Will be updated after download
+    // Download and validate the image before storage.
+    const downloaded = await downloadImageFromUrl(sourceUrl);
+    const checksum = crypto.createHash('sha256').update(downloaded.buffer).digest('hex').slice(0, 16);
+    const ext = extFromContentType(downloaded.contentType);
     const localPath = buildLocalPath({ userId, checksum, ext });
 
-    const downloadResult = await downloadAndSave(sourceUrl, localPath);
+    const saveResult = await saveBuffer(downloaded.buffer, localPath, downloaded.contentType);
 
     // Create database record
     const media = await create({
@@ -269,9 +267,9 @@ async function uploadFromUrl({ userId, sourceUrl }) {
         kind: 'avatar',
         sourceUrl,
         localPath,
-        contentType: downloadResult.contentType,
-        sizeBytes: downloadResult.sizeBytes,
-        checksum: downloadResult.checksum,
+        contentType: saveResult.contentType,
+        sizeBytes: saveResult.sizeBytes,
+        checksum: saveResult.checksum,
     });
 
     // Update user's profile_media_id
@@ -290,11 +288,12 @@ async function uploadFromUrl({ userId, sourceUrl }) {
  * Upload profile photo from buffer (multipart upload)
  */
 async function uploadFromBuffer({ userId, buffer, contentType, originalFilename }) {
+    const validated = await validateImageBuffer(buffer);
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-    const ext = extFromContentType(contentType);
+    const ext = extFromContentType(validated.mime);
     const localPath = buildLocalPath({ userId, checksum, ext });
 
-    const saveResult = await saveBuffer(buffer, localPath, contentType);
+    const saveResult = await saveBuffer(buffer, localPath, validated.mime);
 
     // Create database record
     const media = await create({

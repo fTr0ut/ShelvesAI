@@ -27,11 +27,19 @@ const needsReviewQueries = require('../database/queries/needsReview');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const manualMediaQueries = require('../database/queries/manualMedia');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+const { validateImageBuffer } = require('../utils/imageValidation');
 const {
   normalizeOtherManualItem,
   buildOtherManualPayload,
   hasRequiredOtherFields,
 } = require('../services/manuals/otherManual');
+const { normalizeString, normalizeStringArray } = require('../utils/normalize');
+const {
+  DEFAULT_OCR_CONFIDENCE_THRESHOLD,
+  DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD,
+  OCR_CONFIDENCE_THRESHOLD,
+  AI_REVIEW_CONFIDENCE_THRESHOLD,
+} = require('../config/constants');
 
 
 
@@ -81,34 +89,6 @@ function coerceNumber(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
-}
-
-function normalizeString(value) {
-  if (value === undefined || value === null) return null;
-  const trimmed = String(value).trim();
-  return trimmed || null;
-}
-
-function normalizeStringArray(...values) {
-  const out = [];
-  values.forEach((value) => {
-    if (!value) return;
-    if (Array.isArray(value)) {
-      value.forEach((entry) => out.push(entry));
-    } else {
-      out.push(value);
-    }
-  });
-  const normalized = out.map((entry) => normalizeString(entry)).filter(Boolean);
-  const seen = new Set();
-  const deduped = [];
-  for (const entry of normalized) {
-    const key = entry.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(entry);
-  }
-  return deduped;
 }
 
 function normalizeArray(value) {
@@ -230,20 +210,7 @@ function parsePaginationParams(reqQuery, { defaultLimit = 20, maxLimit = 100 } =
   return { limit, skip };
 }
 
-const DEFAULT_OCR_CONFIDENCE_THRESHOLD = 0.7;
-const OCR_CONFIDENCE_THRESHOLD = (() => {
-  const raw = parseFloat(process.env.OPENAI_VISION_OCR_CONFIDENCE_THRESHOLD || process.env.OPENAI_VISION_CONFIDENCE_THRESHOLD || "");
-  if (Number.isFinite(raw)) return Math.max(0, Math.min(1, raw));
-  return DEFAULT_OCR_CONFIDENCE_THRESHOLD;
-})();
-
 const VISION_FINGERPRINT_SOURCE = "vision-ocr";
-const DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD = 0.35;
-const AI_REVIEW_CONFIDENCE_THRESHOLD = (() => {
-  const raw = parseFloat(process.env.OPENAI_ENRICH_REVIEW_CONFIDENCE_THRESHOLD || process.env.OPENAI_ENRICH_CONFIDENCE_THRESHOLD || "");
-  if (Number.isFinite(raw)) return Math.max(0, Math.min(1, raw));
-  return DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD;
-})();
 
 // PostgreSQL helper functions
 async function loadShelfForUser(userId, shelfId) {
@@ -958,11 +925,12 @@ async function uploadManualCover(req, res) {
     const entry = entryResult.rows[0];
 
     // Upload the cover image
+    const validated = await validateImageBuffer(req.file.buffer);
     const updatedManual = await manualMediaQueries.uploadFromBuffer({
       userId: req.user.id,
       manualId: entry.manual_id,
       buffer: req.file.buffer,
-      contentType: req.file.mimetype,
+      contentType: validated.mime,
     });
 
     // Build response with resolved URL
@@ -977,7 +945,8 @@ async function uploadManualCover(req, res) {
     });
   } catch (err) {
     console.error('uploadManualCover error:', err);
-    res.status(500).json({ error: 'Server error' });
+    const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
+    res.status(statusCode).json({ error: err?.message || 'Server error' });
   }
 }
 

@@ -1,56 +1,91 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { login as apiLogin } from '../api/client';
-
-const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+import { login as apiLogin, logout as apiLogout, getMe as apiGetMe } from '../api/client';
 
 const AuthContext = createContext(null);
+// UI auth state is informational only; API routes enforce JWT + admin role server-side.
+const IDLE_TIMEOUT_MINUTES = Number(import.meta.env.VITE_ADMIN_IDLE_TIMEOUT_MINUTES || 20);
+const IDLE_TIMEOUT_MS = Number.isFinite(IDLE_TIMEOUT_MINUTES) && IDLE_TIMEOUT_MINUTES > 0
+  ? IDLE_TIMEOUT_MINUTES * 60 * 1000
+  : 20 * 60 * 1000;
+const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'touchstart', 'scroll'];
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing token on mount
-    const token = storage?.getItem('adminToken');
-    const userData = storage?.getItem('adminUser');
-    if (token && userData) {
+    let cancelled = false;
+
+    async function bootstrapSession() {
       try {
-        const parsed = JSON.parse(userData);
-        if (parsed?.isAdmin) {
-          setUser(parsed);
-        } else {
-          storage?.removeItem('adminToken');
-          storage?.removeItem('adminUser');
+        // Server-validated bootstrap check; avoids trusting client-stored auth state.
+        const response = await apiGetMe();
+        const userData = response?.data?.user;
+        if (!cancelled && userData?.isAdmin) {
+          setUser(userData);
         }
-      } catch (e) {
-        storage?.removeItem('adminToken');
-        storage?.removeItem('adminUser');
+      } catch (_err) {
+        if (!cancelled) {
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
-    setLoading(false);
+
+    bootstrapSession();
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    let timerId = null;
+    const resetIdleTimer = () => {
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+      timerId = window.setTimeout(() => {
+        logout();
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    ACTIVITY_EVENTS.forEach((eventName) => {
+      window.addEventListener(eventName, resetIdleTimer, { passive: true });
+    });
+    resetIdleTimer();
+
+    return () => {
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+      ACTIVITY_EVENTS.forEach((eventName) => {
+        window.removeEventListener(eventName, resetIdleTimer);
+      });
+    };
+  }, [user]);
 
   const login = async (username, password) => {
     const response = await apiLogin(username, password);
-    const { token, user: userData } = response.data;
+    const { user: userData } = response.data;
 
     if (!userData?.isAdmin) {
-      storage?.removeItem('adminToken');
-      storage?.removeItem('adminUser');
       throw new Error('Admin access required');
     }
 
-    storage?.setItem('adminToken', token);
-    storage?.setItem('adminUser', JSON.stringify(userData));
     setUser(userData);
 
     return userData;
   };
 
-  const logout = () => {
-    storage?.removeItem('adminToken');
-    storage?.removeItem('adminUser');
-    setUser(null);
+  const logout = async () => {
+    try {
+      await apiLogout();
+    } finally {
+      setUser(null);
+    }
   };
 
   return (

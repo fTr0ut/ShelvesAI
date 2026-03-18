@@ -24,6 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 
 const checkInBadge = require('../../assets/checkin_badge.png');
 
@@ -53,67 +54,6 @@ function formatRelativeTime(dateString) {
     if (diffHours < 24) return `${diffHours}h`;
     if (diffDays < 7) return `${diffDays}d`;
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function buildMediaUri(value, apiBase = '') {
-    if (!value) return null;
-    if (/^https?:/i.test(value)) return value;
-    const trimmed = String(value).replace(/^\/+/, '');
-    const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
-    if (!apiBase) return `/${resource}`;
-    return `${apiBase.replace(/\/+$/, '')}/${resource}`;
-}
-
-function resolveCollectableCoverUrl(collectable, apiBase = '') {
-    if (!collectable) return null;
-
-    // Prefer pre-resolved URL from API (handles S3/CloudFront)
-    if (collectable.coverMediaUrl) {
-        return collectable.coverMediaUrl;
-    }
-
-    const coverImageUrl = collectable.coverImageUrl;
-    const coverImageSource = collectable.coverImageSource;
-
-    if (coverImageUrl) {
-        if (coverImageSource === 'external' || /^https?:/i.test(coverImageUrl)) {
-            return coverImageUrl;
-        }
-        return buildMediaUri(coverImageUrl, apiBase);
-    }
-
-    if (collectable.coverMediaPath) {
-        return buildMediaUri(collectable.coverMediaPath, apiBase);
-    }
-
-    if (collectable.coverUrl) {
-        return /^https?:/i.test(collectable.coverUrl)
-            ? collectable.coverUrl
-            : buildMediaUri(collectable.coverUrl, apiBase);
-    }
-
-    const images = Array.isArray(collectable.images) ? collectable.images : [];
-    for (const image of images) {
-        const url = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
-        if (url) return url;
-    }
-
-    return null;
-}
-
-function resolveManualCoverUrl(manual, apiBase = '') {
-    if (!manual) return null;
-
-    // Prefer pre-resolved URL from API (handles S3/CloudFront)
-    if (manual.coverMediaUrl) {
-        return manual.coverMediaUrl;
-    }
-
-    if (manual.coverMediaPath) {
-        return buildMediaUri(manual.coverMediaPath, apiBase);
-    }
-
-    return null;
 }
 
 function getItemPreview(entry, apiBase = '') {
@@ -170,6 +110,7 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [searchLoading, setSearchLoading] = useState(false);
     const [showResults, setShowResults] = useState(false);
     const searchTimeoutRef = useRef(null);
+    const isMountedRef = useRef(true);
 
     // Account menu state
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -210,6 +151,23 @@ export default function SocialFeedScreen({ navigation, route }) {
         });
     }, []);
 
+    // Unmount guard: set isMountedRef to false on unmount
+    useEffect(() => {
+        return () => { isMountedRef.current = false; };
+    }, []);
+
+    // BUG-19: clear pending search timeout on navigation blur to prevent
+    // setState calls during/after screen transition
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('blur', () => {
+            if (searchTimeoutRef.current) {
+                clearTimeout(searchTimeoutRef.current);
+                searchTimeoutRef.current = null;
+            }
+        });
+        return unsubscribe;
+    }, [navigation]);
+
     const load = useCallback(async (opts = {}) => {
         const { silent, forceRefreshPersonalizations } = opts;
         if (!token) {
@@ -231,16 +189,20 @@ export default function SocialFeedScreen({ navigation, route }) {
                 path += '&refreshPersonalizations=1';
             }
             const result = await apiRequest({ apiBase, path, token });
+            if (!isMountedRef.current) return;
             // Filter out shelf.created events as requested (legacy logic preserved)
             const filtered = (result.entries || []).filter(e => e.eventType !== 'shelf.created');
             setEntries(filtered);
             setError('');
         } catch (err) {
             console.error('Feed load error:', err);
+            if (!isMountedRef.current) return;
             setError('Unable to load feed');
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (isMountedRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
     }, [apiBase, token, activeFilter]);
 
@@ -251,9 +213,8 @@ export default function SocialFeedScreen({ navigation, route }) {
         setEntries((prevEntries) => prevEntries
             .map((entry) => {
                 if (!entry || entry.eventType !== 'news.recommendation') return entry;
-                const filteredItems = Array.isArray(entry.items)
-                    ? entry.items.filter((item) => Number.parseInt(item?.id, 10) !== targetId)
-                    : [];
+                const entryItems = Array.isArray(entry.items) ? entry.items : [];
+                const filteredItems = entryItems.filter((item) => Number.parseInt(item?.id, 10) !== targetId);
                 if (!filteredItems.length) return null;
                 return { ...entry, items: filteredItems, eventItemCount: filteredItems.length };
             })
@@ -265,6 +226,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         } catch (err) {
             console.error('Dismiss news item error:', err);
         } finally {
+            if (!isMountedRef.current) return;
             setPendingNewsDismiss(targetId, false);
             if (activeFilter === 'all') {
                 load({ silent: true, forceRefreshPersonalizations: true });
@@ -281,9 +243,11 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
         try {
             const result = await apiRequest({ apiBase, path: '/api/notifications/unread-count', token });
+            if (!isMountedRef.current) return;
             const count = result?.unreadCount ?? result?.count ?? 0;
             setUnreadCount(Number(count) || 0);
         } catch (err) {
+            if (!isMountedRef.current) return;
             setUnreadCount(0);
         }
     }, [apiBase, token]);
@@ -345,6 +309,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
 
         searchTimeoutRef.current = setTimeout(async () => {
+            if (!isMountedRef.current) return;
             setSearchLoading(true);
             setShowResults(true);
 
@@ -355,6 +320,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                     apiRequest({ apiBase, path: `/api/collectables?q=${encodeURIComponent(text)}&limit=3&wildcard=true`, token }),
                 ]);
 
+                if (!isMountedRef.current) return;
                 setSearchResults({
                     friends: friendsRes?.users || [],
                     collectables: collectablesRes?.results || [],
@@ -362,7 +328,9 @@ export default function SocialFeedScreen({ navigation, route }) {
             } catch (err) {
                 console.error('Search error:', err);
             } finally {
-                setSearchLoading(false);
+                if (isMountedRef.current) {
+                    setSearchLoading(false);
+                }
             }
         }, 300);
     }, [apiBase, token]);
@@ -417,25 +385,42 @@ export default function SocialFeedScreen({ navigation, route }) {
         const targetId = entry?.aggregateId || entry?.id;
         if (!token || !targetId || pendingLikes[targetId]) return;
 
-        const previous = {
-            hasLiked: !!entry?.hasLiked,
-            likeCount: entry?.likeCount || 0,
-        };
-        const optimisticLiked = !previous.hasLiked;
-        const optimisticCount = Math.max(0, previous.likeCount + (optimisticLiked ? 1 : -1));
+        // Capture previous values from current entries state at the moment of the
+        // optimistic update, not from the closure-captured `entry` parameter, to
+        // avoid stale state when multiple rapid likes occur.
+        let previous = { hasLiked: false, likeCount: 0 };
+        let optimisticLiked = false;
+        let optimisticCount = 0;
 
-        updateEntrySocial(targetId, { hasLiked: optimisticLiked, likeCount: optimisticCount });
+        setEntries((prevEntries) => {
+            const current = prevEntries.find((e) => (e?.aggregateId || e?.id) === targetId);
+            previous = {
+                hasLiked: !!current?.hasLiked,
+                likeCount: current?.likeCount || 0,
+            };
+            optimisticLiked = !previous.hasLiked;
+            optimisticCount = Math.max(0, previous.likeCount + (optimisticLiked ? 1 : -1));
+            return prevEntries.map((e) => {
+                const eId = e?.aggregateId || e?.id;
+                if (eId !== targetId) return e;
+                return { ...e, hasLiked: optimisticLiked, likeCount: optimisticCount };
+            });
+        });
         setPendingLike(targetId, true);
 
         try {
             const response = await toggleLike({ apiBase, token, eventId: targetId });
+            if (!isMountedRef.current) return;
             const resolvedLiked = typeof response?.liked === 'boolean' ? response.liked : optimisticLiked;
             const resolvedCount = typeof response?.likeCount === 'number' ? response.likeCount : optimisticCount;
             updateEntrySocial(targetId, { hasLiked: resolvedLiked, likeCount: resolvedCount });
         } catch (err) {
+            if (!isMountedRef.current) return;
             updateEntrySocial(targetId, previous);
         } finally {
-            setPendingLike(targetId, false);
+            if (isMountedRef.current) {
+                setPendingLike(targetId, false);
+            }
         }
     }, [apiBase, token, pendingLikes, setPendingLike, updateEntrySocial]);
 
@@ -455,6 +440,8 @@ export default function SocialFeedScreen({ navigation, route }) {
 
         try {
             const response = await addComment({ apiBase, token, eventId: targetId, content });
+
+            if (!isMountedRef.current) return;
 
             // Clear input on success
             setCommentTexts(prev => {
@@ -485,11 +472,13 @@ export default function SocialFeedScreen({ navigation, route }) {
         } catch (err) {
             console.error('Failed to add comment:', err);
         } finally {
-            setPendingComments(prev => {
-                const next = { ...prev };
-                delete next[targetId];
-                return next;
-            });
+            if (isMountedRef.current) {
+                setPendingComments(prev => {
+                    const next = { ...prev };
+                    delete next[targetId];
+                    return next;
+                });
+            }
         }
     }, [apiBase, token, commentTexts, pendingComments, updateEntrySocial, user]);
 

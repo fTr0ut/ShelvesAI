@@ -1,5 +1,6 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
+const { validateStringLengths } = require('../middleware/validate');
 const feedQueries = require('../database/queries/feed');
 const collectablesQueries = require('../database/queries/collectables');
 const { query } = require('../database/pg');
@@ -15,7 +16,7 @@ router.use(auth);
  *
  * Query: q (required), limit (optional), wildcard (optional)
  */
-router.get('/search', async (req, res) => {
+router.get('/search', validateStringLengths({ q: 500 }, { source: 'query' }), async (req, res) => {
     try {
         const userId = req.user.id;
         const q = String(req.query.q || '').trim();
@@ -92,7 +93,7 @@ router.get('/search', async (req, res) => {
  *   note: string (optional) - user message/comment
  * }
  */
-router.post('/', async (req, res) => {
+router.post('/', validateStringLengths({ note: 5000 }), async (req, res) => {
     try {
         const userId = req.user.id;
         const { collectableId, manualId, status, visibility = 'public', note } = req.body || {};

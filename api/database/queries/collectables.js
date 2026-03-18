@@ -3,6 +3,15 @@ const { rowToCamelCase } = require('./utils');
 const { ensureCoverMediaForCollectable } = require('./media');
 const { normalizeCollectableKind } = require('../../services/collectables/kind');
 
+/**
+ * Resolve the query executor: use the provided client if given, otherwise use the shared pool query.
+ * @param {import('pg').PoolClient|null} client
+ * @returns {Function}
+ */
+function resolveQuery(client) {
+    return client ? client.query.bind(client) : query;
+}
+
 function pickCoverUrl(images, fallback) {
     if (fallback) return fallback;
     if (!Array.isArray(images)) return null;
@@ -175,8 +184,10 @@ async function searchByTitle(term, kind = null, limit = 20) {
 
 /**
  * Upsert a collectable (insert or update on conflict)
+ * @param {object} data - Collectable data
+ * @param {import('pg').PoolClient|null} [client] - Optional transaction client
  */
-async function upsert(data) {
+async function upsert(data, client = null) {
     const {
         fingerprint,
         lightweightFingerprint,
@@ -219,7 +230,8 @@ async function upsert(data) {
                 : null;
 
     const normalizedKind = normalizeCollectableKind(kind, 'item');
-    const result = await query(
+    const q = resolveQuery(client);
+    const result = await q(
         `INSERT INTO collectables (
        fingerprint, lightweight_fingerprint, kind, title, subtitle, description,
        primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,

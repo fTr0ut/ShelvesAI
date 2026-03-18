@@ -54,12 +54,11 @@ import linkingConfig from './navigation/linkingConfig'
 import { AuthContext } from './context/AuthContext'
 import { ThemeProvider, useTheme } from './context/ThemeContext'
 import { PushProvider } from './context/PushContext'
-import { apiRequest, setAuthErrorHandler } from './services/api'
+import { apiRequest, setAuthErrorHandler, setApiBase, getStoredToken, clearToken, getValidToken } from './services/api'
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
 
 const Stack = createNativeStackNavigator()
-const TOKEN_STORAGE_KEY = 'token'
 const PREMIUM_STORAGE_KEY = 'premiumEnabled'
 
 SplashScreen.preventAutoHideAsync()
@@ -83,24 +82,32 @@ function isTruthy(value) {
 function guessApiBase() {
   const envUseNgrok = process.env.EXPO_PUBLIC_USE_NGROK
   const envNgrokUrl = process.env.EXPO_PUBLIC_NGROK_URL
-  console.log('[guessApiBase] envUseNgrok:', envUseNgrok, 'envNgrokUrl:', envNgrokUrl)
-  if (isTruthy(envUseNgrok) && envNgrokUrl) return envNgrokUrl
+  if (isTruthy(envUseNgrok) && envNgrokUrl) return enforceSecureApiBase(envNgrokUrl)
 
   const envApiBase = process.env.EXPO_PUBLIC_API_BASE
-  if (envApiBase) return envApiBase
+  if (envApiBase) return enforceSecureApiBase(envApiBase)
 
   const extra = getExtraConfig()
   const extraUseNgrok = isTruthy(extra?.USE_NGROK)
   const extraNgrokUrl = extra?.NGROK_URL
-  if (extraUseNgrok && extraNgrokUrl) return extraNgrokUrl
+  if (extraUseNgrok && extraNgrokUrl) return enforceSecureApiBase(extraNgrokUrl)
 
   const extraBase = extra?.API_BASE
-  if (extraBase) return extraBase
+  if (extraBase) return enforceSecureApiBase(extraBase)
   const hostUri = Constants?.expoConfig?.hostUri || ''
   const host = hostUri.split(':')[0]
-  if (host) return `http://${host}:5001`
-  if (Platform.OS === 'android') return 'http://10.0.2.2:5001' // Android emulator
-  return 'http://localhost:5001'
+  if (host) return enforceSecureApiBase(`http://${host}:5001`)
+  if (Platform.OS === 'android') return enforceSecureApiBase('http://10.0.2.2:5001') // Android emulator
+  return enforceSecureApiBase('http://localhost:5001')
+}
+
+function enforceSecureApiBase(base) {
+  const normalized = String(base || '').trim()
+  if (!normalized) return normalized
+  if (!__DEV__ && /^http:\/\//i.test(normalized)) {
+    throw new Error('Production API base must use HTTPS')
+  }
+  return normalized
 }
 
 export default function App() {
@@ -129,15 +136,21 @@ export default function App() {
   const apiBase = useMemo(() => guessApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
 
+  // Register apiBase with the api service so getValidToken() can call /api/auth/refresh.
+  useEffect(() => {
+    setApiBase(apiBase)
+  }, [apiBase])
+
   useEffect(() => {
     (async () => {
       try {
         const [storedToken, storedPremium] = await Promise.all([
-          AsyncStorage.getItem(TOKEN_STORAGE_KEY),
+          getStoredToken(),
           AsyncStorage.getItem(PREMIUM_STORAGE_KEY),
         ])
-        if (storedToken) {
-          setToken(storedToken)
+        const validToken = await getValidToken(storedToken)
+        if (validToken) {
+          setToken(validToken)
         }
         if (storedPremium !== null) {
           setPremiumEnabledState(storedPremium === 'true')
@@ -153,7 +166,7 @@ export default function App() {
     setAuthErrorHandler(() => {
       setToken('')
       setUser(null)
-      AsyncStorage.removeItem(TOKEN_STORAGE_KEY)
+      clearToken()
     })
     return () => setAuthErrorHandler(null)
   }, [])
@@ -199,14 +212,7 @@ export default function App() {
 
     const checkProfile = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/account`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'ngrok-skip-browser-warning': 'true',
-          },
-        })
-        if (!res.ok) return
-        const data = await res.json()
+        const data = await apiRequest({ apiBase, path: '/api/account', token })
         if (!cancelled) {
           const missingRequired = !data?.user?.email || !data?.user?.firstName || !data?.user?.city || !data?.user?.state
           const onboardingCompleted = !!data?.user?.onboardingCompleted

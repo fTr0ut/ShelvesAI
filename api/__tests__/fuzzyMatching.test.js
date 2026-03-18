@@ -24,8 +24,8 @@ describe('collectablesQueries.fuzzyMatch', () => {
 
         await collectablesQueries.fuzzyMatch('The Hobbit', 'Tolkien', 'book', 0.5);
 
-        expect(query).toHaveBeenCalledWith(expect.stringContaining('SELECT *,') && expect.stringContaining('AND kind = $4'),
-            ['The Hobbit', 'Tolkien', 0.5, 'book']
+        expect(query).toHaveBeenCalledWith(expect.stringContaining('AND c.kind = $4'),
+            ['The Hobbit', 'Tolkien', 0.5, 'books']
         );
     });
 
@@ -44,7 +44,7 @@ describe('collectablesQueries.fuzzyMatch', () => {
     it('should match empty creator if not provided', async () => {
         query.mockResolvedValue({ rows: [] });
         await collectablesQueries.fuzzyMatch('Title', null, 'book');
-        expect(query).toHaveBeenCalledWith(expect.any(String), ['Title', '', 0.3, 'book']);
+        expect(query).toHaveBeenCalledWith(expect.any(String), ['Title', '', 0.3, 'books']);
     });
 
     it('should return null if combined_sim is below threshold', async () => {

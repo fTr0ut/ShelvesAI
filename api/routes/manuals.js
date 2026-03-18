@@ -1,5 +1,6 @@
 const express = require('express');
 const { auth } = require('../middleware/auth');
+const { validateIntParam } = require('../middleware/validate');
 const ctrl = require('../controllers/shelvesController');
 
 const router = express.Router();
@@ -8,6 +9,6 @@ const router = express.Router();
 router.use(auth);
 
 // GET /api/manuals/:manualId - Get manual item details
-router.get('/:manualId', ctrl.getManualItem);
+router.get('/:manualId', validateIntParam(['manualId']), ctrl.getManualItem);
 
 module.exports = router;

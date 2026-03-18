@@ -1,43 +1,60 @@
-# ShelvesAI — Deploy Guide (Render + Vercel)
+# ShelvesAI Deploy Guide
 
-This guide deploys the API (Node/Express + MongoDB) on Render and the mobile app via Expo. You can swap providers from the suggestions below.
+Last updated: 2026-02-08 18:13:21 UTC
 
-## Prerequisites
-- GitHub repo for your project
-- MongoDB Atlas cluster (free M0 works)
+This guide reflects the current stack: Express API + PostgreSQL + Expo mobile + optional admin dashboard.
 
-## Security note
-- Do not commit secrets. Ensure `api/.env` is never in Git. Add it to .gitignore and set env vars in your host dashboard.
+## Core Components
 
-## 1) API on Render
+- API: `api/` (Node/Express)
+- Database: PostgreSQL
+- Mobile client: `mobile/` (Expo)
+- Admin dashboard: `admin-dashboard/` (Vite)
 
-### Option A — Web Service (recommended)
-- Create a new Web Service from your GitHub repo.
-- Root directory: `api`
-- Build Command: `npm install`
-- Start Command: `node index.js`
-- Environment
-  - `MONGO_URI` = your MongoDB Atlas connection string
-  - `JWT_SECRET` = a long random string
-  - `TMDB_API_KEY` = API key for The Movie Database cataloging
-  - Optional `AUTH0_DOMAIN`, `AUTH0_AUDIENCE` if you use Auth0
+## API Deployment
 
-### Notes
-- The service URL will look like `https://your-api.onrender.com`. Save this URL.
-- CORS: the server already allows CORS for all origins.
+Use any Node host (Render, Railway, Fly, VM, container platform).
 
-## 2) Mobile App (Expo)
-- Configure `API_BASE` in the mobile app to point to your deployed API URL.
-- Build using `eas build` for production releases.
+Required environment groups:
 
-## 3) Validate
-- Open your mobile app and test login/register.
-- Create a shelf and add an item.
+- Auth/security: `JWT_SECRET`, `COOKIE_SECRET` (recommended)
+- Database: `DATABASE_URL` or individual `POSTGRES_*` vars
+- Media (optional S3): `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_PUBLIC_URL`
+- Provider keys as needed (TMDB, Google, SendGrid, etc.)
 
-## Alternatives
-- API: Railway, Fly.io, Koyeb
-- Database: MongoDB Atlas M0, PostgreSQL (Phase 1+)
+Typical commands:
 
-## Troubleshooting
-- 404/HTML returned to JSON fetch: Ensure `API_BASE` is set to your API origin.
-- CORS errors: Render service should allow all origins via `cors()`; if you locked it down, add your mobile app domain.
+```bash
+cd api
+npm install
+npm run dev    # development
+npm start      # production
+```
+
+## Database Migrations
+
+Run migrations before first production traffic:
+
+```bash
+cd api
+npx knex migrate:latest
+```
+
+Useful maintenance scripts:
+
+```bash
+npm run backfill:feed-aggregates
+npm run backfill:feed-payloads
+npm run cache-covers
+```
+
+## Mobile Release Notes
+
+- Configure API base via Expo env/config.
+- Build and submit with EAS when publishing.
+
+## Security Basics
+
+- Keep `.env` out of git.
+- Do not use fallback/default secrets in production.
+- Restrict catalog write/admin routes appropriately.

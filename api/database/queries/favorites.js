@@ -197,6 +197,27 @@ async function getFavoritesStatus(userId, collectableIds) {
     return status;
 }
 
+/**
+ * Get multiple manual favorites status for a user (batch check)
+ */
+async function getManualFavoritesStatus(userId, manualIds) {
+    if (!manualIds || manualIds.length === 0) {
+        return {};
+    }
+
+    const result = await query(
+        `SELECT manual_id FROM user_favorites
+         WHERE user_id = $1 AND manual_id = ANY($2)`,
+        [userId, manualIds]
+    );
+    const favorited = new Set(result.rows.map(r => r.manual_id));
+    const status = {};
+    for (const id of manualIds) {
+        status[id] = favorited.has(id);
+    }
+    return status;
+}
+
 module.exports = {
     listForUser,
     isFavorite,
@@ -204,4 +225,5 @@ module.exports = {
     removeFavorite,
     getFavoriteCount,
     getFavoritesStatus,
+    getManualFavoritesStatus,
 };

@@ -16,11 +16,13 @@ export function useVisionProcessing({ apiBase, token, shelfId, onComplete, navig
     const [isBackground, setIsBackground] = useState(false);
 
     const pollIntervalRef = useRef(null);
+    const isMountedRef = useRef(true);
     const { showToast } = useToast();
 
-    // Clear polling on unmount
+    // Clear polling on unmount and mark as unmounted
     useEffect(() => {
         return () => {
+            isMountedRef.current = false;
             if (pollIntervalRef.current) {
                 clearInterval(pollIntervalRef.current);
             }
@@ -74,6 +76,8 @@ export function useVisionProcessing({ apiBase, token, shelfId, onComplete, navig
                     path: `/api/shelves/${shelfId}/vision/${currentJobId}/status`,
                     token,
                 });
+
+                if (!isMountedRef.current) return;
 
                 setStatus(response.status);
                 setProgress(response.progress || 0);

@@ -33,6 +33,29 @@ const manualsRoutes = require('./routes/manuals');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
 
 const app = express();
+const isDevelopment = String(process.env.NODE_ENV || '').toLowerCase() === 'development';
+
+function hasValue(value) {
+  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+}
+
+if (!isDevelopment) {
+  const hasJwtSecret = hasValue(process.env.JWT_SECRET);
+  const hasConnectionString = hasValue(process.env.DATABASE_URL) || hasValue(process.env.POSTGRES_URL);
+  const hasDbCredentialSet =
+    hasValue(process.env.POSTGRES_HOST) &&
+    hasValue(process.env.POSTGRES_USER) &&
+    hasValue(process.env.POSTGRES_PASSWORD) &&
+    (hasValue(process.env.POSTGRES_NAME) || hasValue(process.env.POSTGRES_DB));
+
+  if (!hasJwtSecret) {
+    throw new Error('Missing required JWT_SECRET in non-development environment');
+  }
+
+  if (!hasConnectionString && !hasDbCredentialSet) {
+    throw new Error('Missing database configuration in non-development environment');
+  }
+}
 
 // Render/Cloudflare sit behind one or more proxies. Express-rate-limit (and req.ip)
 // require trust proxy to be enabled when X-Forwarded-For is present.
@@ -98,12 +121,13 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-const defaultCorsOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5001',
-  'http://localhost:5173',
-  'https://nonresilient-rylan-nondebilitating.ngrok-free.dev'
-];
+const defaultCorsOrigins = isDevelopment
+  ? [
+      'http://localhost:3000',
+      'http://localhost:5001',
+      'http://localhost:5173',
+    ]
+  : [];
 
 const envCorsOrigins = [];
 if (process.env.FRONTEND_URL) envCorsOrigins.push(process.env.FRONTEND_URL.trim());
@@ -144,8 +168,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, _res, next) => {
-  const secret =
-    process.env.COOKIE_SECRET || process.env.JWT_SECRET || 'collector-cookie-secret';
+  const secret = process.env.COOKIE_SECRET || process.env.JWT_SECRET || 'collector-cookie-secret';
   req.secret = secret;
 
   const header = req.headers?.cookie;

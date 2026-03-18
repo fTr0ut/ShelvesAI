@@ -1,46 +1,62 @@
 # ShelvesAI
 
+Last updated: 2026-02-08 18:13:21 UTC
+
 Mobile-first app for cataloging and sharing physical collections.
 
 ## Architecture
 
-- **Mobile**: Expo/React Native app (`/mobile`)
-- **API**: Node.js/Express backend (`/api`)
-- **Database**: MongoDB (migrating to PostgreSQL)
+- `mobile/`: Expo + React Native app
+- `api/`: Node.js + Express API
+- `api/database`: PostgreSQL schema, migrations, query modules
+- `admin-dashboard/`: React + Vite admin web app
+- `AGENTS/`: living architecture/process documentation
+
+## Current Stack
+
+- Auth: local JWT (`/api/auth/*`) plus admin JWT (`/api/admin/login`)
+- Data store: PostgreSQL
+- Vision: async job-based pipeline (`/api/shelves/:shelfId/vision`)
+- Media: local cache or S3-backed storage (`/media/*` URLs resolved server-side)
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- Docker (for PostgreSQL - Phase 1)
-- Expo CLI
 
-### Development
+- Node.js 18+
+- PostgreSQL database
+- Expo tooling for mobile development
+
+### API
 
 ```bash
-# Start API
-cd api && npm install && npm run dev
-
-# Start mobile (in separate terminal)
-cd mobile && npm install && npx expo start
+cd api
+npm install
+npm run dev
 ```
 
-## Project Structure
+### Mobile
 
-```
-ShelvesAI/
-├── api/                 # Express backend
-│   ├── controllers/
-│   ├── models/
-│   ├── routes/
-│   ├── services/
-│   └── server.js
-├── mobile/              # Expo app
-│   └── src/
-├── storyboards/         # Implementation plans
-└── README.md
+```bash
+cd mobile
+npm install
+npx expo start
 ```
 
-## Implementation Phases
+### Admin Dashboard
 
-See `/storyboards/readme.md` for the full implementation roadmap.
+```bash
+cd admin-dashboard
+npm install
+npm run dev
+```
+
+## Documentation
+
+- Route map: `AGENTS/api_routes.md`
+- Workflow overview: `AGENTS/workflow.md`
+- Auth/onboarding: `AGENTS/authentication-onboarding.md`
+- Admin system: `AGENTS/admin-system.md`
+- Compliance checklist: `docs/api-compliance.md`
+- Audit TODOs: `FIXME.md`
+- Historical plans archive: `AGENTS/storyboards/README.md`

@@ -7,8 +7,8 @@ const { query } = require('../database/pg');
 const { getNewsRecommendationsForUser } = require('../services/discovery/newsRecommendations');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
+const { PREVIEW_PAYLOAD_LIMIT } = require('../config/constants');
 
-const PREVIEW_PAYLOAD_LIMIT = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
 const NEWS_FEED_GROUP_LIMIT = parseInt(process.env.NEWS_FEED_GROUP_LIMIT || '3', 10);
 const NEWS_FEED_ITEMS_PER_GROUP = parseInt(process.env.NEWS_FEED_ITEMS_PER_GROUP || '3', 10);
 const NEWS_FEED_INSERT_INTERVAL = parseInt(process.env.NEWS_FEED_INSERT_INTERVAL || '3', 10);

@@ -28,6 +28,8 @@ export function PushProvider({ children, navigationRef }) {
 
   const notificationListener = useRef()
   const responseListener = useRef()
+  const isMountedRef = useRef(true)
+  const launchNavigationTimeoutRef = useRef(null)
 
   /**
    * Handle navigation based on notification data
@@ -62,10 +64,12 @@ export function PushProvider({ children, navigationRef }) {
       if (!pushToken) {
         pushToken = await registerForPushNotifications()
         if (!pushToken) {
-          console.log('Could not get push token')
+          if (__DEV__) console.log('Could not get push token')
           return
         }
-        setExpoPushToken(pushToken)
+        if (isMountedRef.current) {
+          setExpoPushToken(pushToken)
+        }
         await AsyncStorage.setItem(PUSH_TOKEN_KEY, pushToken)
       }
 
@@ -76,8 +80,10 @@ export function PushProvider({ children, navigationRef }) {
         expoPushToken: pushToken,
       })
 
-      setIsRegistered(true)
-      console.log('Push notifications registered successfully')
+      if (isMountedRef.current) {
+        setIsRegistered(true)
+      }
+      if (__DEV__) console.log('Push notifications registered successfully')
     } catch (error) {
       console.error('Failed to register push notifications:', error)
     }
@@ -96,22 +102,40 @@ export function PushProvider({ children, navigationRef }) {
         expoPushToken,
       })
 
-      setIsRegistered(false)
+      if (isMountedRef.current) {
+        setIsRegistered(false)
+      }
       // Clear stored token
       await AsyncStorage.removeItem(PUSH_TOKEN_KEY)
-      setExpoPushToken(null)
+      if (isMountedRef.current) {
+        setExpoPushToken(null)
+      }
     } catch (error) {
       console.error('Failed to unregister push notifications:', error)
     }
   }, [token, apiBase, expoPushToken])
 
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      if (launchNavigationTimeoutRef.current) {
+        clearTimeout(launchNavigationTimeoutRef.current)
+      }
+    }
+  }, [])
+
   // Load stored push token on mount
   useEffect(() => {
+    let cancelled = false
     AsyncStorage.getItem(PUSH_TOKEN_KEY).then((storedToken) => {
+      if (cancelled || !isMountedRef.current) return
       if (storedToken) {
         setExpoPushToken(storedToken)
       }
     })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Register push notifications when user logs in
@@ -125,13 +149,13 @@ export function PushProvider({ children, navigationRef }) {
   useEffect(() => {
     // Listener for notifications received while app is in foreground
     notificationListener.current = addNotificationReceivedListener((notification) => {
-      console.log('Notification received in foreground:', notification)
+      if (__DEV__) console.log('Notification received in foreground:', notification)
       // Could show a custom in-app alert here if desired
     })
 
     // Listener for when user taps on a notification
     responseListener.current = addNotificationResponseReceivedListener((response) => {
-      console.log('Notification tapped:', response)
+      if (__DEV__) console.log('Notification tapped:', response)
       const data = parseNotificationData(response.notification)
       handleNotificationNavigation(data)
 
@@ -140,15 +164,25 @@ export function PushProvider({ children, navigationRef }) {
     })
 
     // Check if app was opened via notification
+    let cancelled = false
     getLastNotificationResponse().then((response) => {
+      if (cancelled || !isMountedRef.current) return
       if (response) {
         const data = parseNotificationData(response.notification)
         // Delay navigation slightly to ensure navigation is ready
-        setTimeout(() => handleNotificationNavigation(data), 500)
+        launchNavigationTimeoutRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return
+          handleNotificationNavigation(data)
+        }, 500)
       }
     })
 
     return () => {
+      cancelled = true
+      if (launchNavigationTimeoutRef.current) {
+        clearTimeout(launchNavigationTimeoutRef.current)
+        launchNavigationTimeoutRef.current = null
+      }
       if (notificationListener.current) {
         notificationListener.current.remove()
       }
