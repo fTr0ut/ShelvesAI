@@ -82,6 +82,7 @@ api/index.js
   → api/services/newsSeenCleanupScheduler.js
 
 api/server.js
+  → api/routes/resetPasswordPage.js
   → api/routes/auth.js
   → api/routes/shelves.js
   → api/routes/account.js
@@ -395,6 +396,12 @@ routes/manuals.js
 ```
 routes/config.js
   (reads config/onboardingScreen.json via fs)
+```
+
+#### resetPasswordPage
+```
+routes/resetPasswordPage.js
+  (no internal imports — serves reset-password web fallback + app deep-link bridge)
 ```
 
 ### Middleware Internal Dependencies

@@ -1,0 +1,40 @@
+{
+  "seo": {
+    "title": "Shelves | Catalog your collection and share what you love",
+    "description": "The ultimate mobile companion to showcase, organize, and track your physical collections—powered by OpenAI Vision. Coming soon."
+  },
+  "brand": {
+    "name": "ShelvesAI"
+  },
+  "hero": {
+    "badge": "Coming Soon",
+    "title": "Your physical collections, magically organized.",
+    "subtitle": "Point your camera at your collection and take a shelfy! Shelves instantly catalogs your books, movies, games, and memorabilia.",
+    "cta": "Join the Waitlist"
+  },
+  "features": [
+    {
+      "icon": "book",
+      "title": "Books",
+      "description": "Instantly recognize titles, authors, and editions by simply pointing your camera at your bookshelf."
+    },
+    {
+      "icon": "movie",
+      "title": "Movies & Vinyl",
+      "description": "Automatically retrieve release years, directors, and formats for all your physical media."
+    },
+    {
+      "icon": "gamepad",
+      "title": "Video Games",
+      "description": "Log your retro cartridges and modern discs with an AI that knows every console generation."
+    },
+    {
+      "icon": "shield",
+      "title": "Private or Public",
+      "description": "Keep your collection completely private, share it with close friends, or publish it to the world."
+    }
+  ],
+  "footer": {
+    "text": "© 2026 ShelvesAI. All rights reserved."
+  }
+}

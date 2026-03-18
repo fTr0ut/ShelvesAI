@@ -1,8 +1,9 @@
 const linkingConfig = {
-  prefixes: ['shelvesai://'],
+  prefixes: ['shelvesai://', 'https://shelvesai.com', 'https://www.shelvesai.com'],
   config: {
     screens: {
       Login: 'login',
+      ResetPassword: 'reset-password',
       OnboardingIntro: 'onboarding',
       UsernameSetup: 'onboarding/username',
       OnboardingProfileRequired: 'onboarding/profile',

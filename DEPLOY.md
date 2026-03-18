@@ -19,6 +19,7 @@ Required environment groups:
 
 - Auth/security: `JWT_SECRET`, `COOKIE_SECRET` (recommended)
 - Database: `DATABASE_URL` or individual `POSTGRES_*` vars
+- Password reset UX: `RESET_PASSWORD_URL`, `RESET_PASSWORD_DEEP_LINK_BASE` (optional, app-first reset flow)
 - Media (optional S3): `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_PUBLIC_URL`
 - Provider keys as needed (TMDB, Google, Resend, etc.)
 

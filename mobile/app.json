@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0b0f14"
+      "backgroundColor": "#F4F1EA"
     },
     "ios": {
       "supportsTablet": true,
@@ -24,7 +24,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0b0f14"
+        "backgroundColor": "#F4F1EA"
       },
       "package": "com.shelvesai.app",
       "softwareKeyboardLayoutMode": "resize",

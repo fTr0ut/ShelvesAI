@@ -4,6 +4,7 @@
  * Required env variables:
  *   RESEND_API_KEY - Resend API key
  *   RESEND_FROM_EMAIL - Verified sender email (e.g., noreply@yourapp.com)
+ *   RESET_PASSWORD_URL - Optional absolute URL for reset page (e.g., https://api.yourapp.com/reset-password)
  *   APP_NAME - Application name for email templates
  *   APP_URL - Base URL for reset links (e.g., https://yourapp.com)
  */
@@ -14,6 +15,8 @@ const API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@shelvesai.com';
 const APP_NAME = process.env.APP_NAME || 'ShelvesAI';
 const APP_URL = process.env.APP_URL || 'https://shelvesai.com';
+const RESET_PASSWORD_URL =
+    process.env.RESET_PASSWORD_URL || `${APP_URL.replace(/\/+$/, '')}/reset-password`;
 
 const resend = API_KEY ? new Resend(API_KEY) : null;
 
@@ -37,7 +40,8 @@ async function sendPasswordResetEmail(to, token, firstName = null) {
         return { success: true, simulated: true };
     }
 
-    const resetLink = `${APP_URL}/reset-password?token=${token}`;
+    const separator = RESET_PASSWORD_URL.includes('?') ? '&' : '?';
+    const resetLink = `${RESET_PASSWORD_URL}${separator}token=${encodeURIComponent(token)}`;
     const greeting = firstName ? `Hi ${firstName},` : 'Hi,';
 
     const msg = {

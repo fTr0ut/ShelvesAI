@@ -28,6 +28,7 @@ const discoverRoutes = require('./routes/discover');
 const pushRoutes = require('./routes/push');
 const adminRoutes = require('./routes/admin');
 const manualsRoutes = require('./routes/manuals');
+const resetPasswordPageRoutes = require('./routes/resetPasswordPage');
 // Steam routes temporarily disabled - need PostgreSQL migration
 // const steamRoutes = require('./routes/steam');
 // const steamOpenIdRoutes = require('./routes/steamOpenId');
@@ -221,6 +222,7 @@ try {
 }
 
 // Routes
+app.use('/', resetPasswordPageRoutes);
 app.use('/api', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/shelves', shelvesRoutes);
