@@ -12,10 +12,11 @@ Last updated: 2026-03-18
 2. [Cross-Component Dependencies](#cross-component-dependencies)
 3. [API Dependency Tree](#api-dependency-tree)
 4. [Mobile Dependency Tree](#mobile-dependency-tree)
-5. [Admin Dashboard Dependency Tree](#admin-dashboard-dependency-tree)
-6. [Database Schema Map](#database-schema-map)
-7. [External Service Integrations](#external-service-integrations)
-8. [Shared Module](#shared-module)
+5. [Website Dependency Tree](#website-dependency-tree)
+6. [Admin Dashboard Dependency Tree](#admin-dashboard-dependency-tree)
+7. [Database Schema Map](#database-schema-map)
+8. [External Service Integrations](#external-service-integrations)
+9. [Shared Module](#shared-module)
 
 ---
 
@@ -25,6 +26,7 @@ Last updated: 2026-03-18
 ShelvesAI/
 ├── api/              Express 5 REST API (Node.js, CommonJS, port 5001)
 ├── mobile/           Expo SDK 54 / React Native 0.81 / React 19
+├── website/          Next.js 16 App Router marketing + account flows
 ├── admin-dashboard/  Vite 7 + React 18 SPA (port 5173)
 ├── shared/           Design tokens (ES module, consumed by mobile via Metro)
 └── docker-compose.yml  PostgreSQL 16 + pgAdmin (local dev)
@@ -32,6 +34,7 @@ ShelvesAI/
 
 **Communication patterns:**
 - `mobile → api`: REST over HTTPS, Bearer JWT auth, token in expo-secure-store
+- `website → api`: REST over HTTPS for password reset validate/update
 - `admin-dashboard → api`: REST via `/api/admin/*`, HttpOnly cookie auth + CSRF header
 - `shared → mobile`: Metro watchFolders (not a package, direct file import)
 - `shared → admin-dashboard`: NOT consumed (admin uses Tailwind)
@@ -67,6 +70,13 @@ ShelvesAI/
 | `toggleAdmin(userId)` | `POST /api/admin/users/:userId/toggle-admin` | Cookie + CSRF |
 | `getRecentFeed(params)` | `GET /api/admin/feed/recent` | Cookie (⚠️ dead code — defined but never called) |
 | `getSystemInfo()` | `GET /api/admin/system` | Cookie |
+
+### API ↔ Website Contract
+
+| Website Route/Component | API Route | Auth |
+|---|---|---|
+| `app/reset-password/reset-password-client.tsx` (token validation) | `GET /api/auth/validate-reset-token?token=...` | None |
+| `app/reset-password/reset-password-client.tsx` (password submit) | `POST /api/auth/reset-password` | None |
 
 ---
 
@@ -875,6 +885,38 @@ utils/iconConfig.js  (no internal imports)
 ```
 theme/index.js       (no internal imports — dark theme tokens)
 theme/theme_light.js (no internal imports — light theme tokens)
+```
+
+---
+
+## Website Dependency Tree
+
+### Entry + Route Segments
+
+```
+website/src/app/layout.tsx
+  → website/src/app/globals.css
+  → website/src/content.json
+
+website/src/app/page.tsx
+  → website/src/content.json
+  → website/src/app/page.module.css
+
+website/src/app/reset-password/page.tsx
+  → website/src/app/reset-password/reset-password-client.tsx
+
+website/src/app/reset-password/reset-password-client.tsx
+  → website/src/app/reset-password/reset-password.module.css
+  → next/link
+  → (env) NEXT_PUBLIC_API_BASE
+  → (env) NEXT_PUBLIC_RESET_DEEP_LINK_BASE
+```
+
+### Config
+
+```
+website/next.config.ts   (no internal imports)
+website/.env.example     (NEXT_PUBLIC_API_BASE, NEXT_PUBLIC_RESET_DEEP_LINK_BASE)
 ```
 
 ---

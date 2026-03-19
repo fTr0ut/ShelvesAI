@@ -9,6 +9,7 @@ This guide reflects the current stack: Express API + PostgreSQL + Expo mobile + 
 - API: `api/` (Node/Express)
 - Database: PostgreSQL
 - Mobile client: `mobile/` (Expo)
+- Website: `website/` (Next.js, Vercel-ready)
 - Admin dashboard: `admin-dashboard/` (Vite)
 
 ## API Deployment
@@ -53,6 +54,12 @@ npm run cache-covers
 
 - Configure API base via Expo env/config.
 - Build and submit with EAS when publishing.
+
+## Website Release Notes
+
+- Set `NEXT_PUBLIC_API_BASE` to your API origin.
+- Set `NEXT_PUBLIC_RESET_DEEP_LINK_BASE` (default `shelvesai://reset-password`).
+- Ensure API CORS allow-list includes the website origin.
 
 ## Security Basics
 

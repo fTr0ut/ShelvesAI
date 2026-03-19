@@ -40,8 +40,8 @@ Legacy aliases exist under `/api/*` because auth routes are mounted twice.
 1. `POST /api/auth/forgot-password` accepts email.
 2. API always returns generic success message (anti-enumeration).
 3. If user exists, token is created in `password_reset_tokens`.
-4. Email service sends reset link via Resend to `RESET_PASSWORD_URL` (defaults to `/reset-password` web bridge).
-5. Web bridge attempts deep-link to app (`RESET_PASSWORD_DEEP_LINK_BASE`) and falls back to web form.
+4. Email service sends reset link via Resend to `RESET_PASSWORD_URL` (set this to website `/reset-password`).
+5. Website reset page attempts deep-link to app (`NEXT_PUBLIC_RESET_DEEP_LINK_BASE`) and falls back to web form.
 6. `POST /api/auth/reset-password` validates token and updates password hash.
 
 Security note:

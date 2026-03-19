@@ -4,7 +4,7 @@
  * Required env variables:
  *   RESEND_API_KEY - Resend API key
  *   RESEND_FROM_EMAIL - Verified sender email (e.g., noreply@yourapp.com)
- *   RESET_PASSWORD_URL - Optional absolute URL for reset page (e.g., https://api.yourapp.com/reset-password)
+ *   RESET_PASSWORD_URL - Optional absolute URL for reset page (e.g., https://yourapp.com/reset-password)
  *   APP_NAME - Application name for email templates
  *   APP_URL - Base URL for reset links (e.g., https://yourapp.com)
  */

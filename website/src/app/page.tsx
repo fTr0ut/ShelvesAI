@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Image from "next/image";
 import content from "../content.json";
 import styles from "./page.module.css";
