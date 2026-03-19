@@ -13,6 +13,7 @@ const { makeLightweightFingerprint, makeVisionOcrFingerprint } = require('./coll
 const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
+const { MusicCatalogService } = require('./catalog/MusicCatalogService');
 
 // Configurable fuzzy match threshold (0.0 - 1.0)
 // Higher = stricter matching, fewer false positives
@@ -98,10 +99,12 @@ class CollectableMatchingService {
         this.bookCatalogService = new BookCatalogService();
         this.gameCatalogService = new GameCatalogService();
         this.movieCatalogService = new MovieCatalogService();
+        this.musicCatalogService = new MusicCatalogService();
         this.catalogServices = [
             this.gameCatalogService,
             this.movieCatalogService,
             this.bookCatalogService,
+            this.musicCatalogService,
         ];
     }
 

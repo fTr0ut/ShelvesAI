@@ -445,6 +445,7 @@ services/visionPipeline.js
   → services/catalog/MovieCatalogService.js
   → services/catalog/GameCatalogService.js
   → services/catalog/TvCatalogService.js
+  → services/catalog/MusicCatalogService.js
   → services/manuals/otherManual.js
   → database/pg.js
   → database/queries/collectables.js
@@ -473,6 +474,7 @@ services/collectableMatchingService.js
   → services/catalog/MovieCatalogService.js
   → services/catalog/GameCatalogService.js
   → services/catalog/TvCatalogService.js
+  → services/catalog/MusicCatalogService.js
 
 services/collectables/fingerprint.js
   (no internal imports — crypto hashing)
@@ -502,6 +504,15 @@ services/catalog/TvCatalogService.js
   → services/catalog/CatalogRouter.js
   → services/catalog/adapters/TmdbTvAdapter.js
 
+services/catalog/MusicCatalogService.js
+  → services/collectables/fingerprint.js
+  → adapters/musicbrainz.adapter.js
+  → services/config/shelfTypeResolver.js
+  → services/catalog/MusicBrainzRequestQueue.js
+
+services/catalog/MusicBrainzRequestQueue.js
+  (no internal imports — FIFO request queue)
+
 services/catalog/CatalogRouter.js
   → config/apiContainers.json
 
@@ -516,6 +527,12 @@ services/catalog/adapters/TmdbTvAdapter.js
 
 services/catalog/adapters/IgdbAdapter.js
   → utils/RateLimiter.js
+
+services/catalog/adapters/MusicBrainzAdapter.js
+  → services/collectables/fingerprint.js
+  → adapters/musicbrainz.adapter.js
+  → utils/withTimeout.js
+  → services/catalog/MusicCatalogService.js (lazy require)
 
 services/openLibrary.js
   → utils/RateLimiter.js
@@ -642,6 +659,7 @@ adapters/openlibrary.adapter.js  (no internal imports — transforms API respons
 adapters/hardcover.adapter.js    (no internal imports)
 adapters/tmdb.adapter.js         (no internal imports)
 adapters/tmdbTv.adapter.js       (no internal imports)
+adapters/musicbrainz.adapter.js  → services/collectables/fingerprint.js
 ```
 
 ### Config Files (data, not code)
@@ -1162,6 +1180,8 @@ news_items (SERIAL PK)
 | **Hardcover** | `node-fetch` | `services/hardcover.js`, `adapters/hardcover.adapter.js` | `HARDCOVER_API_TOKEN` |
 | **NYT Books** | `node-fetch` | `services/discovery/NytBooksDiscoveryAdapter.js` | `NYT_BOOKS_API_KEY` |
 | **Bluray.com** | `cheerio` | `services/discovery/BlurayDiscoveryAdapter.js` | (scraping, no key) |
+| **MusicBrainz** | `node-fetch` | `services/catalog/MusicCatalogService.js`, `adapters/musicbrainz.adapter.js` | (public API, no key) |
+| **Cover Art Archive** | `node-fetch` | `adapters/musicbrainz.adapter.js` | (public API, no key) |
 | **Sentry** | `@sentry/react-native` | `mobile/index.js`, `mobile/src/services/api.js` | Sentry DSN in code |
 
 ---

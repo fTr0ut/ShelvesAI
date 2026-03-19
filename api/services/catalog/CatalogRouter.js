@@ -52,7 +52,7 @@ class CatalogRouter {
             igdb: () => this._loadAdapter('IgdbAdapter'),
             tmdb: () => this._loadAdapter('TmdbAdapter'),
             tmdbTv: () => this._loadAdapter('TmdbTvAdapter'),
-            discogs: () => this._loadAdapter('DiscogsAdapter'),
+            musicbrainz: () => this._loadAdapter('MusicBrainzAdapter'),
         };
     }
 

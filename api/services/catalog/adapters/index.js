@@ -9,6 +9,7 @@ const OpenLibraryAdapter = require('./OpenLibraryAdapter');
 const IgdbAdapter = require('./IgdbAdapter');
 const TmdbAdapter = require('./TmdbAdapter');
 const TmdbTvAdapter = require('./TmdbTvAdapter');
+const MusicBrainzAdapter = require('./MusicBrainzAdapter');
 
 module.exports = {
     HardcoverAdapter,
@@ -16,4 +17,5 @@ module.exports = {
     IgdbAdapter,
     TmdbAdapter,
     TmdbTvAdapter,
+    MusicBrainzAdapter,
 };

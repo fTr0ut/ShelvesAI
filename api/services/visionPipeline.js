@@ -25,6 +25,7 @@ const { HOOK_TYPES } = require('./visionPipelineHooks');
 const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
+const { MusicCatalogService } = require('./catalog/MusicCatalogService');
 
 // Load progress messages config
 let progressMessagesConfig = {};
@@ -158,7 +159,7 @@ class VisionPipelineService {
             book: new BookCatalogService(),
             game: new GameCatalogService(),
             movie: new MovieCatalogService(),
-            // fallback/music could go here
+            music: new MusicCatalogService(),
         };
     }
 
