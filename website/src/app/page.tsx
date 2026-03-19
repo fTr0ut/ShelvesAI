@@ -1,5 +1,7 @@
 import Image from "next/image";
+import Link from "next/link";
 import content from "../content.json";
+import WaitlistForm from "./WaitlistForm";
 import styles from "./page.module.css";
 
 const Icons = {
@@ -55,9 +57,7 @@ export default function Home() {
         </p>
 
         <div className="animate-fade-in stagger-3">
-          <button className="btn-primary">
-            {content.hero.cta}
-          </button>
+          <WaitlistForm ctaLabel={content.hero.cta} />
         </div>
       </div>
 
@@ -74,7 +74,10 @@ export default function Home() {
       </div>
 
       <footer className={styles.footer}>
-        {content.footer.text}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem" }}>
+          <span>{content.footer.text}</span>
+          <Link href="/privacy" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "underline", fontSize: "0.875rem" }}>Privacy Policy</Link>
+        </div>
       </footer>
     </main>
   );

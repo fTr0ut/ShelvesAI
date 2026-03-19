@@ -4,7 +4,7 @@
     "slug": "shelves-ai",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo.png",
     "scheme": "shelvesai",
     "userInterfaceStyle": "automatic",
     "splash": {
@@ -23,7 +23,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo-android.png",
         "backgroundColor": "#F4F1EA"
       },
       "package": "com.shelvesai.app",

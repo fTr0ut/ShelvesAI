@@ -1,3 +1,5 @@
+const { MetadataScorer } = require('./MetadataScorer');
+
 const DEFAULT_BOOK_METADATA_MIN_SCORE = 55;
 
 function normalizeString(value) {
@@ -66,70 +68,16 @@ function hasCoverImage(collectable) {
   return false;
 }
 
+/**
+ * Backward-compatible wrapper around MetadataScorer.
+ * Delegates to the generic scoring engine for 'books' container type.
+ */
 function scoreBookCollectable(collectable) {
-  const maxScore = 100;
-  const missing = [];
-  let score = 0;
-
   if (!collectable || typeof collectable !== 'object') {
-    return { score: 0, maxScore, missing: ['collectable'] };
+    return { score: 0, maxScore: 100, missing: ['collectable'] };
   }
-
-  const title = normalizeString(collectable.title);
-  if (title) score += 15;
-  else missing.push('title');
-
-  const primaryCreator =
-    normalizeString(collectable.primaryCreator) ||
-    normalizeString(collectable.primaryAuthor) ||
-    normalizeString(collectable.author);
-  const hasCreators = Boolean(primaryCreator) || hasNonEmptyArray(collectable.creators);
-  if (hasCreators) score += 20;
-  else missing.push('creator');
-
-  const publishers =
-    collectable.publishers ??
-    collectable.publisher ??
-    collectable.publishersDetailed ??
-    collectable.publisherDetailed;
-  const hasPublishers =
-    hasNonEmptyArray(publishers) || Boolean(normalizeString(publishers));
-  if (hasPublishers) score += 10;
-  else missing.push('publishers');
-
-  const year =
-    normalizeString(collectable.year) ||
-    normalizeString(collectable.publishYear) ||
-    normalizeString(collectable.releaseYear);
-  if (year) score += 10;
-  else missing.push('year');
-
-  const description = normalizeString(collectable.description);
-  if (description.length >= 120) score += 20;
-  else if (description.length >= 40) score += 10;
-  else missing.push('description');
-
-  if (hasCoverImage(collectable)) score += 15;
-  else missing.push('cover');
-
-  const identifiers = collectable.identifiers || {};
-  const hasIsbn =
-    hasIdentifierValues(identifiers.isbn13) ||
-    hasIdentifierValues(identifiers.isbn10);
-  const hasAsin = hasIdentifierValues(identifiers.asin);
-  const hasProviderIds =
-    hasIdentifierValues(identifiers.openlibrary) ||
-    hasIdentifierValues(identifiers.hardcover);
-  let identifierScore = 0;
-  if (hasIsbn || hasAsin) identifierScore = 10;
-  else if (hasProviderIds) identifierScore = 5;
-  if (identifierScore) score += identifierScore;
-  else missing.push('identifiers');
-
-  const tags = collectable.tags ?? collectable.genre;
-  if (hasNonEmptyArray(tags)) score += 5;
-  else missing.push('tags');
-
+  const scorer = new MetadataScorer();
+  const { score, maxScore, missing } = scorer.score(collectable, 'books');
   return { score, maxScore, missing };
 }
 

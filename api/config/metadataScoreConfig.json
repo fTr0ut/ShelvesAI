@@ -1,0 +1,73 @@
+{
+  "books": {
+    "minScore": 55,
+    "maxScore": 100,
+    "fields": [
+      { "field": "title", "check": "hasString", "weight": 15 },
+      { "field": ["primaryCreator", "primaryAuthor", "author", "creators"], "check": "hasAny", "weight": 20 },
+      { "field": ["publishers", "publisher", "publishersDetailed", "publisherDetailed"], "check": "hasAny", "weight": 10 },
+      { "field": ["year", "publishYear", "releaseYear"], "check": "hasAny", "weight": 10 },
+      { "field": "description", "check": "stringMinLength", "params": { "full": 120, "partial": 40, "partialWeight": 10 }, "weight": 20 },
+      { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
+      { "field": "identifiers", "check": "hasBookIdentifiers", "params": { "preferred": ["isbn13", "isbn10", "asin"], "fallback": ["openlibrary", "hardcover"], "fallbackWeight": 5 }, "weight": 10 },
+      { "field": ["tags", "genre"], "check": "hasAny", "weight": 5 }
+    ]
+  },
+  "vinyl": {
+    "minScore": 45,
+    "maxScore": 100,
+    "fields": [
+      { "field": "title", "check": "hasString", "weight": 20 },
+      { "field": ["primaryCreator", "creators"], "check": "hasAny", "weight": 25 },
+      { "field": ["year", "releaseYear"], "check": "hasAny", "weight": 10 },
+      { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
+      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["musicbrainz"] }, "weight": 10 },
+      { "field": ["tags", "genre"], "check": "hasAny", "weight": 10 },
+      { "field": "description", "check": "stringMinLength", "params": { "full": 40, "partial": 10, "partialWeight": 5 }, "weight": 10 }
+    ]
+  },
+  "movies": {
+    "minScore": 50,
+    "maxScore": 100,
+    "fields": [
+      { "field": "title", "check": "hasString", "weight": 15 },
+      { "field": ["primaryCreator", "creators"], "check": "hasAny", "weight": 15 },
+      { "field": ["year", "releaseYear"], "check": "hasAny", "weight": 10 },
+      { "field": "description", "check": "stringMinLength", "params": { "full": 120, "partial": 40, "partialWeight": 10 }, "weight": 20 },
+      { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
+      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["tmdb", "imdb"] }, "weight": 10 },
+      { "field": ["tags", "genre"], "check": "hasAny", "weight": 5 },
+      { "field": "runtime", "check": "hasValue", "weight": 5 },
+      { "field": "extras.certification", "check": "hasNestedValue", "weight": 5 }
+    ]
+  },
+  "games": {
+    "minScore": 45,
+    "maxScore": 100,
+    "fields": [
+      { "field": "title", "check": "hasString", "weight": 20 },
+      { "field": ["primaryCreator", "creators"], "check": "hasAny", "weight": 10 },
+      { "field": ["year", "releaseYear"], "check": "hasAny", "weight": 10 },
+      { "field": "description", "check": "stringMinLength", "params": { "full": 80, "partial": 30, "partialWeight": 10 }, "weight": 20 },
+      { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
+      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["igdb"] }, "weight": 10 },
+      { "field": ["tags", "genre"], "check": "hasAny", "weight": 5 },
+      { "field": "systemName", "check": "hasString", "weight": 10 }
+    ]
+  },
+  "tv": {
+    "minScore": 50,
+    "maxScore": 100,
+    "fields": [
+      { "field": "title", "check": "hasString", "weight": 15 },
+      { "field": ["primaryCreator", "creators"], "check": "hasAny", "weight": 15 },
+      { "field": ["year", "releaseYear"], "check": "hasAny", "weight": 10 },
+      { "field": "description", "check": "stringMinLength", "params": { "full": 120, "partial": 40, "partialWeight": 10 }, "weight": 20 },
+      { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
+      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["tmdb"] }, "weight": 10 },
+      { "field": ["tags", "genre"], "check": "hasAny", "weight": 5 },
+      { "field": "extras.numberOfSeasons", "check": "hasNestedValue", "weight": 5 },
+      { "field": "extras.status", "check": "hasNestedString", "weight": 5 }
+    ]
+  }
+}

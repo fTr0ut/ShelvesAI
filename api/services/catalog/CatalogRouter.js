@@ -11,11 +11,7 @@
  */
 
 const path = require('path');
-const {
-    scoreBookCollectable,
-    resolveBookMetadataMinScore,
-    isBookContainer,
-} = require('./metadataScore');
+const { getMetadataScorer } = require('./MetadataScorer');
 const { getApiContainerKey } = require('../config/shelfTypeResolver');
 
 // Load config - will be cached by require()
@@ -192,9 +188,9 @@ class CatalogRouter {
      */
     async _lookupFallback(item, apis, options = {}) {
         const containerType = options.containerType || '';
-        const container = options.container || null;
-        const shouldScore = isBookContainer(containerType);
-        const minScore = shouldScore ? resolveBookMetadataMinScore({ options, container }) : null;
+        const scorer = getMetadataScorer();
+        const minScore = scorer.getMinScore(containerType);
+        const shouldScore = minScore !== null;
         let bestCandidate = null;
 
         for (const api of apis) {
@@ -220,7 +216,7 @@ class CatalogRouter {
                         });
                     }
 
-                    const metadata = scoreBookCollectable(result);
+                    const metadata = scorer.score(result, containerType);
                     const sourceIndex = apis.indexOf(api);
                     if (!bestCandidate || metadata.score > bestCandidate.metadata.score) {
                         bestCandidate = {

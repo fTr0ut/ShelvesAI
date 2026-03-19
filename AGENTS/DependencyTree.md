@@ -2,7 +2,7 @@
 
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 
-Last updated: 2026-03-18
+Last updated: 2026-03-19
 
 ---
 
@@ -75,6 +75,7 @@ ShelvesAI/
 
 | Website Route/Component | API Route | Auth |
 |---|---|---|
+| `app/WaitlistForm.tsx` (waitlist signup) | `POST /api/waitlist` | None |
 | `app/reset-password/reset-password-client.tsx` (token validation) | `GET /api/auth/validate-reset-token?token=...` | None |
 | `app/reset-password/reset-password-client.tsx` (password submit) | `POST /api/auth/reset-password` | None |
 
@@ -113,6 +114,7 @@ api/server.js
   → api/routes/push.js
   → api/routes/admin.js
   → api/routes/manuals.js
+  → api/routes/waitlist.js
 ```
 
 ### Routes → Controllers → Queries/Services
@@ -406,6 +408,13 @@ routes/manuals.js
 ```
 routes/config.js
   (reads config/onboardingScreen.json via fs)
+```
+
+#### waitlist
+```
+routes/waitlist.js
+  → middleware/validate.js
+  → resend (Contacts API)
 ```
 
 #### resetPasswordPage
@@ -918,7 +927,12 @@ website/src/app/layout.tsx
 
 website/src/app/page.tsx
   → website/src/content.json
+  → website/src/app/WaitlistForm.tsx
   → website/src/app/page.module.css
+
+website/src/app/WaitlistForm.tsx
+  → website/src/app/waitlist-form.module.css
+  → (env) NEXT_PUBLIC_API_BASE
 
 website/src/app/reset-password/page.tsx
   → website/src/app/reset-password/reset-password-client.tsx
@@ -1172,7 +1186,7 @@ news_items (SERIAL PK)
 | **Google Cloud Vision** | `@google-cloud/vision` | `services/googleCloudVision.js` (disabled) | `GOOGLE_APPLICATION_CREDENTIALS` |
 | **OpenAI** | `openai` | (not currently imported) | `OPENAI_API_KEY` |
 | **AWS S3** | `@aws-sdk/client-s3` | `services/s3.js` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_PUBLIC_URL`, `AWS_REGION` |
-| **Resend** | `resend` | `services/emailService.js` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` |
+| **Resend** | `resend` | `services/emailService.js`, `routes/waitlist.js` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_AUDIENCE_ID` |
 | **Expo Push** | `expo-server-sdk` | `services/pushNotificationService.js` | (uses Expo tokens) |
 | **TMDB** | `node-fetch` | `adapters/TmdbAdapter.js`, `TmdbTvAdapter.js`, `TmdbDiscoveryAdapter.js` | `TMDB_API_KEY` |
 | **IGDB** | `node-fetch` | `adapters/IgdbAdapter.js`, `IgdbDiscoveryAdapter.js` | `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` |
