@@ -1,6 +1,20 @@
 const { MusicCatalogService } = require('./MusicCatalogService');
 const { musicbrainzReleaseGroupToCollectable } = require('../../adapters/musicbrainz.adapter');
 
+const ORIGINAL_MUSIC_ROUTER_ENV = process.env.MUSIC_CATALOG_USE_ROUTER;
+
+beforeAll(() => {
+  process.env.MUSIC_CATALOG_USE_ROUTER = 'false';
+});
+
+afterAll(() => {
+  if (ORIGINAL_MUSIC_ROUTER_ENV == null) {
+    delete process.env.MUSIC_CATALOG_USE_ROUTER;
+  } else {
+    process.env.MUSIC_CATALOG_USE_ROUTER = ORIGINAL_MUSIC_ROUTER_ENV;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -296,6 +310,17 @@ describe('MusicCatalogService.safeLookup', () => {
       .mockRejectedValue(new Error('Network failure'));
 
     await expect(service.safeLookup({ title: 'Kind of Blue' })).rejects.toThrow('Network failure');
+  });
+
+  it('uses router lookup path when enabled', async () => {
+    const service = new MusicCatalogService({ retries: 0, useRouter: true });
+    const routerResult = { title: 'Kind of Blue', kind: 'album', _metadataScore: 70 };
+    jest.spyOn(service, 'routerLookup').mockResolvedValue(routerResult);
+
+    const result = await service.safeLookup({ title: 'Kind of Blue' });
+
+    expect(service.routerLookup).toHaveBeenCalledTimes(1);
+    expect(result).toBe(routerResult);
   });
 });
 

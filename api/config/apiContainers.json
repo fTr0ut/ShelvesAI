@@ -57,6 +57,12 @@
                 "enabled": true,
                 "priority": 1,
                 "envDisableKey": "DISABLE_MUSICBRAINZ"
+            },
+            {
+                "name": "discogs",
+                "enabled": true,
+                "priority": 2,
+                "envDisableKey": "DISABLE_DISCOGS"
             }
         ]
     }

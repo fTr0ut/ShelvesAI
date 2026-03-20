@@ -58,7 +58,11 @@
           "project": "shelvesai",
           "organization": "trout-pond-llc"
         }
+      ],
+      [
+        "@sentry/react-native"
       ]
+      
     ],
     "extra": {
       "eas": {

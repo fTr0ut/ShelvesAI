@@ -49,6 +49,7 @@ class CatalogRouter {
             tmdb: () => this._loadAdapter('TmdbAdapter'),
             tmdbTv: () => this._loadAdapter('TmdbTvAdapter'),
             musicbrainz: () => this._loadAdapter('MusicBrainzAdapter'),
+            discogs: () => this._loadAdapter('DiscogsAdapter'),
         };
     }
 
@@ -216,7 +217,7 @@ class CatalogRouter {
                         });
                     }
 
-                    const metadata = scorer.score(result, containerType);
+                    const metadata = await scorer.scoreAsync(result, containerType);
                     const sourceIndex = apis.indexOf(api);
                     if (!bestCandidate || metadata.score > bestCandidate.metadata.score) {
                         bestCandidate = {

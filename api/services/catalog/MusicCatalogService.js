@@ -4,6 +4,19 @@ const { musicbrainzReleaseGroupToCollectable } = require('../../adapters/musicbr
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 const { getRequestQueue } = require('./MusicBrainzRequestQueue');
 
+let catalogRouter = null;
+function getCatalogRouter() {
+  if (!catalogRouter) {
+    try {
+      const { getCatalogRouter: getRouter } = require('./CatalogRouter');
+      catalogRouter = getRouter();
+    } catch (err) {
+      console.warn('[MusicCatalogService] CatalogRouter not available:', err.message);
+    }
+  }
+  return catalogRouter;
+}
+
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
@@ -50,6 +63,9 @@ class MusicCatalogService {
       .trim()
       .toLowerCase() === 'true';
 
+    const useRouter = options.useRouter ?? process.env.MUSIC_CATALOG_USE_ROUTER;
+    this.useRouter = String(useRouter || 'true').trim().toLowerCase() !== 'false';
+
     this.serviceName = 'musicbrainz';
     this.timeoutMs = Number.isFinite(options.timeoutMs)
       ? options.timeoutMs
@@ -69,6 +85,20 @@ class MusicCatalogService {
 
     // Use the shared MusicBrainz request queue (1 req/s rate limiting)
     this._requestQueue = getRequestQueue();
+  }
+
+  async routerLookup(item, retries = DEFAULT_RETRIES) {
+    const router = getCatalogRouter();
+    if (!router) {
+      return this.safeLookup(item, retries, { bypassRouter: true });
+    }
+
+    try {
+      return await router.lookup(item, 'vinyl', { retries });
+    } catch (err) {
+      console.error('[MusicCatalogService.routerLookup] failed:', err?.message || err);
+      return null;
+    }
   }
 
   supportsShelfType(type) {
@@ -117,7 +147,11 @@ class MusicCatalogService {
     return results;
   }
 
-  async safeLookup(item, retries = this.retries) {
+  async safeLookup(item, retries = this.retries, options = {}) {
+    if (this.useRouter && !options?.bypassRouter) {
+      return this.routerLookup(item, retries);
+    }
+
     const title = normalizeString(item?.name || item?.title);
     const artist = normalizeString(item?.author || item?.primaryCreator);
     if (!title) {

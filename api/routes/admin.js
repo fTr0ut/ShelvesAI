@@ -47,6 +47,10 @@ router.get('/stats', adminController.getStats);
 router.get('/users', adminController.listUsers);
 router.get('/users/:userId', adminController.getUser);
 
+// System settings (read — no CSRF required)
+router.get('/settings', adminController.getSettings);
+router.get('/settings/:key', adminController.getSetting);
+
 // CSRF required for admin state-changing routes.
 router.use(requireAdminCsrf);
 
@@ -60,5 +64,8 @@ router.get('/feed/recent', adminController.getRecentFeed);
 
 // System info
 router.get('/system', adminController.getSystemInfo);
+
+// System settings (write — CSRF required)
+router.put('/settings/:key', adminController.updateSetting);
 
 module.exports = router;

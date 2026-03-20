@@ -1,6 +1,6 @@
 const { query } = require('../pg');
 
-const DEFAULT_MONTHLY_QUOTA = 50;
+const DEFAULT_MONTHLY_QUOTA = 15;
 
 function getMonthlyQuota() {
     const raw = parseInt(process.env.VISION_MONTHLY_QUOTA || '', 10);

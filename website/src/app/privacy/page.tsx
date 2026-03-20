@@ -1,13 +1,40 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  alternates: { canonical: '/privacy' },
+  openGraph: {
+    title: "Privacy Policy",
+    url: '/privacy',
+  },
+  twitter: {
+    title: "Privacy Policy",
+  },
+};
+
 import styles from "../page.module.css";
+import Image from "next/image";
 
 export default function PrivacyPolicy() {
   return (
     <main className={styles.hero} style={{ minHeight: "100vh", padding: "4rem 2rem", textAlign: "left", alignItems: "flex-start" }}>
-      <header className={`${styles.header} animate-fade-in`} style={{ width: "100%", justifyContent: "flex-start", marginBottom: "3rem" }}>
+      <header className={`${styles.header} animate-fade-in`} style={{ width: "100%", marginBottom: "3rem", flexWrap: "wrap", gap: "1rem" }}>
         <Link href="/" className={styles.brand} style={{ textDecoration: "none" }}>
-          <span>&larr; Back to Home</span>
+          <div className={styles.brandLogoBox} style={{ overflow: 'hidden' }}>
+            <Image src="/logo.png" alt="ShelvesAI Logo" width={44} height={44} style={{ objectFit: 'cover' }} />
+          </div>
+          <span>ShelvesAI</span>
         </Link>
+        <nav style={{ display: "flex", alignItems: "center", gap: "1.5rem", flexWrap: "wrap", justifyContent: "center" }}>
+          <Link href="/books" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Books</Link>
+          <Link href="/video-games" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Video Games</Link>
+          <Link href="/vinyl" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Vinyl</Link>
+          <Link href="/movies" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Movies</Link>
+          <Link href="/collectibles" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Collectibles</Link>
+          <Link href="/how-it-works" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>How It Works</Link>
+          <Link href="/about" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>About</Link>
+        </nav>
       </header>
 
       <div className="animate-fade-in stagger-1" style={{ maxWidth: "800px", margin: "0 auto", background: "rgba(255, 255, 255, 0.05)", padding: "3rem", borderRadius: "16px", backdropFilter: "blur(10px)" }}>
@@ -37,13 +64,13 @@ export default function PrivacyPolicy() {
               <strong style={{ color: "var(--text-primary, #fff)" }}>Manual Entries & Photos:</strong> When manually adding items, we collect the details you provide (such as item condition, age statements, barcodes, edition details) and photos you upload for cover media or identification.
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
-              <strong style={{ color: "var(--text-primary, #fff)" }}>Social & Activity Data:</strong> If you use our social features, we collect data on your friendships, ratings, check-ins, event logs, likes, and comments. This data's visibility is subject to your privacy settings (Private, Friends, or Public).
+              <strong style={{ color: "var(--text-primary, #fff)" }}>Social & Activity Data:</strong> If you use our social features, we collect data on your friendships, ratings, check-ins, event logs, likes, and comments. This data&apos;s visibility is subject to your privacy settings (Private, Friends, or Public).
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
               <strong style={{ color: "var(--text-primary, #fff)" }}>Device & App Usage:</strong> We collect push notification device tokens to send you alerts, as well as your notification preferences. We also track which news items you have seen or dismissed.
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
-              <strong style={{ color: "var(--text-primary, #fff)" }}>Vision AI Processing:</strong> To automatically identify items from photos, we process images you upload through our Vision AI pipeline.
+              <strong style={{ color: "var(--text-primary, #fff)" }}>Image Processing:</strong> To automatically identify items from photos, we process images you upload through our image recognition system.
             </li>
           </ul>
         </section>
@@ -52,7 +79,7 @@ export default function PrivacyPolicy() {
           <h2 style={{ fontSize: "1.5rem", marginBottom: "1rem", color: "var(--text-primary, #fff)" }}>3. How We Use Your Information</h2>
           <ul style={{ color: "var(--text-secondary, #a1a1aa)", lineHeight: "1.6", paddingLeft: "1.5rem" }}>
             <li style={{ marginBottom: "0.5rem" }}>To provide, maintain, and improve the ShelvesAI platform.</li>
-            <li style={{ marginBottom: "0.5rem" }}>To identify your collectables automatically from images via our AI pipeline.</li>
+            <li style={{ marginBottom: "0.5rem" }}>To identify your collectables automatically from images via our recognition system.</li>
             <li style={{ marginBottom: "0.5rem" }}>To enable social interactions between you and your friends based on your visibility settings.</li>
             <li style={{ marginBottom: "0.5rem" }}>To send you push notifications, password reset emails, and account alerts.</li>
           </ul>

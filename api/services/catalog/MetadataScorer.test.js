@@ -261,7 +261,100 @@ describe('MetadataScorer — configOverride', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MetadataScorer — singleton
+// MetadataScorer — scoreAsync()
+// ---------------------------------------------------------------------------
+
+describe('MetadataScorer.scoreAsync()', () => {
+  function buildFullBook(overrides = {}) {
+    return {
+      title: 'The Great Gatsby',
+      primaryCreator: 'F. Scott Fitzgerald',
+      publishers: ['Scribner'],
+      year: '1925',
+      description:
+        'The Great Gatsby is a 1925 novel by American writer F. Scott Fitzgerald. Set in the Jazz Age on Long Island, near New York City, the novel depicts first-person narrator Nick Carraway interactions with mysterious millionaire Jay Gatsby.',
+      coverImageUrl: 'https://example.com/cover.jpg',
+      identifiers: { isbn13: '9780743273565' },
+      tags: ['fiction', 'classic'],
+      ...overrides,
+    };
+  }
+
+  it('falls back to static config when no settingsCache is provided', async () => {
+    const scorer = new MetadataScorer();
+    const book = buildFullBook();
+    const asyncResult = await scorer.scoreAsync(book, 'books');
+    const syncResult = scorer.score(book, 'books');
+
+    expect(asyncResult.score).toBe(syncResult.score);
+    expect(asyncResult.maxScore).toBe(syncResult.maxScore);
+  });
+
+  it('falls back to static config when cache returns null', async () => {
+    const mockCache = { get: jest.fn().mockResolvedValue(null) };
+    const scorer = new MetadataScorer({ settingsCache: mockCache });
+    const book = buildFullBook();
+
+    const asyncResult = await scorer.scoreAsync(book, 'books');
+    const syncResult = scorer.score(book, 'books');
+
+    expect(asyncResult.score).toBe(syncResult.score);
+    expect(mockCache.get).toHaveBeenCalledWith('metadata_score_config');
+  });
+
+  it('uses DB config override when cache returns a config for the container type', async () => {
+    const dbConfig = {
+      books: {
+        minScore: 10,
+        maxScore: 50,
+        fields: [{ field: 'title', check: 'hasString', weight: 50 }],
+      },
+    };
+    const mockCache = { get: jest.fn().mockResolvedValue(dbConfig) };
+    const scorer = new MetadataScorer({ settingsCache: mockCache });
+
+    const result = await scorer.scoreAsync({ title: 'Hello' }, 'books');
+
+    expect(result.score).toBe(50);
+    expect(result.maxScore).toBe(50);
+  });
+
+  it('falls back to static config when DB config does not have the container type', async () => {
+    const dbConfig = { other_type: {} }; // no 'books' key
+    const mockCache = { get: jest.fn().mockResolvedValue(dbConfig) };
+    const scorer = new MetadataScorer({ settingsCache: mockCache });
+    const book = buildFullBook();
+
+    const asyncResult = await scorer.scoreAsync(book, 'books');
+    const syncResult = scorer.score(book, 'books');
+
+    expect(asyncResult.score).toBe(syncResult.score);
+  });
+
+  it('falls back to static config when cache.get() throws', async () => {
+    const mockCache = { get: jest.fn().mockRejectedValue(new Error('DB down')) };
+    const scorer = new MetadataScorer({ settingsCache: mockCache });
+    const book = buildFullBook();
+
+    const asyncResult = await scorer.scoreAsync(book, 'books');
+    const syncResult = scorer.score(book, 'books');
+
+    expect(asyncResult.score).toBe(syncResult.score);
+  });
+
+  it('returns same shape as score() (score, maxScore, missing, scoredAt)', async () => {
+    const scorer = new MetadataScorer();
+    const result = await scorer.scoreAsync(buildFullBook(), 'books');
+
+    expect(typeof result.score).toBe('number');
+    expect(typeof result.maxScore).toBe('number');
+    expect(Array.isArray(result.missing)).toBe(true);
+    expect(typeof result.scoredAt).toBe('string');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MetadataScorer — missing array
 // ---------------------------------------------------------------------------
 
 describe('getMetadataScorer() singleton', () => {

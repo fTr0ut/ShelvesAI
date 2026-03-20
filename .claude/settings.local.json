@@ -13,7 +13,9 @@
       "Bash(npm run init-db:*)",
       "Bash(find:*)",
       "Bash(dir:*)",
-      "mcp__context7__resolve-library-id"
+      "mcp__context7__resolve-library-id",
+      "Bash(mkdir -p \"C:/Users/johna/.claude/plans\")",
+      "Bash(\"C:/Users/johna/.claude/plans/cheeky-doodling-hummingbird.md\":*)"
     ]
   }
 }

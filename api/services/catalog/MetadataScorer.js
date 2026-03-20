@@ -5,6 +5,8 @@ const path = require('path');
 
 const CONFIG_PATH = path.join(__dirname, '../../config/metadataScoreConfig.json');
 
+const { getSystemSettingsCache } = require('../config/SystemSettingsCache');
+
 // ---------------------------------------------------------------------------
 // Helpers (identical logic to metadataScore.js)
 // ---------------------------------------------------------------------------
@@ -32,6 +34,7 @@ class MetadataScorer {
   /**
    * @param {object} [options]
    * @param {object} [options.configOverride] - Use this config object instead of reading from disk.
+   * @param {object} [options.settingsCache] - SystemSettingsCache instance for DB overrides.
    */
   constructor(options = {}) {
     if (options.configOverride && typeof options.configOverride === 'object') {
@@ -39,6 +42,7 @@ class MetadataScorer {
     } else {
       this._config = this._loadConfig();
     }
+    this._settingsCache = options.settingsCache ?? null;
   }
 
   // -------------------------------------------------------------------------
@@ -307,6 +311,35 @@ class MetadataScorer {
   }
 
   /**
+   * Async version of score() that checks the DB for a config override first.
+   * If a `metadata_score_config` setting exists in the DB, uses that config for
+   * the container type. Falls back to the static file config if not found.
+   *
+   * The synchronous score() method is unchanged and has no DB dependency.
+   *
+   * @param {object} collectable
+   * @param {string} containerType - e.g. "books", "games", "movies"
+   * @returns {Promise<{ score: number|null, maxScore: number|null, missing: string[], scoredAt: string }>}
+   */
+  async scoreAsync(collectable, containerType) {
+    const cache = this._settingsCache;
+    if (cache) {
+      try {
+        const dbConfig = await cache.get('metadata_score_config');
+        if (dbConfig && typeof dbConfig === 'object' && dbConfig[containerType]) {
+          // Use a temporary scorer with the DB config for this call
+          const tempScorer = new MetadataScorer({ configOverride: dbConfig });
+          return tempScorer.score(collectable, containerType);
+        }
+      } catch (err) {
+        // DB unavailable — fall through to static config
+        console.warn('[MetadataScorer] scoreAsync DB lookup failed, using static config:', err.message);
+      }
+    }
+    return this.score(collectable, containerType);
+  }
+
+  /**
    * Returns the minScore for the container type, or null if not configured.
    * @param {string} containerType
    * @returns {number|null}
@@ -341,7 +374,7 @@ let _instance = null;
 
 function getMetadataScorer() {
   if (!_instance) {
-    _instance = new MetadataScorer();
+    _instance = new MetadataScorer({ settingsCache: getSystemSettingsCache() });
   }
   return _instance;
 }

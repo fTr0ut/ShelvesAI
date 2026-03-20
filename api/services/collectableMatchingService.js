@@ -14,6 +14,8 @@ const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 const { MusicCatalogService } = require('./catalog/MusicCatalogService');
+const { getMetadataScorer } = require('./catalog/MetadataScorer');
+const { getApiContainerKey } = require('./config/shelfTypeResolver');
 
 // Configurable fuzzy match threshold (0.0 - 1.0)
 // Higher = stricter matching, fewer false positives
@@ -106,6 +108,33 @@ class CollectableMatchingService {
             this.bookCatalogService,
             this.musicCatalogService,
         ];
+        this.metadataScorer = getMetadataScorer();
+    }
+
+    resolveContainerType(shelfType) {
+        return getApiContainerKey(shelfType) || normalizeType(shelfType) || null;
+    }
+
+    async attachMetadataScore(collectable, shelfType) {
+        if (!collectable || typeof collectable !== 'object') return collectable;
+
+        const containerType = this.resolveContainerType(shelfType);
+        if (!containerType) return collectable;
+
+        try {
+            const metadata = await this.metadataScorer.scoreAsync(collectable, containerType);
+            if (Number.isFinite(metadata?.score)) {
+                return {
+                    ...collectable,
+                    _metadataScore: metadata.score,
+                    _metadataMissing: Array.isArray(metadata.missing) ? metadata.missing : [],
+                };
+            }
+        } catch (err) {
+            console.warn('[CollectableMatchingService] metadata score failed:', err?.message || err);
+        }
+
+        return collectable;
     }
 
     /**
@@ -240,7 +269,7 @@ class CollectableMatchingService {
                     id: collectable.id
                 });
 
-                return collectable;
+                return await this.attachMetadataScore(collectable, shelfType);
             } else {
                 console.log('[CollectableMatchingService] API returned no result');
             }
@@ -295,10 +324,11 @@ class CollectableMatchingService {
                     lightweightFingerprint: null,
                 });
                 if (!collectable) continue;
-                suggestions.push(collectable);
+                suggestions.push(await this.attachMetadataScore(collectable, shelfType));
             }
 
             console.log('[CollectableMatchingService] API suggestions:', suggestions.length);
+            suggestions.sort((a, b) => (b?._metadataScore || 0) - (a?._metadataScore || 0));
             return suggestions.slice(0, limit);
         } catch (err) {
             console.error('[CollectableMatchingService] API lookup failed:', err?.message);

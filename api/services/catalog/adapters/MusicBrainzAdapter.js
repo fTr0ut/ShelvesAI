@@ -61,7 +61,7 @@ class MusicBrainzAdapter {
 
     try {
       const result = await withTimeout(
-        () => service.safeLookup(item, options.retries || 2),
+        () => service.safeLookup(item, options.retries || 2, { bypassRouter: true }),
         this.lookupTimeoutMs,
         '[MusicBrainzAdapter] lookup',
       );

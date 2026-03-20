@@ -1232,6 +1232,15 @@ class VisionPipelineService {
                         coverImageUrl: item.coverImageUrl || null,
                         coverImageSource: item.coverImageSource || null,
                         attribution: item.attribution || null,
+                        // Metadata quality score (from MetadataScorer via CatalogRouter)
+                        metascore: (item._metadataScore != null)
+                            ? {
+                                score: item._metadataScore,
+                                maxScore: item._metadataMaxScore ?? null,
+                                missing: item._metadataMissing ?? [],
+                                scoredAt: new Date().toISOString(),
+                            }
+                            : null,
                     };
                     await this.executeHook(HOOK_TYPES.BEFORE_COLLECTABLE_SAVE, {
                         ...hookContext,

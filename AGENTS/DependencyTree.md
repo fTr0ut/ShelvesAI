@@ -392,6 +392,8 @@ routes/admin.js
 
 controllers/adminController.js
   → database/queries/admin.js
+  → database/queries/systemSettings.js
+  → services/config/SystemSettingsCache.js
   → database/queries/utils.js
   → utils/adminAuth.js
 ```
@@ -518,15 +520,27 @@ services/catalog/MusicCatalogService.js
   → adapters/musicbrainz.adapter.js
   → services/config/shelfTypeResolver.js
   → services/catalog/MusicBrainzRequestQueue.js
+  → services/catalog/CatalogRouter.js (lazy require)
 
 services/catalog/MusicBrainzRequestQueue.js
   (no internal imports — FIFO request queue)
 
+services/catalog/CoverArtBackfillHook.js
+  → services/visionPipelineHooks.js (lazy require in register())
+
 services/catalog/CatalogRouter.js
   → config/apiContainers.json
+  → services/catalog/MetadataScorer.js
+
+services/catalog/MetadataScorer.js
+  → config/metadataScoreConfig.json
+  → services/config/SystemSettingsCache.js
 
 services/catalog/metadataScore.js
-  (no internal imports)
+  → services/catalog/MetadataScorer.js
+
+services/config/SystemSettingsCache.js
+  → database/queries/systemSettings.js (lazy require, cache miss only)
 
 services/catalog/adapters/TmdbAdapter.js
   → utils/RateLimiter.js
@@ -542,6 +556,12 @@ services/catalog/adapters/MusicBrainzAdapter.js
   → adapters/musicbrainz.adapter.js
   → utils/withTimeout.js
   → services/catalog/MusicCatalogService.js (lazy require)
+
+services/catalog/adapters/DiscogsAdapter.js
+  → services/collectables/fingerprint.js
+  → adapters/discogs.adapter.js
+  → utils/withTimeout.js
+  → utils/RateLimiter.js
 
 services/openLibrary.js
   → utils/RateLimiter.js
@@ -614,6 +634,16 @@ jobs/cleanupNeedsReview.js
   → database/pg.js
 ```
 
+### Scripts Internal Dependencies
+
+```
+scripts/backfillMetascore.js
+  → database/pg.js
+  → services/catalog/MetadataScorer.js
+  → services/config/shelfTypeResolver.js
+  → database/queries/utils.js
+```
+
 ### Database Query Dependencies
 
 ```
@@ -644,6 +674,7 @@ database/queries/passwordReset.js → database/pg.js
 database/queries/visionQuota.js → database/pg.js
 database/queries/pushDeviceTokens.js → database/pg.js, database/queries/utils.js
 database/queries/notificationPreferences.js → database/pg.js, database/queries/utils.js
+database/queries/systemSettings.js → database/pg.js, database/queries/utils.js
 database/queries/newsSeen.js → database/pg.js
 database/queries/newsDismissed.js → database/pg.js
 database/queries/admin.js → database/pg.js, database/queries/utils.js
@@ -669,6 +700,7 @@ adapters/hardcover.adapter.js    (no internal imports)
 adapters/tmdb.adapter.js         (no internal imports)
 adapters/tmdbTv.adapter.js       (no internal imports)
 adapters/musicbrainz.adapter.js  → services/collectables/fingerprint.js
+adapters/discogs.adapter.js      → services/collectables/fingerprint.js
 ```
 
 ### Config Files (data, not code)
@@ -680,6 +712,7 @@ config/visionSettings.json       (per-type OCR/confidence thresholds + prompts)
 config/visionProgressMessages.json (user-facing progress strings)
 config/onboardingScreen.json     (onboarding screen config)
 config/apiContainers.json        (catalog API routing config)
+config/metadataScoreConfig.json  (per-type metadata scoring weights + field definitions)
 ```
 
 ---
@@ -1099,6 +1132,11 @@ users (UUID PK)
   ├── profile_media (user_id FK)
   └─< admin_action_logs (admin_id FK)
 
+system_settings (key VARCHAR PK)
+  ├── value (JSONB, not null)
+  ├── description (TEXT, nullable)
+  └── updated_by (FK → users.id, nullable)
+
 collectables (SERIAL PK)
   ├── fingerprint (SHA1 hash, unique)
   ├── lightweight_fingerprint
@@ -1174,6 +1212,8 @@ news_items (SERIAL PK)
 | `20260128_rls_tier4` | RLS cascading policies |
 | `20260128_add_manual_id_to_favorites` | + `user_favorites.manual_id` |
 | `20260128_add_manual_cover_media` | + `user_manuals.cover_media_path` |
+| `20260319_add_collectables_metascore` | + `collectables.metascore` (JSONB) |
+| `20260319_create_system_settings` | + `system_settings` (key PK, value JSONB, description, updated_by FK, timestamps) |
 
 ---
 
@@ -1195,6 +1235,7 @@ news_items (SERIAL PK)
 | **NYT Books** | `node-fetch` | `services/discovery/NytBooksDiscoveryAdapter.js` | `NYT_BOOKS_API_KEY` |
 | **Bluray.com** | `cheerio` | `services/discovery/BlurayDiscoveryAdapter.js` | (scraping, no key) |
 | **MusicBrainz** | `node-fetch` | `services/catalog/MusicCatalogService.js`, `adapters/musicbrainz.adapter.js` | (public API, no key) |
+| **Discogs** | `node-fetch` | `services/catalog/adapters/DiscogsAdapter.js`, `adapters/discogs.adapter.js` | `DISCOGS_USER_TOKEN` or `DISCOGS_CONSUMER_KEY` + `DISCOGS_CONSUMER_SECRET` |
 | **Cover Art Archive** | `node-fetch` | `adapters/musicbrainz.adapter.js` | (public API, no key) |
 | **Sentry** | `@sentry/react-native` | `mobile/index.js`, `mobile/src/services/api.js` | Sentry DSN in code |
 

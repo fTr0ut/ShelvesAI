@@ -1,7 +1,21 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { Metadata } from "next";
 import content from "../content.json";
+
+export const metadata: Metadata = {
+  alternates: { canonical: '/' },
+  openGraph: {
+    title: content.seo.title,
+    url: '/',
+  },
+  twitter: {
+    title: content.seo.title,
+  },
+};
+
 import WaitlistForm from "./WaitlistForm";
+import HomeSlideshow from "./HomeSlideshow";
 import styles from "./page.module.css";
 
 const Icons = {
@@ -28,16 +42,32 @@ const Icons = {
   )
 };
 
+const featureRouteMap: Record<string, string> = {
+  book: "/books",
+  movie: "/movies",
+  gamepad: "/video-games",
+  shield: "/about",
+};
+
 export default function Home() {
   return (
     <main className={styles.hero}>
-      <header className={`${styles.header} animate-fade-in`}>
+      <header className={`${styles.header} animate-fade-in`} style={{ flexWrap: "wrap", gap: "1rem" }}>
         <div className={styles.brand}>
           <div className={styles.brandLogoBox} style={{ overflow: 'hidden' }}>
             <Image src="/logo.png" alt="ShelvesAI Logo" width={44} height={44} style={{ objectFit: 'cover' }} />
           </div>
           <span>{content.brand.name}</span>
         </div>
+        <nav style={{ display: "flex", alignItems: "center", gap: "1.5rem", flexWrap: "wrap", justifyContent: "center" }}>
+          <Link href="/books" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Books</Link>
+          <Link href="/video-games" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Video Games</Link>
+          <Link href="/vinyl" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Vinyl</Link>
+          <Link href="/movies" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Movies</Link>
+          <Link href="/collectibles" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>Collectibles</Link>
+          <Link href="/how-it-works" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>How It Works</Link>
+          <Link href="/about" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem", fontWeight: 500 }}>About</Link>
+        </nav>
       </header>
 
 
@@ -48,8 +78,7 @@ export default function Home() {
         </div>
 
         <h1 className={`${styles.title} animate-fade-in stagger-1`}>
-          <span className="text-gradient">Your physical collections,</span><br />
-          magically organized.
+          {content.hero.title}
         </h1>
 
         <p className={`${styles.subtitle} animate-fade-in stagger-2`}>
@@ -61,19 +90,50 @@ export default function Home() {
         </div>
       </div>
 
+      <div className="animate-fade-in stagger-3" style={{ textAlign: "center", marginTop: "4rem", marginBottom: "2rem" }}>
+        <h2 style={{ fontSize: "2rem", fontWeight: "bold" }}>Organize Books, Games, Vinyl, and Memorabilia</h2>
+      </div>
+
       <div className={`${styles.featuresGrid} animate-fade-in stagger-3`}>
         {content.features.map((feature, i) => (
-          <div key={i} className={styles.featureCard}>
-            <div className={styles.featureIcon}>
-              {Icons[feature.icon as keyof typeof Icons]}
+          <Link
+            key={i}
+            href={featureRouteMap[feature.icon] ?? "/"}
+            className={styles.featureCardLink}
+            aria-label={`Open ${feature.title}`}
+          >
+            <div className={styles.featureCard}>
+              <div className={styles.featureIcon}>
+                {Icons[feature.icon as keyof typeof Icons]}
+              </div>
+              <h3 className={styles.featureTitle}>{feature.title}</h3>
+              <p className={styles.featureDesc}>{feature.description}</p>
             </div>
-            <h3 className={styles.featureTitle}>{feature.title}</h3>
-            <p className={styles.featureDesc}>{feature.description}</p>
-          </div>
+          </Link>
         ))}
       </div>
 
+      {content.hero.slideshow && content.hero.slideshow.length > 0 && (
+        <HomeSlideshow images={content.hero.slideshow} />
+      )}
+
+      <div className="animate-fade-in" style={{ textAlign: "center", marginTop: "4rem", marginBottom: "2rem", maxWidth: "800px", marginLeft: "auto", marginRight: "auto" }}>
+        <h2 style={{ fontSize: "2rem", fontWeight: "bold" }}>{content.sections.collectionDatabase.title}</h2>
+        <p style={{ marginTop: "1rem", color: "var(--text-secondary)", lineHeight: "1.6", fontSize: "1.125rem" }}>
+          {content.sections.collectionDatabase.description}
+        </p>
+      </div>
+
       <footer className={styles.footer}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1.5rem", flexWrap: "wrap", marginBottom: "2rem" }}>
+          <Link href="/books" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>Books</Link>
+          <Link href="/video-games" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>Video Games</Link>
+          <Link href="/vinyl" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>Vinyl</Link>
+          <Link href="/movies" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>Movies</Link>
+          <Link href="/collectibles" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>Collectibles</Link>
+          <Link href="/how-it-works" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>How It Works</Link>
+          <Link href="/about" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "none", fontSize: "0.875rem" }}>About</Link>
+        </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem" }}>
           <span>{content.footer.text}</span>
           <Link href="/privacy" style={{ color: "var(--text-secondary, #a1a1aa)", textDecoration: "underline", fontSize: "0.875rem" }}>Privacy Policy</Link>

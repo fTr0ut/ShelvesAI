@@ -32,7 +32,7 @@ CREATE TABLE users (
 
     -- Flags
     is_private BOOLEAN DEFAULT FALSE,
-    is_premium BOOLEAN DEFAULT FALSE,
+    is_premium BOOLEAN DEFAULT TRUE,
     onboarding_completed BOOLEAN DEFAULT FALSE,
 
     -- Admin & Suspension

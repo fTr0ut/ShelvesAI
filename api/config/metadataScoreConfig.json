@@ -21,7 +21,7 @@
       { "field": ["primaryCreator", "creators"], "check": "hasAny", "weight": 25 },
       { "field": ["year", "releaseYear"], "check": "hasAny", "weight": 10 },
       { "field": "coverImage", "check": "hasCoverImage", "weight": 15 },
-      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["musicbrainz"] }, "weight": 10 },
+      { "field": "identifiers", "check": "hasIdentifiers", "params": { "preferred": ["musicbrainz", "discogs"] }, "weight": 10 },
       { "field": ["tags", "genre"], "check": "hasAny", "weight": 10 },
       { "field": "description", "check": "stringMinLength", "params": { "full": 40, "partial": 10, "partialWeight": 5 }, "weight": 10 }
     ]

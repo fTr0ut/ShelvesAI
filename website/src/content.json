@@ -1,16 +1,35 @@
 {
   "seo": {
-    "title": "Shelves | Catalog your collection and share what you love",
-    "description": "The ultimate mobile companion to showcase, organize, and track your physical collections—powered by OpenAI Vision. Coming soon."
+    "title": "ShelvesAI | Catalog and Organize Your Physical Collections",
+    "description": "ShelvesAI helps collectors catalog books, video games, vinyl records, movies, and memorabilia from photos. Organize, search, and share your physical collections.",
+    "siteUrl": "https://shelvesai.com",
+    "ogImage": "/og-image.png"
   },
   "brand": {
     "name": "ShelvesAI"
   },
   "hero": {
     "badge": "Coming Soon",
-    "title": "Your physical collections, magically organized.",
-    "subtitle": "Point your camera at your collection and take a shelfy! Shelves instantly catalogs your books, movies, games, and memorabilia.",
-    "cta": "Join the Waitlist"
+    "title": "Catalog Your Physical Collections",
+    "subtitle": "Easily organize, catalog, and track your books, video games, vinyl records, movies, and memorabilia. Build a comprehensive, searchable database of your physical collections.",
+    "cta": "Join the Waitlist",
+    "slideshow": [
+      "/slideshow/IMG_5270.jpg",
+      "/slideshow/IMG_5258.png",
+      "/slideshow/IMG_5259.png",
+      "/slideshow/IMG_5261.png",
+      "/slideshow/IMG_5262.png",
+      "/slideshow/IMG_5263.png",
+      "/slideshow/IMG_5264.png",
+      "/slideshow/IMG_5265.png",
+      "/slideshow/IMG_5267.png"
+    ]
+  },
+  "sections": {
+    "collectionDatabase": {
+      "title": "Build a Searchable Collection Database",
+      "description": "Stop losing track of what you own. Cataloging your physical collections gives you a searchable, beautifully organized database of your books, games, movies, and vinyl right in your pocket."
+    }
   },
   "features": [
     {
@@ -26,7 +45,7 @@
     {
       "icon": "gamepad",
       "title": "Video Games",
-      "description": "Log your retro cartridges and modern discs with an AI that knows every console generation."
+      "description": "Log your retro cartridges and modern discs to build an ultimate catalog of your video game collection."
     },
     {
       "icon": "shield",

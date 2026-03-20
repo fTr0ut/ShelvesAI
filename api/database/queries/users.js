@@ -38,8 +38,8 @@ async function findByUsername(username) {
  */
 async function create({ email, passwordHash, username }) {
     const result = await query(
-        `INSERT INTO users (email, password_hash, username)
-     VALUES ($1, $2, $3)
+        `INSERT INTO users (email, password_hash, username, is_premium)
+     VALUES ($1, $2, $3, TRUE)
      RETURNING *`,
         [email.toLowerCase(), passwordHash, username?.toLowerCase() || null]
     );

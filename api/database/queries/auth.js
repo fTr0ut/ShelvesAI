@@ -44,8 +44,8 @@ async function register({ username, password, email }) {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await query(
-        `INSERT INTO users (username, email, password_hash)
-     VALUES ($1, $2, $3)
+        `INSERT INTO users (username, email, password_hash, is_premium)
+     VALUES ($1, $2, $3, TRUE)
      RETURNING id, username, email, created_at`,
         [username.toLowerCase(), email.toLowerCase(), passwordHash]
     );
@@ -144,8 +144,8 @@ async function findOrCreateByAuth0(claims) {
 
     if (!user) {
         const result = await query(
-            `INSERT INTO users (email, first_name, picture)
-       VALUES ($1, $2, $3)
+            `INSERT INTO users (email, first_name, picture, is_premium)
+       VALUES ($1, $2, $3, TRUE)
        RETURNING *`,
             [email?.toLowerCase(), name, picture]
         );

@@ -214,6 +214,7 @@ async function upsert(data, client = null) {
         coverImageUrl,
         coverImageSource = 'external',
         attribution = null,
+        metascore = null,
     } = data;
 
     const resolvedCoverUrl = pickCoverUrl(images, coverUrl);
@@ -236,8 +237,8 @@ async function upsert(data, client = null) {
        fingerprint, lightweight_fingerprint, kind, title, subtitle, description,
        primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
-       cover_image_url, cover_image_source, attribution
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+       cover_image_url, cover_image_source, attribution, metascore
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -269,6 +270,7 @@ async function upsert(data, client = null) {
        cover_image_url = COALESCE(EXCLUDED.cover_image_url, collectables.cover_image_url),
        cover_image_source = COALESCE(EXCLUDED.cover_image_source, collectables.cover_image_source),
        attribution = COALESCE(EXCLUDED.attribution, collectables.attribution),
+       metascore = COALESCE(EXCLUDED.metascore, collectables.metascore),
        updated_at = NOW()
      RETURNING *`,
         [
@@ -276,7 +278,8 @@ async function upsert(data, client = null) {
             resolvedPrimaryCreator, normalizedCreators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, normalizedGenre, normalizedRuntime,
             JSON.stringify(identifiers), JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
             JSON.stringify(fuzzyFingerprints), coverImageUrl, coverImageSource,
-            attribution ? JSON.stringify(attribution) : null
+            attribution ? JSON.stringify(attribution) : null,
+            metascore ? JSON.stringify(metascore) : null
         ]
     );
     const collectable = rowToCamelCase(result.rows[0]);

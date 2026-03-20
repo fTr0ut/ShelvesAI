@@ -264,6 +264,26 @@ async function getRecentActivity({ limit = 50, offset = 0 }) {
   return result.rows.map(rowToCamelCase);
 }
 
+/**
+ * Log an admin action without a transaction (standalone insert).
+ * Use this when the action itself is not part of a larger transaction.
+ */
+async function logAction({
+  adminId,
+  action,
+  targetUserId = null,
+  metadata = {},
+  ipAddress = null,
+  userAgent = null,
+}) {
+  const safeMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  await query(
+    `INSERT INTO admin_action_logs (admin_id, action, target_user_id, metadata, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [adminId, action, targetUserId, JSON.stringify(safeMetadata), ipAddress, userAgent]
+  );
+}
+
 module.exports = {
   getSystemStats,
   listUsers,
@@ -272,4 +292,5 @@ module.exports = {
   unsuspendUser,
   toggleAdmin,
   getRecentActivity,
+  logAction,
 };

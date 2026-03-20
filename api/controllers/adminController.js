@@ -1,6 +1,8 @@
 const adminQueries = require('../database/queries/admin');
 const { parsePagination } = require('../database/queries/utils');
 const { clearAdminAuthCookies } = require('../utils/adminAuth');
+const systemSettingsQueries = require('../database/queries/systemSettings');
+const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 
 const normalizeIp = (ip) => {
   if (!ip || typeof ip !== 'string') return ip;
@@ -262,6 +264,78 @@ async function getSystemInfo(req, res) {
   }
 }
 
+/**
+ * GET /api/admin/settings
+ * List all system settings
+ */
+async function getSettings(req, res) {
+  try {
+    const settings = await systemSettingsQueries.getAllSettings();
+    res.json({ settings });
+  } catch (err) {
+    console.error('Admin getSettings error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/settings/:key
+ * Get a specific system setting by key
+ */
+async function getSetting(req, res) {
+  try {
+    const { key } = req.params;
+    const setting = await systemSettingsQueries.getSetting(key);
+    if (!setting) {
+      return res.status(404).json({ error: 'Setting not found' });
+    }
+    res.json({ setting });
+  } catch (err) {
+    console.error('Admin getSetting error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * PUT /api/admin/settings/:key
+ * Create or update a system setting, invalidate cache, and log the action
+ */
+async function updateSetting(req, res) {
+  try {
+    const { key } = req.params;
+    const { value, description } = req.body || {};
+
+    if (value === undefined) {
+      return res.status(400).json({ error: 'value is required' });
+    }
+
+    // Capture previous value for audit log before writing
+    const existing = await systemSettingsQueries.getSetting(key);
+
+    const setting = await systemSettingsQueries.upsertSetting(key, value, {
+      description: description ?? existing?.description ?? null,
+      updatedBy: req.user.id,
+    });
+
+    // Invalidate cache after successful DB write
+    getSystemSettingsCache().invalidate(key);
+
+    // Audit log
+    await adminQueries.logAction({
+      adminId: req.user.id,
+      action: 'update_setting',
+      targetUserId: null,
+      metadata: { key, previousValue: existing?.value ?? null },
+      ...getAdminContext(req),
+    });
+
+    res.json({ setting });
+  } catch (err) {
+    console.error('Admin updateSetting error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   getMe,
   logout,
@@ -273,4 +347,7 @@ module.exports = {
   toggleAdmin,
   getRecentFeed,
   getSystemInfo,
+  getSettings,
+  getSetting,
+  updateSetting,
 };

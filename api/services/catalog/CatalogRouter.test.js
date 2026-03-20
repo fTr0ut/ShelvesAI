@@ -220,6 +220,30 @@ describe('CatalogRouter._lookupFallback — universal scoring via MetadataScorer
             expect(typeof result._metadataScore).toBe('number');
             expect(result._metadataMissing).toBeDefined();
         });
+
+        it('falls through to second API for stronger vinyl metadata', async () => {
+            const lowScoreVinyl = {
+                title: 'Kind of Blue',
+                description: 'Jazz album',
+            };
+            const higherScoreVinyl = {
+                title: 'Kind of Blue',
+                primaryCreator: 'Miles Davis',
+                year: '1959',
+                description: 'A seminal jazz album.',
+                coverImageUrl: 'https://example.com/kob.jpg',
+                identifiers: { discogs: { release: ['249504'] } },
+                tags: ['jazz'],
+            };
+
+            setupRouter('vinyl', [lowScoreVinyl], [higherScoreVinyl]);
+
+            const result = await router.lookup(lowScoreVinyl, 'vinyl');
+
+            expect(result).not.toBeNull();
+            expect(result._source).toBe('api2');
+            expect(result._metadataScore).toBeDefined();
+        });
     });
 
     // -----------------------------------------------------------------------
