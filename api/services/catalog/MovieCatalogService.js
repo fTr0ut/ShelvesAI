@@ -79,6 +79,7 @@ class MovieCatalogService {
     // TMDB limit: 40 requests per second typically
     // We set a safe margin, e.g. 35 per 1s, or just use the 40.
     const RateLimiter = require('../../utils/RateLimiter');
+const logger = require('../../logger');
     this.limiter = new RateLimiter(35, 1);
   }
 
@@ -98,7 +99,7 @@ class MovieCatalogService {
     if (!this.apiKey) {
       if (!this._warnedMissingApiKey) {
         this._warnedMissingApiKey = true;
-        console.warn('[MovieCatalogService] TMDB API key missing; skipping lookups');
+        logger.warn('[MovieCatalogService] TMDB API key missing; skipping lookups');
       }
       return items.map((input) => ({ status: 'unresolved', input }));
     }
@@ -124,7 +125,7 @@ class MovieCatalogService {
             results[currentIndex] = { status: 'unresolved', input };
           }
         } catch (err) {
-          console.error('[MovieCatalogService.lookupFirstPass] failed', {
+          logger.error('[MovieCatalogService.lookupFirstPass] failed', {
             error: err?.message || err,
           });
           results[currentIndex] = { status: 'unresolved', input };
@@ -177,7 +178,7 @@ class MovieCatalogService {
         const message = String(err?.message || err);
         if ((message.includes('429') || message.includes('rate limit')) && attempt < retries) {
           const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[MovieCatalogService.safeLookup] rate limited', {
+          logger.warn('[MovieCatalogService.safeLookup] rate limited', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -187,7 +188,7 @@ class MovieCatalogService {
         }
         if (message.includes('abort') && attempt < retries) {
           const backoff = 500 * (attempt + 1);
-          console.warn('[MovieCatalogService.safeLookup] request aborted', {
+          logger.warn('[MovieCatalogService.safeLookup] request aborted', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -196,14 +197,14 @@ class MovieCatalogService {
           continue;
         }
         if (message.includes('404')) {
-          console.warn('[MovieCatalogService.safeLookup] details not found', {
+          logger.warn('[MovieCatalogService.safeLookup] details not found', {
             query: queryLogContext,
             attempt,
           });
           return null;
         }
         if (message.includes('401')) {
-          console.error('[MovieCatalogService.safeLookup] unauthorized', queryLogContext);
+          logger.error('[MovieCatalogService.safeLookup] unauthorized', queryLogContext);
           return null;
         }
         throw err;
@@ -247,7 +248,7 @@ class MovieCatalogService {
               const message = String(err?.message || err);
               if ((message.includes('429') || message.includes('rate limit')) && detailsAttempt < retries) {
                 const backoff = 500 * Math.pow(2, detailsAttempt);
-                console.warn('[MovieCatalogService.safeLookupMany] rate limited', {
+                logger.warn('[MovieCatalogService.safeLookupMany] rate limited', {
                   attempt: detailsAttempt,
                   backoff,
                   query: queryLogContext,
@@ -257,7 +258,7 @@ class MovieCatalogService {
               }
               if (message.includes('abort') && detailsAttempt < retries) {
                 const backoff = 500 * (detailsAttempt + 1);
-                console.warn('[MovieCatalogService.safeLookupMany] request aborted', {
+                logger.warn('[MovieCatalogService.safeLookupMany] request aborted', {
                   attempt: detailsAttempt,
                   backoff,
                   query: queryLogContext,
@@ -266,14 +267,14 @@ class MovieCatalogService {
                 continue;
               }
               if (message.includes('404')) {
-                console.warn('[MovieCatalogService.safeLookupMany] details not found', {
+                logger.warn('[MovieCatalogService.safeLookupMany] details not found', {
                   query: queryLogContext,
                   attempt: detailsAttempt,
                 });
                 break;
               }
               if (message.includes('401')) {
-                console.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
+                logger.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
                 return [];
               }
               throw err;
@@ -297,7 +298,7 @@ class MovieCatalogService {
         const message = String(err?.message || err);
         if ((message.includes('429') || message.includes('rate limit')) && attempt < retries) {
           const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[MovieCatalogService.safeLookupMany] rate limited', {
+          logger.warn('[MovieCatalogService.safeLookupMany] rate limited', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -307,7 +308,7 @@ class MovieCatalogService {
         }
         if (message.includes('abort') && attempt < retries) {
           const backoff = 500 * (attempt + 1);
-          console.warn('[MovieCatalogService.safeLookupMany] request aborted', {
+          logger.warn('[MovieCatalogService.safeLookupMany] request aborted', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -316,7 +317,7 @@ class MovieCatalogService {
           continue;
         }
         if (message.includes('401')) {
-          console.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
+          logger.error('[MovieCatalogService.safeLookupMany] unauthorized', queryLogContext);
           return [];
         }
         throw err;

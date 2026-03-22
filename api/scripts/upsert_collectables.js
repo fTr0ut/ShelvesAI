@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 import { MongoClient } from "mongodb";
 const require = createRequire(import.meta.url);
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require('../services/collectables/fingerprint');
+const logger = require('../logger');
 
 /* ------------------------------ CLI ------------------------------ */
 
@@ -152,7 +153,7 @@ async function main() {
 
   const file = args.file;
   if (!file) {
-    console.error("ERR: --file <path/to/jsonl> is required");
+    logger.error("ERR: --file <path/to/jsonl> is required");
     process.exit(1);
   }
 
@@ -181,7 +182,7 @@ async function main() {
     try {
       await coll.createIndex({ fingerprint: 1 }, { unique: true, background: true });
     } catch (e) {
-      console.error("Index (fingerprint) warn:", e.message);
+      logger.error("Index (fingerprint) warn:", e.message);
     }
     try { await coll.createIndex({ "identifiers.openlibrary.edition": 1 }, { background: true }); } catch {}
     try { await coll.createIndex({ "identifiers.openlibrary.work": 1 }, { background: true }); } catch {}
@@ -250,7 +251,7 @@ async function main() {
       const res = await coll.bulkWrite(ops, { ordered: false });
       written += res.upsertedCount + (res.matchedCount || 0);
     } catch (err) {
-      console.error("bulkWrite error:", err.message);
+      logger.error("bulkWrite error:", err.message);
       // If needed, inspect err.writeErrors here.
     }
   }
@@ -284,7 +285,7 @@ async function main() {
     }
 
     if (total % 10000 === 0) {
-      console.error(
+      logger.error(
         `Progress: read=${total}, queued=${queued}, written≈${written}, skipped=${skipped}, noKey=${noMatchKey}, dupInBatch=${dupWithinBatch}`
       );
     }
@@ -292,20 +293,20 @@ async function main() {
 
   rl.once("close", async () => {
     await flushBatch();
-    console.error(
+    logger.error(
       `Done. read=${total}, written≈${written}, skipped=${skipped}, noKey=${noMatchKey}, dupInBatch=${dupWithinBatch}`
     );
     await client.close();
   });
 
   rl.once("error", async (e) => {
-    console.error("Read error:", e);
+    logger.error("Read error:", e);
     try { await client.close(); } catch {}
     process.exit(1);
   });
 }
 
 main().catch(async (e) => {
-  console.error(e?.stack || e?.message || String(e));
+  logger.error(e?.stack || e?.message || String(e));
   process.exit(1);
 });

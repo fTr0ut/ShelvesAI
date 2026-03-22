@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -78,7 +79,7 @@ async function backfill() {
        ORDER BY user_id, shelf_id, event_type, created_at, id`
     );
 
-    console.log(`Found ${rows.length} event_logs to backfill.`);
+    logger.info(`Found ${rows.length} event_logs to backfill.`);
     if (!rows.length) return;
 
     let currentKey = null;
@@ -120,13 +121,13 @@ async function backfill() {
 
       processed += 1;
       if (processed % 200 === 0) {
-        console.log(`Processed ${processed}/${rows.length} events...`);
+        logger.info(`Processed ${processed}/${rows.length} events...`);
       }
     }
 
-    console.log(`Backfill complete. Processed ${processed} events.`);
+    logger.info(`Backfill complete. Processed ${processed} events.`);
   } catch (err) {
-    console.error('Backfill failed:', err);
+    logger.error('Backfill failed:', err);
   } finally {
     client.release();
     await pool.end();

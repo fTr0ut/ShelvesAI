@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Pool } = require('pg');
+const logger = require('./logger');
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -15,10 +16,10 @@ async function runMigration() {
   try {
     await client.query('BEGIN');
 
-    console.log('1. Adding bio column to users...');
+    logger.info('1. Adding bio column to users...');
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT`);
 
-    console.log('2. Creating profile_media table...');
+    logger.info('2. Creating profile_media table...');
     await client.query(`
       CREATE TABLE IF NOT EXISTS profile_media (
         id SERIAL PRIMARY KEY,
@@ -35,10 +36,10 @@ async function runMigration() {
     `);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_profile_media_user ON profile_media(user_id)`);
 
-    console.log('3. Adding profile_media_id to users...');
+    logger.info('3. Adding profile_media_id to users...');
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_media_id INTEGER REFERENCES profile_media(id) ON DELETE SET NULL`);
 
-    console.log('4. Creating wishlists table...');
+    logger.info('4. Creating wishlists table...');
     await client.query(`
       CREATE TABLE IF NOT EXISTS wishlists (
         id SERIAL PRIMARY KEY,
@@ -53,7 +54,7 @@ async function runMigration() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wishlists_user ON wishlists(user_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wishlists_visibility ON wishlists(visibility)`);
 
-    console.log('5. Creating wishlist_items table...');
+    logger.info('5. Creating wishlist_items table...');
     await client.query(`
       CREATE TABLE IF NOT EXISTS wishlist_items (
         id SERIAL PRIMARY KEY,
@@ -68,12 +69,12 @@ async function runMigration() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wishlist_items_wishlist ON wishlist_items(wishlist_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_wishlist_items_collectable ON wishlist_items(collectable_id)`);
 
-    console.log('6. Adding cover_image_url, cover_image_source, attribution to collectables...');
+    logger.info('6. Adding cover_image_url, cover_image_source, attribution to collectables...');
     await client.query(`ALTER TABLE collectables ADD COLUMN IF NOT EXISTS cover_image_url TEXT`);
     await client.query(`ALTER TABLE collectables ADD COLUMN IF NOT EXISTS cover_image_source TEXT`);
     await client.query(`ALTER TABLE collectables ADD COLUMN IF NOT EXISTS attribution JSONB`);
 
-    console.log('7. Backfilling cover fields from existing media...');
+    logger.info('7. Backfilling cover fields from existing media...');
     await client.query(`
             UPDATE collectables c
             SET 
@@ -85,7 +86,7 @@ async function runMigration() {
               AND c.cover_image_url IS NULL
         `);
 
-    console.log('8. Backfilling cover fields from cover_url...');
+    logger.info('8. Backfilling cover fields from cover_url...');
     await client.query(`
             UPDATE collectables
             SET 
@@ -96,11 +97,11 @@ async function runMigration() {
         `);
 
     await client.query('COMMIT');
-    console.log('Migration completed successfully!');
+    logger.info('Migration completed successfully!');
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Migration failed:', err.message);
+    logger.error('Migration failed:', err.message);
   } finally {
     client.release();
     await pool.end();

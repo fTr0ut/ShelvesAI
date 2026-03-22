@@ -8,6 +8,7 @@ const { getNewsRecommendationsForUser } = require('../services/discovery/newsRec
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
 const { PREVIEW_PAYLOAD_LIMIT } = require('../config/constants');
+const logger = require('../logger');
 
 const NEWS_FEED_GROUP_LIMIT = parseInt(process.env.NEWS_FEED_GROUP_LIMIT || '3', 10);
 const NEWS_FEED_ITEMS_PER_GROUP = parseInt(process.env.NEWS_FEED_ITEMS_PER_GROUP || '3', 10);
@@ -164,7 +165,7 @@ async function markNewsEntriesSeen(userId, entries) {
   try {
     await markNewsItemsSeen(userId, ids);
   } catch (err) {
-    console.warn('[Feed] Failed to mark news items seen:', err.message);
+    logger.warn('[Feed] Failed to mark news items seen:', err.message);
   }
 }
 
@@ -587,7 +588,7 @@ async function getFeed(req, res) {
           entries = buildNewsRecommendationEntries(groups);
           await markNewsEntriesSeen(viewerId, entries);
         } catch (newsErr) {
-          console.warn('[Feed] Failed to build news recommendations:', newsErr.message);
+          logger.warn('[Feed] Failed to build news recommendations:', newsErr.message);
         }
       }
       return res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
@@ -697,13 +698,13 @@ async function getFeed(req, res) {
           await markNewsEntriesSeen(viewerId, entries);
         }
       } catch (newsErr) {
-        console.warn('[Feed] Failed to build news recommendations:', newsErr.message);
+        logger.warn('[Feed] Failed to build news recommendations:', newsErr.message);
       }
     }
 
     res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
   } catch (err) {
-    console.error('getFeed error:', err);
+    logger.error('getFeed error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1052,7 +1053,7 @@ async function getFeedEntryDetails(req, res) {
 
     res.json({ entry });
   } catch (err) {
-    console.error('getFeedEntryDetails error:', err);
+    logger.error('getFeedEntryDetails error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

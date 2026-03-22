@@ -1,4 +1,5 @@
 const { Client } = require('pg');
+const logger = require('../logger');
 require('dotenv').config();
 
 const client = new Client({
@@ -15,9 +16,9 @@ async function checkConstraints() {
             JOIN pg_namespace n ON n.oid = c.connamespace
             WHERE conrelid = 'user_favorites'::regclass;
         `);
-        console.log('Constraints on user_favorites:', res.rows);
+        logger.info('Constraints on user_favorites:', res.rows);
     } catch (err) {
-        console.error('Error:', err);
+        logger.error('Error:', err);
     } finally {
         await client.end();
     }

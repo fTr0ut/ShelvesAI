@@ -25,6 +25,7 @@ class TmdbTvAdapter {
     _getService() {
         if (!this._service) {
             const { TvCatalogService } = require('../TvCatalogService');
+const logger = require('../../../logger');
             this._service = new TvCatalogService(this._serviceOptions);
         }
         return this._service;
@@ -63,7 +64,7 @@ class TmdbTvAdapter {
                 return this._toCollectable(result, item);
             }
         } catch (err) {
-            console.warn('[TmdbTvAdapter] lookup failed:', err.message);
+            logger.warn('[TmdbTvAdapter] lookup failed:', err.message);
         }
 
         return null;

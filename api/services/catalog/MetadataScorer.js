@@ -6,6 +6,7 @@ const path = require('path');
 const CONFIG_PATH = path.join(__dirname, '../../config/metadataScoreConfig.json');
 
 const { getSystemSettingsCache } = require('../config/SystemSettingsCache');
+const logger = require('../../logger');
 
 // ---------------------------------------------------------------------------
 // Helpers (identical logic to metadataScore.js)
@@ -333,7 +334,7 @@ class MetadataScorer {
         }
       } catch (err) {
         // DB unavailable — fall through to static config
-        console.warn('[MetadataScorer] scoreAsync DB lookup failed, using static config:', err.message);
+        logger.warn('[MetadataScorer] scoreAsync DB lookup failed, using static config:', err.message);
       }
     }
     return this.score(collectable, containerType);

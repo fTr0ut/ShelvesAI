@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const { query } = require('../database/pg');
 const { ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
 const { AUTH_CACHE_TTL_MS, AUTH_CACHE_MAX_ENTRIES } = require('../config/constants');
+const { setUserId } = require('../context');
+const logger = require('../logger');
 const authCache = new Map();
 
 function getCachedUser(userId) {
@@ -85,9 +87,10 @@ async function auth(req, res, next) {
       isPremium: !!user.is_premium,
       isAdmin: !!user.is_admin,
     };
+    setUserId(user.id);
     next();
   } catch (err) {
-    console.error('auth middleware error:', err);
+    logger.error('auth middleware error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -144,10 +147,11 @@ async function optionalAuth(req, res, next) {
         isPremium: !!user.is_premium,
         isAdmin: !!user.is_admin,
       };
+      setUserId(user.id);
     }
     next();
   } catch (err) {
-    console.error('optionalAuth middleware error:', err);
+    logger.error('optionalAuth middleware error:', err);
     req.user = null;
     next();
   }

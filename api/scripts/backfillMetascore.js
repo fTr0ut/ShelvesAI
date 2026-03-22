@@ -7,6 +7,7 @@ const { query, close } = require('../database/pg');
 const { MetadataScorer } = require('../services/catalog/MetadataScorer');
 const { getApiContainerKey } = require('../services/config/shelfTypeResolver');
 const { rowToCamelCase } = require('../database/queries/utils');
+const logger = require('../logger');
 
 const BATCH_SIZE = 500;
 
@@ -62,11 +63,11 @@ async function main() {
   const total = parseInt(countResult.rows[0].total, 10);
 
   if (total === 0) {
-    console.log('[Backfill] No collectables with metascore IS NULL found. Nothing to do.');
+    logger.info('[Backfill] No collectables with metascore IS NULL found. Nothing to do.');
     return;
   }
 
-  console.log(`[Backfill] Starting. ${total} collectables to score.`);
+  logger.info(`[Backfill] Starting. ${total} collectables to score.`);
 
   let offset = 0;
   let totalProcessed = 0;
@@ -108,7 +109,7 @@ async function main() {
     totalScored += batchScored;
     totalSkipped += batchSkipped;
 
-    console.log(
+    logger.info(
       `[Backfill] Processed ${totalProcessed}/${total} (${batchScored} scored, ${batchSkipped} skipped — no container type)`
     );
 
@@ -120,11 +121,11 @@ async function main() {
   const elapsedMs = Date.now() - startTime;
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
 
-  console.log('[Backfill] Complete.');
-  console.log(`  Total processed : ${totalProcessed}`);
-  console.log(`  Scored          : ${totalScored}`);
-  console.log(`  Skipped (no type): ${totalSkipped}`);
-  console.log(`  Elapsed         : ${elapsedSec}s`);
+  logger.info('[Backfill] Complete.');
+  logger.info(`  Total processed : ${totalProcessed}`);
+  logger.info(`  Scored          : ${totalScored}`);
+  logger.info(`  Skipped (no type): ${totalSkipped}`);
+  logger.info(`  Elapsed         : ${elapsedSec}s`);
 }
 
 main()
@@ -133,7 +134,7 @@ main()
     process.exit(0);
   })
   .catch(async (err) => {
-    console.error('[Backfill] Fatal error:', err.message || err);
+    logger.error('[Backfill] Fatal error:', err.message || err);
     try {
       await close();
     } catch (_) {

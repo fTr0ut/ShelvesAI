@@ -1,3 +1,4 @@
+const logger = require('../logger');
 /**
  * Centralized error-handling utilities.
  *
@@ -33,7 +34,7 @@ function sendError(res, status, message, details = {}) {
 function logError(context, error, metadata = {}) {
   const message = error instanceof Error ? error.message : String(error);
   const stack = error instanceof Error ? error.stack : undefined;
-  console.error(`[${context}]`, message, { ...metadata, stack });
+  logger.error(`[${context}]`, message, { ...metadata, stack });
 }
 
 module.exports = { sendError, logError };

@@ -1,6 +1,7 @@
 {
     "cli": {
-        "version": ">= 5.0.0"
+        "version": ">= 5.0.0",
+        "appVersionSource": "remote"
     },
     "build": {
         "development": {
@@ -28,7 +29,8 @@
             "env": {
                 "EXPO_PUBLIC_USE_NGROK": "false",
                 "EXPO_PUBLIC_API_BASE": "https://api.shelvesai.com"
-            }
+            },
+            "autoIncrement": true
         }
     }
 }

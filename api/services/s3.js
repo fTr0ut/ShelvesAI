@@ -4,6 +4,7 @@
  */
 
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const logger = require('../logger');
 
 // Lazy-initialize client to allow graceful fallback when credentials missing
 let client = null;
@@ -110,13 +111,13 @@ function getPublicUrl(key) {
 async function deleteObject(key) {
   const s3Client = getClient();
   if (!s3Client) {
-    console.warn('[s3] Cannot delete object - S3 not configured');
+    logger.warn('[s3] Cannot delete object - S3 not configured');
     return;
   }
 
   const bucket = process.env.S3_BUCKET_NAME;
   if (!bucket) {
-    console.warn('[s3] Cannot delete object - S3_BUCKET_NAME not set');
+    logger.warn('[s3] Cannot delete object - S3_BUCKET_NAME not set');
     return;
   }
 
@@ -131,7 +132,7 @@ async function deleteObject(key) {
       })
     );
   } catch (err) {
-    console.warn('[s3] Failed to delete object:', normalizedKey, err.message);
+    logger.warn('[s3] Failed to delete object:', normalizedKey, err.message);
   }
 }
 

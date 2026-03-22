@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
 const { Client } = require('pg');
+const logger = require('../logger');
 
 const envPath = path.join(__dirname, '..', '.env');
 if (!fs.existsSync(envPath)) {
-  console.error('[debug-feed-detail] Missing .env at:', envPath);
+  logger.error('[debug-feed-detail] Missing .env at:', envPath);
   process.exit(1);
 }
 
@@ -15,7 +16,7 @@ const DEFAULT_USERNAMES = new Set(['test']);
 const DEFAULT_PASSWORDS = new Set(['test123']);
 
 function bail(message) {
-  console.error(`[debug-feed-detail] ${message}`);
+  logger.error(`[debug-feed-detail] ${message}`);
   process.exit(1);
 }
 
@@ -105,7 +106,7 @@ async function run() {
     }
 
     const aggregate = aggregateResult.rows[0];
-    console.log('[debug-feed-detail] aggregate', aggregate);
+    logger.info('[debug-feed-detail] aggregate', aggregate);
 
     const logsResult = await client.query(
       `SELECT id, event_type, payload, created_at
@@ -116,7 +117,7 @@ async function run() {
     );
 
     const payloads = logsResult.rows.map((row) => row.payload || {});
-    console.log(`[debug-feed-detail] logs: ${logsResult.rows.length}`);
+    logger.info(`[debug-feed-detail] logs: ${logsResult.rows.length}`);
 
     const flattened = flattenPayloadItems(payloads);
     const itemIds = extractItemIdsFromPayloads(payloads);
@@ -126,8 +127,8 @@ async function run() {
       .map((id) => Number.parseInt(id, 10))
       .filter((id) => Number.isFinite(id));
 
-    console.log('[debug-feed-detail] payload item ids:', itemIds);
-    console.log('[debug-feed-detail] payload collectable ids:', payloadCollectableIds);
+    logger.info('[debug-feed-detail] payload item ids:', itemIds);
+    logger.info('[debug-feed-detail] payload collectable ids:', payloadCollectableIds);
 
     if (itemIds.length) {
       const itemsResult = await client.query(
@@ -140,9 +141,9 @@ async function run() {
          WHERE uc.id = ANY($1)`,
         [itemIds]
       );
-      console.log('[debug-feed-detail] user_collections matches:', itemsResult.rows);
+      logger.info('[debug-feed-detail] user_collections matches:', itemsResult.rows);
     } else {
-      console.log('[debug-feed-detail] No item ids in payloads.');
+      logger.info('[debug-feed-detail] No item ids in payloads.');
     }
 
     if (payloadCollectableIds.length) {
@@ -152,9 +153,9 @@ async function run() {
          WHERE id = ANY($1)`,
         [payloadCollectableIds]
       );
-      console.log('[debug-feed-detail] collectables found:', collectableResult.rows);
+      logger.info('[debug-feed-detail] collectables found:', collectableResult.rows);
     } else {
-      console.log('[debug-feed-detail] No collectable ids in payloads.');
+      logger.info('[debug-feed-detail] No collectable ids in payloads.');
     }
 
     const preview = flattened.map((payload) => ({
@@ -166,13 +167,13 @@ async function run() {
       kind: payload.type || payload.kind || null,
     }));
 
-    console.log('[debug-feed-detail] payload preview:', preview);
+    logger.info('[debug-feed-detail] payload preview:', preview);
   } finally {
     await client.end();
   }
 }
 
 run().catch((err) => {
-  console.error('[debug-feed-detail] error:', err);
+  logger.error('[debug-feed-detail] error:', err);
   process.exit(1);
 });

@@ -1,6 +1,7 @@
 const vision = require('@google-cloud/vision');
 const fs = require('fs');
 const { logPayload } = require('../utils/payloadLogger');
+const logger = require('../logger');
 
 class GoogleCloudVisionService {
     constructor() {
@@ -10,11 +11,11 @@ class GoogleCloudVisionService {
             if (process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
                 this.client = new vision.ImageAnnotatorClient();
             } else {
-                console.warn('[GoogleCloudVisionService] GOOGLE_APPLICATION_CREDENTIALS not set or file missing. Service will fail if called.');
+                logger.warn('[GoogleCloudVisionService] GOOGLE_APPLICATION_CREDENTIALS not set or file missing. Service will fail if called.');
                 this.client = null;
             }
         } catch (err) {
-            console.error('[GoogleCloudVisionService] Failed to initialize client:', err.message);
+            logger.error('[GoogleCloudVisionService] Failed to initialize client:', err.message);
             this.client = null;
         }
     }

@@ -3,6 +3,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const { BookCatalogService } = require('../services/catalog/BookCatalogService');
+const logger = require('../logger');
 
 function argMap(argv) {
   const args = {};
@@ -119,17 +120,17 @@ function buildItemsFromArgs(args) {
 }
 
 function printUsage() {
-  console.log('Usage: node scripts/test-book-catalog.js --title "..." --author "..."');
-  console.log('  or: node scripts/test-book-catalog.js <json-or-path>');
-  console.log('Flags:');
-  console.log('  --input <json-or-path>');
-  console.log('  --file <json-or-path>');
-  console.log('  --stdin (read JSON from stdin)');
-  console.log('  --title <title>');
-  console.log('  --author <author>');
-  console.log('  --isbn <isbn>');
-  console.log('  --router true|false (override USE_CATALOG_ROUTER)');
-  console.log('  --retries <number>');
+  logger.info('Usage: node scripts/test-book-catalog.js --title "..." --author "..."');
+  logger.info('  or: node scripts/test-book-catalog.js <json-or-path>');
+  logger.info('Flags:');
+  logger.info('  --input <json-or-path>');
+  logger.info('  --file <json-or-path>');
+  logger.info('  --stdin (read JSON from stdin)');
+  logger.info('  --title <title>');
+  logger.info('  --author <author>');
+  logger.info('  --isbn <isbn>');
+  logger.info('  --router true|false (override USE_CATALOG_ROUTER)');
+  logger.info('  --retries <number>');
 }
 
 async function main() {
@@ -155,14 +156,14 @@ async function main() {
     try {
       parsed = parseJsonInput(rawInput);
     } catch (err) {
-      console.error(err?.message || String(err));
+      logger.error(err?.message || String(err));
       process.exit(1);
     }
     items = normalizeItems(parsed);
   }
 
   if (!Array.isArray(items) || items.length === 0) {
-    console.error('No items found in input.');
+    logger.error('No items found in input.');
     process.exit(1);
   }
 
@@ -205,10 +206,10 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify(results, null, 2));
+  logger.info(JSON.stringify(results, null, 2));
 }
 
 main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
+  logger.error(err?.stack || err?.message || String(err));
   process.exit(1);
 });

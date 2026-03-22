@@ -33,6 +33,7 @@ const { GameCatalogService } = require('../services/catalog/GameCatalogService')
 const { TvCatalogService } = require('../services/catalog/TvCatalogService');
 const { tmdbMovieToCollectable } = require('../adapters/tmdb.adapter');
 const { tmdbTvToCollectable } = require('../adapters/tmdbTv.adapter');
+const logger = require('../logger');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI Prompts
@@ -68,7 +69,7 @@ async function promptForDateRange(rl) {
         if (isValidDate(input)) {
             startDate = input;
         } else {
-            console.log('Invalid date format. Please use YYYY-MM-DD.');
+            logger.info('Invalid date format. Please use YYYY-MM-DD.');
         }
     }
 
@@ -78,10 +79,10 @@ async function promptForDateRange(rl) {
             if (new Date(input) >= new Date(startDate)) {
                 endDate = input;
             } else {
-                console.log('End date must be on or after start date.');
+                logger.info('End date must be on or after start date.');
             }
         } else {
-            console.log('Invalid date format. Please use YYYY-MM-DD.');
+            logger.info('Invalid date format. Please use YYYY-MM-DD.');
         }
     }
 
@@ -98,7 +99,7 @@ async function promptForType(rl) {
         if (validTypes.includes(normalized)) {
             type = normalized;
         } else {
-            console.log('Invalid type. Please enter: books, movies, games, tv, or all.');
+            logger.info('Invalid type. Please enter: books, movies, games, tv, or all.');
         }
     }
 
@@ -407,11 +408,11 @@ async function enrichCollectable(collectable, services) {
                 return extractTvUpdates(result, services.tv.imageBaseUrl);
             }
             default:
-                console.warn(`[Enrichment] Unknown kind: ${kind}`);
+                logger.warn(`[Enrichment] Unknown kind: ${kind}`);
                 return null;
         }
     } catch (err) {
-        console.error(`[Enrichment] Error enriching ${kind} "${title}":`, err.message);
+        logger.error(`[Enrichment] Error enriching ${kind} "${title}":`, err.message);
         return null;
     }
 }
@@ -419,10 +420,10 @@ async function enrichCollectable(collectable, services) {
 async function runEnrichment() {
     const rl = createPrompt();
 
-    console.log('='.repeat(60));
-    console.log('[Collectable Enrichment] Starting...');
-    console.log('='.repeat(60));
-    console.log('');
+    logger.info('='.repeat(60));
+    logger.info('[Collectable Enrichment] Starting...');
+    logger.info('='.repeat(60));
+    logger.info('');
 
     // Prompt for parameters
     const { startDate, endDate } = await promptForDateRange(rl);
@@ -430,9 +431,9 @@ async function runEnrichment() {
 
     rl.close();
 
-    console.log('');
-    console.log(`[Enrichment] Config: type=${type}, startDate=${startDate}, endDate=${endDate}`);
-    console.log('');
+    logger.info('');
+    logger.info(`[Enrichment] Config: type=${type}, startDate=${startDate}, endDate=${endDate}`);
+    logger.info('');
 
     // Initialize catalog services
     const services = {
@@ -443,13 +444,13 @@ async function runEnrichment() {
     };
 
     // Fetch collectables
-    console.log('[Enrichment] Fetching collectables...');
+    logger.info('[Enrichment] Fetching collectables...');
     const collectables = await fetchCollectablesByTypeAndDateRange(type, startDate, endDate);
-    console.log(`[Enrichment] Found ${collectables.length} collectables to process`);
-    console.log('');
+    logger.info(`[Enrichment] Found ${collectables.length} collectables to process`);
+    logger.info('');
 
     if (collectables.length === 0) {
-        console.log('[Enrichment] No collectables found in the specified range.');
+        logger.info('[Enrichment] No collectables found in the specified range.');
         return;
     }
 
@@ -469,7 +470,7 @@ async function runEnrichment() {
             const updates = await enrichCollectable(collectable, services);
 
             if (!updates) {
-                console.log(`${label} - SKIPPED (no match found)`);
+                logger.info(`${label} - SKIPPED (no match found)`);
                 stats.skipped++;
                 continue;
             }
@@ -477,14 +478,14 @@ async function runEnrichment() {
             const result = await updateCollectableMetadata(collectable.id, updates);
 
             if (result) {
-                console.log(`${label} - UPDATED`);
+                logger.info(`${label} - UPDATED`);
                 stats.updated++;
             } else {
-                console.log(`${label} - SKIPPED (no updates to apply)`);
+                logger.info(`${label} - SKIPPED (no updates to apply)`);
                 stats.skipped++;
             }
         } catch (err) {
-            console.error(`${label} - ERROR: ${err.message}`);
+            logger.error(`${label} - ERROR: ${err.message}`);
             stats.errors++;
         }
 
@@ -493,23 +494,23 @@ async function runEnrichment() {
     }
 
     // Print summary
-    console.log('');
-    console.log('='.repeat(60));
-    console.log('[Enrichment] Complete!');
-    console.log(`  Processed: ${stats.processed}`);
-    console.log(`  Updated:   ${stats.updated}`);
-    console.log(`  Skipped:   ${stats.skipped}`);
-    console.log(`  Errors:    ${stats.errors}`);
-    console.log('='.repeat(60));
+    logger.info('');
+    logger.info('='.repeat(60));
+    logger.info('[Enrichment] Complete!');
+    logger.info(`  Processed: ${stats.processed}`);
+    logger.info(`  Updated:   ${stats.updated}`);
+    logger.info(`  Skipped:   ${stats.skipped}`);
+    logger.info(`  Errors:    ${stats.errors}`);
+    logger.info('='.repeat(60));
 }
 
 // Run the job
 runEnrichment()
     .then(() => {
-        console.log('[Enrichment] Job finished successfully');
+        logger.info('[Enrichment] Job finished successfully');
         process.exit(0);
     })
     .catch((err) => {
-        console.error('[Enrichment] Job failed:', err);
+        logger.error('[Enrichment] Job failed:', err);
         process.exit(1);
     });

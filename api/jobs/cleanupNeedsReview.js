@@ -14,19 +14,20 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const needsReviewQueries = require('../database/queries/needsReview');
+const logger = require('../logger');
 
 const EXPIRY_DAYS = parseInt(process.env.NEEDS_REVIEW_EXPIRY_DAYS || '7', 10);
 
 async function runCleanup() {
-    console.log(`[Cleanup] Starting needs_review cleanup (expiry: ${EXPIRY_DAYS} days)...`);
-    console.log(`[Cleanup] Timestamp: ${new Date().toISOString()}`);
+    logger.info(`[Cleanup] Starting needs_review cleanup (expiry: ${EXPIRY_DAYS} days)...`);
+    logger.info(`[Cleanup] Timestamp: ${new Date().toISOString()}`);
 
     try {
         const deletedCount = await needsReviewQueries.deleteExpired(EXPIRY_DAYS);
-        console.log(`[Cleanup] Deleted ${deletedCount} expired pending review items.`);
+        logger.info(`[Cleanup] Deleted ${deletedCount} expired pending review items.`);
         process.exit(0);
     } catch (err) {
-        console.error('[Cleanup] Error:', err);
+        logger.error('[Cleanup] Error:', err);
         process.exit(1);
     }
 }

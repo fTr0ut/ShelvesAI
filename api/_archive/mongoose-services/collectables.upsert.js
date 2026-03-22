@@ -1,3 +1,4 @@
+const logger = require('../../logger');
 // Deep-merge identifiers where values are arrays or nested objects.
 // Arrays are unioned (de-duplicated), nested objects are merged recursively.
 function mergeIdentifiers(existingIds = {}, incomingIds = {}) {
@@ -129,13 +130,13 @@ async function upsertCollectable(Collectable, incoming) {
     }
 
     if (incomingLwf && existingLwf === incomingLwf) {
-      console.log("[collectables.upsert] matched lightweight fingerprint", {
+      logger.info("[collectables.upsert] matched lightweight fingerprint", {
         collectableId: String(existing._id || ""),
         lightweightFingerprint: existingLwf,
         title: existing.title || existing.name || incoming.title || "",
       });
     } else if (incomingLwf && !existingLwf) {
-      console.log("[collectables.upsert] assigning lightweight fingerprint", {
+      logger.info("[collectables.upsert] assigning lightweight fingerprint", {
         collectableId: String(existing._id || ""),
         lightweightFingerprint: incomingLwf,
         title: existing.title || existing.name || incoming.title || "",

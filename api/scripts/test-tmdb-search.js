@@ -2,12 +2,13 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const TmdbDiscoveryAdapter = require('../services/discovery/TmdbDiscoveryAdapter');
+const logger = require('../logger');
 
 async function testSearch() {
     const tmdb = new TmdbDiscoveryAdapter();
 
     if (!tmdb.isConfigured()) {
-        console.error('TMDB not configured!');
+        logger.error('TMDB not configured!');
         process.exit(1);
     }
 
@@ -19,15 +20,15 @@ async function testSearch() {
     ];
 
     for (const title of testTitles) {
-        console.log(`\nSearching for: "${title}"`);
+        logger.info(`\nSearching for: "${title}"`);
         try {
             const results = await tmdb.searchMovie({ title });
-            console.log(`  Found ${results.length} results`);
+            logger.info(`  Found ${results.length} results`);
             if (results.length > 0) {
-                console.log(`  Top match: ${results[0].title} (${results[0].release_date})`);
+                logger.info(`  Top match: ${results[0].title} (${results[0].release_date})`);
             }
         } catch (err) {
-            console.error(`  Error: ${err.message}`);
+            logger.error(`  Error: ${err.message}`);
         }
     }
 

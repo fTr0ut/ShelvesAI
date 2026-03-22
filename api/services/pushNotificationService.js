@@ -1,6 +1,7 @@
 const Expo = require('expo-server-sdk').default;
 const pushDeviceTokens = require('../database/queries/pushDeviceTokens');
 const notificationPreferences = require('../database/queries/notificationPreferences');
+const logger = require('../logger');
 
 const expo = new Expo();
 
@@ -74,7 +75,7 @@ async function sendPushNotification({ id, userId, type, actorName, metadata = {}
 
             // Validate token format
             if (!Expo.isExpoPushToken(pushToken)) {
-                console.warn(`Invalid Expo push token: ${pushToken}`);
+                logger.warn(`Invalid Expo push token: ${pushToken}`);
                 invalidTokens.push(pushToken);
                 continue;
             }
@@ -112,7 +113,7 @@ async function sendPushNotification({ id, userId, type, actorName, metadata = {}
                 const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
                 tickets.push(...ticketChunk);
             } catch (error) {
-                console.error('Error sending push notification chunk:', error);
+                logger.error('Error sending push notification chunk:', error);
             }
         }
 
@@ -125,7 +126,7 @@ async function sendPushNotification({ id, userId, type, actorName, metadata = {}
             errorCount: errors.length,
         };
     } catch (error) {
-        console.error('sendPushNotification error:', error);
+        logger.error('sendPushNotification error:', error);
         return { sent: false, reason: 'error', error: error.message };
     }
 }
@@ -145,7 +146,7 @@ async function processTickets(tickets, messages) {
 
             // Handle DeviceNotRegistered by deactivating the token
             if (ticket.details?.error === 'DeviceNotRegistered' && message?.to) {
-                console.log(`Deactivating unregistered token: ${message.to}`);
+                logger.info(`Deactivating unregistered token: ${message.to}`);
                 await pushDeviceTokens.deactivateToken(message.to);
             }
         }

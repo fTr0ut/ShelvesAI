@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Shelf = require('../models/Shelf');
 const UserCollection = require('../models/UserCollection');
 const EventLog = require('../models/EventLog');
+const logger = require('../../logger');
 
 const {
   buildOpenIdLoginUrl,
@@ -106,7 +107,7 @@ async function startLink(req, res) {
     }
     res.json(payload);
   } catch (err) {
-    console.error('[steam] startLink failed', err);
+    logger.error('[steam] startLink failed', err);
     const status = err.code === "JWT_SECRET_MISSING" ? 500 : 500;
     res.status(status).json({ error: err.message || "Failed to initiate Steam linking" });
   }
@@ -157,7 +158,7 @@ async function completeLink(req, res) {
     await user.save();
     res.json({ steam: sanitizeSteam(user.steam) });
   } catch (err) {
-    console.error('[steam] completeLink failed', err);
+    logger.error('[steam] completeLink failed', err);
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
       return res.status(400).json({ error: 'Invalid or expired state token' });
     }
@@ -242,7 +243,7 @@ async function importLibrary(req, res) {
             importedSamples.push({ appId: game.appid, collectableId: collectable._id });
           }
         } catch (error) {
-          console.error('[steam] import error', { appId: game.appid, error });
+          logger.error('[steam] import error', { appId: game.appid, error });
           summary.errors.push({ appId: game.appid, name: game.name, message: error.message || 'Unknown error' });
         }
       }
@@ -279,7 +280,7 @@ async function importLibrary(req, res) {
       dryRun,
     });
   } catch (err) {
-    console.error('[steam] importLibrary failed', err);
+    logger.error('[steam] importLibrary failed', err);
     res.status(err.code === "STEAM_API_KEY_MISSING" ? 500 : 500).json({
       error: err.message || 'Failed to import Steam library',
     });

@@ -2,6 +2,7 @@ const { query } = require('../database/pg');
 const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const { addMediaUrls } = require('../services/mediaUrl');
+const logger = require('../logger');
 
 async function getAccount(req, res) {
   try {
@@ -27,12 +28,12 @@ async function getAccount(req, res) {
     try {
       visionQuota = await visionQuotaQueries.getQuota(req.user.id);
     } catch (quotaErr) {
-      console.warn('Failed to get vision quota:', quotaErr.message);
+      logger.warn('Failed to get vision quota:', quotaErr.message);
     }
 
     res.json({ user, visionQuota });
   } catch (err) {
-    console.error('getAccount error:', err);
+    logger.error('getAccount error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -66,7 +67,7 @@ async function updateAccount(req, res) {
     const user = rowToCamelCase(result.rows[0]);
     res.json({ user });
   } catch (err) {
-    console.error('updateAccount error:', err);
+    logger.error('updateAccount error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

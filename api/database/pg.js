@@ -6,6 +6,7 @@
  */
 
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 // Build connection config from environment variables
 // Supports DATABASE_URL / POSTGRES_URL or individual POSTGRES_* variables
@@ -19,8 +20,8 @@ const slowQueryThresholdMs = process.env.SLOW_QUERY_MS ? parseInt(process.env.SL
 
 // Validate required database configuration
 if (!connectionString && !process.env.POSTGRES_PASSWORD) {
-  console.error('FATAL: Database configuration missing.');
-  console.error('Set DATABASE_URL or POSTGRES_HOST/POSTGRES_PASSWORD environment variables.');
+  logger.error('FATAL: Database configuration missing.');
+  logger.error('Set DATABASE_URL or POSTGRES_HOST/POSTGRES_PASSWORD environment variables.');
   process.exit(1);
 }
 
@@ -50,16 +51,16 @@ const pool = new Pool(poolConfig);
 
 // Log connection errors
 pool.on('error', (err) => {
-  console.error('Unexpected PostgreSQL pool error:', err);
+  logger.error('Unexpected PostgreSQL pool error:', err);
 });
 
 // Test connection on startup
 pool.query('SELECT NOW()')
   .then(() => {
-    console.log('PostgreSQL connected');
+    logger.info('PostgreSQL connected');
   })
   .catch((err) => {
-    console.error('PostgreSQL connection error:', err.message);
+    logger.error('PostgreSQL connection error:', err.message);
   });
 
 /**
@@ -75,12 +76,12 @@ async function query(text, params) {
     const duration = Date.now() - start;
 
     if (process.env.NODE_ENV !== 'production' && duration > slowQueryThresholdMs) {
-      console.log('Slow query:', { text: text.substring(0, 100), duration, rows: result.rowCount });
+      logger.info('Slow query:', { text: text.substring(0, 100), duration, rows: result.rowCount });
     }
 
     return result;
   } catch (err) {
-    console.error('Query error:', { text: text.substring(0, 100), error: err.message });
+    logger.error('Query error:', { text: text.substring(0, 100), error: err.message });
     throw err;
   }
 }
@@ -99,7 +100,7 @@ async function getClient() {
   // Monkey-patch release to prevent double-release
   client.release = () => {
     if (released) {
-      console.warn('Client already released');
+      logger.warn('Client already released');
       return;
     }
     released = true;
@@ -186,7 +187,7 @@ async function transactionWithContext(userId, fn) {
  */
 async function close() {
   await pool.end();
-  console.log('PostgreSQL pool closed');
+  logger.info('PostgreSQL pool closed');
 }
 
 module.exports = {

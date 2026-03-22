@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { GameCatalogService } = require('./GameCatalogService'); // keep file next to this CLI
+const logger = require('../../logger');
 
 // ---- tiny arg parser (no deps) ----
 const args = process.argv.slice(2);
@@ -128,10 +129,10 @@ async function main() {
       const _callIgdb = svc.callIgdb.bind(svc);
       svc.callIgdb = async (endpoint, query) => {
         // pretty print the exact IGDB query body
-        console.log('\n=== IGDB QUERY =====================================');
-        console.log(`Endpoint: ${endpoint}`);
-        console.log('Query:\n' + query);
-        console.log('====================================================\n');
+        logger.info('\n=== IGDB QUERY =====================================');
+        logger.info(`Endpoint: ${endpoint}`);
+        logger.info('Query:\n' + query);
+        logger.info('====================================================\n');
         return _callIgdb(endpoint, query);
       };
       
@@ -144,8 +145,8 @@ async function main() {
       const payload = await svc.callIgdb('games', query);
       if (Array.isArray(payload) && payload.length) {
         const sample = payload[0];
-        console.log('[igdb-cli] sample keys:', Object.keys(sample).slice(0, 20).join(', '));
-        console.log('[igdb-cli] sample.category (raw):', sample.category);
+        logger.info('[igdb-cli] sample keys:', Object.keys(sample).slice(0, 20).join(', '));
+        logger.info('[igdb-cli] sample.category (raw):', sample.category);
       }
       return printResult(payload, { raw: true, json: opt.json });
     }
@@ -169,7 +170,7 @@ async function main() {
     const result = decorate(game);
     if (opt.json) {
       // minimal JSON
-      return console.log(JSON.stringify({ score: out.score, game: result }, null, 2));
+      return logger.info(JSON.stringify({ score: out.score, game: result }, null, 2));
     }
     prettyPrint([result], { header: `Best match (score=${out.score})` });
     return;
@@ -186,55 +187,55 @@ if (platformId) whereParts.push(`platforms = (${platformId})`);
 let query = [baseSearch, baseFields, `where ${whereParts.join(' & ')};`, baseLimit].join('\n');
 
 let payload = await svc.callIgdb('games', query);
-console.log(`[igdb-cli] rows=${Array.isArray(payload) ? payload.length : 0}`);
+logger.info(`[igdb-cli] rows=${Array.isArray(payload) ? payload.length : 0}`);
 
 // After you have `payload` (and any fallbacks) resolved:
 
 // Always show how many rows came back from IGDB
 const rawCount = Array.isArray(payload) ? payload.length : 0;
-console.log(`[igdb-cli] rows=${rawCount}`);
+logger.info(`[igdb-cli] rows=${rawCount}`);
 
 // Map to lightweight display objects
   let rows = [];
   try {
     rows = Array.isArray(payload) ? payload.map(decorate) : [];
-    console.log(`[igdb-cli] mapped=${rows.length}`);
+    logger.info(`[igdb-cli] mapped=${rows.length}`);
   } catch (e) {
-    console.error('[igdb-cli] decorate() failed:', e?.message || e);
+    logger.error('[igdb-cli] decorate() failed:', e?.message || e);
     rows = [];
   }
 
   // JSON mode → dump and return
   if (opt.json) {
-    console.log(JSON.stringify({ count: rows.length, items: rows }, null, 2));
+    logger.info(JSON.stringify({ count: rows.length, items: rows }, null, 2));
     return;
   }
 
   // Human-readable printing (no helper indirection, print inline)
   const header = `Results for "${opt.title}"${platformId ? ` (platform=${platformId})` : ''}`;
-  console.log('\n' + header + '\n' + '='.repeat(header.length));
+  logger.info('\n' + header + '\n' + '='.repeat(header.length));
 
   if (!rows.length) {
-    console.log('(no results)\n');
+    logger.info('(no results)\n');
   } else {
     for (const it of rows) {
-      console.log(`- ${it.name}${it.year ? ` (${it.year})` : ''}`);
-      if (it.categoryId != null) console.log(`  Category: ${it.category} [${it.categoryId}]`);
-      else if (it.rawCategory !== null && it.rawCategory !== undefined) console.log(`  Category(raw): ${it.rawCategory}`);
-      if (it.platforms?.length)  console.log(`  Platforms: ${it.platforms.join(', ')}`);
-      if (it.developers?.length) console.log(`  Dev: ${it.developers.join(', ')}`);
-      if (it.publishers?.length) console.log(`  Pub: ${it.publishers.join(', ')}`);
-      if (it.genres?.length)     console.log(`  Genres: ${it.genres.join(', ')}`);
-      if (it.cover)              console.log(`  Cover: ${it.cover}`);
-      if (it.url)                console.log(`  IGDB: ${it.url}`);
+      logger.info(`- ${it.name}${it.year ? ` (${it.year})` : ''}`);
+      if (it.categoryId != null) logger.info(`  Category: ${it.category} [${it.categoryId}]`);
+      else if (it.rawCategory !== null && it.rawCategory !== undefined) logger.info(`  Category(raw): ${it.rawCategory}`);
+      if (it.platforms?.length)  logger.info(`  Platforms: ${it.platforms.join(', ')}`);
+      if (it.developers?.length) logger.info(`  Dev: ${it.developers.join(', ')}`);
+      if (it.publishers?.length) logger.info(`  Pub: ${it.publishers.join(', ')}`);
+      if (it.genres?.length)     logger.info(`  Genres: ${it.genres.join(', ')}`);
+      if (it.cover)              logger.info(`  Cover: ${it.cover}`);
+      if (it.url)                logger.info(`  IGDB: ${it.url}`);
     }
-    console.log(''); // final newline
+    logger.info(''); // final newline
   }
 }
 
 // ---- helpers ----
 function bail(msg) {
-  console.error('[igdb-cli] ' + msg);
+  logger.error('[igdb-cli] ' + msg);
   process.exit(1);
 }
 
@@ -327,24 +328,24 @@ function mapIgdbCategory(n) {
 
 
 function prettyPrint(items, { header, message } = {}) {
-  if (header) console.log('\n' + header + '\n' + '='.repeat(header.length));
-  if (message) console.log(message);
+  if (header) logger.info('\n' + header + '\n' + '='.repeat(header.length));
+  if (message) logger.info(message);
   if (!Array.isArray(items) || !items.length) {
-    console.log('(no results)');
+    logger.info('(no results)');
     return;
   }
   for (const it of items) {
-    console.log(`- ${it.name} ${it.year ? `(${it.year})` : ''}`);
-    if (it.categoryId != null) console.log(`  Category: ${it.category} [${it.categoryId}]`);
-    else if (it.rawCategory !== null && it.rawCategory !== undefined) console.log(`  Category(raw): ${it.rawCategory}`);
-    if (it.platforms?.length) console.log(`  Platforms: ${it.platforms.join(', ')}`);
-    if (it.developers?.length) console.log(`  Dev: ${it.developers.join(', ')}`);
-    if (it.publishers?.length) console.log(`  Pub: ${it.publishers.join(', ')}`);
-    if (it.genres?.length) console.log(`  Genres: ${it.genres.join(', ')}`);
-    if (it.cover) console.log(`  Cover: ${it.cover}`);
-    if (it.url) console.log(`  IGDB: ${it.url}`);
+    logger.info(`- ${it.name} ${it.year ? `(${it.year})` : ''}`);
+    if (it.categoryId != null) logger.info(`  Category: ${it.category} [${it.categoryId}]`);
+    else if (it.rawCategory !== null && it.rawCategory !== undefined) logger.info(`  Category(raw): ${it.rawCategory}`);
+    if (it.platforms?.length) logger.info(`  Platforms: ${it.platforms.join(', ')}`);
+    if (it.developers?.length) logger.info(`  Dev: ${it.developers.join(', ')}`);
+    if (it.publishers?.length) logger.info(`  Pub: ${it.publishers.join(', ')}`);
+    if (it.genres?.length) logger.info(`  Genres: ${it.genres.join(', ')}`);
+    if (it.cover) logger.info(`  Cover: ${it.cover}`);
+    if (it.url) logger.info(`  IGDB: ${it.url}`);
   }
-  console.log('');
+  logger.info('');
 }
 
 function inferCategoryFromRelations(game) {
@@ -371,11 +372,11 @@ function inferCategoryFromRelations(game) {
 
 function printResult(payload, { raw = false, json = false, message = '' } = {}) {
   if (json) {
-    console.log(JSON.stringify({ message, payload }, null, 2));
+    logger.info(JSON.stringify({ message, payload }, null, 2));
   } else {
-    if (message) console.log(message);
+    if (message) logger.info(message);
     if (raw) {
-      console.log(Array.isArray(payload) ? `${payload.length} result(s)` : '(non-array payload)');
+      logger.info(Array.isArray(payload) ? `${payload.length} result(s)` : '(non-array payload)');
       prettyPrint((payload || []).map(decorate));
     } else {
       prettyPrint((payload || []).map(decorate));
@@ -385,6 +386,7 @@ function printResult(payload, { raw = false, json = false, message = '' } = {}) 
 
 main().catch((err) => {
   const msg = err?.stack || err?.message || String(err);
-  console.error('[igdb-cli] Error:', msg.slice(0, 4000));
+  logger.error('[igdb-cli] Error:', msg.slice(0, 4000));
   process.exit(1);
 });
+

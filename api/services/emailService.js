@@ -10,6 +10,7 @@
  */
 
 const { Resend } = require('resend');
+const logger = require('../logger');
 
 const API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@shelvesai.com';
@@ -32,11 +33,11 @@ async function sendPasswordResetEmail(to, token, firstName = null) {
         const isDevLike = env === 'development' || env === 'test';
 
         if (!isDevLike) {
-            console.error(`[EmailService] RESEND_API_KEY not configured - cannot send password reset email to ${to}`);
+            logger.error(`[EmailService] RESEND_API_KEY not configured - cannot send password reset email to ${to}`);
             throw new Error('Email transport unavailable');
         }
 
-        console.warn(`[EmailService] RESEND_API_KEY not configured - simulating password reset email to ${to}`);
+        logger.warn(`[EmailService] RESEND_API_KEY not configured - simulating password reset email to ${to}`);
         return { success: true, simulated: true };
     }
 
@@ -92,10 +93,10 @@ If you didn't request this, you can safely ignore this email.
         if (response?.error) {
             throw new Error(response.error.message || 'Resend API error');
         }
-        console.log(`[EmailService] Password reset email sent to ${to}`);
+        logger.info(`[EmailService] Password reset email sent to ${to}`);
         return { success: true };
     } catch (error) {
-        console.error('[EmailService] Failed to send email:', error.message);
+        logger.error('[EmailService] Failed to send email:', error.message);
         throw new Error('Failed to send email');
     }
 }

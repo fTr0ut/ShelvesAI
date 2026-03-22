@@ -1,4 +1,5 @@
 const { GameCatalogService } = require('./GameCatalogService');
+const logger = require('../../logger');
 
 describe('GameCatalogService.safeLookup', () => {
   const baseInput = {
@@ -111,7 +112,7 @@ describe('GameCatalogService.safeLookup', () => {
     });
 
     jest.spyOn(service, 'getAccessToken').mockResolvedValue('token');
-    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => {});
 
     await Promise.all([
       service.callIgdb('games', 'fields name;'),

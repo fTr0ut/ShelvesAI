@@ -18,6 +18,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const fs = require('fs/promises');
 const { Pool } = require('pg');
 const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const logger = require('../logger');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -194,14 +195,14 @@ async function migrateRecord(record, tableName) {
  * Migrate records from a table
  */
 async function migrateTable(tableName) {
-  console.log(`\n--- Migrating ${tableName} ---`);
+  logger.info(`\n--- Migrating ${tableName} ---`);
 
   // Get total count
   const countResult = await pool.query(
     `SELECT COUNT(*) FROM ${tableName} WHERE local_path IS NOT NULL`
   );
   const totalCount = parseInt(countResult.rows[0].count, 10);
-  console.log(`Found ${totalCount} records with local_path`);
+  logger.info(`Found ${totalCount} records with local_path`);
 
   if (totalCount === 0) {
     return;
@@ -230,17 +231,17 @@ async function migrateTable(tableName) {
         const progress = `[${processed}/${totalCount}]`;
 
         if (migrationResult.status === 'migrated' || migrationResult.status === 'dry_run') {
-          console.log(`${progress} Migrated: ${migrationResult.key} (${migrationResult.size} bytes)`);
+          logger.info(`${progress} Migrated: ${migrationResult.key} (${migrationResult.size} bytes)`);
         } else if (migrationResult.status === 'exists') {
-          console.log(`${progress} Already in S3: ${migrationResult.key}`);
+          logger.info(`${progress} Already in S3: ${migrationResult.key}`);
         } else if (migrationResult.status === 'not_found') {
-          console.log(`${progress} File not found: ${migrationResult.path}`);
+          logger.info(`${progress} File not found: ${migrationResult.path}`);
         } else if (migrationResult.status === 'skipped') {
-          console.log(`${progress} Skipped: ${migrationResult.reason}`);
+          logger.info(`${progress} Skipped: ${migrationResult.reason}`);
         }
       } catch (err) {
         stats.errors++;
-        console.error(`[${processed}/${totalCount}] Error migrating record ${record.id}:`, err.message);
+        logger.error(`[${processed}/${totalCount}] Error migrating record ${record.id}:`, err.message);
       }
     }
 
@@ -252,36 +253,36 @@ async function migrateTable(tableName) {
  * Main migration function
  */
 async function main() {
-  console.log('='.repeat(60));
-  console.log('S3 Media Migration Script');
-  console.log('='.repeat(60));
+  logger.info('='.repeat(60));
+  logger.info('S3 Media Migration Script');
+  logger.info('='.repeat(60));
 
   if (DRY_RUN) {
-    console.log('\n** DRY RUN MODE - No files will be uploaded **\n');
+    logger.info('\n** DRY RUN MODE - No files will be uploaded **\n');
   }
 
   // Validate S3 configuration
   if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
-    console.error('ERROR: AWS credentials not configured.');
-    console.error('Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
+    logger.error('ERROR: AWS credentials not configured.');
+    logger.error('Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
     process.exit(1);
   }
 
   if (!S3_BUCKET) {
-    console.error('ERROR: S3_BUCKET_NAME environment variable not set.');
+    logger.error('ERROR: S3_BUCKET_NAME environment variable not set.');
     process.exit(1);
   }
 
-  console.log(`S3 Bucket: ${S3_BUCKET}`);
-  console.log(`Local cache: ${CACHE_ROOT}`);
-  console.log(`Batch size: ${BATCH_SIZE}`);
-  console.log(`Skip count: ${SKIP_COUNT}`);
-  console.log(`Table filter: ${TABLE_FILTER}`);
+  logger.info(`S3 Bucket: ${S3_BUCKET}`);
+  logger.info(`Local cache: ${CACHE_ROOT}`);
+  logger.info(`Batch size: ${BATCH_SIZE}`);
+  logger.info(`Skip count: ${SKIP_COUNT}`);
+  logger.info(`Table filter: ${TABLE_FILTER}`);
 
   try {
     // Test database connection
     await pool.query('SELECT 1');
-    console.log('Database connection: OK');
+    logger.info('Database connection: OK');
 
     // Migrate tables based on filter
     if (TABLE_FILTER === 'all' || TABLE_FILTER === 'media') {
@@ -293,23 +294,23 @@ async function main() {
     }
 
     // Print summary
-    console.log('\n' + '='.repeat(60));
-    console.log('Migration Summary');
-    console.log('='.repeat(60));
-    console.log(`Total records processed: ${stats.total}`);
-    console.log(`Successfully migrated:   ${stats.migrated}`);
-    console.log(`Already in S3:           ${stats.alreadyExists}`);
-    console.log(`File not found locally:  ${stats.notFound}`);
-    console.log(`Skipped (no path/empty): ${stats.skipped}`);
-    console.log(`Errors:                  ${stats.errors}`);
+    logger.info('\n' + '='.repeat(60));
+    logger.info('Migration Summary');
+    logger.info('='.repeat(60));
+    logger.info(`Total records processed: ${stats.total}`);
+    logger.info(`Successfully migrated:   ${stats.migrated}`);
+    logger.info(`Already in S3:           ${stats.alreadyExists}`);
+    logger.info(`File not found locally:  ${stats.notFound}`);
+    logger.info(`Skipped (no path/empty): ${stats.skipped}`);
+    logger.info(`Errors:                  ${stats.errors}`);
 
     if (DRY_RUN) {
-      console.log('\n** DRY RUN COMPLETE - No files were uploaded **');
-      console.log('Run without --dry-run to perform actual migration.');
+      logger.info('\n** DRY RUN COMPLETE - No files were uploaded **');
+      logger.info('Run without --dry-run to perform actual migration.');
     }
 
   } catch (err) {
-    console.error('Migration failed:', err);
+    logger.error('Migration failed:', err);
     process.exit(1);
   } finally {
     await pool.end();

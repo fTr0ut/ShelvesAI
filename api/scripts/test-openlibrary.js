@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('../logger');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const {
@@ -139,9 +140,9 @@ async function main() {
   const limit = parseLimit(args.limit, 5);
 
   if (!inputArg || mode === 'help') {
-    console.log('Usage: node scripts/test-openlibrary.js <json-or-path> [--mode auto|lookup|search|isbn|work] [--limit 5]');
-    console.log('Tip (PowerShell): wrap JSON in single quotes or use --input with a here-string.');
-    console.log('Input can be a JSON string, a file path, an array, or an object with { "items": [...] }.');
+    logger.info('Usage: node scripts/test-openlibrary.js <json-or-path> [--mode auto|lookup|search|isbn|work] [--limit 5]');
+    logger.info('Tip (PowerShell): wrap JSON in single quotes or use --input with a here-string.');
+    logger.info('Input can be a JSON string, a file path, an array, or an object with { "items": [...] }.');
     if (process.stdin.isTTY) {
       process.exit(inputArg ? 0 : 1);
     }
@@ -156,12 +157,12 @@ async function main() {
   try {
     parsed = parseJsonInput(rawInput);
   } catch (err) {
-    console.error(err?.message || String(err));
+    logger.error(err?.message || String(err));
     process.exit(1);
   }
   const items = normalizeItems(parsed);
   if (!items.length) {
-    console.error('No items found in input.');
+    logger.error('No items found in input.');
     process.exit(1);
   }
 
@@ -179,10 +180,10 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify(results, null, 2));
+  logger.info(JSON.stringify(results, null, 2));
 }
 
 main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
+  logger.error(err?.stack || err?.message || String(err));
   process.exit(1);
 });

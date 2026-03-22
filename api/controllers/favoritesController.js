@@ -11,6 +11,7 @@ const friendshipsQueries = require('../database/queries/friendships');
 const shelvesQueries = require('../database/queries/shelves');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { sendError, logError } = require('../utils/errorHandler');
+const logger = require('../logger');
 
 function hydrateFavoriteMedia(favorite) {
     if (!favorite || typeof favorite !== 'object') return favorite;
@@ -96,7 +97,7 @@ async function addFavorite(req, res) {
                 payload: logPayload,
             });
         } catch (e) {
-            console.warn('Failed to log favorite event:', e.message);
+            logger.warn('Failed to log favorite event:', e.message);
         }
 
         res.status(201).json({

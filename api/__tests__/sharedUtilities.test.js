@@ -57,6 +57,7 @@ describe('normalizeTags', () => {
 // errorHandler.js
 // ---------------------------------------------------------------------------
 const { sendError, logError } = require('../utils/errorHandler');
+const logger = require('../logger');
 
 describe('sendError', () => {
   let res;
@@ -81,15 +82,15 @@ describe('sendError', () => {
 });
 
 describe('logError', () => {
-  it('calls console.error without throwing', () => {
-    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  it('calls logger.error without throwing', () => {
+    const spy = jest.spyOn(logger, 'error').mockImplementation(() => {});
     expect(() => logError('testContext', new Error('boom'), { userId: 1 })).not.toThrow();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
 
   it('handles non-Error values gracefully', () => {
-    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const spy = jest.spyOn(logger, 'error').mockImplementation(() => {});
     expect(() => logError('ctx', 'string error')).not.toThrow();
     spy.mockRestore();
   });

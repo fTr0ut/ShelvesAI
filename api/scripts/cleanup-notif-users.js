@@ -1,5 +1,6 @@
 const path = require('path');
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -45,12 +46,12 @@ function parseArgs() {
 }
 
 function logSummary(summary) {
-    console.log('Cleanup summary (dry run):');
-    console.log(`- Target users: ${summary.users}`);
-    console.log(`- Notifications to delete: ${summary.notifications}`);
-    console.log(`- Event aggregates to delete: ${summary.eventAggregates}`);
-    console.log(`- Event logs to delete: ${summary.eventLogs}`);
-    console.log(`- Friendships to delete: ${summary.friendships}`);
+    logger.info('Cleanup summary (dry run):');
+    logger.info(`- Target users: ${summary.users}`);
+    logger.info(`- Notifications to delete: ${summary.notifications}`);
+    logger.info(`- Event aggregates to delete: ${summary.eventAggregates}`);
+    logger.info(`- Event logs to delete: ${summary.eventLogs}`);
+    logger.info(`- Friendships to delete: ${summary.friendships}`);
 }
 
 async function main() {
@@ -69,7 +70,7 @@ async function main() {
         );
 
         if (!targetUsersResult.rows.length) {
-            console.log('No notif_user_* accounts found. Nothing to delete.');
+            logger.info('No notif_user_* accounts found. Nothing to delete.');
             return;
         }
 
@@ -142,18 +143,18 @@ async function main() {
                     [userIdsParam]
                 );
 
-                console.log('');
-                console.log('Targets (dry run):');
-                console.log('Users:', targetUsersResult.rows);
-                console.log('Notifications:', notificationRows.rows);
-                console.log('Event aggregates:', eventAggregateIds);
-                console.log('Event logs:', eventLogRows.rows);
-                console.log('Friendships:', friendshipRows.rows);
+                logger.info('');
+                logger.info('Targets (dry run):');
+                logger.info('Users:', targetUsersResult.rows);
+                logger.info('Notifications:', notificationRows.rows);
+                logger.info('Event aggregates:', eventAggregateIds);
+                logger.info('Event logs:', eventLogRows.rows);
+                logger.info('Friendships:', friendshipRows.rows);
             }
-            console.log('');
-            console.log('To execute:');
-            console.log('1) Set NOTIF_CLEANUP_TOKEN in api/.env (any unique string).');
-            console.log('2) Run: node api/_tests_/cleanup-notif-users.js --execute --token=YOUR_TOKEN');
+            logger.info('');
+            logger.info('To execute:');
+            logger.info('1) Set NOTIF_CLEANUP_TOKEN in api/.env (any unique string).');
+            logger.info('2) Run: node api/_tests_/cleanup-notif-users.js --execute --token=YOUR_TOKEN');
             return;
         }
 
@@ -194,14 +195,14 @@ async function main() {
         );
 
         await pool.query('COMMIT');
-        console.log('Cleanup complete.');
+        logger.info('Cleanup complete.');
     } catch (err) {
         try {
             await pool.query('ROLLBACK');
         } catch (rollbackErr) {
-            console.warn('Rollback failed:', rollbackErr.message);
+            logger.warn('Rollback failed:', rollbackErr.message);
         }
-        console.error('Cleanup failed:', err.message);
+        logger.error('Cleanup failed:', err.message);
         process.exitCode = 1;
     } finally {
         await pool.end();
@@ -209,6 +210,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error('Cleanup failed:', err.message);
+    logger.error('Cleanup failed:', err.message);
     process.exitCode = 1;
 });

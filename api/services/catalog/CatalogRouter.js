@@ -13,13 +13,14 @@
 const path = require('path');
 const { getMetadataScorer } = require('./MetadataScorer');
 const { getApiContainerKey } = require('../config/shelfTypeResolver');
+const logger = require('../../logger');
 
 // Load config - will be cached by require()
 let containersConfig;
 try {
     containersConfig = require('../../config/apiContainers.json');
 } catch (err) {
-    console.warn('[CatalogRouter] Failed to load apiContainers.json, using empty config:', err.message);
+    logger.warn('[CatalogRouter] Failed to load apiContainers.json, using empty config:', err.message);
     containersConfig = {};
 }
 
@@ -81,7 +82,7 @@ class CatalogRouter {
             this._adapterInstances.set(adapterName, instance);
             return instance;
         } catch (err) {
-            console.warn(`[CatalogRouter] Failed to load adapter ${adapterName}:`, err.message);
+            logger.warn(`[CatalogRouter] Failed to load adapter ${adapterName}:`, err.message);
             return null;
         }
     }
@@ -143,7 +144,7 @@ class CatalogRouter {
     getAdapter(apiName) {
         const factory = this._adapterFactories[apiName];
         if (!factory) {
-            console.warn(`[CatalogRouter] Unknown adapter: ${apiName}`);
+            logger.warn(`[CatalogRouter] Unknown adapter: ${apiName}`);
             return null;
         }
         return factory();
@@ -159,13 +160,13 @@ class CatalogRouter {
     async lookup(item, containerType, options = {}) {
         const container = this.getContainer(containerType);
         if (!container) {
-            console.log('[CatalogRouter] No container found for type:', containerType);
+            logger.info('[CatalogRouter] No container found for type:', containerType);
             return null;
         }
 
         const apis = this.getEnabledApis(containerType);
         if (!apis.length) {
-            console.log('[CatalogRouter] No enabled APIs for container:', containerType);
+            logger.info('[CatalogRouter] No enabled APIs for container:', containerType);
             return null;
         }
 
@@ -175,7 +176,7 @@ class CatalogRouter {
             containerType,
             container,
         };
-        console.log(`[CatalogRouter] Looking up item in ${containerType} container (mode: ${mode}), APIs:`, apis.map(a => a.name));
+        logger.info(`[CatalogRouter] Looking up item in ${containerType} container (mode: ${mode}), APIs:`, apis.map(a => a.name));
 
         if (mode === 'merge') {
             return this._lookupMerge(item, apis, sharedOptions);
@@ -200,17 +201,17 @@ class CatalogRouter {
 
             // Check if adapter is configured (has required credentials)
             if (typeof adapter.isConfigured === 'function' && !adapter.isConfigured()) {
-                console.log(`[CatalogRouter] Skipping ${api.name} - not configured`);
+                logger.info(`[CatalogRouter] Skipping ${api.name} - not configured`);
                 continue;
             }
 
             try {
-                console.log(`[CatalogRouter] Trying ${api.name}...`);
+                logger.info(`[CatalogRouter] Trying ${api.name}...`);
                 const result = await adapter.lookup(item, options);
 
                 if (result) {
                     if (!shouldScore || !Number.isFinite(minScore)) {
-                        console.log(`[CatalogRouter] Hit on ${api.name}`);
+                        logger.info(`[CatalogRouter] Hit on ${api.name}`);
                         return this.wrapCollectableResult(result, {
                             _source: api.name,
                             _sourceIndex: apis.indexOf(api),
@@ -229,7 +230,7 @@ class CatalogRouter {
                     }
 
                     if (metadata.score >= minScore) {
-                        console.log(`[CatalogRouter] Hit on ${api.name}`);
+                        logger.info(`[CatalogRouter] Hit on ${api.name}`);
                         return this.wrapCollectableResult(result, {
                             _source: api.name,
                             _sourceIndex: sourceIndex,
@@ -238,22 +239,22 @@ class CatalogRouter {
                         });
                     }
 
-                    console.log(`[CatalogRouter] Low metadata score from ${api.name}, trying next API`, {
+                    logger.info(`[CatalogRouter] Low metadata score from ${api.name}, trying next API`, {
                         score: metadata.score,
                         missing: metadata.missing,
                     });
                     continue;
                 }
 
-                console.log(`[CatalogRouter] No result from ${api.name}`);
+                logger.info(`[CatalogRouter] No result from ${api.name}`);
             } catch (err) {
-                console.warn(`[CatalogRouter] ${api.name} failed:`, err.message);
+                logger.warn(`[CatalogRouter] ${api.name} failed:`, err.message);
                 // Continue to next API
             }
         }
 
         if (bestCandidate) {
-            console.log('[CatalogRouter] Returning best available result below metadata threshold', {
+            logger.info('[CatalogRouter] Returning best available result below metadata threshold', {
                 source: bestCandidate.source,
                 score: bestCandidate.metadata.score,
             });
@@ -265,7 +266,7 @@ class CatalogRouter {
             });
         }
 
-        console.log('[CatalogRouter] All APIs exhausted, no result found');
+        logger.info('[CatalogRouter] All APIs exhausted, no result found');
         return null;
     }
     /**
@@ -284,7 +285,7 @@ class CatalogRouter {
             }
 
             try {
-                console.log(`[CatalogRouter] (merge) Calling ${api.name}...`);
+                logger.info(`[CatalogRouter] (merge) Calling ${api.name}...`);
                 const result = await adapter.lookup(item, options);
                 if (result) {
                     return {
@@ -295,7 +296,7 @@ class CatalogRouter {
                 }
                 return null;
             } catch (err) {
-                console.warn(`[CatalogRouter] (merge) ${api.name} failed:`, err.message);
+                logger.warn(`[CatalogRouter] (merge) ${api.name} failed:`, err.message);
                 return null;
             }
         });
@@ -314,7 +315,7 @@ class CatalogRouter {
         const merged = this._mergeResults(validResults);
         merged._sources = validResults.map(r => r._source);
 
-        console.log(`[CatalogRouter] (merge) Combined results from:`, merged._sources);
+        logger.info(`[CatalogRouter] (merge) Combined results from:`, merged._sources);
         return this.wrapCollectableResult(merged);
     }
 
@@ -379,9 +380,9 @@ class CatalogRouter {
         delete require.cache[require.resolve('../../config/apiContainers.json')];
         try {
             this.config = require('../../config/apiContainers.json');
-            console.log('[CatalogRouter] Config reloaded');
+            logger.info('[CatalogRouter] Config reloaded');
         } catch (err) {
-            console.warn('[CatalogRouter] Failed to reload config:', err.message);
+            logger.warn('[CatalogRouter] Failed to reload config:', err.message);
         }
     }
 }

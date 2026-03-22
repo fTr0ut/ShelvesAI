@@ -13,12 +13,13 @@
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const { query, pool } = require('../database/pg');
+const logger = require('../logger');
 
 async function generateToken(userId, expiry = '7d') {
     const jwtSecret = process.env.JWT_SECRET;
 
     if (!jwtSecret) {
-        console.error('Error: JWT_SECRET not set in environment');
+        logger.error('Error: JWT_SECRET not set in environment');
         process.exit(1);
     }
 
@@ -29,7 +30,7 @@ async function generateToken(userId, expiry = '7d') {
     );
 
     if (result.rows.length === 0) {
-        console.error(`Error: User with ID "${userId}" not found`);
+        logger.error(`Error: User with ID "${userId}" not found`);
         process.exit(1);
     }
 
@@ -48,7 +49,7 @@ async function main() {
     const args = process.argv.slice(2);
 
     if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-        console.log(`
+        logger.info(`
 Usage: node scripts/generate-token.js <user-uuid> [options]
 
 Options:
@@ -74,13 +75,13 @@ Examples:
     try {
         const { user, token } = await generateToken(userId, expiry);
 
-        console.log('\n--- Token Generated ---');
-        console.log(`User ID:    ${user.id}`);
-        console.log(`Username:   ${user.username || '(not set)'}`);
-        console.log(`Expires in: ${expiry}`);
-        console.log(`\nToken:\n${token}\n`);
+        logger.info('\n--- Token Generated ---');
+        logger.info(`User ID:    ${user.id}`);
+        logger.info(`Username:   ${user.username || '(not set)'}`);
+        logger.info(`Expires in: ${expiry}`);
+        logger.info(`\nToken:\n${token}\n`);
     } catch (err) {
-        console.error('Error generating token:', err.message);
+        logger.error('Error generating token:', err.message);
         process.exit(1);
     } finally {
         await pool.end();

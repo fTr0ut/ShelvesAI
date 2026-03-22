@@ -3,6 +3,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const { HardcoverClient } = require('../services/hardcover');
+const logger = require('../logger');
 
 function argMap(argv) {
   const args = {};
@@ -270,10 +271,10 @@ async function main() {
   const debugAuth = parseBoolean(args['debug-auth'] || process.env.HARDCOVER_DEBUG_LOG_AUTH);
 
   if (!inputArg || mode === 'help') {
-    console.log('Usage: node scripts/test-hardcover.js <json-or-path> [--mode auto|search|isbn] [--limit 5]');
-    console.log('Tip (PowerShell): wrap JSON in single quotes or use --input with a here-string.');
-    console.log('Input can be a JSON string, a file path, an array, or an object with { "items": [...] }.');
-    console.log('Debug: add --debug to log the GraphQL request payload; add --debug-auth to include the token.');
+    logger.info('Usage: node scripts/test-hardcover.js <json-or-path> [--mode auto|search|isbn] [--limit 5]');
+    logger.info('Tip (PowerShell): wrap JSON in single quotes or use --input with a here-string.');
+    logger.info('Input can be a JSON string, a file path, an array, or an object with { "items": [...] }.');
+    logger.info('Debug: add --debug to log the GraphQL request payload; add --debug-auth to include the token.');
     if (process.stdin.isTTY) {
       process.exit(inputArg ? 0 : 1);
     }
@@ -284,7 +285,7 @@ async function main() {
     debugLogAuth: debugAuth,
   });
   if (!client.isConfigured()) {
-    console.error('Missing HARDCOVER_API_TOKEN. Add it to api/.env before running this script.');
+    logger.error('Missing HARDCOVER_API_TOKEN. Add it to api/.env before running this script.');
     process.exit(1);
   }
 
@@ -310,13 +311,13 @@ async function main() {
     if (fallbackParsed) {
       parsed = fallbackParsed;
     } else {
-      console.error(err?.message || String(err));
+      logger.error(err?.message || String(err));
       process.exit(1);
     }
   }
   const items = normalizeItems(parsed);
   if (!items.length) {
-    console.error('No items found in input.');
+    logger.error('No items found in input.');
     process.exit(1);
   }
 
@@ -334,10 +335,10 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify(results, null, 2));
+  logger.info(JSON.stringify(results, null, 2));
 }
 
 main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
+  logger.error(err?.stack || err?.message || String(err));
   process.exit(1);
 });

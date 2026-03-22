@@ -1,5 +1,7 @@
 const { query } = require('../database/pg');
 const { runRefresh } = require('../jobs/refreshNewsCache');
+const logger = require('../logger');
+const { runJob } = require('../utils/jobRunner');
 
 const DEFAULT_REFRESH_HOUR = 4;
 const DEFAULT_REFRESH_MINUTE = 0;
@@ -59,25 +61,25 @@ async function getCacheCounts() {
     return result.rows[0] || { active_count: 0, expired_count: 0, total_count: 0 };
   } catch (err) {
     if (err && err.code === '42P01') {
-      console.warn('[News Cache] news_items table missing; skipping cache checks.');
+      logger.warn('[News Cache] news_items table missing; skipping cache checks.');
       return null;
     }
-    console.warn('[News Cache] Failed to read cache status:', err.message);
+    logger.warn('[News Cache] Failed to read cache status:', { error: err.message });
     return null;
   }
 }
 
 async function runRefreshSafely(reason) {
   if (refreshInProgress) {
-    console.log(`[News Cache] Refresh already running; skipping (${reason}).`);
+    logger.info(`[News Cache] Refresh already running; skipping (${reason}).`);
     return;
   }
   refreshInProgress = true;
   try {
-    console.log(`[News Cache] Starting refresh (${reason}).`);
-    await runRefresh();
-  } catch (err) {
-    console.error('[News Cache] Refresh failed:', err);
+    await runJob('newsCache', async () => {
+      logger.info(`[News Cache] Starting refresh (${reason}).`);
+      await runRefresh();
+    });
   } finally {
     refreshInProgress = false;
   }
@@ -88,21 +90,21 @@ async function checkAndRefreshOnBoot() {
   if (!counts) return;
 
   if (counts.total_count === 0) {
-    console.log('[News Cache] Cache empty on boot; refreshing.');
+    logger.info('[News Cache] Cache empty on boot; refreshing.');
     await runRefreshSafely('startup-empty');
     return;
   }
 
   if (counts.active_count === 0) {
-    console.log('[News Cache] Cache expired on boot; refreshing.');
+    logger.info('[News Cache] Cache expired on boot; refreshing.');
     await runRefreshSafely('startup-expired');
     return;
   }
 
   if (counts.expired_count > 0) {
-    console.log('[News Cache] Cache has expired items; scheduled refresh will clean up.');
+    logger.info('[News Cache] Cache has expired items; scheduled refresh will clean up.');
   } else {
-    console.log('[News Cache] Cache healthy on boot; no immediate refresh needed.');
+    logger.info('[News Cache] Cache healthy on boot; no immediate refresh needed.');
   }
 }
 
@@ -114,7 +116,7 @@ function scheduleNextRefresh() {
     clearTimeout(scheduledTimeout);
   }
 
-  console.log(`[News Cache] Next refresh scheduled for ${nextRun.toISOString()}.`);
+  logger.info(`[News Cache] Next refresh scheduled for ${nextRun.toISOString()}.`);
 
   scheduledTimeout = setTimeout(async () => {
     await runRefreshSafely('scheduled');
@@ -131,13 +133,13 @@ function startNewsCacheScheduler({ runOnStartup = true } = {}) {
   schedulerStarted = true;
 
   if (process.env.NEWS_CACHE_SCHEDULER_DISABLED === 'true') {
-    console.log('[News Cache] Scheduler disabled via NEWS_CACHE_SCHEDULER_DISABLED.');
+    logger.info('[News Cache] Scheduler disabled via NEWS_CACHE_SCHEDULER_DISABLED.');
     return;
   }
 
   if (runOnStartup) {
     checkAndRefreshOnBoot().catch((err) => {
-      console.warn('[News Cache] Startup check failed:', err.message);
+      logger.warn('[News Cache] Startup check failed:', { error: err.message });
     });
   }
 

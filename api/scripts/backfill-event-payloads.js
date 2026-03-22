@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 require('dotenv').config();
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -71,7 +72,7 @@ async function backfill() {
        ORDER BY e.id`
     );
 
-    console.log(`Found ${result.rows.length} events to inspect.`);
+    logger.info(`Found ${result.rows.length} events to inspect.`);
     let updated = 0;
 
     for (const row of result.rows) {
@@ -135,9 +136,9 @@ async function backfill() {
       updated += 1;
     }
 
-    console.log(`Backfill complete. Updated ${updated} events.`);
+    logger.info(`Backfill complete. Updated ${updated} events.`);
   } catch (err) {
-    console.error('Backfill failed:', err);
+    logger.error('Backfill failed:', err);
   } finally {
     client.release();
     await pool.end();

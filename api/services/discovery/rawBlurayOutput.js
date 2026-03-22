@@ -8,17 +8,18 @@
  */
 
 const BlurayDiscoveryAdapter = require('./BlurayDiscoveryAdapter');
+const logger = require('../../logger');
 
 async function main() {
     const adapter = new BlurayDiscoveryAdapter();
 
-    console.log('='.repeat(80));
-    console.log('BLURAY DISCOVERY ADAPTER - RAW OUTPUT DEBUG');
-    console.log('='.repeat(80));
-    console.log(`Timestamp: ${new Date().toISOString()}`);
-    console.log(`Base URL: ${adapter.baseUrl}`);
-    console.log(`Is Configured: ${adapter.isConfigured()}`);
-    console.log('='.repeat(80));
+    logger.info('='.repeat(80));
+    logger.info('BLURAY DISCOVERY ADAPTER - RAW OUTPUT DEBUG');
+    logger.info('='.repeat(80));
+    logger.info(`Timestamp: ${new Date().toISOString()}`);
+    logger.info(`Base URL: ${adapter.baseUrl}`);
+    logger.info(`Is Configured: ${adapter.isConfigured()}`);
+    logger.info('='.repeat(80));
 
     const sections = [
         { name: 'NEW PRE-ORDERS (4K)', method: 'fetchNewPreorders4K' },
@@ -30,43 +31,48 @@ async function main() {
     ];
 
     for (const section of sections) {
-        console.log(`\n>>> FETCHING ${section.name}...\n`);
+        logger.info(`\n>>> FETCHING ${section.name}...\n`);
 
         try {
             const results = await adapter[section.method]();
-            console.log(`Total Found: ${results.length}`);
-            console.log('-'.repeat(80));
+            logger.info(`Total Found: ${results.length}`);
+            logger.info('-'.repeat(80));
 
             if (results.length > 0) {
                 // Show first 5 items
                 const preview = results.slice(0, 5);
-                console.log('PREVIEW (first 5 items):');
-                console.log(JSON.stringify(preview, null, 2));
+                logger.info('PREVIEW (first 5 items):');
+                logger.info(JSON.stringify(preview, null, 2));
 
                 if (results.length > 5) {
-                    console.log(`... and ${results.length - 5} more items`);
+                    logger.info(`... and ${results.length - 5} more items`);
                 }
 
                 // Data quality check
-                console.log('\nDATA QUALITY:');
+                logger.info('\nDATA QUALITY:');
                 const withDates = results.filter(r => r.release_date).length;
                 const withUrls = results.filter(r => r.source_url).length;
-                console.log(`  Items with valid dates: ${withDates}/${results.length}`);
-                console.log(`  Items with valid URLs: ${withUrls}/${results.length}`);
+                logger.info(`  Items with valid dates: ${withDates}/${results.length}`);
+                logger.info(`  Items with valid URLs: ${withUrls}/${results.length}`);
             } else {
-                console.log('No items found.');
+                logger.info('No items found.');
             }
 
-            console.log('-'.repeat(80));
+            logger.info('-'.repeat(80));
         } catch (error) {
-            console.error(`ERROR: ${error.message}`);
-            console.error('Stack:', error.stack);
+            logger.error(`ERROR: ${error.message}`);
+            logger.error('Stack:', error.stack);
         }
     }
 
-    console.log('\n' + '='.repeat(80));
-    console.log('DEBUG COMPLETE');
-    console.log('='.repeat(80));
+    logger.info('\n' + '='.repeat(80));
+    logger.info('DEBUG COMPLETE');
+    logger.info('='.repeat(80));
 }
 
-main().catch(console.error);
+main().catch((err) => {
+    logger.error('[rawBlurayOutput] fatal', {
+        error: err.message,
+        stack: err.stack,
+    });
+});

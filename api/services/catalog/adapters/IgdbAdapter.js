@@ -30,6 +30,7 @@ class IgdbAdapter {
     _getService() {
         if (!this._service) {
             const { GameCatalogService } = require('../GameCatalogService');
+const logger = require('../../../logger');
             this._service = new GameCatalogService(this._serviceOptions);
         }
         return this._service;
@@ -73,7 +74,7 @@ class IgdbAdapter {
                 return this._toCollectable(result, item);
             }
         } catch (err) {
-            console.warn('[IgdbAdapter] lookup failed:', err.message);
+            logger.warn('[IgdbAdapter] lookup failed:', err.message);
         }
 
         return null;

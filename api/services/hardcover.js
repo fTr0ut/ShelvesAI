@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
 const RateLimiter = require('../utils/RateLimiter');
+const logger = require('../logger');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -515,7 +516,7 @@ class HardcoverClient {
 
     // Reject if best match score is below threshold (no meaningful match)
     if (bestScore < MIN_ACCEPTABLE_SCORE) {
-      console.log('[HardcoverClient.pickBestBook] Rejecting best match - score too low', {
+      logger.info('[HardcoverClient.pickBestBook] Rejecting best match - score too low', {
         expectedTitle: expected.title,
         bestTitle: best?.title,
         bestScore,
@@ -588,7 +589,7 @@ class HardcoverClient {
           if (!this.debugLogAuth && logHeaders.authorization) {
             logHeaders.authorization = `REDACTED(${String(logHeaders.authorization).length})`;
           }
-          console.log('[HardcoverClient] request', {
+          logger.info('[HardcoverClient] request', {
             url: this.baseUrl,
             headers: logHeaders,
             body: requestBody,
@@ -633,7 +634,7 @@ class HardcoverClient {
         // Only retry on timeout, network, or server errors
         if ((isTimeoutError || isNetworkError || isServerError) && attempt < this.maxRetries) {
           const delay = this.initialRetryDelayMs * Math.pow(2, attempt);
-          console.log(`[HardcoverClient] Request failed (attempt ${attempt + 1}/${this.maxRetries + 1}), retrying in ${delay}ms...`, {
+          logger.info(`[HardcoverClient] Request failed (attempt ${attempt + 1}/${this.maxRetries + 1}), retrying in ${delay}ms...`, {
             error: err.message,
           });
           lastError = isAbortError ? new Error('Hardcover request aborted') : err;

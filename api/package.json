@@ -47,7 +47,9 @@
         "node-fetch": "^2.7.0",
         "openai": "^4.54.0",
         "pg": "^8.16.3",
-        "resend": "^6.9.4"
+        "resend": "^6.9.4",
+        "winston": "^3.19.0",
+        "winston-daily-rotate-file": "^5.0.0"
     },
     "devDependencies": {
         "@types/cookie-parser": "^1.4.9",

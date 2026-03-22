@@ -11,6 +11,7 @@ const {
 } = require('../../openLibrary');
 const { openLibraryToCollectable } = require('../../../adapters/openlibrary.adapter');
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
+const logger = require('../../../logger');
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -59,7 +60,7 @@ class OpenLibraryAdapter {
             } catch (err) {
                 // Check for 404 (not found) vs other errors
                 if (!String(err?.message).includes('404')) {
-                    console.warn(`[OpenLibraryAdapter] ISBN lookup failed for ${isbn}:`, err.message);
+                    logger.warn(`[OpenLibraryAdapter] ISBN lookup failed for ${isbn}:`, err.message);
                 }
                 // Continue to next ISBN
             }
@@ -73,7 +74,7 @@ class OpenLibraryAdapter {
                     return this._normalizeResult(result, item);
                 }
             } catch (err) {
-                console.warn('[OpenLibraryAdapter] Title/author lookup failed:', err.message);
+                logger.warn('[OpenLibraryAdapter] Title/author lookup failed:', err.message);
             }
         }
 
@@ -91,7 +92,7 @@ class OpenLibraryAdapter {
             }
         } catch (err) {
             if (!String(err?.message).includes('404')) {
-                console.warn('[OpenLibraryAdapter] lookupByIsbn failed:', err.message);
+                logger.warn('[OpenLibraryAdapter] lookupByIsbn failed:', err.message);
             }
         }
         return null;
@@ -107,7 +108,7 @@ class OpenLibraryAdapter {
                 return this._normalizeResult(result, { title, author });
             }
         } catch (err) {
-            console.warn('[OpenLibraryAdapter] lookupByTitleAuthor failed:', err.message);
+            logger.warn('[OpenLibraryAdapter] lookupByTitleAuthor failed:', err.message);
         }
         return null;
     }

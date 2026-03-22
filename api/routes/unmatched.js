@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
 
         res.json({ items, count });
     } catch (err) {
-        console.error('GET /api/unmatched error:', err);
+        logger.error('GET /api/unmatched error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -51,7 +51,7 @@ router.get('/count', async (req, res) => {
         const count = await needsReviewQueries.countPendingForUser(req.user.id);
         res.json({ count });
     } catch (err) {
-        console.error('GET /api/unmatched/count error:', err);
+        logger.error('GET /api/unmatched/count error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -65,7 +65,7 @@ router.delete('/all', async (req, res) => {
         const count = await needsReviewQueries.dismissAllForUser(req.user.id);
         res.json({ success: true, dismissed: count });
     } catch (err) {
-        console.error('DELETE /api/unmatched/all error:', err);
+        logger.error('DELETE /api/unmatched/all error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -84,7 +84,7 @@ router.get('/:id', unmatchedIntParam, async (req, res) => {
         }
         res.json({ item });
     } catch (err) {
-        console.error('GET /api/unmatched/:id error:', err);
+        logger.error('GET /api/unmatched/:id error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -236,6 +236,7 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
         if (!collectable) {
             try {
                 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+const logger = require('../logger');
                 const matchingService = getCollectableMatchingService();
                 const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
                 if (apiResult) {
@@ -251,7 +252,7 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
                     matchSource = 'api';
                 }
             } catch (apiErr) {
-                console.warn('[PUT /api/unmatched/:id] API lookup failed:', apiErr?.message);
+                logger.warn('[PUT /api/unmatched/:id] API lookup failed:', apiErr?.message);
                 // Continue to create new collectable
             }
         }
@@ -288,7 +289,7 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
             },
         });
     } catch (err) {
-        console.error('PUT /api/unmatched/:id error:', err);
+        logger.error('PUT /api/unmatched/:id error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -305,7 +306,7 @@ router.delete('/:id', unmatchedIntParam, async (req, res) => {
         }
         res.json({ success: true, dismissed: true, id: req.params.id });
     } catch (err) {
-        console.error('DELETE /api/unmatched/:id error:', err);
+        logger.error('DELETE /api/unmatched/:id error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });

@@ -31,6 +31,7 @@ const {
   hasRequiredOtherFields,
 } = require('../services/manuals/otherManual');
 const { normalizeString, normalizeStringArray } = require('../utils/normalize');
+const logger = require('../logger');
 const {
   DEFAULT_OCR_CONFIDENCE_THRESHOLD,
   DEFAULT_AI_REVIEW_CONFIDENCE_THRESHOLD,
@@ -297,7 +298,7 @@ async function logShelfEvent({ userId, shelfId, type, payload }) {
       payload: payload || {},
     });
   } catch (err) {
-    console.warn("Event log failed", err.message || err);
+    logger.warn("Event log failed", err.message || err);
   }
 }
 
@@ -313,7 +314,7 @@ function resolveCatalogServiceForShelf(type) {
     try {
       if (service.supportsShelfType(type)) return service;
     } catch (err) {
-      console.error('[shelfVision.catalogService] supportsShelfType failed', { error: err?.message || err });
+      logger.error('[shelfVision.catalogService] supportsShelfType failed', { error: err?.message || err });
     }
   }
   return null;
@@ -403,7 +404,7 @@ async function listShelves(req, res) {
       pagination: { limit, skip, total, hasMore: skip + result.rows.length < total },
     });
   } catch (err) {
-    console.error('listShelves error:', err);
+    logger.error('listShelves error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -433,7 +434,7 @@ async function createShelf(req, res) {
 
     res.status(201).json({ shelf });
   } catch (err) {
-    console.error('createShelf error:', err);
+    logger.error('createShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -448,7 +449,7 @@ async function getShelf(req, res) {
     const readOnly = shelf.ownerId !== req.user.id;
     res.json({ shelf: { ...shelf, readOnly } });
   } catch (err) {
-    console.error('getShelf error:', err);
+    logger.error('getShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -463,7 +464,7 @@ async function updateShelf(req, res) {
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
     res.json({ shelf });
   } catch (err) {
-    console.error('updateShelf error:', err);
+    logger.error('updateShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -478,7 +479,7 @@ async function deleteShelf(req, res) {
 
     res.json({ deleted: true, id: shelfId });
   } catch (err) {
-    console.error('deleteShelf error:', err);
+    logger.error('deleteShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -508,7 +509,7 @@ async function listShelfItems(req, res) {
       pagination: { limit, skip, total, hasMore: skip + items.length < total },
     });
   } catch (err) {
-    console.error('listShelfItems error:', err);
+    logger.error('listShelfItems error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -559,7 +560,7 @@ async function searchManualEntry(req, res) {
       },
     });
   } catch (err) {
-    console.error('searchManualEntry error:', err);
+    logger.error('searchManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -625,7 +626,7 @@ async function addManualEntry(req, res) {
       item: { id: result.collection.id, manual: result.manual, position: null, format: null, notes: null, rating: null },
     });
   } catch (err) {
-    console.error('addManualEntry error:', err);
+    logger.error('addManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -668,7 +669,7 @@ async function addCollectable(req, res) {
 
     res.status(201).json({ item: { id: item.id, collectable, position: item.position, format: item.format, notes: item.notes, rating: item.rating } });
   } catch (err) {
-    console.error('addCollectable error:', err);
+    logger.error('addCollectable error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -689,7 +690,7 @@ async function addCollectableFromApi(req, res) {
         resolvedInput = { ...input, ...apiResult };
       }
     } catch (err) {
-      console.warn('[addCollectableFromApi] API enrichment failed:', err?.message || err);
+      logger.warn('[addCollectableFromApi] API enrichment failed:', err?.message || err);
     }
 
     const payload = buildCollectableUpsertPayload(resolvedInput, shelf.type);
@@ -730,7 +731,7 @@ async function addCollectableFromApi(req, res) {
       },
     });
   } catch (err) {
-    console.error('addCollectableFromApi error:', err);
+    logger.error('addCollectableFromApi error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -758,7 +759,7 @@ async function removeShelfItem(req, res) {
     const items = await hydrateShelfItems(req.user.id, shelf.id);
     res.json({ removedId: req.params.itemId, items });
   } catch (err) {
-    console.error('removeShelfItem error:', err);
+    logger.error('removeShelfItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -774,7 +775,7 @@ async function searchCollectablesForShelf(req, res) {
     const results = await collectablesQueries.searchByTitle(q, shelf.type, limit);
     res.json({ results });
   } catch (err) {
-    console.error('searchCollectablesForShelf error:', err);
+    logger.error('searchCollectablesForShelf error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -878,7 +879,7 @@ async function updateManualEntry(req, res) {
 
     res.json({ item: { id: entry.id, notes: updatedNotes, manual: manualData } });
   } catch (err) {
-    console.error('updateManualEntry error:', err);
+    logger.error('updateManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -932,7 +933,7 @@ async function uploadManualCover(req, res) {
       },
     });
   } catch (err) {
-    console.error('uploadManualCover error:', err);
+    logger.error('uploadManualCover error:', err);
     const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
     res.status(statusCode).json({ error: err?.message || 'Server error' });
   }
@@ -976,7 +977,7 @@ async function processShelfVision(req, res) {
       }
     }
 
-    console.log(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
+    logger.info(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
 
     // Generate job ID and create job entry
     const jobId = processingStatus.generateJobId(req.user.id, shelf.id);
@@ -1003,7 +1004,7 @@ async function processShelfVision(req, res) {
             try {
               await visionQuotaQueries.incrementUsage(userId);
             } catch (quotaErr) {
-              console.warn('[Vision] Failed to increment quota:', quotaErr.message);
+              logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
             }
           }
 
@@ -1018,9 +1019,9 @@ async function processShelfVision(req, res) {
         } catch (err) {
           if (err.message === 'Processing cancelled by user') {
             // Already marked as aborted
-            console.log(`[Vision] Job ${jobId} was cancelled by user`);
+            logger.info(`[Vision] Job ${jobId} was cancelled by user`);
           } else {
-            console.error(`[Vision] Job ${jobId} failed:`, err);
+            logger.error(`[Vision] Job ${jobId} failed:`, err);
             processingStatus.failJob(jobId, err.message || 'Processing failed');
           }
         }
@@ -1043,7 +1044,7 @@ async function processShelfVision(req, res) {
       try {
         await visionQuotaQueries.incrementUsage(req.user.id);
       } catch (quotaErr) {
-        console.warn('[Vision] Failed to increment quota:', quotaErr.message);
+        logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
       }
     }
 
@@ -1065,7 +1066,7 @@ async function processShelfVision(req, res) {
     });
 
   } catch (err) {
-    console.error("Vision analysis failed", err);
+    logger.error("Vision analysis failed", err);
     res.status(502).json({ error: "Vision analysis failed" });
   }
 }
@@ -1103,7 +1104,7 @@ async function getVisionStatus(req, res) {
       items,
     });
   } catch (err) {
-    console.error('getVisionStatus error:', err);
+    logger.error('getVisionStatus error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1134,7 +1135,7 @@ async function abortVision(req, res) {
       message: aborted ? 'Job abort requested' : 'Job could not be aborted',
     });
   } catch (err) {
-    console.error('abortVision error:', err);
+    logger.error('abortVision error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1176,7 +1177,7 @@ async function processCatalogLookup(req, res) {
     });
 
   } catch (err) {
-    console.error("Catalog lookup failed", err);
+    logger.error("Catalog lookup failed", err);
     res.status(500).json({ error: "Catalog lookup failed" });
   }
 }
@@ -1189,7 +1190,7 @@ async function listReviewItems(req, res) {
     const items = await needsReviewQueries.listPending(req.user.id, shelf.id);
     res.json({ items });
   } catch (err) {
-    console.error('listReviewItems error:', err);
+    logger.error('listReviewItems error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1360,7 +1361,7 @@ async function completeReviewItem(req, res) {
 
     res.json({ item: { id: item.id, collectable, position: item.position, notes: item.notes, rating: item.rating } });
   } catch (err) {
-    console.error('completeReviewItem error:', err);
+    logger.error('completeReviewItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1371,7 +1372,7 @@ async function dismissReviewItem(req, res) {
     if (!result) return res.status(404).json({ error: "Review item not found" });
     res.json({ dismissed: true, id: req.params.id });
   } catch (err) {
-    console.error('dismissReviewItem error:', err);
+    logger.error('dismissReviewItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1444,7 +1445,7 @@ async function rateShelfItem(req, res) {
       item: fullItem
     });
   } catch (err) {
-    console.error('rateShelfItem error:', err);
+    logger.error('rateShelfItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -1474,7 +1475,7 @@ async function getManualItem(req, res) {
 
     res.json({ manual });
   } catch (err) {
-    console.error('getManualItem error:', err);
+    logger.error('getManualItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

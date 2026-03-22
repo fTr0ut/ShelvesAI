@@ -49,7 +49,7 @@ function buildSearchUrl({ title, author, limit = 10 }) {
   if (author) {
     const normalizedAuthor = normalizeAuthorQuery(author);
     if (normalizedAuthor !== author) {
-      console.log('[openLibrary.buildSearchUrl] normalized author', { original: author, normalized: normalizedAuthor });
+      logger.info('[openLibrary.buildSearchUrl] normalized author', { original: author, normalized: normalizedAuthor });
     }
     params.append('author', normalizedAuthor);
   }
@@ -423,7 +423,7 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
   if (!title && !author) return [];
   try {
     const url = buildSearchUrl({ title, author, limit: 10 }); // get >limit so we can score & slice
-    console.log('[openLibrary.searchAndHydrateBooks] request', { title, author, fetchLimit: 10, clientLimit: limit, url });
+    logger.info('[openLibrary.searchAndHydrateBooks] request', { title, author, fetchLimit: 10, clientLimit: limit, url });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return [];
@@ -432,7 +432,7 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
     const scored = docs.map((d) => ({ d, s: scoreDoc(d, { title, author }) }));
     const validScored = scored.filter(x => x.s >= 0); // Only keep results with title match
     if (!validScored.length) {
-      console.log('[openLibrary.searchAndHydrateBooks] No matching titles found');
+      logger.info('[openLibrary.searchAndHydrateBooks] No matching titles found');
       return [];
     }
     validScored.sort((a, b) => b.s - a.s);
@@ -442,7 +442,7 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
     const hydrated = await mapWithConcurrency(selected, getConcurrency(), hydrateDoc);
     return hydrated.filter(Boolean);
   } catch (err) {
-    console.warn('OpenLibrary searchAndHydrateBooks failed', err.message);
+    logger.warn('OpenLibrary searchAndHydrateBooks failed', err.message);
     return [];
   }
 }
@@ -456,7 +456,7 @@ async function lookupWorkBookMetadata({ title, author }) {
   if (!title && !author) return null;
   try {
     const url = buildSearchUrl({ title, author, limit: 1 });
-    console.log('[openLibrary.lookupWorkBookMetadata] request', { title, author, strategy: 'first', url });
+    logger.info('[openLibrary.lookupWorkBookMetadata] request', { title, author, strategy: 'first', url });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return null;
@@ -464,7 +464,7 @@ async function lookupWorkBookMetadata({ title, author }) {
     const first = docs[0];
     return await hydrateDoc(first);
   } catch (err) {
-    console.warn('OpenLibrary lookup failed', err.message);
+    logger.warn('OpenLibrary lookup failed', err.message);
     return null;
   }
 }
@@ -492,7 +492,7 @@ async function hydrateWorkByKey(workKeyOrId) {
     };
     return await hydrateDoc(fakeDoc);
   } catch (e) {
-    console.warn('OpenLibrary hydrateWorkByKey failed', e.message);
+    logger.warn('OpenLibrary hydrateWorkByKey failed', e.message);
     return null;
   }
 }
@@ -520,6 +520,7 @@ function uniqueStrings(arr) {
  * Ex: sha1("title|author|year")
  */
 const crypto = require('crypto');
+const logger = require('../logger');
 /**
  * Turn a hydrated Open Library object into a canonical "Collection" doc.
  * Input: one element from searchAndHydrateBooks() or lookupWorkBookMetadata()

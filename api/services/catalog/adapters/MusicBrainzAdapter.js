@@ -33,6 +33,7 @@ class MusicBrainzAdapter {
   _getService() {
     if (!this._service) {
       const { MusicCatalogService } = require('../MusicCatalogService');
+const logger = require('../../../logger');
       this._service = new MusicCatalogService(this._serviceOptions);
     }
     return this._service;
@@ -70,7 +71,7 @@ class MusicBrainzAdapter {
         return this._toCollectable(result, item);
       }
     } catch (err) {
-      console.warn('[MusicBrainzAdapter] lookup failed:', err.message);
+      logger.warn('[MusicBrainzAdapter] lookup failed:', err.message);
     }
 
     return null;

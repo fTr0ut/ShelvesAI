@@ -33,6 +33,7 @@ const zlib = require('zlib');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), override: true });
 
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 // Build connection config (matching knexfile.js env vars)
 const connectionString = process.env.DATABASE_URL;
@@ -149,14 +150,14 @@ async function dropAllTables() {
   const tables = await getAllTables();
 
   if (tables.length === 0) {
-    console.log('No existing tables to drop.');
+    logger.info('No existing tables to drop.');
     return;
   }
 
-  console.log(`Dropping ${tables.length} existing table(s)...`);
+  logger.info(`Dropping ${tables.length} existing table(s)...`);
   const tableList = tables.map((t) => `"${t}"`).join(', ');
   await pool.query(`DROP TABLE IF EXISTS ${tableList} CASCADE`);
-  console.log('Existing tables dropped.');
+  logger.info('Existing tables dropped.');
 }
 
 /**
@@ -181,7 +182,7 @@ function detectEncoding(buffer) {
  */
 function convertToUtf8(buffer) {
   const encoding = detectEncoding(buffer);
-  console.log(`Detected encoding: ${encoding}`);
+  logger.info(`Detected encoding: ${encoding}`);
 
   if (encoding === 'utf16le') {
     // Skip BOM (2 bytes) and decode
@@ -212,10 +213,10 @@ function restoreSqlFile(filePath, options = {}) {
     let tempFile = null;
 
     // Read file and handle encoding
-    console.log('Reading backup file...');
+    logger.info('Reading backup file...');
     let buffer;
     if (filePath.endsWith('.gz')) {
-      console.log('Decompressing gzipped file...');
+      logger.info('Decompressing gzipped file...');
       const compressed = fs.readFileSync(filePath);
       buffer = zlib.gunzipSync(compressed);
     } else {
@@ -234,7 +235,7 @@ function restoreSqlFile(filePath, options = {}) {
       const trimmed = line.trim();
       // Filter out \restrict and \unrestrict commands (Azure backup security tokens)
       if (trimmed.startsWith('\\restrict') || trimmed.startsWith('\\unrestrict')) {
-        console.log('Skipping Azure security command:', trimmed.substring(0, 40) + '...');
+        logger.info('Skipping Azure security command:', trimmed.substring(0, 40) + '...');
         return false;
       }
       return true;
@@ -244,7 +245,7 @@ function restoreSqlFile(filePath, options = {}) {
     // Replace CREATE FUNCTION with CREATE OR REPLACE FUNCTION to handle existing functions
     // This is safe and idempotent - works for both new and existing functions
     content = content.replace(/CREATE FUNCTION/gi, 'CREATE OR REPLACE FUNCTION');
-    console.log('Converted CREATE FUNCTION statements to CREATE OR REPLACE FUNCTION');
+    logger.info('Converted CREATE FUNCTION statements to CREATE OR REPLACE FUNCTION');
 
     // Fix search_path - pg_dump sets it to empty which breaks unqualified references
     // Replace empty search_path with public schema
@@ -252,7 +253,7 @@ function restoreSqlFile(filePath, options = {}) {
       /SELECT pg_catalog\.set_config\('search_path', '', false\);/gi,
       "SELECT pg_catalog.set_config('search_path', 'public', false);"
     );
-    console.log('Fixed search_path configuration');
+    logger.info('Fixed search_path configuration');
 
     // Remove OWNER TO statements if --no-owner flag is set (for managed databases like Supabase)
     if (options.noOwner) {
@@ -260,13 +261,13 @@ function restoreSqlFile(filePath, options = {}) {
       content = content.replace(/^ALTER\s+\w+\s+[^;]+\s+OWNER\s+TO\s+[^;]+;$/gim, '');
       // Remove OWNER TO clauses from CREATE statements (inline ownership)
       content = content.replace(/\s+OWNER\s+TO\s+\w+/gi, '');
-      console.log('Removed OWNER TO statements');
+      logger.info('Removed OWNER TO statements');
 
       // Replace public.uuid_generate_v4() with gen_random_uuid() for Supabase compatibility
       // Supabase installs uuid-ossp in 'extensions' schema, but gen_random_uuid() is built-in
       content = content.replace(/public\.uuid_generate_v4\(\)/gi, 'gen_random_uuid()');
       content = content.replace(/uuid_generate_v4\(\)/gi, 'gen_random_uuid()');
-      console.log('Replaced uuid_generate_v4() with gen_random_uuid()');
+      logger.info('Replaced uuid_generate_v4() with gen_random_uuid()');
 
       // Add DROP TABLE IF EXISTS before each CREATE TABLE for clean restore
       // This handles cases where tables exist but weren't detected (different schemas, permissions)
@@ -276,7 +277,7 @@ function restoreSqlFile(filePath, options = {}) {
           return `DROP TABLE IF EXISTS ${schema}${tableName} CASCADE;\nCREATE TABLE ${schema}${tableName} (`;
         }
       );
-      console.log('Added DROP TABLE IF EXISTS before CREATE TABLE statements');
+      logger.info('Added DROP TABLE IF EXISTS before CREATE TABLE statements');
     }
 
     // Always write to temp file to ensure UTF-8 encoding
@@ -284,7 +285,7 @@ function restoreSqlFile(filePath, options = {}) {
     fs.writeFileSync(tempFile, content, 'utf8');
     inputFile = tempFile;
 
-    console.log('Restoring from SQL file using psql...');
+    logger.info('Restoring from SQL file using psql...');
 
     const args = [
       '-h', dbHost,
@@ -305,7 +306,7 @@ function restoreSqlFile(filePath, options = {}) {
       // psql outputs notices to stdout
       const msg = data.toString().trim();
       if (msg && options.verbose) {
-        console.log(msg);
+        logger.info(msg);
       }
     });
 
@@ -327,7 +328,7 @@ function restoreSqlFile(filePath, options = {}) {
       if (code !== 0) {
         reject(new Error(`psql failed with code ${code}\n${stderr}`));
       } else {
-        console.log('SQL restore completed.');
+        logger.info('SQL restore completed.');
         resolve();
       }
     });
@@ -347,7 +348,7 @@ function restoreSqlFile(filePath, options = {}) {
  */
 function restoreCustomFormat(filePath, options = {}) {
   return new Promise((resolve, reject) => {
-    console.log('Restoring from custom format using pg_restore...');
+    logger.info('Restoring from custom format using pg_restore...');
 
     const args = [
       '-h', dbHost,
@@ -386,7 +387,7 @@ function restoreCustomFormat(filePath, options = {}) {
       if (code !== 0 && stderr.includes('ERROR')) {
         reject(new Error(`pg_restore failed with code ${code}`));
       } else {
-        console.log('\npg_restore completed.');
+        logger.info('\npg_restore completed.');
         resolve();
       }
     });
@@ -402,7 +403,7 @@ function restoreCustomFormat(filePath, options = {}) {
  */
 function restoreWithPsql(filePath, options = {}) {
   return new Promise((resolve, reject) => {
-    console.log('Restoring from SQL file using psql...');
+    logger.info('Restoring from SQL file using psql...');
 
     const args = [
       '-h', dbHost,
@@ -435,7 +436,7 @@ function restoreWithPsql(filePath, options = {}) {
       if (code !== 0) {
         reject(new Error(`psql failed with code ${code}`));
       } else {
-        console.log('psql restore completed.');
+        logger.info('psql restore completed.');
         resolve();
       }
     });
@@ -450,7 +451,7 @@ function restoreWithPsql(filePath, options = {}) {
  * Show usage help
  */
 function showHelp() {
-  console.log(`
+  logger.info(`
 Usage: node scripts/restore-db.js <backup-file> [options]
 
 Options:
@@ -483,8 +484,8 @@ async function main() {
   const noOwner = args.includes('--no-owner');
   const dryRun = !confirmed;
 
-  console.log('ShelvesAI Database Restore Script');
-  console.log('==================================\n');
+  logger.info('ShelvesAI Database Restore Script');
+  logger.info('==================================\n');
 
   // Check for help or missing file
   if (args.includes('--help') || args.includes('-h') || !backupFile) {
@@ -494,8 +495,8 @@ async function main() {
 
   // Safety check for production
   if (process.env.NODE_ENV === 'production' && confirmed) {
-    console.error('ERROR: Cannot restore database in production environment.');
-    console.error('Set NODE_ENV to development or remove the production safeguard.');
+    logger.error('ERROR: Cannot restore database in production environment.');
+    logger.error('Set NODE_ENV to development or remove the production safeguard.');
     process.exit(1);
   }
 
@@ -503,7 +504,7 @@ async function main() {
   const absolutePath = path.isAbsolute(backupFile) ? backupFile : path.resolve(backupFile);
 
   if (!fs.existsSync(absolutePath)) {
-    console.error(`ERROR: Backup file not found: ${absolutePath}`);
+    logger.error(`ERROR: Backup file not found: ${absolutePath}`);
     process.exit(1);
   }
 
@@ -511,65 +512,65 @@ async function main() {
   const fileInfo = getFileInfo(absolutePath);
 
   if (fileInfo.format === 'unknown') {
-    console.error(`ERROR: Unsupported file format: ${fileInfo.ext}`);
-    console.error('Supported formats: .sql, .sql.gz, .dump, .backup');
+    logger.error(`ERROR: Unsupported file format: ${fileInfo.ext}`);
+    logger.error('Supported formats: .sql, .sql.gz, .dump, .backup');
     process.exit(1);
   }
 
   // Check for required tools
   if (fileInfo.format === 'custom' && !checkPgRestore()) {
-    console.error('ERROR: pg_restore not found in PATH.');
-    console.error('Install PostgreSQL client tools to restore custom format backups.');
+    logger.error('ERROR: pg_restore not found in PATH.');
+    logger.error('Install PostgreSQL client tools to restore custom format backups.');
     process.exit(1);
   }
 
   if ((fileInfo.format === 'sql' || fileInfo.format === 'sql-gzip') && !checkPsql()) {
-    console.error('ERROR: psql not found in PATH.');
-    console.error('Install PostgreSQL client tools to restore SQL backups.');
+    logger.error('ERROR: psql not found in PATH.');
+    logger.error('Install PostgreSQL client tools to restore SQL backups.');
     process.exit(1);
   }
 
   try {
     // Test connection
     const result = await pool.query('SELECT current_database() as db');
-    console.log(`Connected to database: ${result.rows[0].db}`);
+    logger.info(`Connected to database: ${result.rows[0].db}`);
 
     // Show backup file info
-    console.log(`\nBackup file: ${fileInfo.basename}`);
-    console.log(`Format: ${fileInfo.format}`);
-    console.log(`Size: ${fileInfo.sizeDisplay}`);
-    console.log(`Modified: ${fileInfo.modified.toLocaleString()}`);
+    logger.info(`\nBackup file: ${fileInfo.basename}`);
+    logger.info(`Format: ${fileInfo.format}`);
+    logger.info(`Size: ${fileInfo.sizeDisplay}`);
+    logger.info(`Modified: ${fileInfo.modified.toLocaleString()}`);
 
     // Show existing tables
     const existingTables = await getAllTables();
-    console.log(`\nExisting tables in database: ${existingTables.length}`);
+    logger.info(`\nExisting tables in database: ${existingTables.length}`);
 
     if (existingTables.length > 0 && !clean) {
-      console.log('\nWARNING: Database has existing tables.');
-      console.log('Use --clean to drop them before restoring.');
+      logger.info('\nWARNING: Database has existing tables.');
+      logger.info('Use --clean to drop them before restoring.');
     }
 
     if (dryRun) {
-      console.log('\n*** DRY RUN MODE ***');
-      console.log('Add --confirm flag to actually restore.');
-      console.log('\nActions that would be performed:');
+      logger.info('\n*** DRY RUN MODE ***');
+      logger.info('Add --confirm flag to actually restore.');
+      logger.info('\nActions that would be performed:');
       if (clean) {
-        console.log(`  1. Drop ${existingTables.length} existing table(s)`);
-        console.log(`  2. Restore from ${fileInfo.basename}`);
+        logger.info(`  1. Drop ${existingTables.length} existing table(s)`);
+        logger.info(`  2. Restore from ${fileInfo.basename}`);
       } else {
-        console.log(`  1. Restore from ${fileInfo.basename}`);
+        logger.info(`  1. Restore from ${fileInfo.basename}`);
       }
       await pool.end();
       return;
     }
 
     // Actual restore
-    console.log('\n*** RESTORING DATABASE ***\n');
+    logger.info('\n*** RESTORING DATABASE ***\n');
 
     // Clean if requested
     if (clean) {
       await dropAllTables();
-      console.log('');
+      logger.info('');
     }
 
     // Close pool before using external tools
@@ -584,7 +585,7 @@ async function main() {
     }
 
     // Verify restore by checking table count
-    console.log('\nVerifying restore...');
+    logger.info('\nVerifying restore...');
     const verifyPool = new Pool(poolConfig);
     try {
       const tableResult = await verifyPool.query(`
@@ -596,22 +597,22 @@ async function main() {
         SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' LIMIT 5
       `);
 
-      console.log(`\n✓ Database restored successfully!`);
-      console.log(`  Tables in public schema: ${tableCount}`);
+      logger.info(`\n✓ Database restored successfully!`);
+      logger.info(`  Tables in public schema: ${tableCount}`);
       if (rowResult.rows.length > 0) {
-        console.log('  Sample tables:', rowResult.rows.map((r) => r.tablename).join(', '));
+        logger.info('  Sample tables:', rowResult.rows.map((r) => r.tablename).join(', '));
       }
       if (tableCount === 0) {
-        console.log('\n⚠ WARNING: No tables were created. Check the backup file format.');
+        logger.info('\n⚠ WARNING: No tables were created. Check the backup file format.');
       }
     } finally {
       await verifyPool.end();
     }
 
   } catch (err) {
-    console.error('\nError:', err.message);
+    logger.error('\nError:', err.message);
     if (process.env.NODE_ENV !== 'production') {
-      console.error(err.stack);
+      logger.error(err.stack);
     }
     process.exit(1);
   }

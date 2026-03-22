@@ -37,6 +37,7 @@ class TmdbAdapter {
     _getService() {
         if (!this._service) {
             const { MovieCatalogService } = require('../MovieCatalogService');
+const logger = require('../../../logger');
             this._service = new MovieCatalogService(this._serviceOptions);
         }
         return this._service;
@@ -79,7 +80,7 @@ class TmdbAdapter {
                 return this._toCollectable(result, item);
             }
         } catch (err) {
-            console.warn('[TmdbAdapter] lookup failed:', err.message);
+            logger.warn('[TmdbAdapter] lookup failed:', err.message);
         }
 
         return null;

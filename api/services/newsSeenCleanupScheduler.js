@@ -3,6 +3,8 @@
  * Runs nightly and on boot to delete records older than 48 hours.
  */
 const { deleteOldSeenRecords } = require('../database/queries/newsSeen');
+const logger = require('../logger');
+const { runJob } = require('../utils/jobRunner');
 
 const DEFAULT_CLEANUP_HOUR = 3;
 const DEFAULT_CLEANUP_MINUTE = 0;
@@ -62,17 +64,17 @@ function msUntilNextRun({ hour, minute }) {
 
 async function runCleanupSafely(reason) {
   if (cleanupInProgress) {
-    console.log(`[News Seen Cleanup] Cleanup already running; skipping (${reason}).`);
+    logger.info(`[News Seen Cleanup] Cleanup already running; skipping (${reason}).`);
     return;
   }
   cleanupInProgress = true;
   try {
-    const maxAgeHours = getMaxAgeHours();
-    console.log(`[News Seen Cleanup] Starting cleanup (${reason}), deleting records older than ${maxAgeHours} hours.`);
-    const deletedCount = await deleteOldSeenRecords(maxAgeHours);
-    console.log(`[News Seen Cleanup] Completed. Deleted ${deletedCount} old records.`);
-  } catch (err) {
-    console.error('[News Seen Cleanup] Cleanup failed:', err);
+    await runJob('newsSeenCleanup', async () => {
+      const maxAgeHours = getMaxAgeHours();
+      logger.info(`[News Seen Cleanup] Starting cleanup (${reason}), deleting records older than ${maxAgeHours} hours.`);
+      const deletedCount = await deleteOldSeenRecords(maxAgeHours);
+      logger.info(`[News Seen Cleanup] Completed. Deleted ${deletedCount} old records.`, { deletedCount });
+    });
   } finally {
     cleanupInProgress = false;
   }
@@ -86,7 +88,7 @@ function scheduleNextCleanup() {
     clearTimeout(scheduledTimeout);
   }
 
-  console.log(`[News Seen Cleanup] Next cleanup scheduled for ${nextRun.toISOString()}.`);
+  logger.info(`[News Seen Cleanup] Next cleanup scheduled for ${nextRun.toISOString()}.`);
 
   scheduledTimeout = setTimeout(async () => {
     await runCleanupSafely('scheduled');
@@ -103,13 +105,13 @@ function startNewsSeenCleanupScheduler({ runOnStartup = true } = {}) {
   schedulerStarted = true;
 
   if (process.env.NEWS_SEEN_CLEANUP_DISABLED === 'true') {
-    console.log('[News Seen Cleanup] Scheduler disabled via NEWS_SEEN_CLEANUP_DISABLED.');
+    logger.info('[News Seen Cleanup] Scheduler disabled via NEWS_SEEN_CLEANUP_DISABLED.');
     return;
   }
 
   if (runOnStartup) {
     runCleanupSafely('startup').catch((err) => {
-      console.warn('[News Seen Cleanup] Startup cleanup failed:', err.message);
+      logger.warn('[News Seen Cleanup] Startup cleanup failed:', { error: err.message });
     });
   }
 

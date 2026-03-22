@@ -6,6 +6,7 @@ const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 
 const Collectable = require('../models/Collectable');
+const logger = require('../logger');
 
 const __dirnameResolved = __dirname;
 
@@ -47,7 +48,7 @@ async function fileExists(filePath) {
     return true;
   } catch (err) {
     if (err && err.code !== 'ENOENT') {
-      console.warn(`[warn] access failed for ${filePath}: ${err.message}`);
+      logger.warn(`[warn] access failed for ${filePath}: ${err.message}`);
     }
     return false;
   }
@@ -151,7 +152,7 @@ async function main() {
           updates[`images.${i}.cachedSmallPath`] = image.cachedSmallPath;
         }
       } catch (err) {
-        console.warn(`[warn] ${collectable._id} image ${i}: ${err.message}`);
+        logger.warn(`[warn] ${collectable._id} image ${i}: ${err.message}`);
       }
     }
     const updateKeys = Object.keys(updates);
@@ -164,17 +165,17 @@ async function main() {
         );
         processed += 1;
       } catch (err) {
-        console.warn(`[warn] failed to update collectable ${collectable._id}: ${err.message}`);
+        logger.warn(`[warn] failed to update collectable ${collectable._id}: ${err.message}`);
       }
     }
   }
 
-  console.log(`Cache complete. Updated ${processed} collectables. Downloaded ${downloaded} covers. Reused ${reused}.`);
+  logger.info(`Cache complete. Updated ${processed} collectables. Downloaded ${downloaded} covers. Reused ${reused}.`);
   await mongoose.disconnect();
 }
 
 main().catch((err) => {
-  console.error('[error] cover cache script failed:', err);
+  logger.error('[error] cover cache script failed:', err);
   mongoose.disconnect().catch(() => {});
   process.exitCode = 1;
 });

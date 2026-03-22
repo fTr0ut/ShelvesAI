@@ -16,6 +16,7 @@ const { tmdbMovieToCollectable } = require('../../adapters/tmdb.adapter');
 const { openLibraryToCollectable } = require('../../adapters/openlibrary.adapter');
 const { hardcoverToCollectable } = require('../../adapters/hardcover.adapter');
 const fetch = require('node-fetch');
+const logger = require('../../logger');
 
 // Environment toggle for gradual rollout
 const HOOK_ENABLED = process.env.COLLECTABLE_DISCOVERY_HOOK_ENABLED !== 'false';
@@ -74,19 +75,19 @@ class CollectableDiscoveryHook {
         // 1. Extract external ID early for deduplication
         const externalId = this._extractExternalId({ source, kind, enrichment, originalItem });
 
-        console.log(`[CollectableDiscoveryHook] Processing "${originalItem?.title || enrichment?.title}" (${source}/${kind})`);
+        logger.info(`[CollectableDiscoveryHook] Processing "${originalItem?.title || enrichment?.title}" (${source}/${kind})`);
 
         // 2. FIRST: Check by external ID (most reliable deduplication)
         if (externalId) {
-            console.log(`[CollectableDiscoveryHook] Checking external ID: ${externalId}`);
+            logger.info(`[CollectableDiscoveryHook] Checking external ID: ${externalId}`);
             try {
                 const existing = await collectablesQueries.findBySourceId(externalId);
                 if (existing) {
-                    console.log(`[CollectableDiscoveryHook] ✓ Existing collectable found by external ID: ${existing.id} "${existing.title}"`);
+                    logger.info(`[CollectableDiscoveryHook] ✓ Existing collectable found by external ID: ${existing.id} "${existing.title}"`);
                     return { status: 'exists', collectable: existing };
                 }
             } catch (err) {
-                console.warn(`[CollectableDiscoveryHook] External ID check failed:`, err.message);
+                logger.warn('[CollectableDiscoveryHook] External ID check failed', { error: err.message });
             }
         }
 
@@ -95,7 +96,7 @@ class CollectableDiscoveryHook {
         if ((source === 'tmdb' || source === 'bluray') && (kind === 'movie' || kind === 'tv')) {
             const tmdbId = this._extractTmdbId(enrichment, originalItem);
             if (tmdbId && this.tmdbApiKey) {
-                console.log(`[CollectableDiscoveryHook] Fetching full TMDB details for ID: ${tmdbId}`);
+                logger.info(`[CollectableDiscoveryHook] Fetching full TMDB details for ID: ${tmdbId}`);
                 const details = await this._fetchTmdbDetails(tmdbId, kind);
                 if (details) {
                     fullEnrichment = details;
@@ -106,7 +107,7 @@ class CollectableDiscoveryHook {
         // 4. Build collectable payload using source-specific adapter
         const payload = this.buildPayload({ source, kind, enrichment: fullEnrichment, originalItem });
         if (!payload?.title) {
-            console.log(`[CollectableDiscoveryHook] Skipping item - no title:`, originalItem?.title);
+            logger.info(`[CollectableDiscoveryHook] Skipping item - no title:`, originalItem?.title);
             return { status: 'skipped', reason: 'no_title' };
         }
 
@@ -141,7 +142,7 @@ class CollectableDiscoveryHook {
             kind
         });
 
-        console.log(`[CollectableDiscoveryHook] Fingerprint: ${fingerprint?.slice(0, 12)}... LWF: ${lwf?.slice(0, 12)}...`);
+        logger.info(`[CollectableDiscoveryHook] Fingerprint: ${fingerprint?.slice(0, 12)}... LWF: ${lwf?.slice(0, 12)}...`);
 
         // 6. Secondary dedupe check - fingerprints (in case external ID check missed it)
         try {
@@ -154,11 +155,11 @@ class CollectableDiscoveryHook {
             }
 
             if (existing) {
-                console.log(`[CollectableDiscoveryHook] ✓ Existing collectable found by fingerprint: ${existing.id} "${existing.title}"`);
+                logger.info(`[CollectableDiscoveryHook] ✓ Existing collectable found by fingerprint: ${existing.id} "${existing.title}"`);
                 return { status: 'exists', collectable: existing };
             }
         } catch (err) {
-            console.warn(`[CollectableDiscoveryHook] Fingerprint dedupe check failed:`, err.message);
+            logger.warn('[CollectableDiscoveryHook] Fingerprint dedupe check failed', { error: err.message });
         }
 
         // 7. Upsert new collectable with full metadata
@@ -190,10 +191,10 @@ class CollectableDiscoveryHook {
                 attribution: payload.attribution || null,
             });
 
-            console.log(`[CollectableDiscoveryHook] ✓ Created collectable: ${collectable.id} "${collectable.title}"`);
+            logger.info(`[CollectableDiscoveryHook] ✓ Created collectable: ${collectable.id} "${collectable.title}"`);
             return { status: 'created', collectable };
         } catch (err) {
-            console.error(`[CollectableDiscoveryHook] Upsert failed:`, err.message);
+            logger.error('[CollectableDiscoveryHook] Upsert failed', { error: err.message });
             return { status: 'error', reason: err.message };
         }
     }
@@ -263,15 +264,15 @@ class CollectableDiscoveryHook {
             });
 
             if (!response.ok) {
-                console.warn(`[CollectableDiscoveryHook] TMDB details fetch failed: ${response.status}`);
+                logger.warn(`[CollectableDiscoveryHook] TMDB details fetch failed: ${response.status}`);
                 return null;
             }
 
             const data = await response.json();
-            console.log(`[CollectableDiscoveryHook] ✓ Fetched full TMDB details for "${data.title || data.name}"`);
+            logger.info(`[CollectableDiscoveryHook] ✓ Fetched full TMDB details for "${data.title || data.name}"`);
             return data;
         } catch (err) {
-            console.warn(`[CollectableDiscoveryHook] TMDB details fetch error:`, err.message);
+            logger.warn('[CollectableDiscoveryHook] TMDB details fetch error', { error: err.message });
             return null;
         }
     }

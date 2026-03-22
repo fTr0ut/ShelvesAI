@@ -15,6 +15,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { query } = require('../database/pg');
 const { ensureCoverMediaForCollectable } = require('../database/queries/media');
+const logger = require('../logger');
 
 function parseBool(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -56,7 +57,7 @@ async function deleteLocalFile(localPath) {
     return true;
   } catch (err) {
     if (err && err.code !== 'ENOENT') {
-      console.warn(`[TMDB Cache] Failed to delete ${absolutePath}: ${err.message}`);
+      logger.warn(`[TMDB Cache] Failed to delete ${absolutePath}: ${err.message}`);
     }
     return false;
   }
@@ -90,10 +91,10 @@ async function waitIfNeeded() {
 
 async function runRefresh() {
   const interval = `${EXPIRY_MONTHS} months`;
-  console.log(
+  logger.info(
     `[TMDB Cache] Refresh start (expiry: ${EXPIRY_MONTHS} months, limit: ${REFRESH_LIMIT}, purgeOnFailure: ${PURGE_ON_FAILURE})`,
   );
-  console.log(`[TMDB Cache] Timestamp: ${new Date().toISOString()}`);
+  logger.info(`[TMDB Cache] Timestamp: ${new Date().toISOString()}`);
 
   const result = await query(
     `SELECT
@@ -119,7 +120,7 @@ async function runRefresh() {
   );
 
   const rows = result.rows || [];
-  console.log(`[TMDB Cache] Found ${rows.length} expired cover caches.`);
+  logger.info(`[TMDB Cache] Found ${rows.length} expired cover caches.`);
 
   let refreshed = 0;
   let purged = 0;
@@ -160,7 +161,7 @@ async function runRefresh() {
       }
     } catch (err) {
       failed += 1;
-      console.warn(
+      logger.warn(
         `[TMDB Cache] Refresh failed for collectable ${row.collectable_id}: ${err.message || err}`,
       );
       if (PURGE_ON_FAILURE) {
@@ -168,7 +169,7 @@ async function runRefresh() {
           await purgeCoverCache(row);
           purged += 1;
         } catch (purgeErr) {
-          console.warn(
+          logger.warn(
             `[TMDB Cache] Purge failed for collectable ${row.collectable_id}: ${purgeErr.message || purgeErr}`,
           );
         }
@@ -178,7 +179,7 @@ async function runRefresh() {
     await waitIfNeeded();
   }
 
-  console.log(
+  logger.info(
     `[TMDB Cache] Done. Refreshed: ${refreshed}, Purged: ${purged}, Cleaned: ${cleaned}, Failed: ${failed}.`,
   );
 }
@@ -186,6 +187,6 @@ async function runRefresh() {
 runRefresh()
   .then(() => process.exit(0))
   .catch((err) => {
-    console.error('[TMDB Cache] Job failed:', err);
+    logger.error('[TMDB Cache] Job failed:', err);
     process.exit(1);
   });

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { query } = require('../pg');
 const s3 = require('../../services/s3');
+const logger = require('../../logger');
 const {
   validateImageBuffer,
   isAllowedImageMimeType,
@@ -249,7 +250,7 @@ async function ensureCoverMediaForCollectable({
 } = {}) {
   // Skip local caching for external-only sources (e.g., OpenLibrary requires hot-linking)
   if (coverImageSource === 'external') {
-    console.log('[media] Skipping local cache for external source (hot-link required)');
+    logger.info('[media] Skipping local cache for external source (hot-link required)');
     return null;
   }
 
@@ -378,10 +379,10 @@ async function ensureCoverMediaForCollectable({
     return null;
   } catch (err) {
     if (isMissingRelationError(err)) {
-      console.warn('[media] media table missing; skipping cover cache.');
+      logger.warn('[media] media table missing; skipping cover cache.');
       return null;
     }
-    console.warn('[media] cover download failed:', err.message || err);
+    logger.warn('[media] cover download failed:', err.message || err);
     return null;
   }
 }

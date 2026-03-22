@@ -9,6 +9,7 @@ const { query } = require('../database/pg');
 const { markNewsItemDismissed } = require('../database/queries/newsDismissed');
 const { parsePagination } = require('../database/queries/utils');
 const { sendError, logError } = require('../utils/errorHandler');
+const logger = require('../logger');
 
 /**
  * GET /api/discover
@@ -348,7 +349,7 @@ async function dismissDiscoverItem(req, res) {
     try {
       await markNewsItemDismissed(userId, newsItemId);
     } catch (err) {
-      console.warn('[Discover] Failed to mark news item dismissed:', err.message);
+      logger.warn('[Discover] Failed to mark news item dismissed:', err.message);
     }
 
     return res.json({ success: true, data: result.rows[0] });

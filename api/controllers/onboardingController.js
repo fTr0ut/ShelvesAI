@@ -1,5 +1,6 @@
 const usersQueries = require('../database/queries/users');
 const { formatUserForResponse } = require('../database/queries/utils');
+const logger = require('../logger');
 
 async function completeOnboarding(req, res) {
     try {
@@ -28,7 +29,7 @@ async function completeOnboarding(req, res) {
         const updated = await usersQueries.setOnboardingCompleted(req.user.id, true);
         return res.json({ onboardingCompleted: true, user: formatUserForResponse(updated) });
     } catch (err) {
-        console.error('completeOnboarding error:', err);
+        logger.error('completeOnboarding error:', err);
         return res.status(500).json({ error: 'Server error' });
     }
 }

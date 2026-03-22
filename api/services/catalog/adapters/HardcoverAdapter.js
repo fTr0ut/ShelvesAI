@@ -7,6 +7,7 @@
 const { HardcoverClient } = require('../../hardcover');
 const { hardcoverToCollectable } = require('../../../adapters/hardcover.adapter');
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
+const logger = require('../../../logger');
 
 function normalizeString(value) {
     if (value == null) return '';
@@ -63,7 +64,7 @@ class HardcoverAdapter {
                     return this._toCollectable(result, item);
                 }
             } catch (err) {
-                console.warn(`[HardcoverAdapter] ISBN lookup failed for ${isbn}:`, err.message);
+                logger.warn(`[HardcoverAdapter] ISBN lookup failed for ${isbn}:`, err.message);
                 // Continue to next ISBN
             }
         }
@@ -80,7 +81,7 @@ class HardcoverAdapter {
                     return this._toCollectable(result, item);
                 }
             } catch (err) {
-                console.warn('[HardcoverAdapter] Title/author lookup failed:', err.message);
+                logger.warn('[HardcoverAdapter] Title/author lookup failed:', err.message);
             }
         }
 
@@ -99,7 +100,7 @@ class HardcoverAdapter {
                 return this._toCollectable(result, { identifiers: { isbn13: [isbn] } });
             }
         } catch (err) {
-            console.warn('[HardcoverAdapter] lookupByIsbn failed:', err.message);
+            logger.warn('[HardcoverAdapter] lookupByIsbn failed:', err.message);
         }
         return null;
     }
@@ -116,7 +117,7 @@ class HardcoverAdapter {
                 return this._toCollectable(result, { title, author });
             }
         } catch (err) {
-            console.warn('[HardcoverAdapter] lookupByTitleAuthor failed:', err.message);
+            logger.warn('[HardcoverAdapter] lookupByTitleAuthor failed:', err.message);
         }
         return null;
     }

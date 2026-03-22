@@ -44,11 +44,11 @@ const pool = new Pool(poolConfig);
 async function checkConnection() {
   try {
     const result = await pool.query('SELECT NOW() as time, current_database() as db');
-    console.log(`Connected to database: ${result.rows[0].db}`);
-    console.log(`Server time: ${result.rows[0].time}`);
+    logger.info(`Connected to database: ${result.rows[0].db}`);
+    logger.info(`Server time: ${result.rows[0].time}`);
     return true;
   } catch (err) {
-    console.error('Connection failed:', err.message);
+    logger.error('Connection failed:', err.message);
     return false;
   }
 }
@@ -93,14 +93,14 @@ async function applyFreshSchema() {
   const schemaPath = path.join(__dirname, '../database/init/01-schema.sql');
 
   if (!fs.existsSync(schemaPath)) {
-    console.error(`Schema file not found: ${schemaPath}`);
+    logger.error(`Schema file not found: ${schemaPath}`);
     process.exit(1);
   }
 
-  console.log('Reading schema file...');
+  logger.info('Reading schema file...');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
-  console.log('Applying schema (this may take a moment)...');
+  logger.info('Applying schema (this may take a moment)...');
   await pool.query(schemaSql);
 
   // Create knex_migrations table to track that we started fresh
@@ -126,7 +126,7 @@ async function applyFreshSchema() {
     VALUES ('00000000000000_fresh_schema.js', 0, NOW())
   `);
 
-  console.log('Schema applied successfully!');
+  logger.info('Schema applied successfully!');
 }
 
 /**
@@ -138,19 +138,20 @@ async function runMigrations() {
 
   const knex = require('knex');
   const knexConfig = require('../knexfile');
+const logger = require('../logger');
 
   const env = process.env.NODE_ENV || 'development';
   const db = knex(knexConfig[env]);
 
   try {
-    console.log('Running migrations...');
+    logger.info('Running migrations...');
     const [batch, migrations] = await db.migrate.latest();
 
     if (migrations.length === 0) {
-      console.log('Database is up to date. No migrations to run.');
+      logger.info('Database is up to date. No migrations to run.');
     } else {
-      console.log(`Batch ${batch}: Applied ${migrations.length} migration(s):`);
-      migrations.forEach((m) => console.log(`  - ${m}`));
+      logger.info(`Batch ${batch}: Applied ${migrations.length} migration(s):`);
+      migrations.forEach((m) => logger.info(`  - ${m}`));
     }
   } finally {
     await db.destroy();
@@ -167,18 +168,18 @@ async function showStatus() {
   }
 
   const hasTables = await hasExistingTables();
-  console.log(`\nExisting tables: ${hasTables ? 'Yes' : 'No (fresh database)'}`);
+  logger.info(`\nExisting tables: ${hasTables ? 'Yes' : 'No (fresh database)'}`);
 
   const migrations = await getMigrationStatus();
   if (migrations === null) {
-    console.log('Migration tracking: Not initialized');
+    logger.info('Migration tracking: Not initialized');
   } else if (migrations.length === 0) {
-    console.log('Migrations: None recorded');
+    logger.info('Migrations: None recorded');
   } else {
-    console.log('\nRecent migrations:');
+    logger.info('\nRecent migrations:');
     migrations.forEach((m) => {
       const time = new Date(m.migration_time).toLocaleString();
-      console.log(`  ${m.name} (${time})`);
+      logger.info(`  ${m.name} (${time})`);
     });
   }
 }
@@ -192,8 +193,8 @@ async function main() {
     : args.includes('--check') ? 'check'
     : 'migrate';
 
-  console.log('ShelvesAI Database Initialization');
-  console.log('==================================\n');
+  logger.info('ShelvesAI Database Initialization');
+  logger.info('==================================\n');
 
   try {
     if (mode === 'check') {
@@ -210,25 +211,25 @@ async function main() {
     if (mode === 'fresh') {
       const hasTables = await hasExistingTables();
       if (hasTables) {
-        console.error('\nERROR: Database already has tables.');
-        console.error('Fresh schema can only be applied to empty databases.');
-        console.error('Use --migrate for existing databases, or drop all tables first.');
+        logger.error('\nERROR: Database already has tables.');
+        logger.error('Fresh schema can only be applied to empty databases.');
+        logger.error('Use --migrate for existing databases, or drop all tables first.');
         await pool.end();
         process.exit(1);
       }
 
       await applyFreshSchema();
       await pool.end();
-      console.log('\nDone! Database initialized with fresh schema.');
+      logger.info('\nDone! Database initialized with fresh schema.');
     } else {
       // Default: run migrations
       await runMigrations();
-      console.log('\nDone! Database is up to date.');
+      logger.info('\nDone! Database is up to date.');
     }
   } catch (err) {
-    console.error('\nError:', err.message);
+    logger.error('\nError:', err.message);
     if (process.env.NODE_ENV !== 'production') {
-      console.error(err.stack);
+      logger.error(err.stack);
     }
     process.exit(1);
   }

@@ -3,6 +3,7 @@ const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { musicbrainzReleaseGroupToCollectable } = require('../../adapters/musicbrainz.adapter');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 const { getRequestQueue } = require('./MusicBrainzRequestQueue');
+const logger = require('../../logger');
 
 let catalogRouter = null;
 function getCatalogRouter() {
@@ -11,7 +12,7 @@ function getCatalogRouter() {
       const { getCatalogRouter: getRouter } = require('./CatalogRouter');
       catalogRouter = getRouter();
     } catch (err) {
-      console.warn('[MusicCatalogService] CatalogRouter not available:', err.message);
+      logger.warn('[MusicCatalogService] CatalogRouter not available:', err.message);
     }
   }
   return catalogRouter;
@@ -96,7 +97,7 @@ class MusicCatalogService {
     try {
       return await router.lookup(item, 'vinyl', { retries });
     } catch (err) {
-      console.error('[MusicCatalogService.routerLookup] failed:', err?.message || err);
+      logger.error('[MusicCatalogService.routerLookup] failed:', err?.message || err);
       return null;
     }
   }
@@ -135,7 +136,7 @@ class MusicCatalogService {
             results[currentIndex] = { status: 'unresolved', input };
           }
         } catch (err) {
-          console.error('[MusicCatalogService.lookupFirstPass] failed', {
+          logger.error('[MusicCatalogService.lookupFirstPass] failed', {
             error: err?.message || err,
           });
           results[currentIndex] = { status: 'unresolved', input };
@@ -199,7 +200,7 @@ class MusicCatalogService {
           attempt < retries
         ) {
           const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[MusicCatalogService.safeLookup] rate limited', {
+          logger.warn('[MusicCatalogService.safeLookup] rate limited', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -209,7 +210,7 @@ class MusicCatalogService {
         }
         if (message.includes('abort') && attempt < retries) {
           const backoff = 500 * (attempt + 1);
-          console.warn('[MusicCatalogService.safeLookup] request aborted', {
+          logger.warn('[MusicCatalogService.safeLookup] request aborted', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -218,7 +219,7 @@ class MusicCatalogService {
           continue;
         }
         if (message.includes('404')) {
-          console.warn('[MusicCatalogService.safeLookup] details not found', {
+          logger.warn('[MusicCatalogService.safeLookup] details not found', {
             query: queryLogContext,
             attempt,
           });
@@ -272,7 +273,7 @@ class MusicCatalogService {
                 detailsAttempt < retries
               ) {
                 const backoff = 500 * Math.pow(2, detailsAttempt);
-                console.warn('[MusicCatalogService.safeLookupMany] rate limited', {
+                logger.warn('[MusicCatalogService.safeLookupMany] rate limited', {
                   attempt: detailsAttempt,
                   backoff,
                   query: queryLogContext,
@@ -282,7 +283,7 @@ class MusicCatalogService {
               }
               if (message.includes('abort') && detailsAttempt < retries) {
                 const backoff = 500 * (detailsAttempt + 1);
-                console.warn('[MusicCatalogService.safeLookupMany] request aborted', {
+                logger.warn('[MusicCatalogService.safeLookupMany] request aborted', {
                   attempt: detailsAttempt,
                   backoff,
                   query: queryLogContext,
@@ -291,7 +292,7 @@ class MusicCatalogService {
                 continue;
               }
               if (message.includes('404')) {
-                console.warn('[MusicCatalogService.safeLookupMany] details not found', {
+                logger.warn('[MusicCatalogService.safeLookupMany] details not found', {
                   query: queryLogContext,
                   attempt: detailsAttempt,
                 });
@@ -323,7 +324,7 @@ class MusicCatalogService {
           attempt < retries
         ) {
           const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[MusicCatalogService.safeLookupMany] rate limited', {
+          logger.warn('[MusicCatalogService.safeLookupMany] rate limited', {
             attempt,
             backoff,
             query: queryLogContext,
@@ -333,7 +334,7 @@ class MusicCatalogService {
         }
         if (message.includes('abort') && attempt < retries) {
           const backoff = 500 * (attempt + 1);
-          console.warn('[MusicCatalogService.safeLookupMany] request aborted', {
+          logger.warn('[MusicCatalogService.safeLookupMany] request aborted', {
             attempt,
             backoff,
             query: queryLogContext,

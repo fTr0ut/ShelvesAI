@@ -11,6 +11,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const { pool, query } = require('../database/pg');
+const logger = require('../logger');
 
 // Simple email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -23,21 +24,21 @@ async function updateUserEmail() {
   const newEmail = process.argv[3];
 
   if (!userId || !newEmail) {
-    console.error('Usage: node scripts/update-user-email.js <user_id> <new_email>');
-    console.error('Example: node scripts/update-user-email.js 550e8400-e29b-41d4-a716-446655440000 newemail@example.com');
+    logger.error('Usage: node scripts/update-user-email.js <user_id> <new_email>');
+    logger.error('Example: node scripts/update-user-email.js 550e8400-e29b-41d4-a716-446655440000 newemail@example.com');
     process.exit(1);
   }
 
   // Validate UUID format
   if (!UUID_REGEX.test(userId)) {
-    console.error('Error: Invalid user ID format. Must be a valid UUID.');
-    console.error('Example: 550e8400-e29b-41d4-a716-446655440000');
+    logger.error('Error: Invalid user ID format. Must be a valid UUID.');
+    logger.error('Example: 550e8400-e29b-41d4-a716-446655440000');
     process.exit(1);
   }
 
   // Validate email format
   if (!EMAIL_REGEX.test(newEmail)) {
-    console.error('Error: Invalid email format.');
+    logger.error('Error: Invalid email format.');
     process.exit(1);
   }
 
@@ -49,7 +50,7 @@ async function updateUserEmail() {
     );
 
     if (findResult.rows.length === 0) {
-      console.error(`No user found with ID: ${userId}`);
+      logger.error(`No user found with ID: ${userId}`);
       process.exit(1);
     }
 
@@ -57,7 +58,7 @@ async function updateUserEmail() {
 
     // Check if new email is same as current
     if (user.email.toLowerCase() === newEmail.toLowerCase()) {
-      console.log(`User "${user.username}" already has email: ${newEmail}`);
+      logger.info(`User "${user.username}" already has email: ${newEmail}`);
       process.exit(0);
     }
 
@@ -68,7 +69,7 @@ async function updateUserEmail() {
     );
 
     if (emailCheck.rows.length > 0) {
-      console.error(`Error: Email "${newEmail}" is already in use by user "${emailCheck.rows[0].username}".`);
+      logger.error(`Error: Email "${newEmail}" is already in use by user "${emailCheck.rows[0].username}".`);
       process.exit(1);
     }
 
@@ -79,14 +80,14 @@ async function updateUserEmail() {
     );
 
     const updatedUser = updateResult.rows[0];
-    console.log('Email updated successfully:');
-    console.log(`   ID: ${updatedUser.id}`);
-    console.log(`   Username: ${updatedUser.username}`);
-    console.log(`   Old Email: ${user.email}`);
-    console.log(`   New Email: ${updatedUser.email}`);
+    logger.info('Email updated successfully:');
+    logger.info(`   ID: ${updatedUser.id}`);
+    logger.info(`   Username: ${updatedUser.username}`);
+    logger.info(`   Old Email: ${user.email}`);
+    logger.info(`   New Email: ${updatedUser.email}`);
 
   } catch (err) {
-    console.error('Error:', err.message);
+    logger.error('Error:', err.message);
     process.exit(1);
   } finally {
     // Wait for pg.js background initialization to complete before closing

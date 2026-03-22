@@ -3,6 +3,7 @@ const notificationsQueries = require('../database/queries/notifications');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
+const logger = require('../logger');
 
 function formatUser(user) {
   if (!user) return null;
@@ -130,7 +131,7 @@ async function searchUsers(req, res) {
 
     res.json({ users });
   } catch (err) {
-    console.error('searchUsers error:', err);
+    logger.error('searchUsers error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -200,7 +201,7 @@ async function listFriendships(req, res) {
       },
     });
   } catch (err) {
-    console.error('listFriendships error:', err);
+    logger.error('listFriendships error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -244,7 +245,7 @@ async function sendFriendRequest(req, res) {
             metadata: {},
           });
         } catch (err) {
-          console.warn('sendFriendRequest auto-accept notification error:', err.message);
+          logger.warn('sendFriendRequest auto-accept notification error:', err.message);
         }
         return res.json({ friendship: rowToCamelCase(updated.rows[0]), autoAccepted: true });
       }
@@ -275,7 +276,7 @@ async function sendFriendRequest(req, res) {
           metadata: message ? { message } : {},
         });
       } catch (err) {
-        console.warn('sendFriendRequest refresh notification error:', err.message);
+        logger.warn('sendFriendRequest refresh notification error:', err.message);
       }
       return res.json({ friendship: rowToCamelCase(updated.rows[0]), refreshed: true });
     }
@@ -298,12 +299,12 @@ async function sendFriendRequest(req, res) {
         metadata: message ? { message } : {},
       });
     } catch (err) {
-      console.warn('sendFriendRequest notification error:', err.message);
+      logger.warn('sendFriendRequest notification error:', err.message);
     }
 
     res.status(201).json({ friendship: rowToCamelCase(result.rows[0]) });
   } catch (err) {
-    console.error('sendFriendRequest error:', err);
+    logger.error('sendFriendRequest error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -337,13 +338,13 @@ async function respondToRequest(req, res) {
           metadata: {},
         });
       } catch (err) {
-        console.warn('respondToRequest notification error:', err.message);
+        logger.warn('respondToRequest notification error:', err.message);
       }
     }
 
     res.json({ friendship: result.friendship });
   } catch (err) {
-    console.error('respondToRequest error:', err);
+    logger.error('respondToRequest error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -363,7 +364,7 @@ async function removeFriendship(req, res) {
 
     res.json({ removed: true });
   } catch (err) {
-    console.error('removeFriendship error:', err);
+    logger.error('removeFriendship error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

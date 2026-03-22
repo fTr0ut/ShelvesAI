@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('../logger');
 
 const logDir = path.resolve(__dirname, '..', '..', 'payload-logs');
 
@@ -56,7 +57,7 @@ function logPayload({ source, operation, payload }) {
         };
         fs.writeFileSync(filePath, safeStringify(content), 'utf8');
     } catch (err) {
-        console.warn('[PayloadLogger] Failed to write payload:', err.message);
+        logger.warn('[PayloadLogger] Failed to write payload:', err.message);
     }
 }
 

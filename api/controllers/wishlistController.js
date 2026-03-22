@@ -4,6 +4,7 @@
  */
 
 const wishlistsQueries = require('../database/queries/wishlists');
+const logger = require('../logger');
 
 /**
  * GET /wishlists - List all wishlists for current user
@@ -13,7 +14,7 @@ async function listWishlists(req, res) {
         const wishlists = await wishlistsQueries.listForUser(req.user.id);
         res.json({ wishlists });
     } catch (err) {
-        console.error('listWishlists error:', err);
+        logger.error('listWishlists error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -34,7 +35,7 @@ async function listUserWishlists(req, res) {
         const wishlists = await wishlistsQueries.listViewableForUser(targetUserId, req.user.id);
         res.json({ wishlists });
     } catch (err) {
-        console.error('listUserWishlists error:', err);
+        logger.error('listUserWishlists error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -54,7 +55,7 @@ async function checkUserHasWishlists(req, res) {
         const hasWishlists = await wishlistsQueries.hasViewableWishlists(targetUserId, req.user.id);
         res.json({ hasWishlists });
     } catch (err) {
-        console.error('checkUserHasWishlists error:', err);
+        logger.error('checkUserHasWishlists error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -79,7 +80,7 @@ async function createWishlist(req, res) {
 
         res.status(201).json({ wishlist });
     } catch (err) {
-        console.error('createWishlist error:', err);
+        logger.error('createWishlist error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -107,7 +108,7 @@ async function getWishlist(req, res) {
 
         res.json({ wishlist, items });
     } catch (err) {
-        console.error('getWishlist error:', err);
+        logger.error('getWishlist error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -131,7 +132,7 @@ async function updateWishlist(req, res) {
 
         res.json({ wishlist });
     } catch (err) {
-        console.error('updateWishlist error:', err);
+        logger.error('updateWishlist error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -151,7 +152,7 @@ async function deleteWishlist(req, res) {
 
         res.json({ success: true });
     } catch (err) {
-        console.error('deleteWishlist error:', err);
+        logger.error('deleteWishlist error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -179,7 +180,7 @@ async function listItems(req, res) {
 
         res.json({ items });
     } catch (err) {
-        console.error('listItems error:', err);
+        logger.error('listItems error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -212,7 +213,7 @@ async function addItem(req, res) {
 
         res.status(201).json({ item });
     } catch (err) {
-        console.error('addItem error:', err);
+        logger.error('addItem error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -238,7 +239,7 @@ async function removeItem(req, res) {
 
         res.json({ success: true });
     } catch (err) {
-        console.error('removeItem error:', err);
+        logger.error('removeItem error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

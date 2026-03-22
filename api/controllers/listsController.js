@@ -6,6 +6,7 @@
 const listsQueries = require('../database/queries/lists');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
+const logger = require('../logger');
 
 /**
  * GET /lists - List all lists for current user
@@ -15,7 +16,7 @@ async function listLists(req, res) {
         const lists = await listsQueries.listForUser(req.user.id);
         res.json({ lists });
     } catch (err) {
-        console.error('listLists error:', err);
+        logger.error('listLists error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -51,12 +52,12 @@ async function createList(req, res) {
                 },
             });
         } catch (e) {
-            console.warn('Failed to log list created event:', e.message);
+            logger.warn('Failed to log list created event:', e.message);
         }
 
         res.status(201).json({ list });
     } catch (err) {
-        console.error('createList error:', err);
+        logger.error('createList error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -80,7 +81,7 @@ async function getList(req, res) {
 
         res.json({ list, items });
     } catch (err) {
-        console.error('getList error:', err);
+        logger.error('getList error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -109,7 +110,7 @@ async function updateList(req, res) {
 
         res.json({ list: updated });
     } catch (err) {
-        console.error('updateList error:', err);
+        logger.error('updateList error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -131,7 +132,7 @@ async function deleteList(req, res) {
 
         res.json({ success: true });
     } catch (err) {
-        console.error('deleteList error:', err);
+        logger.error('deleteList error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -176,7 +177,7 @@ async function addListItem(req, res) {
         if (err.message.includes('cannot have more than')) {
             return res.status(400).json({ error: err.message });
         }
-        console.error('addListItem error:', err);
+        logger.error('addListItem error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -206,7 +207,7 @@ async function removeListItem(req, res) {
 
         res.json({ success: true });
     } catch (err) {
-        console.error('removeListItem error:', err);
+        logger.error('removeListItem error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -240,7 +241,7 @@ async function reorderListItems(req, res) {
         if (err.message.includes('Position') || err.message.includes('Duplicate')) {
             return res.status(400).json({ error: err.message });
         }
-        console.error('reorderListItems error:', err);
+        logger.error('reorderListItems error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

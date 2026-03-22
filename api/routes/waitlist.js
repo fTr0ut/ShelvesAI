@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
 const { requireFields } = require('../middleware/validate');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.post('/', waitlistLimiter, requireFields(['email']), async (req, res) => 
   const audienceId = process.env.RESEND_AUDIENCE_ID;
 
   if (!apiKey || !audienceId) {
-    console.error('[Waitlist] Missing Resend configuration.');
+    logger.error('[Waitlist] Missing Resend configuration.');
     return res.status(500).json({ error: 'Waitlist is temporarily unavailable.' });
   }
 
@@ -69,7 +70,7 @@ router.post('/', waitlistLimiter, requireFields(['email']), async (req, res) => 
       return res.status(200).json({ success: true, alreadySubscribed: true });
     }
 
-    console.error('[Waitlist] Failed to add email:', error.message || error);
+    logger.error('[Waitlist] Failed to add email:', error.message || error);
     return res.status(502).json({ error: 'Unable to join waitlist right now. Please try again.' });
   }
 });

@@ -8,14 +8,15 @@ const { makeLightweightFingerprint } = require("../services/collectables/fingerp
 async function main() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
   if (!uri) {
-    console.error("MONGODB_URI is not set in environment (.env)");
+    logger.error("MONGODB_URI is not set in environment (.env)");
     process.exit(1);
   }
 
-  console.log("[backfill] connecting to MongoDB");
+  logger.info("[backfill] connecting to MongoDB");
   await mongoose.connect(uri);
 
   const Collectable = require("../models/Collectable");
+const logger = require('../logger');
 
   const cursor = Collectable.find({}).cursor();
   let scanned = 0;
@@ -27,9 +28,9 @@ async function main() {
     if (!bulkOps.length) return;
     try {
       const result = await Collectable.bulkWrite(bulkOps);
-      console.log("[backfill] bulkWrite", result.nModified || result.modifiedCount || 0);
+      logger.info("[backfill] bulkWrite", result.nModified || result.modifiedCount || 0);
     } catch (err) {
-      console.error("[backfill] bulkWrite failed", err?.message || err);
+      logger.error("[backfill] bulkWrite failed", err?.message || err);
     }
     bulkOps.length = 0;
   };
@@ -78,15 +79,15 @@ async function main() {
   await flush();
   await mongoose.disconnect();
 
-  console.log("[backfill] scanned", scanned, "records");
-  console.log("[backfill] updated", updated, "records");
-  console.log("[backfill] skipped", skipped, "records");
+  logger.info("[backfill] scanned", scanned, "records");
+  logger.info("[backfill] updated", updated, "records");
+  logger.info("[backfill] skipped", skipped, "records");
 
   process.exit(0);
 }
 
 main().catch(async (err) => {
-  console.error("[backfill] failed", err?.message || err);
+  logger.error("[backfill] failed", err?.message || err);
   try { await mongoose.disconnect(); } catch (_) {}
   process.exit(1);
 });

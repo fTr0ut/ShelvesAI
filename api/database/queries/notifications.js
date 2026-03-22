@@ -1,5 +1,6 @@
 const { query } = require('../pg');
 const { rowToCamelCase, parsePagination } = require('./utils');
+const logger = require('../../logger');
 
 const UNREAD_COUNT_CACHE_TTL_MS = process.env.UNREAD_COUNT_CACHE_TTL_MS
     ? parseInt(process.env.UNREAD_COUNT_CACHE_TTL_MS, 10)
@@ -122,7 +123,7 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
                     entityType,
                 });
             } catch (err) {
-                console.warn('Push notification failed:', err.message);
+                logger.warn('Push notification failed:', err.message);
             }
         })();
     }

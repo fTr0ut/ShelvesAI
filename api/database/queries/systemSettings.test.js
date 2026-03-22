@@ -8,6 +8,10 @@ beforeEach(() => {
     jest.clearAllMocks();
 });
 
+const USER_ID_1 = '11111111-1111-4111-8111-111111111111';
+const USER_ID_2 = '22222222-2222-4222-8222-222222222222';
+const USER_ID_3 = '33333333-3333-4333-8333-333333333333';
+
 // ---------------------------------------------------------------------------
 // getSetting
 // ---------------------------------------------------------------------------
@@ -19,7 +23,7 @@ describe('getSetting()', () => {
                 key: 'metadata_score_config',
                 value: { books: {} },
                 description: 'Scoring config',
-                updated_by: 1,
+                updated_by: USER_ID_1,
                 created_at: new Date('2026-01-01'),
                 updated_at: new Date('2026-01-02'),
             }],
@@ -32,7 +36,7 @@ describe('getSetting()', () => {
         expect(result.key).toBe('metadata_score_config');
         expect(result.value).toEqual({ books: {} });
         expect(result.description).toBe('Scoring config');
-        expect(result.updatedBy).toBe(1);
+        expect(result.updatedBy).toBe(USER_ID_1);
         expect(result.createdAt).toBeDefined();
         expect(result.updatedAt).toBeDefined();
     });
@@ -88,18 +92,18 @@ describe('upsertSetting()', () => {
                 key: 'bar',
                 value: {},
                 description: 'A description',
-                updated_by: 5,
+                updated_by: USER_ID_2,
                 created_at: new Date(),
                 updated_at: new Date(),
             }],
             rowCount: 1,
         });
 
-        await upsertSetting('bar', {}, { description: 'A description', updatedBy: 5 });
+        await upsertSetting('bar', {}, { description: 'A description', updatedBy: USER_ID_2 });
 
         const callArgs = query.mock.calls[0];
         expect(callArgs[1]).toContain('A description');
-        expect(callArgs[1]).toContain(5);
+        expect(callArgs[1]).toContain(USER_ID_2);
     });
 
     it('defaults description and updatedBy to null when not provided', async () => {
@@ -184,7 +188,7 @@ describe('getAllSettings()', () => {
                     key: 'b',
                     value: { y: 2 },
                     description: 'desc',
-                    updated_by: 3,
+                    updated_by: USER_ID_3,
                     created_at: new Date(),
                     updated_at: new Date(),
                 },
@@ -198,6 +202,6 @@ describe('getAllSettings()', () => {
         expect(result[0].key).toBe('a');
         expect(result[0].value).toEqual({ x: 1 });
         expect(result[1].key).toBe('b');
-        expect(result[1].updatedBy).toBe(3);
+        expect(result[1].updatedBy).toBe(USER_ID_3);
     });
 });

@@ -8,6 +8,9 @@ const fs = require('fs');
 const cookie = require('cookie');
 const signature = require('cookie-signature');
 
+const logger = require('./logger');
+const requestLogger = require('./middleware/requestLogger');
+
 const authRoutes = require('./routes/auth');
 const shelvesRoutes = require('./routes/shelves');
 const accountRoutes = require('./routes/account');
@@ -96,33 +99,6 @@ const getClientIp = (req) => {
   return normalizeIp(req.socket?.remoteAddress || req.ip);
 };
 
-// Minimal request log (dev only)
-if (process.env.NODE_ENV !== 'production') {
-  app.use((req, res, next) => {
-    const start = process.hrtime.bigint();
-    const clientIp = getClientIp(req) || '-';
-
-    res.on('finish', () => {
-      const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
-      const contentLength = res.get('Content-Length') || 0;
-      const logLine = [
-        clientIp,
-        req.method,
-        req.originalUrl,
-        res.statusCode,
-        `${contentLength}b`,
-        `${durationMs.toFixed(2)}ms`,
-        req.get('referer') || '-',
-        req.get('user-agent') || '-',
-      ].join(' | ');
-
-      console.log(logLine);
-    });
-
-    next();
-  });
-}
-
 const defaultCorsOrigins = isDevelopment
   ? [
       'http://localhost:3000',
@@ -154,7 +130,7 @@ const corsOptions = {
     if (corsAllowList.includes(origin)) {
       return callback(null, true);
     }
-    console.warn(`Blocked CORS origin: ${origin}`);
+    logger.warn(`Blocked CORS origin: ${origin}`);
     return callback(null, false);
   },
   credentials: true,
@@ -195,6 +171,9 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Structured request logging with jobId
+app.use(requestLogger);
+
 app.use(express.json({ limit: '10mb' }));
 
 // Security headers
@@ -219,7 +198,7 @@ try {
     immutable: true
   }));
 } catch (err) {
-  console.warn('Failed to initialize media cache directory:', err.message);
+  logger.warn('Failed to initialize media cache directory:', { error: err.message });
 }
 
 // Routes

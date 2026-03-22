@@ -2,7 +2,7 @@
 
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 
-Last updated: 2026-03-19
+Last updated: 2026-03-22
 
 ---
 
@@ -88,11 +88,13 @@ ShelvesAI/
 ```
 api/index.js
   → api/server.js
+  -> api/logger.js
   → api/database/pg.js
   → api/services/newsCacheScheduler.js
   → api/services/newsSeenCleanupScheduler.js
 
 api/server.js
+  -> api/middleware/requestLogger.js
   → api/routes/resetPasswordPage.js
   → api/routes/auth.js
   → api/routes/shelves.js
@@ -115,6 +117,26 @@ api/server.js
   → api/routes/admin.js
   → api/routes/manuals.js
   → api/routes/waitlist.js
+```
+
+### Runtime Logging Utilities
+
+```
+api/context.js
+  (no internal imports)
+
+api/logger.js
+  -> api/context.js
+
+api/middleware/requestLogger.js
+  -> api/context.js
+  -> api/logger.js
+  -> api/database/queries/jobRuns.js
+
+api/utils/jobRunner.js
+  -> api/context.js
+  -> api/logger.js
+  -> api/database/queries/jobRuns.js
 ```
 
 ### Routes → Controllers → Queries/Services
@@ -392,6 +414,7 @@ routes/admin.js
 
 controllers/adminController.js
   → database/queries/admin.js
+  -> database/queries/jobRuns.js
   → database/queries/systemSettings.js
   → services/config/SystemSettingsCache.js
   → database/queries/utils.js
@@ -430,6 +453,7 @@ routes/resetPasswordPage.js
 ```
 middleware/auth.js
   → database/pg.js
+  -> context.js
   → utils/adminAuth.js
   → config/constants.js
 
@@ -441,6 +465,11 @@ middleware/validate.js
 
 middleware/csrf.js
   → utils/adminAuth.js
+
+middleware/requestLogger.js
+  -> context.js
+  -> logger.js
+  -> database/queries/jobRuns.js
 ```
 
 ### Services Internal Dependencies
@@ -586,9 +615,11 @@ services/manuals/otherManual.js
 
 services/newsCacheScheduler.js
   → jobs/refreshNewsCache.js
+  -> utils/jobRunner.js
 
 services/newsSeenCleanupScheduler.js
   → database/queries/newsSeen.js
+  -> utils/jobRunner.js
 
 services/discovery/newsRecommendations.js
   → database/pg.js
@@ -1132,6 +1163,17 @@ users (UUID PK)
   ├── profile_media (user_id FK)
   └─< admin_action_logs (admin_id FK)
 
+job_runs (job_id TEXT PK)
+  -> user_id (FK -> users.id, nullable)
+  -> status in {running, completed, failed}
+  -> http_method/http_path/http_status/ip_address/duration_ms
+  -> metadata (JSONB), started_at, finished_at
+  -> job_events (job_id FK)
+
+job_events (BIGSERIAL PK)
+  -> job_id (FK -> job_runs.job_id)
+  -> level/message/metadata + created_at
+
 system_settings (key VARCHAR PK)
   ├── value (JSONB, not null)
   ├── description (TEXT, nullable)
@@ -1170,7 +1212,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (40 files, 2026-01-10 → 2026-01-28)
+### Migration History (42 files, 2026-01-10 -> 2026-03-22)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1214,6 +1256,8 @@ news_items (SERIAL PK)
 | `20260128_add_manual_cover_media` | + `user_manuals.cover_media_path` |
 | `20260319_add_collectables_metascore` | + `collectables.metascore` (JSONB) |
 | `20260319_create_system_settings` | + `system_settings` (key PK, value JSONB, description, updated_by FK, timestamps) |
+| `20260320_set_premium_default_on` | `users.is_premium` default set to true |
+| `20260322_create_job_logging_tables` | + `job_runs`, + `job_events` |
 
 ---
 

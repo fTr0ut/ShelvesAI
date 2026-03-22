@@ -15,6 +15,7 @@
 
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
+const logger = require('../../logger');
 
 class BlurayDiscoveryAdapter {
     // Format constants
@@ -122,7 +123,7 @@ class BlurayDiscoveryAdapter {
             const html = await this._fetchPage();
             return this._parseSection(html, sectionId, format);
         } catch (error) {
-            console.error(`[Bluray Adapter] Error scraping ${sectionId}:`, error.message);
+            logger.error(`[Bluray Adapter] Error scraping ${sectionId}:`, error.message);
             return [];
         }
     }
@@ -151,7 +152,7 @@ class BlurayDiscoveryAdapter {
         const container = $(`#${sectionId}`);
 
         if (!container.length) {
-            console.warn(`[Bluray Adapter] Section "${sectionId}" not found`);
+            logger.warn(`[Bluray Adapter] Section "${sectionId}" not found`);
             return [];
         }
 
@@ -159,7 +160,7 @@ class BlurayDiscoveryAdapter {
         const table = container.find('table').first();
 
         if (!table.length) {
-            console.warn(`[Bluray Adapter] No table found in "${sectionId}"`);
+            logger.warn(`[Bluray Adapter] No table found in "${sectionId}"`);
             return [];
         }
 

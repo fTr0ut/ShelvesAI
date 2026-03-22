@@ -10,6 +10,7 @@ const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
 const { validateImageBuffer } = require('../../utils/imageValidation');
+const logger = require('../../logger');
 
 // Media storage configuration - use same cache directory as server.js
 const API_ROOT = path.resolve(__dirname, '..', '..');
@@ -91,7 +92,7 @@ async function deleteOldCover(localPath) {
         }
     } catch (err) {
         // Ignore file deletion errors
-        console.warn('[manualMedia] Failed to delete old cover:', err.message);
+        logger.warn('[manualMedia] Failed to delete old cover:', err.message);
     }
 }
 

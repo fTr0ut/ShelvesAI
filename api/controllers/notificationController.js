@@ -1,5 +1,6 @@
 const notificationsQueries = require('../database/queries/notifications');
 const { parsePagination } = require('../database/queries/utils');
+const logger = require('../logger');
 
 async function list(req, res) {
     try {
@@ -11,7 +12,7 @@ async function list(req, res) {
             paging: { limit: result.limit, offset: result.offset },
         });
     } catch (err) {
-        console.error('listNotifications error:', err);
+        logger.error('listNotifications error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -26,7 +27,7 @@ async function markRead(req, res) {
         const result = await notificationsQueries.markAsRead(req.user.id, ids);
         res.json({ updated: result.updated, ids: result.ids || [] });
     } catch (err) {
-        console.error('markRead error:', err);
+        logger.error('markRead error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -36,7 +37,7 @@ async function getUnreadCount(req, res) {
         const unreadCount = await notificationsQueries.getUnreadCount(req.user.id);
         res.json({ unreadCount });
     } catch (err) {
-        console.error('getUnreadCount error:', err);
+        logger.error('getUnreadCount error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

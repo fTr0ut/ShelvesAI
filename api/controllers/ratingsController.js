@@ -7,6 +7,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
 const { resolveMediaUrl } = require('../services/mediaUrl');
+const logger = require('../logger');
 
 /**
  * GET /api/ratings/:itemId
@@ -23,7 +24,7 @@ async function getRating(req, res) {
         );
         res.json({ rating: rating?.rating || 0 });
     } catch (err) {
-        console.error('getRating error:', err);
+        logger.error('getRating error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -93,7 +94,7 @@ async function setRating(req, res) {
 
         res.json({ rating: result?.rating || 0 });
     } catch (err) {
-        console.error('setRating error:', err);
+        logger.error('setRating error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -109,7 +110,7 @@ async function getAggregateRating(req, res) {
         const stats = await ratingsQueries.getAggregateRating(collectableId);
         res.json(stats);
     } catch (err) {
-        console.error('getAggregateRating error:', err);
+        logger.error('getAggregateRating error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -129,7 +130,7 @@ async function getUserRating(req, res) {
         );
         res.json({ rating: rating?.rating || 0 });
     } catch (err) {
-        console.error('getUserRating error:', err);
+        logger.error('getUserRating error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

@@ -16,6 +16,7 @@ const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 const { MusicCatalogService } = require('./catalog/MusicCatalogService');
 const { getMetadataScorer } = require('./catalog/MetadataScorer');
 const { getApiContainerKey } = require('./config/shelfTypeResolver');
+const logger = require('../logger');
 
 // Configurable fuzzy match threshold (0.0 - 1.0)
 // Higher = stricter matching, fewer false positives
@@ -131,7 +132,7 @@ class CollectableMatchingService {
                 };
             }
         } catch (err) {
-            console.warn('[CollectableMatchingService] metadata score failed:', err?.message || err);
+            logger.warn('[CollectableMatchingService] metadata score failed:', err?.message || err);
         }
 
         return collectable;
@@ -149,7 +150,7 @@ class CollectableMatchingService {
                     return service;
                 }
             } catch (err) {
-                console.error('[CollectableMatchingService] supportsShelfType failed', err?.message);
+                logger.error('[CollectableMatchingService] supportsShelfType failed', err?.message);
             }
         }
         return null;
@@ -172,13 +173,13 @@ class CollectableMatchingService {
             return suggestions;
         }
 
-        console.log('[CollectableMatchingService] Searching database for:', { title, creator, shelfType });
+        logger.info('[CollectableMatchingService] Searching database for:', { title, creator, shelfType });
 
         // 1. Check lightweight fingerprint (exact match)
         const lwf = makeLightweightFingerprint({ title, primaryCreator: creator, kind: shelfType });
         const fingerprintMatch = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (fingerprintMatch) {
-            console.log('[CollectableMatchingService] Fingerprint match:', fingerprintMatch.id, fingerprintMatch.title);
+            logger.info('[CollectableMatchingService] Fingerprint match:', fingerprintMatch.id, fingerprintMatch.title);
             suggestions.push({
                 ...fingerprintMatch,
                 matchSource: 'fingerprint',
@@ -196,7 +197,7 @@ class CollectableMatchingService {
             fuzzyFpMatch = await collectablesQueries.findByFuzzyFingerprint(lwf);
         }
         if (fuzzyFpMatch && !suggestions.some(s => s.id === fuzzyFpMatch.id)) {
-            console.log('[CollectableMatchingService] Fuzzy fingerprint match:', fuzzyFpMatch.id, fuzzyFpMatch.title);
+            logger.info('[CollectableMatchingService] Fuzzy fingerprint match:', fuzzyFpMatch.id, fuzzyFpMatch.title);
             suggestions.push({
                 ...fuzzyFpMatch,
                 matchSource: 'fuzzy_fingerprint',
@@ -208,7 +209,7 @@ class CollectableMatchingService {
         if (collectablesQueries.fuzzyMatch) {
             const fuzzyMatch = await collectablesQueries.fuzzyMatch(title, creator, shelfType, FUZZY_MATCH_THRESHOLD);
             if (fuzzyMatch && !suggestions.some(s => s.id === fuzzyMatch.id)) {
-                console.log('[CollectableMatchingService] Fuzzy match:', fuzzyMatch.id, fuzzyMatch.title, 'score:', fuzzyMatch.combinedSim);
+                logger.info('[CollectableMatchingService] Fuzzy match:', fuzzyMatch.id, fuzzyMatch.title, 'score:', fuzzyMatch.combinedSim);
                 // Only include if title is valid
                 if (fuzzyMatch.title) {
                     suggestions.push({
@@ -217,12 +218,12 @@ class CollectableMatchingService {
                         matchScore: fuzzyMatch.combinedSim || 0.8,
                     });
                 } else {
-                    console.warn('[CollectableMatchingService] Fuzzy match has no title, skipping:', fuzzyMatch.id);
+                    logger.warn('[CollectableMatchingService] Fuzzy match has no title, skipping:', fuzzyMatch.id);
                 }
             }
         }
 
-        console.log('[CollectableMatchingService] Database search found', suggestions.length, 'suggestions');
+        logger.info('[CollectableMatchingService] Database search found', suggestions.length, 'suggestions');
         return suggestions;
     }
 
@@ -236,12 +237,12 @@ class CollectableMatchingService {
     async searchCatalogAPI(itemData, shelfType) {
         const catalogService = this.resolveCatalogService(shelfType);
         if (!catalogService) {
-            console.log('[CollectableMatchingService] No catalog service for type:', shelfType);
+            logger.info('[CollectableMatchingService] No catalog service for type:', shelfType);
             return null;
         }
 
         try {
-            console.log('[CollectableMatchingService] Calling API for:', shelfType);
+            logger.info('[CollectableMatchingService] Calling API for:', shelfType);
             const lookupInput = buildLookupInput(itemData);
             const result = await catalogService.safeLookup(lookupInput);
 
@@ -258,12 +259,12 @@ class CollectableMatchingService {
                     lightweightFingerprint: lwf,
                 });
                 if (!collectable) {
-                    console.warn('[CollectableMatchingService] API result could not be normalized, skipping');
+                    logger.warn('[CollectableMatchingService] API result could not be normalized, skipping');
                     return null;
                 }
 
                 const resolvedTitle = collectable.title || collectable.name;
-                console.log('[CollectableMatchingService] API result:', {
+                logger.info('[CollectableMatchingService] API result:', {
                     title: resolvedTitle,
                     primaryCreator: collectable.primaryCreator || collectable.author,
                     id: collectable.id
@@ -271,10 +272,10 @@ class CollectableMatchingService {
 
                 return await this.attachMetadataScore(collectable, shelfType);
             } else {
-                console.log('[CollectableMatchingService] API returned no result');
+                logger.info('[CollectableMatchingService] API returned no result');
             }
         } catch (err) {
-            console.error('[CollectableMatchingService] API lookup failed:', err?.message);
+            logger.error('[CollectableMatchingService] API lookup failed:', err?.message);
         }
 
         return null;
@@ -291,7 +292,7 @@ class CollectableMatchingService {
     async searchCatalogAPIMultiple(itemData, shelfType, options = {}) {
         const catalogService = this.resolveCatalogService(shelfType);
         if (!catalogService) {
-            console.log('[CollectableMatchingService] No catalog service for type:', shelfType);
+            logger.info('[CollectableMatchingService] No catalog service for type:', shelfType);
             return [];
         }
 
@@ -301,7 +302,7 @@ class CollectableMatchingService {
         const lookupInput = buildLookupInput(itemData);
 
         try {
-            console.log('[CollectableMatchingService] Calling API for:', shelfType, '(limit', limit + ')');
+            logger.info('[CollectableMatchingService] Calling API for:', shelfType, '(limit', limit + ')');
             let results = [];
             if (typeof catalogService.safeLookupMany === 'function') {
                 results = await catalogService.safeLookupMany(lookupInput, limit);
@@ -309,7 +310,7 @@ class CollectableMatchingService {
                 const single = await catalogService.safeLookup(lookupInput);
                 if (single) results = [single];
             } else {
-                console.warn('[CollectableMatchingService] Catalog service missing lookup method');
+                logger.warn('[CollectableMatchingService] Catalog service missing lookup method');
                 return [];
             }
 
@@ -327,11 +328,11 @@ class CollectableMatchingService {
                 suggestions.push(await this.attachMetadataScore(collectable, shelfType));
             }
 
-            console.log('[CollectableMatchingService] API suggestions:', suggestions.length);
+            logger.info('[CollectableMatchingService] API suggestions:', suggestions.length);
             suggestions.sort((a, b) => (b?._metadataScore || 0) - (a?._metadataScore || 0));
             return suggestions.slice(0, limit);
         } catch (err) {
-            console.error('[CollectableMatchingService] API lookup failed:', err?.message);
+            logger.error('[CollectableMatchingService] API lookup failed:', err?.message);
             return [];
         }
     }

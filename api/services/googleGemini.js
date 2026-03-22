@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { normalizeCollectableKind } = require('./collectables/kind');
 const { withTimeout } = require('../utils/withTimeout');
+const logger = require('../logger');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
@@ -17,10 +18,10 @@ try {
     const configPath = path.join(__dirname, '../config/visionSettings.json');
     if (fs.existsSync(configPath)) {
         visionSettings = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        console.log('[GoogleGeminiService] Loaded vision settings from config');
+        logger.info('[GoogleGeminiService] Loaded vision settings from config');
     }
 } catch (err) {
-    console.warn('[GoogleGeminiService] Failed to load visionSettings.json:', err.message);
+    logger.warn('[GoogleGeminiService] Failed to load visionSettings.json:', err.message);
 }
 
 function resolveVisionSettingsKey(shelfType) {
@@ -119,7 +120,7 @@ class GoogleGeminiService {
             this.modelName = textModelName;
             this.model = this.textModel;
         } else {
-            console.warn('[GoogleGeminiService] GOOGLE_GEN_AI_KEY not set.');
+            logger.warn('[GoogleGeminiService] GOOGLE_GEN_AI_KEY not set.');
             this.genAI = null;
             this.textModel = null;
             this.visionModel = null;
@@ -320,11 +321,11 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
             // Check for truncation (incomplete JSON)
             if (!jsonStr.endsWith(']')) {
-                console.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
+                logger.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
                 const repaired = this.repairTruncatedJsonArray(jsonStr);
                 if (repaired) {
                     const partialItems = JSON.parse(repaired);
-                    console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
+                    logger.info('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
                     const items = partialItems.map(item => ({
                         ...item,
                         kind: normalizedKind,
@@ -344,7 +345,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
             // Validation / Fallback for array
             if (!Array.isArray(enrichedItems)) {
-                console.warn('[GoogleGeminiService] Response was not an array:', enrichedItems);
+                logger.warn('[GoogleGeminiService] Response was not an array:', enrichedItems);
                 return [];
             }
 
@@ -361,7 +362,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
             }));
 
         } catch (err) {
-            console.error('[GoogleGeminiService] Schema enrichment failed:', err);
+            logger.error('[GoogleGeminiService] Schema enrichment failed:', err);
             // Fallback: return extracting items as is
             return items.map(i => ({
                 title: i.name || i.title,
@@ -464,12 +465,12 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
             // Check for truncation (incomplete JSON)
             if (!jsonStr.endsWith(']')) {
-                console.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
+                logger.warn('[GoogleGeminiService] Response appears truncated, attempting repair...');
                 // Try to extract complete items before the truncation point
                 const repaired = this.repairTruncatedJsonArray(jsonStr);
                 if (repaired) {
                     const partialItems = JSON.parse(repaired);
-                    console.log('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
+                    logger.info('[GoogleGeminiService] Recovered', partialItems.length, 'items from truncated response');
                     const items = partialItems.map(item => ({
                         ...item,
                         kind: normalizedKind,
@@ -488,7 +489,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             const enrichedItems = JSON.parse(jsonStr);
 
             if (!Array.isArray(enrichedItems)) {
-                console.warn('[GoogleGeminiService] Uncertain response was not an array:', enrichedItems);
+                logger.warn('[GoogleGeminiService] Uncertain response was not an array:', enrichedItems);
                 return [];
             }
 
@@ -502,7 +503,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             }));
 
         } catch (err) {
-            console.error('[GoogleGeminiService] Uncertain enrichment failed:', err);
+            logger.error('[GoogleGeminiService] Uncertain enrichment failed:', err);
             return items.map(i => ({
                 title: i.name || i.title,
                 _originalTitle: i.name || i.title,
@@ -577,17 +578,17 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             try {
                 parsedItems = JSON.parse(jsonStr);
             } catch (e) {
-                console.warn('[GoogleGeminiService] Failed to parse vision JSON:', e);
+                logger.warn('[GoogleGeminiService] Failed to parse vision JSON:', e);
             }
 
             if (!Array.isArray(parsedItems)) {
-                console.warn('[GoogleGeminiService] Vision response was not an array:', parsedItems);
+                logger.warn('[GoogleGeminiService] Vision response was not an array:', parsedItems);
                 parsedItems = []; // Continue with empty or retry logic if needed
             }
 
             // STEP 2: Enrichment via Search (Only for "other")
             if (isOther && parsedItems.length > 0 && this.textModel) {
-                console.log('[GoogleGeminiService] Performing search enrichment for "other" items...');
+                logger.info('[GoogleGeminiService] Performing search enrichment for "other" items...');
                 const configPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
                 const searchPrompt = `I have performed a visual scan of the items and extracted the following preliminary data:
 ${JSON.stringify(parsedItems)}
@@ -625,7 +626,7 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
 
                     // Guard against empty or invalid JSON response
                     if (!searchJson || !searchJson.startsWith('[') || !searchJson.endsWith(']')) {
-                        console.warn('[GoogleGeminiService] Search enrichment returned invalid JSON, using raw vision items. Response preview:', (searchText || '').substring(0, 200));
+                        logger.warn('[GoogleGeminiService] Search enrichment returned invalid JSON, using raw vision items. Response preview:', (searchText || '').substring(0, 200));
                     } else {
                         const enriched = JSON.parse(searchJson);
                         if (Array.isArray(enriched)) {
@@ -633,7 +634,7 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
                         }
                     }
                 } catch (err) {
-                    console.error('[GoogleGeminiService] Search enrichment failed:', err);
+                    logger.error('[GoogleGeminiService] Search enrichment failed:', err);
                     // Fallback to raw vision items if search fails
                 }
             }
@@ -662,7 +663,7 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
 
             return { items };
         } catch (err) {
-            console.error('[GoogleGeminiService] Vision item detection failed:', err);
+            logger.error('[GoogleGeminiService] Vision item detection failed:', err);
             return { items: [] };
         }
     }

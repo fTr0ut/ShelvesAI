@@ -10,6 +10,7 @@ const profileMediaQueries = require('../database/queries/profileMedia');
 const { rowToCamelCase } = require('../database/queries/utils');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { validateImageBuffer } = require('../utils/imageValidation');
+const logger = require('../logger');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -37,7 +38,7 @@ async function getMyProfile(req, res) {
 
         res.json({ profile: addMediaUrls(response) });
     } catch (err) {
-        console.error('getMyProfile error:', err);
+        logger.error('getMyProfile error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -90,7 +91,7 @@ async function updateMyProfile(req, res) {
 
         res.json({ profile: rowToCamelCase(updatedUser) });
     } catch (err) {
-        console.error('updateMyProfile error:', err);
+        logger.error('updateMyProfile error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -131,7 +132,7 @@ async function uploadPhoto(req, res) {
             }
         });
     } catch (err) {
-        console.error('uploadPhoto error:', err);
+        logger.error('uploadPhoto error:', err);
         const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
         res.status(statusCode).json({ error: err?.message || 'Failed to upload photo' });
     }
@@ -153,7 +154,7 @@ async function getPublicProfile(req, res) {
 
         res.json({ profile: addMediaUrls(profile) });
     } catch (err) {
-        console.error('getPublicProfile error:', err);
+        logger.error('getPublicProfile error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -192,7 +193,7 @@ async function getProfileShelves(req, res) {
 
         res.json({ shelves });
     } catch (err) {
-        console.error('getProfileShelves error:', err);
+        logger.error('getProfileShelves error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

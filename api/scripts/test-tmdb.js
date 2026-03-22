@@ -17,6 +17,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const TmdbAdapter = require('../services/catalog/adapters/TmdbAdapter');
+const logger = require('../logger');
 
 async function readInput() {
     const args = process.argv.slice(2);
@@ -55,7 +56,7 @@ async function main() {
     const adapter = new TmdbAdapter();
 
     if (!adapter.isConfigured()) {
-        console.error('Error: TMDB_API_KEY not configured in environment.');
+        logger.error('Error: TMDB_API_KEY not configured in environment.');
         process.exit(1);
     }
 
@@ -63,7 +64,7 @@ async function main() {
     try {
         items = await readInput();
     } catch (err) {
-        console.error(`Input error: ${err.message}`);
+        logger.error(`Input error: ${err.message}`);
         process.exit(1);
     }
 
@@ -71,7 +72,7 @@ async function main() {
         items = [items];
     }
 
-    console.error(`[test-tmdb] Processing ${items.length} item(s)...`);
+    logger.error(`[test-tmdb] Processing ${items.length} item(s)...`);
 
     const results = [];
 
@@ -83,7 +84,7 @@ async function main() {
             format: item.format,
         };
 
-        console.error(`  -> Looking up: "${normalizedItem.title}"${normalizedItem.year ? ` (${normalizedItem.year})` : ''}`);
+        logger.error(`  -> Looking up: "${normalizedItem.title}"${normalizedItem.year ? ` (${normalizedItem.year})` : ''}`);
 
         try {
             const result = await adapter.lookup(normalizedItem);
@@ -93,7 +94,7 @@ async function main() {
                 collectable: result,
             });
         } catch (err) {
-            console.error(`     Error: ${err.message}`);
+            logger.error(`     Error: ${err.message}`);
             results.push({
                 input: item,
                 resolved: false,
@@ -103,13 +104,13 @@ async function main() {
     }
 
     const resolved = results.filter(r => r.resolved).length;
-    console.error(`\n[test-tmdb] Complete: ${resolved}/${items.length} resolved`);
+    logger.error(`\n[test-tmdb] Complete: ${resolved}/${items.length} resolved`);
 
     // Output results as JSON to stdout
-    console.log(JSON.stringify(results, null, 2));
+    logger.info(JSON.stringify(results, null, 2));
 }
 
 main().catch(err => {
-    console.error(`Fatal error: ${err.message}`);
+    logger.error(`Fatal error: ${err.message}`);
     process.exit(1);
 });

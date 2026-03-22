@@ -1,6 +1,7 @@
 const pushDeviceTokens = require('../database/queries/pushDeviceTokens');
 const notificationPreferences = require('../database/queries/notificationPreferences');
 const { isValidExpoPushToken } = require('../services/pushNotificationService');
+const logger = require('../logger');
 
 /**
  * Register a push token for the authenticated user
@@ -25,7 +26,7 @@ async function registerPushToken(req, res) {
 
         res.json({ success: true, token });
     } catch (err) {
-        console.error('registerPushToken error:', err);
+        logger.error('registerPushToken error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -46,7 +47,7 @@ async function unregisterPushToken(req, res) {
 
         res.json({ success: true, removed });
     } catch (err) {
-        console.error('unregisterPushToken error:', err);
+        logger.error('unregisterPushToken error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -69,7 +70,7 @@ async function getNotificationPreferences(req, res) {
             },
         });
     } catch (err) {
-        console.error('getNotificationPreferences error:', err);
+        logger.error('getNotificationPreferences error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }
@@ -111,7 +112,7 @@ async function updateNotificationPreferences(req, res) {
             },
         });
     } catch (err) {
-        console.error('updateNotificationPreferences error:', err);
+        logger.error('updateNotificationPreferences error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 }

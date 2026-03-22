@@ -5,6 +5,7 @@ const feedQueries = require('../database/queries/feed');
 const collectablesQueries = require('../database/queries/collectables');
 const { query } = require('../database/pg');
 const { rowToCamelCase } = require('../database/queries/utils');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -76,7 +77,7 @@ router.get('/search', validateStringLengths({ q: 500 }, { source: 'query' }), as
         const result = await query(sql, params);
         res.json({ results: result.rows.map(rowToCamelCase) });
     } catch (err) {
-        console.error('GET /api/checkin/search error:', err);
+        logger.error('GET /api/checkin/search error:', err);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -165,7 +166,7 @@ router.post('/', validateStringLengths({ note: 5000 }), async (req, res) => {
             },
         });
     } catch (err) {
-        console.error('POST /api/checkin error:', err);
+        logger.error('POST /api/checkin error:', err);
         if (err.message?.includes('required') || err.message?.includes('Invalid')) {
             return res.status(400).json({ error: err.message });
         }

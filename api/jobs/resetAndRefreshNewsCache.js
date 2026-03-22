@@ -20,6 +20,7 @@ const IgdbDiscoveryAdapter = require('../services/discovery/IgdbDiscoveryAdapter
 const BlurayDiscoveryAdapter = require('../services/discovery/BlurayDiscoveryAdapter');
 const NytDiscoveryAdapter = require('../services/discovery/NytBooksDiscoveryAdapter');
 const { getCollectableDiscoveryHook } = require('../services/discovery/CollectableDiscoveryHook');
+const logger = require('../logger');
 
 
 function parsePositiveInt(value, fallback) {
@@ -50,9 +51,9 @@ function toSafeDate(value) {
  * Clear all news items from the database
  */
 async function clearNewsCache() {
-    console.log('[News Cache] Clearing all news items...');
+    logger.info('[News Cache] Clearing all news items...');
     const result = await query('TRUNCATE TABLE news_items RESTART IDENTITY CASCADE');
-    console.log('[News Cache] News cache cleared successfully');
+    logger.info('[News Cache] News cache cleared successfully');
     return result;
 }
 
@@ -103,7 +104,7 @@ async function upsertNewsItem(item) {
         ]);
         return true;
     } catch (err) {
-        console.error(`[News Cache] Failed to upsert item "${item.title}":`, err.message);
+        logger.error(`[News Cache] Failed to upsert item "${item.title}":`, err.message);
         return false;
     }
 }
@@ -133,7 +134,7 @@ async function refreshTmdb(adapter) {
 
     // Fetch movies
     try {
-        console.log('[News Cache] Fetching TMDB movies...');
+        logger.info('[News Cache] Fetching TMDB movies...');
         const [trending, upcoming, nowPlaying] = await Promise.all([
             adapter.fetchTrendingMovies(ITEMS_PER_TYPE),
             adapter.fetchUpcomingMovies(ITEMS_PER_TYPE),
@@ -155,21 +156,21 @@ async function refreshTmdb(adapter) {
                         originalItem: item
                     });
                 } catch (hookErr) {
-                    console.warn('[News Cache] Collectable hook failed for TMDB movie:', hookErr.message);
+                    logger.warn('[News Cache] Collectable hook failed for TMDB movie:', hookErr.message);
                 }
             } else {
                 stats.errors++;
             }
         }
-        console.log(`[News Cache] TMDB movies: ${stats.movies} items stored`);
+        logger.info(`[News Cache] TMDB movies: ${stats.movies} items stored`);
     } catch (err) {
-        console.error('[News Cache] TMDB movies fetch failed:', err.message);
+        logger.error('[News Cache] TMDB movies fetch failed:', err.message);
         stats.errors++;
     }
 
     // Fetch TV shows
     try {
-        console.log('[News Cache] Fetching TMDB TV shows...');
+        logger.info('[News Cache] Fetching TMDB TV shows...');
         const [trending, onAir] = await Promise.all([
             adapter.fetchTrendingTV(ITEMS_PER_TYPE),
             adapter.fetchOnTheAirTV(ITEMS_PER_TYPE)
@@ -190,15 +191,15 @@ async function refreshTmdb(adapter) {
                         originalItem: item
                     });
                 } catch (hookErr) {
-                    console.warn('[News Cache] Collectable hook failed for TMDB TV:', hookErr.message);
+                    logger.warn('[News Cache] Collectable hook failed for TMDB TV:', hookErr.message);
                 }
             } else {
                 stats.errors++;
             }
         }
-        console.log(`[News Cache] TMDB TV: ${stats.tv} items stored`);
+        logger.info(`[News Cache] TMDB TV: ${stats.tv} items stored`);
     } catch (err) {
-        console.error('[News Cache] TMDB TV fetch failed:', err.message);
+        logger.error('[News Cache] TMDB TV fetch failed:', err.message);
         stats.errors++;
     }
 
@@ -212,7 +213,7 @@ async function refreshIgdb(adapter) {
     const stats = { games: 0, errors: 0 };
 
     try {
-        console.log('[News Cache] Fetching IGDB games...');
+        logger.info('[News Cache] Fetching IGDB games...');
         const [topRated, mostFollowed, recent, popular] = await Promise.all([
             adapter.fetchTopRatedGames(ITEMS_PER_TYPE),
             adapter.fetchMostFollowedGames(ITEMS_PER_TYPE),
@@ -242,15 +243,15 @@ async function refreshIgdb(adapter) {
                         originalItem: item
                     });
                 } catch (hookErr) {
-                    console.warn('[News Cache] Collectable hook failed for IGDB:', hookErr.message);
+                    logger.warn('[News Cache] Collectable hook failed for IGDB:', hookErr.message);
                 }
             } else {
                 stats.errors++;
             }
         }
-        console.log(`[News Cache] IGDB games: ${stats.games} items stored`);
+        logger.info(`[News Cache] IGDB games: ${stats.games} items stored`);
     } catch (err) {
-        console.error('[News Cache] IGDB fetch failed:', err.message);
+        logger.error('[News Cache] IGDB fetch failed:', err.message);
         stats.errors++;
     }
 
@@ -265,7 +266,7 @@ async function refreshNyt(nytAdapter) {
     const stats = { books: 0, errors: 0 };
 
     try {
-        console.log('[News Cache] Fetching NYT Books...');
+        logger.info('[News Cache] Fetching NYT Books...');
         const [bestSellerOverview, hardcoverFiction, hardcoverNonfiction, youngAdult] = await Promise.all([
             nytAdapter.fetchBestsellerOverview(),
             nytAdapter.fetchHardcoverFiction(),
@@ -289,15 +290,15 @@ async function refreshNyt(nytAdapter) {
                         originalItem: item
                     });
                 } catch (hookErr) {
-                    console.warn('[News Cache] Collectable hook failed for NYT:', hookErr.message);
+                    logger.warn('[News Cache] Collectable hook failed for NYT:', hookErr.message);
                 }
             } else {
                 stats.errors++;
             }
         }
-        console.log(`[News Cache] NYT Books: ${stats.books} items stored`);
+        logger.info(`[News Cache] NYT Books: ${stats.books} items stored`);
     } catch (err) {
-        console.error('[News Cache] NYT Books fetch failed:', err.message);
+        logger.error('[News Cache] NYT Books fetch failed:', err.message);
         stats.errors++;
     }
 
@@ -311,7 +312,7 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
     const stats = { items: 0, enriched: 0, errors: 0 };
 
     try {
-        console.log('[News Cache] Fetching Blu-ray.com releases...');
+        logger.info('[News Cache] Fetching Blu-ray.com releases...');
 
         // Fetch all 6 distinct categories
         const [
@@ -340,7 +341,7 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
             ...upcomingBluray.map(i => ({ ...i, type: 'upcoming_bluray' }))
         ];
 
-        console.log(`[News Cache] Blu-ray.com totals: preorder_4k=${preorder4K.length}, preorder_bluray=${preorderBluray.length}, new_release_4k=${newRelease4K.length}, new_release_bluray=${newReleaseBluray.length}, upcoming_4k=${upcoming4K.length}, upcoming_bluray=${upcomingBluray.length}`);
+        logger.info(`[News Cache] Blu-ray.com totals: preorder_4k=${preorder4K.length}, preorder_bluray=${preorderBluray.length}, new_release_4k=${newRelease4K.length}, new_release_bluray=${newReleaseBluray.length}, upcoming_4k=${upcoming4K.length}, upcoming_bluray=${upcomingBluray.length}`);
 
         // Deduplicate by URL
         const uniqueItems = [];
@@ -417,7 +418,7 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
                                 originalItem: item
                             });
                         } catch (hookErr) {
-                            console.warn('[News Cache] Collectable hook failed:', hookErr.message);
+                            logger.warn('[News Cache] Collectable hook failed:', hookErr.message);
                         }
                     }
                 } else {
@@ -425,15 +426,15 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
                 }
 
             } catch (innerErr) {
-                console.error(`[News Cache] Failed to process bluray item ${item.title}:`, innerErr);
+                logger.error(`[News Cache] Failed to process bluray item ${item.title}:`, innerErr);
                 stats.errors++;
             }
         }
 
-        console.log(`[News Cache] Blu-ray.com: ${stats.items} items stored (${stats.enriched} enriched)`);
+        logger.info(`[News Cache] Blu-ray.com: ${stats.items} items stored (${stats.enriched} enriched)`);
 
     } catch (err) {
-        console.error('[News Cache] Blu-ray fetch failed:', err.message);
+        logger.error('[News Cache] Blu-ray fetch failed:', err.message);
         stats.errors++;
     }
 
@@ -445,10 +446,10 @@ async function refreshBluray(blurayAdapter, tmdbAdapter) {
  */
 async function runResetAndRefresh() {
     const startTime = Date.now();
-    console.log('='.repeat(60));
-    console.log(`[News Cache] RESET AND REFRESH at ${new Date().toISOString()}`);
-    console.log(`[News Cache] Config: expiryHours=${EXPIRY_HOURS}, itemsPerType=${ITEMS_PER_TYPE}`);
-    console.log('='.repeat(60));
+    logger.info('='.repeat(60));
+    logger.info(`[News Cache] RESET AND REFRESH at ${new Date().toISOString()}`);
+    logger.info(`[News Cache] Config: expiryHours=${EXPIRY_HOURS}, itemsPerType=${ITEMS_PER_TYPE}`);
+    logger.info('='.repeat(60));
 
     // Step 1: Clear the news cache table
     await clearNewsCache();
@@ -465,7 +466,7 @@ async function runResetAndRefresh() {
         totals.items += tmdbStats.movies + tmdbStats.tv;
         totals.errors += tmdbStats.errors;
     } else {
-        console.warn('[News Cache] TMDB not configured (missing TMDB_API_KEY)');
+        logger.warn('[News Cache] TMDB not configured (missing TMDB_API_KEY)');
     }
 
     // Step 3: Refresh IGDB
@@ -474,7 +475,7 @@ async function runResetAndRefresh() {
         totals.items += igdbStats.games;
         totals.errors += igdbStats.errors;
     } else {
-        console.warn('[News Cache] IGDB not configured (missing IGDB_CLIENT_ID/SECRET)');
+        logger.warn('[News Cache] IGDB not configured (missing IGDB_CLIENT_ID/SECRET)');
     }
 
     // Step 4: Refresh Blu-ray.com
@@ -495,25 +496,25 @@ async function runResetAndRefresh() {
 
     // Print final stats
     const stats = await getCacheStats();
-    console.log('\n[News Cache] Current cache contents:');
+    logger.info('\n[News Cache] Current cache contents:');
     for (const row of stats) {
-        console.log(`  ${row.category}/${row.item_type}: ${row.count} items`);
+        logger.info(`  ${row.category}/${row.item_type}: ${row.count} items`);
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log('='.repeat(60));
-    console.log(`[News Cache] RESET COMPLETE. ${totals.items} items refreshed, ${totals.errors} errors`);
-    console.log(`[News Cache] Duration: ${duration}s`);
-    console.log('='.repeat(60));
+    logger.info('='.repeat(60));
+    logger.info(`[News Cache] RESET COMPLETE. ${totals.items} items refreshed, ${totals.errors} errors`);
+    logger.info(`[News Cache] Duration: ${duration}s`);
+    logger.info('='.repeat(60));
 }
 
 // Run the job
 runResetAndRefresh()
     .then(() => {
-        console.log('[News Cache] Reset and refresh job finished successfully');
+        logger.info('[News Cache] Reset and refresh job finished successfully');
         process.exit(0);
     })
     .catch((err) => {
-        console.error('[News Cache] Reset and refresh job failed:', err);
+        logger.error('[News Cache] Reset and refresh job failed:', err);
         process.exit(1);
     });

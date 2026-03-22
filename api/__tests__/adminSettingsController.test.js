@@ -14,6 +14,9 @@ const adminQueries = require('../database/queries/admin');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 const adminController = require('../controllers/adminController');
 
+const ADMIN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const USER_ID_1 = '11111111-1111-4111-8111-111111111111';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -28,7 +31,7 @@ function makeRes() {
 
 function makeReq(overrides = {}) {
   return {
-    user: { id: 42 },
+    user: { id: ADMIN_ID },
     params: {},
     body: {},
     headers: {},
@@ -55,7 +58,7 @@ describe('adminController.getSettings()', () => {
   it('returns all settings wrapped in { settings }', async () => {
     const rows = [
       { key: 'a', value: 1, description: null, updatedBy: null, createdAt: new Date(), updatedAt: new Date() },
-      { key: 'b', value: 'hello', description: 'desc', updatedBy: 1, createdAt: new Date(), updatedAt: new Date() },
+      { key: 'b', value: 'hello', description: 'desc', updatedBy: USER_ID_1, createdAt: new Date(), updatedAt: new Date() },
     ];
     systemSettingsQueries.getAllSettings.mockResolvedValue(rows);
 
@@ -131,8 +134,8 @@ describe('adminController.getSetting()', () => {
 // ---------------------------------------------------------------------------
 
 describe('adminController.updateSetting()', () => {
-  const existingRow = { key: 'cfg', value: { old: true }, description: 'Old desc', updatedBy: 1, createdAt: new Date(), updatedAt: new Date() };
-  const updatedRow = { key: 'cfg', value: { new: true }, description: 'Old desc', updatedBy: 42, createdAt: new Date(), updatedAt: new Date() };
+  const existingRow = { key: 'cfg', value: { old: true }, description: 'Old desc', updatedBy: USER_ID_1, createdAt: new Date(), updatedAt: new Date() };
+  const updatedRow = { key: 'cfg', value: { new: true }, description: 'Old desc', updatedBy: ADMIN_ID, createdAt: new Date(), updatedAt: new Date() };
 
   it('returns 400 when value is missing from body', async () => {
     const req = makeReq({ params: { key: 'cfg' }, body: {} });
@@ -176,7 +179,7 @@ describe('adminController.updateSetting()', () => {
     expect(systemSettingsQueries.upsertSetting).toHaveBeenCalledWith(
       'cfg',
       { new: true },
-      expect.objectContaining({ updatedBy: 42 })
+      expect.objectContaining({ updatedBy: ADMIN_ID })
     );
     expect(res.json).toHaveBeenCalledWith({ setting: updatedRow });
   });
@@ -204,7 +207,7 @@ describe('adminController.updateSetting()', () => {
 
     expect(adminQueries.logAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        adminId: 42,
+        adminId: ADMIN_ID,
         action: 'update_setting',
         targetUserId: null,
         metadata: { key: 'cfg', previousValue: existingRow.value },

@@ -8,6 +8,7 @@ const { rowToCamelCase, parsePagination } = require("../database/queries/utils")
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../services/collectables/fingerprint");
 const { normalizeCollectableKind } = require("../services/collectables/kind");
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -90,7 +91,7 @@ router.post("/", requireAdmin, async (req, res) => {
 
     res.status(201).json({ item });
   } catch (err) {
-    console.error('POST /collectables error:', err);
+    logger.error('POST /collectables error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -184,7 +185,7 @@ router.post("/from-news", requireAdmin, async (req, res) => {
 
     res.status(201).json({ collectable: created, source: 'created' });
   } catch (err) {
-    console.error('POST /collectables/from-news error:', err);
+    logger.error('POST /collectables/from-news error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -261,7 +262,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       },
     });
   } catch (err) {
-    console.error('GET /collectables error:', err);
+    logger.error('GET /collectables error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -274,7 +275,7 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
       return res.status(404).json({ error: "Collectable not found" });
     res.json({ collectable });
   } catch (err) {
-    console.error('GET /collectables/:id error:', err);
+    logger.error('GET /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -358,7 +359,7 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
     const hydrated = updated ? await collectablesQueries.findById(updated.id) : null;
     res.json({ collectable: hydrated || updated });
   } catch (err) {
-    console.error('PUT /collectables/:id error:', err);
+    logger.error('PUT /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

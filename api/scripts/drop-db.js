@@ -24,6 +24,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), override: true });
 
 const { Pool } = require('pg');
+const logger = require('../logger');
 
 // Build connection config (matching knexfile.js env vars)
 const connectionString = process.env.DATABASE_URL;
@@ -87,22 +88,22 @@ async function dropAllTables(dryRun = true) {
   const tables = await getAllTables();
 
   if (tables.length === 0) {
-    console.log('No tables found.');
+    logger.info('No tables found.');
     return;
   }
 
-  console.log(`\nTables to drop (${tables.length}):`);
-  tables.forEach((t) => console.log(`  - ${t}`));
+  logger.info(`\nTables to drop (${tables.length}):`);
+  tables.forEach((t) => logger.info(`  - ${t}`));
 
   if (dryRun) {
-    console.log('\n[DRY RUN] No tables were dropped.');
+    logger.info('\n[DRY RUN] No tables were dropped.');
     return;
   }
 
   // Drop all tables in one statement with CASCADE
   const tableList = tables.map((t) => `"${t}"`).join(', ');
   await pool.query(`DROP TABLE IF EXISTS ${tableList} CASCADE`);
-  console.log(`\nDropped ${tables.length} table(s).`);
+  logger.info(`\nDropped ${tables.length} table(s).`);
 }
 
 /**
@@ -112,22 +113,22 @@ async function dropAllFunctions(dryRun = true) {
   const functions = await getCustomFunctions();
 
   if (functions.length === 0) {
-    console.log('No user-defined functions found.');
+    logger.info('No user-defined functions found.');
     return;
   }
 
-  console.log(`\nFunctions to drop (${functions.length}):`);
-  functions.forEach((f) => console.log(`  - ${f.name}(${f.args})`));
+  logger.info(`\nFunctions to drop (${functions.length}):`);
+  functions.forEach((f) => logger.info(`  - ${f.name}(${f.args})`));
 
   if (dryRun) {
-    console.log('\n[DRY RUN] No functions were dropped.');
+    logger.info('\n[DRY RUN] No functions were dropped.');
     return;
   }
 
   for (const func of functions) {
     await pool.query(`DROP FUNCTION IF EXISTS "${func.name}"(${func.args}) CASCADE`);
   }
-  console.log(`\nDropped ${functions.length} function(s).`);
+  logger.info(`\nDropped ${functions.length} function(s).`);
 }
 
 /**
@@ -137,22 +138,22 @@ async function dropAllExtensions(dryRun = true) {
   const extensions = await getExtensions();
 
   if (extensions.length === 0) {
-    console.log('No extensions found.');
+    logger.info('No extensions found.');
     return;
   }
 
-  console.log(`\nExtensions to drop (${extensions.length}):`);
-  extensions.forEach((e) => console.log(`  - ${e}`));
+  logger.info(`\nExtensions to drop (${extensions.length}):`);
+  extensions.forEach((e) => logger.info(`  - ${e}`));
 
   if (dryRun) {
-    console.log('\n[DRY RUN] No extensions were dropped.');
+    logger.info('\n[DRY RUN] No extensions were dropped.');
     return;
   }
 
   for (const ext of extensions) {
     await pool.query(`DROP EXTENSION IF EXISTS "${ext}" CASCADE`);
   }
-  console.log(`\nDropped ${extensions.length} extension(s).`);
+  logger.info(`\nDropped ${extensions.length} extension(s).`);
 }
 
 /**
@@ -164,27 +165,27 @@ async function main() {
   const tablesOnly = args.includes('--tables');
   const dryRun = !confirmed;
 
-  console.log('ShelvesAI Database Drop Script');
-  console.log('==============================\n');
+  logger.info('ShelvesAI Database Drop Script');
+  logger.info('==============================\n');
 
   // Safety check for production
   if (process.env.NODE_ENV === 'production' && confirmed) {
-    console.error('ERROR: Cannot drop database in production environment.');
-    console.error('Set NODE_ENV to development or remove the production safeguard.');
+    logger.error('ERROR: Cannot drop database in production environment.');
+    logger.error('Set NODE_ENV to development or remove the production safeguard.');
     process.exit(1);
   }
 
   try {
     // Test connection
     const result = await pool.query('SELECT current_database() as db');
-    console.log(`Connected to database: ${result.rows[0].db}`);
+    logger.info(`Connected to database: ${result.rows[0].db}`);
 
     if (dryRun) {
-      console.log('\n*** DRY RUN MODE ***');
-      console.log('Add --confirm flag to actually drop objects.\n');
+      logger.info('\n*** DRY RUN MODE ***');
+      logger.info('Add --confirm flag to actually drop objects.\n');
     } else {
-      console.log('\n*** DESTRUCTIVE MODE ***');
-      console.log('All data will be permanently deleted!\n');
+      logger.info('\n*** DESTRUCTIVE MODE ***');
+      logger.info('All data will be permanently deleted!\n');
     }
 
     // Drop tables
@@ -199,13 +200,13 @@ async function main() {
     }
 
     if (!dryRun) {
-      console.log('\nDatabase has been reset.');
-      console.log('Run `npm run init-db:fresh` to reinitialize.');
+      logger.info('\nDatabase has been reset.');
+      logger.info('Run `npm run init-db:fresh` to reinitialize.');
     }
   } catch (err) {
-    console.error('\nError:', err.message);
+    logger.error('\nError:', err.message);
     if (process.env.NODE_ENV !== 'production') {
-      console.error(err.stack);
+      logger.error(err.stack);
     }
     process.exit(1);
   } finally {

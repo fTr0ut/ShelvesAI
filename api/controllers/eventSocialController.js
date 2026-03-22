@@ -1,6 +1,7 @@
 const eventSocialQueries = require('../database/queries/eventSocial');
 const notificationsQueries = require('../database/queries/notifications');
 const { parsePagination } = require('../database/queries/utils');
+const logger = require('../logger');
 
 async function ensureEventAccessible(eventId, userId, res) {
   const exists = await eventSocialQueries.ensureEventExists(eventId);
@@ -49,11 +50,11 @@ async function toggleLike(req, res) {
         }
       }
     } catch (err) {
-      console.warn('toggleLike notification error:', err.message);
+      logger.warn('toggleLike notification error:', err.message);
     }
     res.json(result);
   } catch (err) {
-    console.error('toggleLike error:', err);
+    logger.error('toggleLike error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -87,12 +88,12 @@ async function addComment(req, res) {
         });
       }
     } catch (err) {
-      console.warn('addComment notification error:', err.message);
+      logger.warn('addComment notification error:', err.message);
     }
 
     res.status(201).json({ comment, commentCount });
   } catch (err) {
-    console.error('addComment error:', err);
+    logger.error('addComment error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -114,7 +115,7 @@ async function getComments(req, res) {
       paging: { limit, offset }
     });
   } catch (err) {
-    console.error('getComments error:', err);
+    logger.error('getComments error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -134,7 +135,7 @@ async function deleteComment(req, res) {
 
     res.json({ deleted: true, id: commentId });
   } catch (err) {
-    console.error('deleteComment error:', err);
+    logger.error('deleteComment error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }

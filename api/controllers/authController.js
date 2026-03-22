@@ -3,6 +3,7 @@ const authQueries = require('../database/queries/auth');
 const passwordResetQueries = require('../database/queries/passwordReset');
 const emailService = require('../services/emailService');
 const { setAdminAuthCookies } = require('../utils/adminAuth');
+const logger = require('../logger');
 
 // Grace period: accept tokens expired within the last 5 minutes for refresh
 const REFRESH_GRACE_SECONDS = 5 * 60;
@@ -37,7 +38,7 @@ async function login(req, res) {
 
     return res.json(result);
   } catch (err) {
-    console.error('Login error:', err);
+    logger.error('Login error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -74,7 +75,7 @@ async function adminLogin(req, res) {
       onboardingCompleted: result.onboardingCompleted,
     });
   } catch (err) {
-    console.error('Admin login error:', err);
+    logger.error('Admin login error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -110,7 +111,7 @@ async function register(req, res) {
       }
       return res.status(400).json({ error: 'Username taken' });
     }
-    console.error('Register error:', err);
+    logger.error('Register error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -135,7 +136,7 @@ async function me(req, res) {
       }
     });
   } catch (err) {
-    console.error('Me error:', err);
+    logger.error('Me error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -156,7 +157,7 @@ async function consumeAuth0(req, res) {
 
     return res.json(result);
   } catch (err) {
-    console.error('consumeAuth0 error:', err);
+    logger.error('consumeAuth0 error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -180,7 +181,7 @@ async function setUsername(req, res) {
 
     return res.json(result);
   } catch (err) {
-    console.error('setUsername error:', err);
+    logger.error('setUsername error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -200,7 +201,7 @@ async function forgotPassword(req, res) {
 
     // Always return success to prevent email enumeration attacks
     if (!user) {
-      console.log(`[ForgotPassword] No user found for email: ${normalizedEmail}`);
+      logger.info(`[ForgotPassword] No user found for email: ${normalizedEmail}`);
       return res.json({ message: 'If an account exists, a reset link has been sent' });
     }
 
@@ -215,13 +216,13 @@ async function forgotPassword(req, res) {
         user.first_name
       );
     } catch (emailError) {
-      console.error('[ForgotPassword] Failed to send email:', emailError);
+      logger.error('[ForgotPassword] Failed to send email:', emailError);
       return res.status(500).json({ error: 'Failed to send reset email. Please try again.' });
     }
 
     return res.json({ message: 'If an account exists, a reset link has been sent' });
   } catch (err) {
-    console.error('ForgotPassword error:', err);
+    logger.error('ForgotPassword error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -247,7 +248,7 @@ async function resetPassword(req, res) {
 
     return res.json({ message: 'Password has been reset successfully' });
   } catch (err) {
-    console.error('ResetPassword error:', err);
+    logger.error('ResetPassword error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }
@@ -264,7 +265,7 @@ async function validateResetToken(req, res) {
     const result = await passwordResetQueries.validateResetToken(token);
     return res.json(result);
   } catch (err) {
-    console.error('ValidateResetToken error:', err);
+    logger.error('ValidateResetToken error:', err);
     return res.status(500).json({ valid: false, error: 'Server error' });
   }
 }
@@ -318,7 +319,7 @@ async function refresh(req, res) {
 
     return res.json({ token: result.token });
   } catch (err) {
-    console.error('Refresh error:', err);
+    logger.error('Refresh error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 }

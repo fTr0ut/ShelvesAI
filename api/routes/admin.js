@@ -7,6 +7,7 @@ const { requireAdminCsrf } = require('../middleware/csrf');
 const adminController = require('../controllers/adminController');
 const { adminLogin } = require('../controllers/authController');
 const { requireFields } = require('../middleware/validate');
+const logger = require('../logger');
 
 const adminLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -17,7 +18,7 @@ const adminLoginLimiter = rateLimit({
   legacyHeaders: false,
   handler: (req, res, _next, options) => {
     const ip = req.headers['cf-connecting-ip'] || req.ip;
-    console.warn(`[AdminLoginLimiter] Too many admin login attempts from ${ip}`);
+    logger.warn(`[AdminLoginLimiter] Too many admin login attempts from ${ip}`);
     res.status(options.statusCode).json(options.message);
   },
 });
@@ -61,6 +62,8 @@ router.post('/users/:userId/toggle-admin', adminController.toggleAdmin);
 
 // Activity monitoring
 router.get('/feed/recent', adminController.getRecentFeed);
+router.get('/jobs', adminController.listJobs);
+router.get('/jobs/:jobId', adminController.getJob);
 
 // System info
 router.get('/system', adminController.getSystemInfo);

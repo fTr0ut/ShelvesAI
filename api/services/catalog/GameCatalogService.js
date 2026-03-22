@@ -4,6 +4,7 @@ const {
   makeLightweightFingerprint,
 } = require('../collectables/fingerprint');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
+const logger = require('../../logger');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -206,7 +207,7 @@ class GameCatalogService {
     for (let i = 0; i < previewSize; i++) {
       preview.push(summarizeItemForLog(items[i], i));
     }
-    console.info('[GameCatalogService.lookupFirstPass] starting batch', {
+    logger.info('[GameCatalogService.lookupFirstPass] starting batch', {
       total: items.length,
       preview,
       concurrency,
@@ -218,7 +219,7 @@ class GameCatalogService {
         const currentIndex = index++;
         const input = items[currentIndex];
         const logContext = summarizeItemForLog(input, currentIndex);
-        console.info('[GameCatalogService.lookupFirstPass] lookup.start', logContext);
+        logger.info('[GameCatalogService.lookupFirstPass] lookup.start', logContext);
         let enrichment = null;
         let status = 'unresolved';
         const observer = {
@@ -253,7 +254,7 @@ class GameCatalogService {
           }
         } catch (err) {
           status = 'error';
-          console.error('[GameCatalogService.lookupFirstPass] failed', {
+          logger.error('[GameCatalogService.lookupFirstPass] failed', {
             ...logContext,
             message: err?.message || err,
           });
@@ -267,7 +268,7 @@ class GameCatalogService {
           if (enrichmentSummary) {
             payload.enrichment = enrichmentSummary;
           }
-          console.info('[GameCatalogService.lookupFirstPass] lookup.finish', payload);
+          logger.info('[GameCatalogService.lookupFirstPass] lookup.finish', payload);
         }
       }
     };
@@ -312,7 +313,7 @@ class GameCatalogService {
     });
 
     if (!title) {
-      console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+      logger.info('[GameCatalogService.safeLookup] lookup.skipped', {
         ...logContext,
         reason: 'missing-title',
       });
@@ -321,12 +322,12 @@ class GameCatalogService {
 
     if (!this.clientId || !this.clientSecret) {
       if (!this._warnedMissingCredentials) {
-        console.warn(
+        logger.warn(
           '[GameCatalogService.safeLookup] IGDB credentials missing; skipping lookup',
         );
         this._warnedMissingCredentials = true;
       }
-      console.warn('[GameCatalogService.safeLookup] lookup.skipped', {
+      logger.warn('[GameCatalogService.safeLookup] lookup.skipped', {
         ...logContext,
         reason: 'missing-credentials',
       });
@@ -347,7 +348,7 @@ class GameCatalogService {
               limit: this.maxResults,
               platform,
             });
-            console.info('[GameCatalogService.safeLookup] lookup.retry', {
+            logger.info('[GameCatalogService.safeLookup] lookup.retry', {
               ...logContext,
               reason: 'no-results',
               payloadLength: 0,
@@ -356,7 +357,7 @@ class GameCatalogService {
             });
             continue;
           }
-          console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+          logger.info('[GameCatalogService.safeLookup] lookup.skipped', {
             ...logContext,
             reason: 'no-results',
             payloadLength: Array.isArray(payload) ? payload.length : 0,
@@ -375,7 +376,7 @@ class GameCatalogService {
 
         const best = this.pickBestCandidate(candidates);
         if (!best) {
-          console.info('[GameCatalogService.safeLookup] lookup.skipped', {
+          logger.info('[GameCatalogService.safeLookup] lookup.skipped', {
             ...logContext,
             reason: 'no-matching-candidates',
             attempt,
@@ -405,7 +406,7 @@ class GameCatalogService {
             item: logContext,
           });
           if (willRetry) {
-            console.warn('[GameCatalogService.safeLookup] rate limited', {
+            logger.warn('[GameCatalogService.safeLookup] rate limited', {
               backoff,
               title,
             });
@@ -416,7 +417,7 @@ class GameCatalogService {
         }
         if (message.includes('aborted') && attempt < retries) {
           const backoff = 1000 * (attempt + 1);
-          console.warn('[GameCatalogService.safeLookup] request aborted', {
+          logger.warn('[GameCatalogService.safeLookup] request aborted', {
             backoff,
             title,
           });
@@ -1356,7 +1357,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
           : 50;
 
         if (loggedReason !== reason) {
-          console.info('[GameCatalogService.rateLimit] throttling', {
+          logger.info('[GameCatalogService.rateLimit] throttling', {
             reason,
             waitMs,
             activeRequests: this._activeRequests,

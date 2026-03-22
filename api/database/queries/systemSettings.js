@@ -4,7 +4,7 @@ const { rowToCamelCase } = require('./utils');
 /**
  * Get a single system setting by key.
  * @param {string} key
- * @returns {Promise<{ key: string, value: any, description: string|null, updatedBy: number|null, createdAt: Date, updatedAt: Date }|null>}
+ * @returns {Promise<{ key: string, value: any, description: string|null, updatedBy: string|null, createdAt: Date, updatedAt: Date }|null>}
  */
 async function getSetting(key) {
     const result = await query(
@@ -18,8 +18,8 @@ async function getSetting(key) {
  * Insert or update a system setting.
  * @param {string} key
  * @param {any} value - Will be stored as JSONB
- * @param {{ description?: string, updatedBy?: number }} [options]
- * @returns {Promise<{ key: string, value: any, description: string|null, updatedBy: number|null, createdAt: Date, updatedAt: Date }>}
+ * @param {{ description?: string, updatedBy?: string }} [options]
+ * @returns {Promise<{ key: string, value: any, description: string|null, updatedBy: string|null, createdAt: Date, updatedAt: Date }>}
  */
 async function upsertSetting(key, value, { description = null, updatedBy = null } = {}) {
     const result = await query(
@@ -51,7 +51,7 @@ async function deleteSetting(key) {
 
 /**
  * Get all system settings.
- * @returns {Promise<Array<{ key: string, value: any, description: string|null, updatedBy: number|null, createdAt: Date, updatedAt: Date }>>}
+ * @returns {Promise<Array<{ key: string, value: any, description: string|null, updatedBy: string|null, createdAt: Date, updatedAt: Date }>>}
  */
 async function getAllSettings() {
     const result = await query(

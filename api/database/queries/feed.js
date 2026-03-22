@@ -1,6 +1,7 @@
 const { query, transaction } = require('../pg');
 const { rowToCamelCase, parsePagination } = require('./utils');
 const { AGGREGATE_WINDOW_MINUTES, PREVIEW_PAYLOAD_LIMIT } = require('../../config/constants');
+const logger = require('../../logger');
 
 const FEED_AGGREGATE_DEBUG = String(process.env.FEED_AGGREGATE_DEBUG || '').toLowerCase() === 'true';
 
@@ -79,7 +80,7 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
   );
 
   if (FEED_AGGREGATE_DEBUG) {
-    console.log('[feed.aggregate] created', {
+    logger.info('[feed.aggregate] created', {
       aggregateId: insertResult.rows[0]?.id,
       userId,
       shelfId,
@@ -348,7 +349,7 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
     const visibility = visibilityResult.rows[0]?.visibility || null;
     if (!visibility || visibility === 'private') {
       if (FEED_AGGREGATE_DEBUG) {
-        console.log('[feed.event] skipped private shelf', {
+        logger.info('[feed.event] skipped private shelf', {
           shelfId,
           eventType,
           userId,
@@ -397,7 +398,7 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
     );
 
     if (FEED_AGGREGATE_DEBUG) {
-      console.log('[feed.event] logged', {
+      logger.info('[feed.event] logged', {
         eventId: insertResult.rows[0]?.id,
         aggregateId: aggregate?.id,
         userId,
@@ -442,7 +443,7 @@ async function logCheckIn({ userId, collectableId = null, manualId = null, statu
   );
 
   if (FEED_AGGREGATE_DEBUG) {
-    console.log('[feed.checkin] created', {
+    logger.info('[feed.checkin] created', {
       aggregateId: result.rows[0]?.id,
       userId,
       collectableId,

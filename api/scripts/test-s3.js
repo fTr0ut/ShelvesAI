@@ -19,6 +19,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const crypto = require('crypto');
+const logger = require('../logger');
 
 // Test configuration
 const TEST_KEY = `_test/s3-connection-test-${Date.now()}.txt`;
@@ -36,23 +37,23 @@ const colors = {
 };
 
 function log(message, color = 'reset') {
-  console.log(`${colors[color]}${message}${colors.reset}`);
+  logger.info(`${colors[color]}${message}${colors.reset}`);
 }
 
 function logStep(step, message) {
-  console.log(`\n${colors.cyan}[Step ${step}]${colors.reset} ${message}`);
+  logger.info(`\n${colors.cyan}[Step ${step}]${colors.reset} ${message}`);
 }
 
 function logSuccess(message) {
-  console.log(`  ${colors.green}✓${colors.reset} ${message}`);
+  logger.info(`  ${colors.green}✓${colors.reset} ${message}`);
 }
 
 function logError(message) {
-  console.log(`  ${colors.red}✗${colors.reset} ${message}`);
+  logger.info(`  ${colors.red}✗${colors.reset} ${message}`);
 }
 
 function logInfo(message) {
-  console.log(`  ${colors.dim}${message}${colors.reset}`);
+  logger.info(`  ${colors.dim}${message}${colors.reset}`);
 }
 
 /**
@@ -67,9 +68,9 @@ async function streamToString(stream) {
 }
 
 async function main() {
-  console.log('='.repeat(60));
+  logger.info('='.repeat(60));
   log('S3 Connection Test', 'cyan');
-  console.log('='.repeat(60));
+  logger.info('='.repeat(60));
 
   const results = {
     config: false,
@@ -233,9 +234,9 @@ async function main() {
 }
 
 function printSummary(results) {
-  console.log('\n' + '='.repeat(60));
+  logger.info('\n' + '='.repeat(60));
   log('Test Summary', 'cyan');
-  console.log('='.repeat(60));
+  logger.info('='.repeat(60));
 
   const tests = [
     ['Configuration', results.config],
@@ -251,27 +252,27 @@ function printSummary(results) {
 
   for (const [name, result] of tests) {
     if (result) {
-      console.log(`  ${colors.green}✓${colors.reset} ${name}`);
+      logger.info(`  ${colors.green}✓${colors.reset} ${name}`);
       passed++;
     } else {
-      console.log(`  ${colors.red}✗${colors.reset} ${name}`);
+      logger.info(`  ${colors.red}✗${colors.reset} ${name}`);
       failed++;
     }
   }
 
-  console.log('');
+  logger.info('');
   if (failed === 0) {
     log(`All ${passed} tests passed! S3 is ready for use.`, 'green');
   } else {
     log(`${passed} passed, ${failed} failed`, failed > 0 ? 'red' : 'green');
   }
 
-  console.log('');
+  logger.info('');
 
   // IAM policy reminder
   if (failed > 0) {
-    console.log('Required IAM permissions:');
-    console.log(colors.dim + `{
+    logger.info('Required IAM permissions:');
+    logger.info(colors.dim + `{
   "Version": "2012-10-17",
   "Statement": [{
     "Effect": "Allow",
@@ -290,6 +291,6 @@ function printSummary(results) {
 }
 
 main().catch(err => {
-  console.error('Unexpected error:', err);
+  logger.error('Unexpected error:', err);
   process.exit(1);
 });

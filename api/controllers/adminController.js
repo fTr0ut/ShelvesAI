@@ -2,7 +2,9 @@ const adminQueries = require('../database/queries/admin');
 const { parsePagination } = require('../database/queries/utils');
 const { clearAdminAuthCookies } = require('../utils/adminAuth');
 const systemSettingsQueries = require('../database/queries/systemSettings');
+const jobRunsQueries = require('../database/queries/jobRuns');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
+const logger = require('../logger');
 
 const normalizeIp = (ip) => {
   if (!ip || typeof ip !== 'string') return ip;
@@ -46,7 +48,7 @@ async function getMe(req, res) {
       },
     });
   } catch (err) {
-    console.error('Admin getMe error:', err);
+    logger.error('Admin getMe error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -60,7 +62,7 @@ async function logout(req, res) {
     clearAdminAuthCookies(res);
     res.status(204).send();
   } catch (err) {
-    console.error('Admin logout error:', err);
+    logger.error('Admin logout error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -74,7 +76,7 @@ async function getStats(req, res) {
     const stats = await adminQueries.getSystemStats();
     res.json(stats);
   } catch (err) {
-    console.error('Admin getStats error:', err);
+    logger.error('Admin getStats error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -114,7 +116,7 @@ async function listUsers(req, res) {
       },
     });
   } catch (err) {
-    console.error('Admin listUsers error:', err);
+    logger.error('Admin listUsers error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -134,7 +136,7 @@ async function getUser(req, res) {
 
     res.json({ user });
   } catch (err) {
-    console.error('Admin getUser error:', err);
+    logger.error('Admin getUser error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -162,7 +164,7 @@ async function suspendUser(req, res) {
 
     res.json({ user: result.user, message: 'User suspended successfully' });
   } catch (err) {
-    console.error('Admin suspendUser error:', err);
+    logger.error('Admin suspendUser error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -187,7 +189,7 @@ async function unsuspendUser(req, res) {
 
     res.json({ user: result.user, message: 'User unsuspended successfully' });
   } catch (err) {
-    console.error('Admin unsuspendUser error:', err);
+    logger.error('Admin unsuspendUser error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -217,7 +219,7 @@ async function toggleAdmin(req, res) {
 
     res.json({ user: result.user, message });
   } catch (err) {
-    console.error('Admin toggleAdmin error:', err);
+    logger.error('Admin toggleAdmin error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -234,7 +236,65 @@ async function getRecentFeed(req, res) {
 
     res.json({ activity });
   } catch (err) {
-    console.error('Admin getRecentFeed error:', err);
+    logger.error('Admin getRecentFeed error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/jobs
+ * List recent job runs for quick lookup
+ */
+async function listJobs(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+    const result = await jobRunsQueries.listJobRuns({
+      limit,
+      offset,
+      status: req.query.status || null,
+      jobType: req.query.jobType || null,
+      userId: req.query.userId || null,
+      jobId: req.query.jobId || null,
+    });
+
+    res.json({
+      jobs: result.jobs,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin listJobs error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/jobs/:jobId
+ * Get a job run and its recent event trail
+ */
+async function getJob(req, res) {
+  try {
+    const { jobId } = req.params;
+    if (!jobId || String(jobId).length > 255) {
+      return res.status(400).json({ error: 'Invalid jobId' });
+    }
+
+    const job = await jobRunsQueries.getJobRun(jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const eventLimitRaw = Number.parseInt(req.query.eventLimit, 10);
+    const eventLimit = Number.isFinite(eventLimitRaw) ? eventLimitRaw : 200;
+    const events = await jobRunsQueries.getJobEvents(jobId, { limit: eventLimit });
+
+    res.json({ job, events });
+  } catch (err) {
+    logger.error('Admin getJob error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -259,7 +319,7 @@ async function getSystemInfo(req, res) {
       platform: process.platform,
     });
   } catch (err) {
-    console.error('Admin getSystemInfo error:', err);
+    logger.error('Admin getSystemInfo error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -273,7 +333,7 @@ async function getSettings(req, res) {
     const settings = await systemSettingsQueries.getAllSettings();
     res.json({ settings });
   } catch (err) {
-    console.error('Admin getSettings error:', err);
+    logger.error('Admin getSettings error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -291,7 +351,7 @@ async function getSetting(req, res) {
     }
     res.json({ setting });
   } catch (err) {
-    console.error('Admin getSetting error:', err);
+    logger.error('Admin getSetting error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -331,7 +391,7 @@ async function updateSetting(req, res) {
 
     res.json({ setting });
   } catch (err) {
-    console.error('Admin updateSetting error:', err);
+    logger.error('Admin updateSetting error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -346,6 +406,8 @@ module.exports = {
   unsuspendUser,
   toggleAdmin,
   getRecentFeed,
+  listJobs,
+  getJob,
   getSystemInfo,
   getSettings,
   getSetting,

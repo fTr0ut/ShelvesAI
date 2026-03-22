@@ -71,6 +71,7 @@ class TvCatalogService {
         this._warnedMissingApiKey = false;
 
         const RateLimiter = require('../../utils/RateLimiter');
+const logger = require('../../logger');
         this.limiter = new RateLimiter(35, 1);
     }
 
@@ -118,7 +119,7 @@ class TvCatalogService {
                 const message = String(err?.message || err);
                 if ((message.includes('429') || message.includes('rate limit')) && attempt < retries) {
                     const backoff = 500 * Math.pow(2, attempt);
-                    console.warn('[TvCatalogService.safeLookup] rate limited', {
+                    logger.warn('[TvCatalogService.safeLookup] rate limited', {
                         attempt,
                         backoff,
                         query: queryLogContext,
@@ -128,7 +129,7 @@ class TvCatalogService {
                 }
                 if (message.includes('abort') && attempt < retries) {
                     const backoff = 500 * (attempt + 1);
-                    console.warn('[TvCatalogService.safeLookup] request aborted', {
+                    logger.warn('[TvCatalogService.safeLookup] request aborted', {
                         attempt,
                         backoff,
                         query: queryLogContext,
@@ -137,14 +138,14 @@ class TvCatalogService {
                     continue;
                 }
                 if (message.includes('404')) {
-                    console.warn('[TvCatalogService.safeLookup] details not found', {
+                    logger.warn('[TvCatalogService.safeLookup] details not found', {
                         query: queryLogContext,
                         attempt,
                     });
                     return null;
                 }
                 if (message.includes('401')) {
-                    console.error('[TvCatalogService.safeLookup] unauthorized', queryLogContext);
+                    logger.error('[TvCatalogService.safeLookup] unauthorized', queryLogContext);
                     return null;
                 }
                 throw err;

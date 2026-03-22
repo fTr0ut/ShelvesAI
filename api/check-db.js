@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const path = require('path');
+const logger = require('./logger');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -24,9 +25,9 @@ async function check() {
       FROM information_schema.tables 
       WHERE table_schema = 'public'
     `);
-        console.log('Tables:', res.rows.map(r => r.table_name));
+        logger.info('Tables:', res.rows.map(r => r.table_name));
     } catch (err) {
-        console.error('DB Check Error:', err);
+        logger.error('DB Check Error:', err);
     } finally {
         await pool.end();
     }

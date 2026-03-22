@@ -18,9 +18,10 @@ function getCatalogRouter() {
   if (!catalogRouter) {
     try {
       const { getCatalogRouter: getRouter } = require('./CatalogRouter');
+const logger = require('../../logger');
       catalogRouter = getRouter();
     } catch (err) {
-      console.warn('[BookCatalogService] CatalogRouter not available:', err.message);
+      logger.warn('[BookCatalogService] CatalogRouter not available:', err.message);
     }
   }
   return catalogRouter;
@@ -101,7 +102,7 @@ class BookCatalogService {
             results[currentIndex] = { status: 'unresolved', input };
           }
         } catch (err) {
-          console.error('[BookCatalogService.lookupFirstPass] failed', err?.message || err);
+          logger.error('[BookCatalogService.lookupFirstPass] failed', err?.message || err);
           results[currentIndex] = { status: 'unresolved', input };
         }
       }
@@ -118,7 +119,7 @@ class BookCatalogService {
   async routerLookup(item, retries = DEFAULT_RETRIES) {
     const router = getCatalogRouter();
     if (!router) {
-      console.warn('[BookCatalogService.routerLookup] Router not available, falling back to safeLookup');
+      logger.warn('[BookCatalogService.routerLookup] Router not available, falling back to safeLookup');
       return this.safeLookup(item, retries, { bypassRouter: true });
     }
 
@@ -126,7 +127,7 @@ class BookCatalogService {
       const result = await router.lookup(item, 'books', { retries });
       return result;
     } catch (err) {
-      console.error('[BookCatalogService.routerLookup] failed:', err?.message || err);
+      logger.error('[BookCatalogService.routerLookup] failed:', err?.message || err);
       return null;
     }
   }
@@ -155,7 +156,7 @@ class BookCatalogService {
     const hardcoverEnabled = this.hardcoverClient?.isConfigured();
     if (!hardcoverEnabled && !this._warnedMissingHardcoverToken) {
       this._warnedMissingHardcoverToken = true;
-      console.warn('[BookCatalogService.safeLookup] Hardcover API token missing; skipping Hardcover fallback');
+      logger.warn('[BookCatalogService.safeLookup] Hardcover API token missing; skipping Hardcover fallback');
     }
 
     const minMetadataScore = Number.isFinite(this.bookMetadataMinScore)
@@ -186,7 +187,7 @@ class BookCatalogService {
         attempt < retries
       ) {
         const backoff = 500 * Math.pow(2, attempt);
-        console.warn('[BookCatalogService.safeLookup] Hardcover rate limited', {
+        logger.warn('[BookCatalogService.safeLookup] Hardcover rate limited', {
           backoff,
           stage,
           payload,
@@ -197,7 +198,7 @@ class BookCatalogService {
       // Handle aborted requests
       if (message.toLowerCase().includes('aborted') && attempt < retries) {
         const backoff = 1000 * (attempt + 1);
-        console.warn('[BookCatalogService.safeLookup] Hardcover request aborted', {
+        logger.warn('[BookCatalogService.safeLookup] Hardcover request aborted', {
           backoff,
           stage,
           payload,
@@ -208,7 +209,7 @@ class BookCatalogService {
       // Handle 503 (Service Unavailable) and 502 (Bad Gateway) - transient server errors
       if ((message.includes('503') || message.includes('502') || message.toLowerCase().includes('no available server')) && attempt < retries) {
         const backoff = 2000 * Math.pow(2, attempt); // Longer backoff for server issues
-        console.warn('[BookCatalogService.safeLookup] Hardcover server unavailable (503/502), retrying...', {
+        logger.warn('[BookCatalogService.safeLookup] Hardcover server unavailable (503/502), retrying...', {
           backoff,
           stage,
           payload,
@@ -218,7 +219,7 @@ class BookCatalogService {
         await makeDelay(backoff);
         return true;
       }
-      console.error('[BookCatalogService.safeLookup] Hardcover lookup failed', {
+      logger.error('[BookCatalogService.safeLookup] Hardcover lookup failed', {
         stage,
         payload,
         error: err,
@@ -264,7 +265,7 @@ class BookCatalogService {
         const message = String(err?.message || err);
         if (message.includes('429') && attempt < retries) {
           const backoff = 500 * Math.pow(2, attempt);
-          console.warn('[BookCatalogService.safeLookup] 429 from OpenLibrary', {
+          logger.warn('[BookCatalogService.safeLookup] 429 from OpenLibrary', {
             backoff,
             payload,
           });
@@ -273,14 +274,14 @@ class BookCatalogService {
         }
         if (message.includes('aborted') && attempt < retries) {
           const backoff = 1000 * (attempt + 1);
-          console.warn('[BookCatalogService.safeLookup] request aborted', {
+          logger.warn('[BookCatalogService.safeLookup] request aborted', {
             backoff,
             payload,
           });
           await makeDelay(backoff);
           continue;
         }
-        console.error('[BookCatalogService.safeLookup] failed', {
+        logger.error('[BookCatalogService.safeLookup] failed', {
           payload,
           error: err,
         });
@@ -323,16 +324,16 @@ class BookCatalogService {
       } catch (err) {
         const message = String(err?.message || err);
         if (message.includes('429')) {
-          console.warn('[BookCatalogService.safeLookup] isbn 429', { isbn });
+          logger.warn('[BookCatalogService.safeLookup] isbn 429', { isbn });
           await makeDelay(500);
           continue;
         }
         if (message.includes('aborted')) {
-          console.warn('[BookCatalogService.safeLookup] isbn aborted', { isbn });
+          logger.warn('[BookCatalogService.safeLookup] isbn aborted', { isbn });
           await makeDelay(500);
           continue;
         }
-        console.error('[BookCatalogService.safeLookup] isbn lookup failed', {
+        logger.error('[BookCatalogService.safeLookup] isbn lookup failed', {
           isbn,
           error: err,
         });

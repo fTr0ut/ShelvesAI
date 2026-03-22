@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const logger = require('../../logger');
 
 // Load shelf type config
 let shelfTypeConfig = null;
@@ -20,13 +21,13 @@ function loadConfig() {
         if (fs.existsSync(configPath)) {
             shelfTypeConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
             buildAliasMap();
-            console.log('[ShelfTypeResolver] Loaded shelf type config');
+            logger.info('[ShelfTypeResolver] Loaded shelf type config');
         } else {
-            console.warn('[ShelfTypeResolver] shelfType.json not found, using defaults');
+            logger.warn('[ShelfTypeResolver] shelfType.json not found, using defaults');
             shelfTypeConfig = { types: {}, defaultType: 'other' };
         }
     } catch (err) {
-        console.error('[ShelfTypeResolver] Failed to load shelfType.json:', err.message);
+        logger.error('[ShelfTypeResolver] Failed to load shelfType.json:', err.message);
         shelfTypeConfig = { types: {}, defaultType: 'other' };
     }
 

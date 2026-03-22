@@ -525,6 +525,55 @@ CREATE INDEX idx_admin_action_logs_action ON admin_action_logs(action);
 CREATE INDEX idx_admin_action_logs_created_at ON admin_action_logs(created_at);
 
 -- ============================================
+-- JOB LOGGING (Requests + Scheduled Workflows)
+-- ============================================
+CREATE TABLE job_runs (
+    job_id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL, -- request | scheduled | script | manual | system
+    job_name TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'running', -- running | completed | failed
+    success BOOLEAN,
+
+    http_method TEXT,
+    http_path TEXT,
+    http_status INTEGER,
+    ip_address TEXT,
+    duration_ms INTEGER,
+
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}' NOT NULL,
+
+    started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    finished_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    CONSTRAINT chk_job_runs_status CHECK (status IN ('running', 'completed', 'failed'))
+);
+
+CREATE INDEX idx_job_runs_job_type ON job_runs(job_type);
+CREATE INDEX idx_job_runs_status ON job_runs(status);
+CREATE INDEX idx_job_runs_user_id ON job_runs(user_id);
+CREATE INDEX idx_job_runs_started_at ON job_runs(started_at);
+CREATE INDEX idx_job_runs_finished_at ON job_runs(finished_at);
+CREATE INDEX idx_job_runs_http_status ON job_runs(http_status);
+
+CREATE TABLE job_events (
+    id BIGSERIAL PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES job_runs(job_id) ON DELETE CASCADE,
+    level TEXT NOT NULL, -- info | warn | error | debug
+    message TEXT NOT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}' NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_job_events_job_time ON job_events(job_id, created_at);
+CREATE INDEX idx_job_events_level ON job_events(level);
+CREATE INDEX idx_job_events_created_at ON job_events(created_at);
+
+-- ============================================
 -- NEWS ITEMS (Trending/Upcoming from APIs)
 -- ============================================
 CREATE TABLE news_items (
@@ -695,4 +744,8 @@ CREATE TRIGGER update_user_lists_updated_at
 
 CREATE TRIGGER update_user_ratings_updated_at
     BEFORE UPDATE ON user_ratings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_job_runs_updated_at
+    BEFORE UPDATE ON job_runs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

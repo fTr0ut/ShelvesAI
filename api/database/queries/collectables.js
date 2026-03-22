@@ -2,6 +2,9 @@ const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const { ensureCoverMediaForCollectable } = require('./media');
 const { normalizeCollectableKind } = require('../../services/collectables/kind');
+const { appendJobEvent } = require('./jobRuns');
+const { getJobId, getUserId } = require('../../context');
+const logger = require('../../logger');
 
 /**
  * Resolve the query executor: use the provided client if given, otherwise use the shared pool query.
@@ -283,6 +286,34 @@ async function upsert(data, client = null) {
         ]
     );
     const collectable = rowToCamelCase(result.rows[0]);
+    const isInsert = collectable.createdAt && collectable.updatedAt &&
+      new Date(collectable.createdAt).getTime() === new Date(collectable.updatedAt).getTime();
+    logger.info('[collectables] upsert', {
+      action: isInsert ? 'insert' : 'update',
+      collectableId: collectable.id,
+      fingerprint: collectable.fingerprint,
+      kind: normalizedKind,
+      title: collectable.title,
+    });
+    const jobId = getJobId();
+    if (jobId !== 'no-job') {
+        appendJobEvent({
+            jobId,
+            level: 'info',
+            message: '[collectables] upsert',
+            userId: getUserId(),
+            metadata: {
+                action: isInsert ? 'insert' : 'update',
+                collectableId: collectable.id,
+                fingerprint: collectable.fingerprint,
+                kind: normalizedKind,
+                title: collectable.title,
+            },
+        }).catch((err) => {
+            if (err && err.code === '42P01') return;
+            logger.warn('[collectables] failed to append job event', { error: err.message });
+        });
+    }
 
     try {
         const coverMedia = await ensureCoverMediaForCollectable({
@@ -309,7 +340,7 @@ async function upsert(data, client = null) {
             if (localPath) collectable.coverMediaPath = localPath;
         }
     } catch (err) {
-        console.warn('[collectables.upsert] media sync failed:', err.message || err);
+        logger.warn('[collectables.upsert] media sync failed', { error: err.message || String(err) });
     }
 
     return collectable;

@@ -26,6 +26,7 @@ const { BookCatalogService } = require('./catalog/BookCatalogService');
 const { GameCatalogService } = require('./catalog/GameCatalogService');
 const { MovieCatalogService } = require('./catalog/MovieCatalogService');
 const { MusicCatalogService } = require('./catalog/MusicCatalogService');
+const logger = require('../logger');
 
 // Load progress messages config
 let progressMessagesConfig = {};
@@ -33,7 +34,7 @@ try {
     const configPath = path.join(__dirname, '..', 'config', 'visionProgressMessages.json');
     progressMessagesConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 } catch (err) {
-    console.warn('[VisionPipeline] Could not load visionProgressMessages.json, using defaults:', err.message);
+    logger.warn('[VisionPipeline] Could not load visionProgressMessages.json, using defaults:', err.message);
 }
 
 /**
@@ -168,7 +169,7 @@ class VisionPipelineService {
         try {
             await this.hooks.execute(hookType, context);
         } catch (err) {
-            console.warn(`[VisionPipeline] Hook ${hookType} failed:`, err?.message || err);
+            logger.warn(`[VisionPipeline] Hook ${hookType} failed:`, err?.message || err);
         }
     }
 
@@ -203,7 +204,7 @@ class VisionPipelineService {
      */
     async processImage(imageBase64, shelf, userId, jobId = null, options = null) {
         if (!shelf || !shelf.type) throw new Error('Invalid shelf provided');
-        console.log('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId, jobId });
+        logger.info('[VisionPipeline] === Starting processImage ===', { shelfId: shelf.id, shelfType: shelf.type, userId, jobId });
         if (jobId && typeof jobId === 'object' && options == null) {
             options = jobId;
             jobId = null;
@@ -232,7 +233,7 @@ class VisionPipelineService {
         const typeSettings = getVisionSettingsForType(shelf.type) || {};
         const confidenceMax = typeSettings.confidenceMax ?? DEFAULT_CONFIDENCE_MAX;
         const confidenceMin = typeSettings.confidenceMin ?? DEFAULT_CONFIDENCE_MIN;
-        console.log('[VisionPipeline] Using confidence thresholds for', shelf.type, ':', { max: confidenceMax, min: confidenceMin });
+        logger.info('[VisionPipeline] Using confidence thresholds for', shelf.type, ':', { max: confidenceMax, min: confidenceMin });
 
         const providedRawItems = Array.isArray(resolvedOptions.rawItems) ? resolvedOptions.rawItems : null;
         const ocrProvider = providedRawItems ? (resolvedOptions.ocrProvider || 'mlkit') : 'gemini';
@@ -248,7 +249,7 @@ class VisionPipelineService {
         // Step 1: Extract items from image
         checkAborted();
         updateProgress('extracting');
-        console.log('[VisionPipeline] Step 1: Extracting items from image via vision OCR...');
+        logger.info('[VisionPipeline] Step 1: Extracting items from image via vision OCR...');
         let rawItems = [];
         if (providedRawItems) {
             rawItems = providedRawItems;
@@ -257,7 +258,7 @@ class VisionPipelineService {
         } else {
             throw new Error('Vision OCR disabled and no rawItems provided');
         }
-        console.log('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
+        logger.info('[VisionPipeline] Step 1 Complete: Extracted', rawItems.length, 'items:', rawItems.map(i => i.title || i.name));
         await this.executeHook(HOOK_TYPES.AFTER_VISION_OCR, {
             ...baseHookContext,
             items: rawItems,
@@ -274,7 +275,7 @@ class VisionPipelineService {
         // Step 1b: Categorize into three tiers using per-type thresholds
         checkAborted();
         updateProgress('categorizing', { count: normalizedItems.length });
-        console.log('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
+        logger.info('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
         const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
             normalizedItems,
             confidenceMax,
@@ -289,7 +290,7 @@ class VisionPipelineService {
 
         // Low confidence items go directly to needs_review
         if (lowConfidence.length > 0) {
-            console.log('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
+            logger.info('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
             await this.saveToReviewQueue(lowConfidence, userId, shelf.id, {
                 ...baseHookContext,
                 reason: 'low_confidence',
@@ -324,7 +325,7 @@ class VisionPipelineService {
             }
 
             if (itemsToReview.length > 0) {
-                console.log('[VisionPipeline] Sending', itemsToReview.length, 'incomplete items to review queue...');
+                logger.info('[VisionPipeline] Sending', itemsToReview.length, 'incomplete items to review queue...');
                 await this.saveToReviewQueue(itemsToReview, userId, shelf.id, {
                     ...baseHookContext,
                     reason: 'missing_fields',
@@ -333,7 +334,7 @@ class VisionPipelineService {
 
             checkAborted();
             updateProgress('preparingOther', { count: itemsToSave.length });
-            console.log('[VisionPipeline] Saving', itemsToSave.length, 'other items to shelf...');
+            logger.info('[VisionPipeline] Saving', itemsToSave.length, 'other items to shelf...');
             updateProgress('saving', { count: itemsToSave.length });
             const manualResult = await this.saveManualToShelf(itemsToSave, userId, shelf.id, shelf.type, {
                 requireCreator: true,
@@ -346,7 +347,7 @@ class VisionPipelineService {
 
             // Route skipped items (missing title or primaryCreator) to review queue
             if (skippedItems.length > 0) {
-                console.log('[VisionPipeline] Routing', skippedItems.length, 'skipped items (missing fields) to review queue...');
+                logger.info('[VisionPipeline] Routing', skippedItems.length, 'skipped items (missing fields) to review queue...');
                 await this.saveToReviewQueue(skippedItems, userId, shelf.id, {
                     ...baseHookContext,
                     reason: 'missing_fields',
@@ -390,12 +391,12 @@ class VisionPipelineService {
                         },
                     });
                 } catch (err) {
-                    console.warn('[VisionPipeline] Event log failed', err?.message || err);
+                    logger.warn('[VisionPipeline] Event log failed', err?.message || err);
                 }
             }
 
             const totalNeedsReview = lowConfidence.length + itemsToReview.length + skippedItems.length;
-            console.log('[VisionPipeline] === processImage Complete (other) ===', { added: addedItems.length, needsReview: totalNeedsReview });
+            logger.info('[VisionPipeline] === processImage Complete (other) ===', { added: addedItems.length, needsReview: totalNeedsReview });
 
             return {
                 analysis: { shelfConfirmed: true, items: allResolvedItems },
@@ -410,7 +411,7 @@ class VisionPipelineService {
         // Step 2: Fingerprint lookup for high confidence items
         checkAborted();
         updateProgress('matching', { count: highConfidence.length });
-        console.log('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
+        logger.info('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
         const matched = [];
         const unmatchedHigh = [];
         for (const item of highConfidence) {
@@ -422,7 +423,7 @@ class VisionPipelineService {
                 unmatchedHigh.push(item);
             }
         }
-        console.log('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched high-conf:', unmatchedHigh.length);
+        logger.info('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched high-conf:', unmatchedHigh.length);
         await this.executeHook(HOOK_TYPES.AFTER_FINGERPRINT_LOOKUP, {
             ...baseHookContext,
             tier: 'high',
@@ -437,14 +438,14 @@ class VisionPipelineService {
         let catalogResults = { resolved: [], unresolved: unmatchedHigh };
         if (unmatchedHigh.length > 0) {
             if (this.catalogEnabled) {
-                console.log('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
+                logger.info('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
                 catalogResults = await this.lookupCatalog(unmatchedHigh, shelf.type);
-                console.log('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
+                logger.info('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
             } else {
-                console.log('[VisionPipeline] Step 3: Skipped - catalog lookup disabled');
+                logger.info('[VisionPipeline] Step 3: Skipped - catalog lookup disabled');
             }
         } else {
-            console.log('[VisionPipeline] Step 3: Skipped - all high-confidence items matched in database');
+            logger.info('[VisionPipeline] Step 3: Skipped - all high-confidence items matched in database');
         }
         await this.executeHook(HOOK_TYPES.AFTER_CATALOG_LOOKUP, {
             ...baseHookContext,
@@ -460,7 +461,7 @@ class VisionPipelineService {
         let unresolvedHighForReview = [];
         if (catalogResults.unresolved.length > 0) {
             if (this.enrichmentEnabled) {
-                console.log('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
+                logger.info('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
 
                 const rawOcrFingerprints = new Map();
                 for (const item of catalogResults.unresolved) {
@@ -489,7 +490,7 @@ class VisionPipelineService {
                     return enrichedItem;
                 });
 
-                console.log('[VisionPipeline] Step 4a Complete: Enriched', enrichedHighConf.length, 'high-confidence items');
+                logger.info('[VisionPipeline] Step 4a Complete: Enriched', enrichedHighConf.length, 'high-confidence items');
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
                     ...baseHookContext,
                     enrichedItems: enrichedHighConf,
@@ -498,7 +499,7 @@ class VisionPipelineService {
                     skipped: false,
                 });
             } else {
-                console.log('[VisionPipeline] Step 4a: Skipped - enrichment disabled');
+                logger.info('[VisionPipeline] Step 4a: Skipped - enrichment disabled');
                 unresolvedHighForReview = catalogResults.unresolved;
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
                     ...baseHookContext,
@@ -517,7 +518,7 @@ class VisionPipelineService {
         const mediumMatched = [];
         const mediumUnmatched = [];
         if (mediumConfidence.length > 0) {
-            console.log('[VisionPipeline] Step 4b: Medium-confidence matching (fingerprint first)...');
+            logger.info('[VisionPipeline] Step 4b: Medium-confidence matching (fingerprint first)...');
             for (const item of mediumConfidence) {
                 const collectable = await this.matchCollectable(item, shelf.type);
                 if (collectable) {
@@ -526,7 +527,7 @@ class VisionPipelineService {
                     mediumUnmatched.push(item);
                 }
             }
-            console.log('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Unmatched:', mediumUnmatched.length);
+            logger.info('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Unmatched:', mediumUnmatched.length);
 
             // Add DB matches to our matched list
             matched.push(...mediumMatched);
@@ -545,14 +546,14 @@ class VisionPipelineService {
         if (mediumUnmatched.length > 0) {
             if (this.catalogEnabled) {
                 updateProgress('catalog', { count: mediumUnmatched.length });
-                console.log('[VisionPipeline] Step 4c: Catalog lookup for', mediumUnmatched.length, 'medium-confidence items...');
+                logger.info('[VisionPipeline] Step 4c: Catalog lookup for', mediumUnmatched.length, 'medium-confidence items...');
                 mediumCatalogResults = await this.lookupCatalog(mediumUnmatched, shelf.type);
-                console.log('[VisionPipeline] Step 4c Complete: Catalog resolved:', mediumCatalogResults.resolved.length, ', Still unresolved:', mediumCatalogResults.unresolved.length);
+                logger.info('[VisionPipeline] Step 4c Complete: Catalog resolved:', mediumCatalogResults.resolved.length, ', Still unresolved:', mediumCatalogResults.unresolved.length);
             } else {
-                console.log('[VisionPipeline] Step 4c: Skipped - catalog lookup disabled');
+                logger.info('[VisionPipeline] Step 4c: Skipped - catalog lookup disabled');
             }
         } else {
-            console.log('[VisionPipeline] Step 4c: Skipped - all medium-confidence items matched in database');
+            logger.info('[VisionPipeline] Step 4c: Skipped - all medium-confidence items matched in database');
         }
         await this.executeHook(HOOK_TYPES.AFTER_CATALOG_LOOKUP, {
             ...baseHookContext,
@@ -569,7 +570,7 @@ class VisionPipelineService {
         if (mediumCatalogResults.unresolved.length > 0) {
             if (this.enrichmentEnabled) {
                 updateProgress('enriching', { count: mediumCatalogResults.unresolved.length });
-                console.log('[VisionPipeline] Step 4d: Enrichment for', mediumCatalogResults.unresolved.length, 'unresolved medium-confidence items...');
+                logger.info('[VisionPipeline] Step 4d: Enrichment for', mediumCatalogResults.unresolved.length, 'unresolved medium-confidence items...');
 
                 const rawOcrFingerprints = new Map();
                 for (const item of mediumCatalogResults.unresolved) {
@@ -601,7 +602,7 @@ class VisionPipelineService {
                     return enrichedItem;
                 });
 
-                console.log('[VisionPipeline] Step 4d Complete: Enriched', enrichedMediumConf.length, 'medium-confidence items');
+                logger.info('[VisionPipeline] Step 4d Complete: Enriched', enrichedMediumConf.length, 'medium-confidence items');
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
                     ...baseHookContext,
                     enrichedItems: enrichedMediumConf,
@@ -611,7 +612,7 @@ class VisionPipelineService {
                     skipped: false,
                 });
             } else {
-                console.log('[VisionPipeline] Step 4d: Skipped - enrichment disabled');
+                logger.info('[VisionPipeline] Step 4d: Skipped - enrichment disabled');
                 unresolvedMediumForManual = mediumCatalogResults.unresolved;
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
                     ...baseHookContext,
@@ -636,7 +637,7 @@ class VisionPipelineService {
         // Low confidence enriched items and unresolved items go to manual
         const mediumItemsToManual = [...enrichedMediumToManual, ...unresolvedMediumForManual];
 
-        console.log('[VisionPipeline] Step 4d: Medium-conf items split:', {
+        logger.info('[VisionPipeline] Step 4d: Medium-conf items split:', {
             toSaveAsCollectable: mediumItemsToSave.length,
             toSaveAsManual: mediumItemsToManual.length
         });
@@ -653,7 +654,7 @@ class VisionPipelineService {
                 shelf.type,
                 { ...baseHookContext, tier: 'medium' },
             );
-            console.log('[VisionPipeline] Saved', mediumAddedCollectables.length, 'medium-confidence items as collectables');
+            logger.info('[VisionPipeline] Saved', mediumAddedCollectables.length, 'medium-confidence items as collectables');
         }
 
         let manualAdded = [];
@@ -671,7 +672,7 @@ class VisionPipelineService {
             manualSkipped = manualResult.skipped || [];
 
             if (manualSkipped.length > 0) {
-                console.log('[VisionPipeline] Routing', manualSkipped.length, 'medium-conf items (missing fields) to review queue...');
+                logger.info('[VisionPipeline] Routing', manualSkipped.length, 'medium-conf items (missing fields) to review queue...');
                 await this.saveToReviewQueue(manualSkipped, userId, shelf.id, {
                     ...baseHookContext,
                     reason: 'missing_fields',
@@ -706,7 +707,7 @@ class VisionPipelineService {
                         },
                     });
                 } catch (err) {
-                    console.warn('[VisionPipeline] Event log failed', err?.message || err);
+                    logger.warn('[VisionPipeline] Event log failed', err?.message || err);
                 }
             }
         }
@@ -724,7 +725,7 @@ class VisionPipelineService {
         const itemsToSave = [...enrichedToSave, ...enrichedMedium];
         const itemsToReview = enrichedToReview;
 
-        console.log('[VisionPipeline] Step 5: Enriched items split:', {
+        logger.info('[VisionPipeline] Step 5: Enriched items split:', {
             toSave: itemsToSave.length,
             toReview: itemsToReview.length
         });
@@ -735,7 +736,7 @@ class VisionPipelineService {
             ...catalogResults.resolved,
             ...itemsToSave
         ];
-        console.log('[VisionPipeline] Step 5: Saving', collectableResolvedItems.length, 'resolved items to shelf...');
+        logger.info('[VisionPipeline] Step 5: Saving', collectableResolvedItems.length, 'resolved items to shelf...');
         checkAborted();
         updateProgress('saving', { count: collectableResolvedItems.length });
         const addedCollectables = await this.saveToShelf(
@@ -746,7 +747,7 @@ class VisionPipelineService {
             baseHookContext,
         );
         const addedItems = [...addedCollectables, ...mediumAddedCollectables, ...manualAdded];
-        console.log('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
+        logger.info('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
 
         if (addedItems.length > 0) {
             const previewLimit = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
@@ -776,7 +777,7 @@ class VisionPipelineService {
                     },
                 });
             } catch (err) {
-                console.warn('[VisionPipeline] Event log failed', err?.message || err);
+                logger.warn('[VisionPipeline] Event log failed', err?.message || err);
             }
         }
 
@@ -784,7 +785,7 @@ class VisionPipelineService {
 
         // Send enriched items that didn't meet threshold to review queue
         if (itemsToReview.length > 0) {
-            console.log('[VisionPipeline] Post-enrichment: Sending', itemsToReview.length, 'low-confidence enriched items to review queue...');
+            logger.info('[VisionPipeline] Post-enrichment: Sending', itemsToReview.length, 'low-confidence enriched items to review queue...');
             await this.saveToReviewQueue(itemsToReview, userId, shelf.id, {
                 ...baseHookContext,
                 reason: 'post_enrichment',
@@ -792,7 +793,7 @@ class VisionPipelineService {
         }
 
         if (unresolvedHighForReview.length > 0) {
-            console.log('[VisionPipeline] Post-catalog: Sending', unresolvedHighForReview.length, 'unresolved items to review queue...');
+            logger.info('[VisionPipeline] Post-catalog: Sending', unresolvedHighForReview.length, 'unresolved items to review queue...');
             await this.saveToReviewQueue(unresolvedHighForReview, userId, shelf.id, {
                 ...baseHookContext,
                 reason: 'enrichment_disabled',
@@ -800,7 +801,7 @@ class VisionPipelineService {
         }
 
         const totalNeedsReview = reviewQueueItems.length;
-        console.log('[VisionPipeline] === processImage Complete ===', { added: addedItems.length, needsReview: totalNeedsReview });
+        logger.info('[VisionPipeline] === processImage Complete ===', { added: addedItems.length, needsReview: totalNeedsReview });
 
         return {
             analysis: { shelfConfirmed: true, items: [...collectableResolvedItems, ...manualAdded, ...manualMatched] },
@@ -823,31 +824,31 @@ class VisionPipelineService {
     }
 
     async lookupCatalog(items, shelfType) {
-        console.log('[VisionPipeline.lookupCatalog] Starting catalog lookup for', items.length, 'items, shelfType:', shelfType);
+        logger.info('[VisionPipeline.lookupCatalog] Starting catalog lookup for', items.length, 'items, shelfType:', shelfType);
         const catalogService = this.resolveCatalogServiceForShelf(shelfType);
         if (!catalogService) {
-            console.log('[VisionPipeline.lookupCatalog] No catalog service available for shelfType:', shelfType);
+            logger.info('[VisionPipeline.lookupCatalog] No catalog service available for shelfType:', shelfType);
             return { resolved: [], unresolved: items };
         }
-        console.log('[VisionPipeline.lookupCatalog] Using catalog service:', catalogService.constructor.name);
+        logger.info('[VisionPipeline.lookupCatalog] Using catalog service:', catalogService.constructor.name);
 
         if (typeof catalogService.lookupFirstPass === 'function') {
             const resolved = [];
             const unresolved = [];
             try {
-                console.log('[VisionPipeline.lookupCatalog] Calling lookupFirstPass (OpenLibrary -> Hardcover)...');
+                logger.info('[VisionPipeline.lookupCatalog] Calling lookupFirstPass (OpenLibrary -> Hardcover)...');
                 const results = await catalogService.lookupFirstPass(items);
                 const entries = Array.isArray(results) ? results : [];
-                console.log('[VisionPipeline.lookupCatalog] lookupFirstPass returned', entries.length, 'entries');
+                logger.info('[VisionPipeline.lookupCatalog] lookupFirstPass returned', entries.length, 'entries');
 
                 for (let index = 0; index < items.length; index++) {
                     const entry = entries[index];
                     const input = entry?.input || items[index];
                     const itemTitle = input?.title || input?.name || 'Unknown';
-                    console.log(`[VisionPipeline.lookupCatalog] Processing item ${index + 1}/${items.length}:`, itemTitle, '- status:', entry?.status || 'no-entry');
+                    logger.info(`[VisionPipeline.lookupCatalog] Processing item ${index + 1}/${items.length}:`, itemTitle, '- status:', entry?.status || 'no-entry');
 
                     if (entry && entry.status === 'resolved' && entry.enrichment) {
-                        console.log('[VisionPipeline.lookupCatalog] ✓ Resolved via catalog:', itemTitle);
+                        logger.info('[VisionPipeline.lookupCatalog] ✓ Resolved via catalog:', itemTitle);
                         const lwf = makeLightweightFingerprint(input);
                         let collectable = null;
                         if (typeof catalogService.buildCollectablePayload === 'function') {
@@ -887,20 +888,20 @@ class VisionPipelineService {
                         }
                     }
                     if (input) {
-                        console.log('[VisionPipeline.lookupCatalog] ✗ Unresolved, will try Gemini enrichment:', input?.title || input?.name);
+                        logger.info('[VisionPipeline.lookupCatalog] ✗ Unresolved, will try Gemini enrichment:', input?.title || input?.name);
                         unresolved.push(input);
                     }
                 }
-                console.log('[VisionPipeline.lookupCatalog] Summary: resolved:', resolved.length, 'unresolved:', unresolved.length);
+                logger.info('[VisionPipeline.lookupCatalog] Summary: resolved:', resolved.length, 'unresolved:', unresolved.length);
                 return { resolved, unresolved };
             } catch (err) {
-                console.error('[VisionPipeline.lookupCatalog] lookupFirstPass failed:', err.message || err);
+                logger.error('[VisionPipeline.lookupCatalog] lookupFirstPass failed:', err.message || err);
                 return { resolved: [], unresolved: items };
             }
         }
 
         if (typeof catalogService.search !== 'function') {
-            console.warn('[VisionPipelineService.lookupCatalog] catalog service missing lookup method');
+            logger.warn('[VisionPipelineService.lookupCatalog] catalog service missing lookup method');
             return { resolved: [], unresolved: items };
         }
 
@@ -927,7 +928,7 @@ class VisionPipelineService {
                     unresolved.push(item);
                 }
             } catch (e) {
-                console.error('Catalog lookup error', e);
+                logger.error('Catalog lookup error', e);
                 unresolved.push(item);
             }
         }
@@ -947,7 +948,7 @@ class VisionPipelineService {
      */
     async enrichUncertain(items, shelfType) {
         if (!items.length) return [];
-        console.log('[VisionPipeline.enrichUncertain] Processing', items.length, 'uncertain items...');
+        logger.info('[VisionPipeline.enrichUncertain] Processing', items.length, 'uncertain items...');
 
         // Use enrichWithSchema but with an uncertain flag for special prompt handling
         if (typeof this.geminiService.enrichWithSchemaUncertain === 'function') {
@@ -955,7 +956,7 @@ class VisionPipelineService {
         }
 
         // Fallback to standard enrichment if specialized method not available
-        console.log('[VisionPipeline.enrichUncertain] Falling back to standard enrichment (enrichWithSchemaUncertain not found)');
+        logger.info('[VisionPipeline.enrichUncertain] Falling back to standard enrichment (enrichWithSchemaUncertain not found)');
         return this.geminiService.enrichWithSchema(items, shelfType);
     }
 
@@ -984,7 +985,7 @@ class VisionPipelineService {
             }
         });
 
-        console.log('[VisionPipeline.categorizeByConfidence] Tiers:', {
+        logger.info('[VisionPipeline.categorizeByConfidence] Tiers:', {
             high: highConfidence.length,
             medium: mediumConfidence.length,
             low: lowConfidence.length,
@@ -1034,7 +1035,7 @@ class VisionPipelineService {
                 // Get threshold from visionSettings.json if available
                 const typeSettings = getVisionSettingsForType(shelfType) || {};
                 const threshold = typeSettings.nameSearchThreshold ?? 0.4;
-                console.log('[VisionPipeline.matchCollectable] Using name search for', normalizedType, '(threshold:', threshold, ')');
+                logger.info('[VisionPipeline.matchCollectable] Using name search for', normalizedType, '(threshold:', threshold, ')');
                 return collectablesQueries.findByNameSearch(itemTitle, normalizedType, threshold);
 
             case 'books':
@@ -1063,19 +1064,19 @@ class VisionPipelineService {
             item.kind || item.type || shelfType,
         );
         if (ocrFingerprint) {
-            console.log('[VisionPipeline.matchCollectable] Checking fuzzy OCR fingerprint:', ocrFingerprint);
+            logger.info('[VisionPipeline.matchCollectable] Checking fuzzy OCR fingerprint:', ocrFingerprint);
             const match = await collectablesQueries.findByFuzzyFingerprint(ocrFingerprint);
             if (match) {
-                console.log('[VisionPipeline.matchCollectable] ✓ Found via fuzzy OCR fingerprint:', match.id, match.title);
+                logger.info('[VisionPipeline.matchCollectable] ✓ Found via fuzzy OCR fingerprint:', match.id, match.title);
                 return match;
             }
         }
 
         // Check legacy fuzzy fingerprints array
-        console.log('[VisionPipeline.matchCollectable] Checking legacy fuzzy fingerprints array:', lwf);
+        logger.info('[VisionPipeline.matchCollectable] Checking legacy fuzzy fingerprints array:', lwf);
         const legacyMatch = await collectablesQueries.findByFuzzyFingerprint(lwf);
         if (legacyMatch) {
-            console.log('[VisionPipeline.matchCollectable] ✓ Found via legacy fuzzy fingerprint:', legacyMatch.id, legacyMatch.title);
+            logger.info('[VisionPipeline.matchCollectable] ✓ Found via legacy fuzzy fingerprint:', legacyMatch.id, legacyMatch.title);
             return legacyMatch;
         }
 
@@ -1099,24 +1100,24 @@ class VisionPipelineService {
     async matchCollectable(item, shelfType) {
         const itemTitle = item.title || item.name;
         const normalizedType = this.normalizeShelfType(shelfType);
-        console.log('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle, '(shelfType:', normalizedType, ')');
+        logger.info('[VisionPipeline.matchCollectable] Checking DB for:', itemTitle, '(shelfType:', normalizedType, ')');
 
         // 1. Always check fingerprint first (if present from catalog)
         if (item.fingerprint) {
-            console.log('[VisionPipeline.matchCollectable] Checking fingerprint:', item.fingerprint);
+            logger.info('[VisionPipeline.matchCollectable] Checking fingerprint:', item.fingerprint);
             const byFp = await collectablesQueries.findByFingerprint(item.fingerprint);
             if (byFp) {
-                console.log('[VisionPipeline.matchCollectable] ✓ Found via fingerprint:', byFp.id, byFp.title);
+                logger.info('[VisionPipeline.matchCollectable] ✓ Found via fingerprint:', byFp.id, byFp.title);
                 return byFp;
             }
         }
 
         // 2. Always try lightweight fingerprint
         const lwf = makeLightweightFingerprint(item);
-        console.log('[VisionPipeline.matchCollectable] Checking lightweight fingerprint:', lwf);
+        logger.info('[VisionPipeline.matchCollectable] Checking lightweight fingerprint:', lwf);
         let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
         if (collectable) {
-            console.log('[VisionPipeline.matchCollectable] ✓ Found via lightweight fingerprint:', collectable.id, collectable.title);
+            logger.info('[VisionPipeline.matchCollectable] ✓ Found via lightweight fingerprint:', collectable.id, collectable.title);
             return collectable;
         }
 
@@ -1126,16 +1127,16 @@ class VisionPipelineService {
             return collectable;
         }
 
-        console.log('[VisionPipeline.matchCollectable] ✗ No match found for:', itemTitle);
+        logger.info('[VisionPipeline.matchCollectable] ✗ No match found for:', itemTitle);
         return null;
     }
 
     async saveToShelf(items, userId, shelfId, shelfType, hookContext = {}) {
-        console.log('[VisionPipeline.saveToShelf] Processing', items.length, 'items for shelf', shelfId);
+        logger.info('[VisionPipeline.saveToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            console.log(`[VisionPipeline.saveToShelf] Item ${i + 1}/${items.length}:`, item.title || item.name);
+            logger.info(`[VisionPipeline.saveToShelf] Item ${i + 1}/${items.length}:`, item.title || item.name);
             try {
                 // Check if item already has a collectable from Step 2 (database match)
                 let collectable = item.collectable || null;
@@ -1144,14 +1145,14 @@ class VisionPipelineService {
                     // Only call matchCollectable if we don't already have one
                     collectable = await this.matchCollectable(item, shelfType);
                 } else {
-                    console.log('[VisionPipeline.saveToShelf] Using pre-matched collectable:', collectable.id, collectable.title);
+                    logger.info('[VisionPipeline.saveToShelf] Using pre-matched collectable:', collectable.id, collectable.title);
                 }
 
                 if (!collectable) {
-                    console.log('[VisionPipeline.saveToShelf] No existing collectable found, creating new entry...');
+                    logger.info('[VisionPipeline.saveToShelf] No existing collectable found, creating new entry...');
                     const title = normalizeString(item.title || item.name);
                     if (!title) {
-                        console.warn('[VisionPipeline.saveToShelf] Skipping - missing title', { item });
+                        logger.warn('[VisionPipeline.saveToShelf] Skipping - missing title', { item });
                         continue;
                     }
 
@@ -1260,7 +1261,7 @@ class VisionPipelineService {
                         return { savedCollectable: upserted, savedShelfItem: shelfEntry };
                     });
                     collectable = savedCollectable;
-                    console.log('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
+                    logger.info('[VisionPipeline.saveToShelf] Created new collectable:', collectable.id, title);
 
                     await this.executeHook(HOOK_TYPES.AFTER_SHELF_UPSERT, {
                         ...hookContext,
@@ -1277,14 +1278,14 @@ class VisionPipelineService {
                         coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
                         type: collectable.kind || item.type || item.kind || shelfType,
                     });
-                    console.log('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
+                    logger.info('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
                     continue;
                 } else {
-                    console.log('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
+                    logger.info('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
                 }
 
                 // Add pre-matched collectable to shelf
-                console.log('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
+                logger.info('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
                 const shelfItem = await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
@@ -1307,9 +1308,9 @@ class VisionPipelineService {
                     coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
                     type: collectable.kind || item.type || item.kind || shelfType,
                 });
-                console.log('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
+                logger.info('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
             } catch (err) {
-                console.error(`Failed to save item ${item.title}:`, err);
+                logger.error(`Failed to save item ${item.title}:`, err);
                 // Fail safe: maybe add to review queue instead?
                 // For now, just skip
             }
@@ -1318,7 +1319,7 @@ class VisionPipelineService {
     }
 
     async saveManualToShelf(items, userId, shelfId, shelfType, options = {}) {
-        console.log('[VisionPipeline.saveManualToShelf] Processing', items.length, 'items for shelf', shelfId);
+        logger.info('[VisionPipeline.saveManualToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
         const matched = [];
         const skipped = [];
@@ -1332,7 +1333,7 @@ class VisionPipelineService {
                 item.primaryCreator || item.author || item.creator || item.brand || item.publisher || item.manufacturer,
             );
             if (!title || (requireCreator && !primaryCreator)) {
-                console.warn('[VisionPipeline.saveManualToShelf] Missing required fields, routing to review', { item });
+                logger.warn('[VisionPipeline.saveManualToShelf] Missing required fields, routing to review', { item });
                 skipped.push(item);
                 continue;
             }
@@ -1426,22 +1427,22 @@ class VisionPipelineService {
 
     async saveToReviewQueue(items, userId, shelfId, context = {}) {
         if (!Array.isArray(items) || items.length === 0) {
-            console.log('[VisionPipeline.saveToReviewQueue] No items to add to review queue');
+            logger.info('[VisionPipeline.saveToReviewQueue] No items to add to review queue');
             return;
         }
         if (!this.reviewQueueAvailable) {
-            console.log('[VisionPipeline.saveToReviewQueue] Review queue not available, skipping');
+            logger.info('[VisionPipeline.saveToReviewQueue] Review queue not available, skipping');
             return;
         }
 
-        console.log('[VisionPipeline.saveToReviewQueue] Adding', items.length, 'items to review queue');
+        logger.info('[VisionPipeline.saveToReviewQueue] Adding', items.length, 'items to review queue');
         let inserted = [];
         try {
             // Wrap all inserts in a single transaction so a partial failure rolls back the whole batch.
             inserted = await transaction(async (txClient) => {
                 const saved = [];
                 for (const item of items) {
-                    console.log('[VisionPipeline.saveToReviewQueue] Adding:', item.title || item.name, '(confidence:', item.confidence, ')');
+                    logger.info('[VisionPipeline.saveToReviewQueue] Adding:', item.title || item.name, '(confidence:', item.confidence, ')');
                     await needsReviewQueries.create({
                         userId,
                         shelfId,
@@ -1455,7 +1456,7 @@ class VisionPipelineService {
         } catch (err) {
             if (isMissingRelationError(err, 'needs_review')) {
                 this.reviewQueueAvailable = false;
-                console.warn('[VisionPipelineService] needs_review table missing; skipping review queue.');
+                logger.warn('[VisionPipelineService] needs_review table missing; skipping review queue.');
                 return;
             }
             throw err;
