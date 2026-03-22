@@ -119,11 +119,13 @@ async function appendJobEvent({
   createdAt = null,
 }) {
   const safeMetadata = normalizeMetadata(metadata);
-  await query(
+  const result = await query(
     `INSERT INTO job_events (job_id, level, message, user_id, metadata, created_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6, NOW()))`,
+     SELECT $1, $2, $3, $4, $5::jsonb, COALESCE($6, NOW())
+     WHERE EXISTS (SELECT 1 FROM job_runs WHERE job_id = $1)`,
     [jobId, level, message, userId, JSON.stringify(safeMetadata), createdAt]
   );
+  return result.rowCount > 0;
 }
 
 async function getJobRun(jobId) {

@@ -150,6 +150,14 @@ api/utils/jobRunner.js
   -> api/context.js
   -> api/logger.js
   -> api/database/queries/jobRuns.js
+
+api/__tests__/requestLogger.test.js
+  -> api/middleware/requestLogger.js
+  -> api/database/queries/jobRuns.js
+
+api/database/queries/jobRuns.test.js
+  -> api/database/queries/jobRuns.js
+  -> api/database/pg.js
 ```
 
 ### Routes → Controllers → Queries/Services
@@ -270,6 +278,7 @@ controllers/accountController.js
   → database/queries/utils.js
   → database/queries/visionQuota.js
   → services/mediaUrl.js
+  Guards: checks req.user.premiumLockedByAdmin before allowing is_premium update
 ```
 
 #### collectables
@@ -424,11 +433,21 @@ routes/admin.js
   → middleware/admin.js
   → middleware/csrf.js
   → middleware/validate.js
+  Routes (read, before CSRF):
+    GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
+    GET  /settings, /users/:userId/vision-quota, /audit-logs
+    GET  /shelves, /shelves/:shelfId, /shelves/:shelfId/items
+  Routes (write, after CSRF):
+    PUT  /settings/:key, /users/:userId/vision-quota
+    POST /users/:userId/suspend, /unsuspend, /toggle-admin, /toggle-premium
+    POST /users/:userId/vision-quota/reset
 
 controllers/adminController.js
   → database/queries/admin.js
-  -> database/queries/jobRuns.js
+  → database/queries/jobRuns.js
   → database/queries/systemSettings.js
+  → database/queries/visionQuota.js
+  → database/queries/adminContent.js
   → services/config/SystemSettingsCache.js
   → database/queries/utils.js
   → utils/adminAuth.js
@@ -469,6 +488,7 @@ middleware/auth.js
   -> context.js
   → utils/adminAuth.js
   → config/constants.js
+  Selects: is_premium, premium_locked_by_admin → sets req.user.premiumLockedByAdmin
 
 middleware/admin.js
   (no internal imports)
@@ -720,13 +740,14 @@ database/queries/media.js → database/pg.js, services/s3.js, utils/imageValidat
 database/queries/manualMedia.js → database/pg.js, services/s3.js
 database/queries/profileMedia.js → database/pg.js, services/s3.js
 database/queries/passwordReset.js → database/pg.js
-database/queries/visionQuota.js → database/pg.js
+database/queries/visionQuota.js → database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
 database/queries/pushDeviceTokens.js → database/pg.js, database/queries/utils.js
 database/queries/notificationPreferences.js → database/pg.js, database/queries/utils.js
 database/queries/systemSettings.js → database/pg.js, database/queries/utils.js
 database/queries/newsSeen.js → database/pg.js
 database/queries/newsDismissed.js → database/pg.js
 database/queries/admin.js → database/pg.js, database/queries/utils.js
+database/queries/adminContent.js → database/pg.js, database/queries/utils.js
 ```
 
 ### Utility Dependencies
@@ -1224,6 +1245,7 @@ users (UUID PK)
   ├─< user_news_seen (user_id FK)
   ├─< user_news_dismissed (user_id FK)
   ├── profile_media (user_id FK)
+  ├── premium_locked_by_admin (BOOLEAN, default FALSE)
   └─< admin_action_logs (admin_id FK)
 
 job_runs (job_id TEXT PK)
@@ -1275,7 +1297,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (42 files, 2026-01-10 -> 2026-03-22)
+### Migration History (43 files, 2026-01-10 -> 2026-03-23)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1321,6 +1343,7 @@ news_items (SERIAL PK)
 | `20260319_create_system_settings` | + `system_settings` (key PK, value JSONB, description, updated_by FK, timestamps) |
 | `20260320_set_premium_default_on` | `users.is_premium` default set to true |
 | `20260322_create_job_logging_tables` | + `job_runs`, + `job_events` |
+| `20260323_add_premium_admin_lock` | + `users.premium_locked_by_admin` (BOOLEAN DEFAULT FALSE NOT NULL) |
 
 ---
 
