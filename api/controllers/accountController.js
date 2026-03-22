@@ -40,6 +40,11 @@ async function getAccount(req, res) {
 
 async function updateAccount(req, res) {
   try {
+    // Block user from toggling premium when locked by admin
+    if (req.body?.is_premium !== undefined && req.user.premiumLockedByAdmin) {
+      return res.status(403).json({ error: 'Premium status is managed by an administrator' });
+    }
+
     const allowedFields = [
       'first_name', 'last_name', 'phone_number',
       'country', 'city', 'state', 'is_private', 'is_premium', 'picture'

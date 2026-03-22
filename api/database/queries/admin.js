@@ -58,6 +58,7 @@ async function listUsers({
   sortOrder = 'desc',
   filterSuspended = null,
   filterAdmin = null,
+  filterPremium = null,
 }) {
   const allowedSorts = ['created_at', 'username', 'email'];
   const sortColumn = allowedSorts.includes(sortBy) ? sortBy : 'created_at';
@@ -90,6 +91,12 @@ async function listUsers({
     paramIndex++;
   }
 
+  if (filterPremium !== null) {
+    whereConditions.push(`is_premium = $${paramIndex}`);
+    params.push(filterPremium);
+    paramIndex++;
+  }
+
   const whereClause = whereConditions.length > 0
     ? `WHERE ${whereConditions.join(' AND ')}`
     : '';
@@ -104,6 +111,7 @@ async function listUsers({
   const result = await query(
     `SELECT id, username, email, first_name, last_name, picture,
             is_admin, is_suspended, suspended_at, suspension_reason,
+            is_premium, premium_locked_by_admin,
             created_at, updated_at
      FROM users
      ${whereClause}
@@ -284,6 +292,176 @@ async function getRecentActivity({ limit = 50, offset = 0 }) {
 }
 
 /**
+ * Toggle premium status for a user (admin-only).
+ * Sets premium_locked_by_admin = true so the user cannot self-toggle.
+ */
+async function togglePremium(userId, adminId, context = {}) {
+  return transaction(async (client) => {
+    const current = await client.query(
+      'SELECT id, username, is_premium, premium_locked_by_admin FROM users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+
+    if (current.rows.length === 0) {
+      return { error: 'User not found' };
+    }
+
+    const targetValue = !current.rows[0].is_premium;
+    const result = await client.query(
+      `UPDATE users
+       SET is_premium = $2, premium_locked_by_admin = true
+       WHERE id = $1 AND is_premium = $3
+       RETURNING id, username, is_premium, premium_locked_by_admin`,
+      [userId, targetValue, current.rows[0].is_premium]
+    );
+
+    if (result.rows.length === 0) {
+      return { error: 'Concurrent modification detected, please retry' };
+    }
+
+    const updated = result.rows[0];
+    await logAdminAction(client, {
+      adminId,
+      action: 'PREMIUM_TOGGLED',
+      targetUserId: userId,
+      metadata: { isPremium: !!updated.is_premium, locked: true },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { user: rowToCamelCase(updated) };
+  });
+}
+
+/**
+ * List admin action logs with filtering and pagination
+ */
+async function listAuditLogs({
+  limit = 50,
+  offset = 0,
+  action = null,
+  adminId = null,
+  targetUserId = null,
+  startDate = null,
+  endDate = null,
+}) {
+  let whereConditions = [];
+  let params = [];
+  let paramIndex = 1;
+
+  if (action) {
+    whereConditions.push(`a.action = $${paramIndex}`);
+    params.push(action);
+    paramIndex++;
+  }
+
+  if (adminId) {
+    whereConditions.push(`a.admin_id = $${paramIndex}`);
+    params.push(adminId);
+    paramIndex++;
+  }
+
+  if (targetUserId) {
+    whereConditions.push(`a.target_user_id = $${paramIndex}`);
+    params.push(targetUserId);
+    paramIndex++;
+  }
+
+  if (startDate) {
+    whereConditions.push(`a.created_at >= $${paramIndex}`);
+    params.push(startDate);
+    paramIndex++;
+  }
+
+  if (endDate) {
+    whereConditions.push(`a.created_at <= $${paramIndex}`);
+    params.push(endDate);
+    paramIndex++;
+  }
+
+  const whereClause = whereConditions.length > 0
+    ? `WHERE ${whereConditions.join(' AND ')}`
+    : '';
+
+  const countResult = await query(
+    `SELECT COUNT(*) as count FROM admin_action_logs a ${whereClause}`,
+    params
+  );
+  const total = parseInt(countResult.rows[0].count);
+
+  params.push(limit, offset);
+  const result = await query(
+    `SELECT a.id, a.admin_id, a.action, a.target_user_id,
+            a.metadata, a.ip_address, a.user_agent, a.created_at,
+            admin_u.username as admin_username,
+            target_u.username as target_username
+     FROM admin_action_logs a
+     LEFT JOIN users admin_u ON admin_u.id = a.admin_id
+     LEFT JOIN users target_u ON target_u.id = a.target_user_id
+     ${whereClause}
+     ORDER BY a.created_at DESC
+     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+    params
+  );
+
+  return {
+    logs: result.rows.map(rowToCamelCase),
+    total,
+    hasMore: offset + result.rows.length < total,
+  };
+}
+
+/**
+ * Get detailed statistics with breakdowns for analytics
+ */
+async function getDetailedStats() {
+  const [
+    usersByMonth,
+    shelvesByType,
+    collectablesByKind,
+    premiumResult,
+    visionResult,
+  ] = await Promise.all([
+    query(`
+      SELECT date_trunc('month', created_at) as month, COUNT(*) as count
+      FROM users
+      WHERE created_at > NOW() - INTERVAL '12 months'
+      GROUP BY date_trunc('month', created_at)
+      ORDER BY month ASC
+    `),
+    query(`
+      SELECT type, COUNT(*) as count
+      FROM shelves
+      GROUP BY type
+      ORDER BY count DESC
+    `),
+    query(`
+      SELECT kind, COUNT(*) as count
+      FROM collectables
+      GROUP BY kind
+      ORDER BY count DESC
+    `),
+    query('SELECT COUNT(*) as count FROM users WHERE is_premium = true'),
+    query(`
+      SELECT COALESCE(SUM(scans_used), 0) as total_scans,
+             COUNT(*) FILTER (WHERE scans_used > 0) as active_users
+      FROM user_vision_quota
+    `),
+  ]);
+
+  return {
+    usersByMonth: usersByMonth.rows.map(r => ({ month: r.month, count: parseInt(r.count) })),
+    shelvesByType: shelvesByType.rows.map(r => ({ type: r.type, count: parseInt(r.count) })),
+    collectablesByKind: collectablesByKind.rows.map(r => ({ kind: r.kind, count: parseInt(r.count) })),
+    premiumUsers: parseInt(premiumResult.rows[0].count),
+    visionUsage: {
+      totalScans: parseInt(visionResult.rows[0].total_scans),
+      activeUsers: parseInt(visionResult.rows[0].active_users),
+    },
+  };
+}
+
+/**
  * Log an admin action without a transaction (standalone insert).
  * Use this when the action itself is not part of a larger transaction.
  */
@@ -310,6 +488,9 @@ module.exports = {
   suspendUser,
   unsuspendUser,
   toggleAdmin,
+  togglePremium,
   getRecentActivity,
+  listAuditLogs,
+  getDetailedStats,
   logAction,
 };

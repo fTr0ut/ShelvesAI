@@ -68,9 +68,12 @@ export const getMe = () =>
 export const logout = () =>
   client.post('/admin/logout');
 
-// Admin endpoints
+// Dashboard
 export const getStats = () => client.get('/admin/stats');
+export const getDetailedStats = () => client.get('/admin/stats/detailed');
+export const getSystemInfo = () => client.get('/admin/system');
 
+// Users
 export const getUsers = (params = {}) =>
   client.get('/admin/users', { params });
 
@@ -86,10 +89,49 @@ export const unsuspendUser = (userId) =>
 export const toggleAdmin = (userId) =>
   client.post(`/admin/users/${userId}/toggle-admin`);
 
+export const togglePremium = (userId) =>
+  client.post(`/admin/users/${userId}/toggle-premium`);
+
+// Vision quota
+export const getUserVisionQuota = (userId) =>
+  client.get(`/admin/users/${userId}/vision-quota`);
+
+export const resetUserVisionQuota = (userId) =>
+  client.post(`/admin/users/${userId}/vision-quota/reset`);
+
+export const setUserVisionQuota = (userId, scansUsed) =>
+  client.put(`/admin/users/${userId}/vision-quota`, { scansUsed });
+
+// Activity feed
 export const getRecentFeed = (params = {}) =>
   client.get('/admin/feed/recent', { params });
 
-export const getSystemInfo = () =>
-  client.get('/admin/system');
+// Jobs
+export const getJobs = (params = {}) =>
+  client.get('/admin/jobs', { params });
+
+export const getJob = (jobId) =>
+  client.get(`/admin/jobs/${jobId}`);
+
+// Audit logs
+export const getAuditLogs = (params = {}) =>
+  client.get('/admin/audit-logs', { params });
+
+// System settings
+export const getSettings = () =>
+  client.get('/admin/settings');
+
+export const updateSetting = (key, value, description) =>
+  client.put(`/admin/settings/${key}`, { value, description });
+
+// Content browsing
+export const getShelves = (params = {}) =>
+  client.get('/admin/shelves', { params });
+
+export const getShelf = (shelfId) =>
+  client.get(`/admin/shelves/${shelfId}`);
+
+export const getShelfItems = (shelfId, params = {}) =>
+  client.get(`/admin/shelves/${shelfId}/items`, { params });
 
 export default client;

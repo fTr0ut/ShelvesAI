@@ -91,7 +91,7 @@ async function auth(req, res, next) {
 
     if (!user) {
       const result = await query(
-        'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
         [payload.id]
       );
 
@@ -117,6 +117,7 @@ async function auth(req, res, next) {
       id: user.id,
       username: user.username,
       isPremium: !!user.is_premium,
+      premiumLockedByAdmin: !!user.premium_locked_by_admin,
       isAdmin: !!user.is_admin,
     };
     req.tokenType = payload.type || 'user';
@@ -155,7 +156,7 @@ async function optionalAuth(req, res, next) {
 
     if (!user) {
       const result = await query(
-        'SELECT id, username, is_premium, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
         [payload.id]
       );
 
@@ -178,6 +179,7 @@ async function optionalAuth(req, res, next) {
         id: user.id,
         username: user.username,
         isPremium: !!user.is_premium,
+        premiumLockedByAdmin: !!user.premium_locked_by_admin,
         isAdmin: !!user.is_admin,
       };
       setUserId(user.id);

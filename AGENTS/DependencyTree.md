@@ -63,13 +63,26 @@ ShelvesAI/
 | `getMe()` | `GET /api/admin/me` | Cookie |
 | `logout()` | `POST /api/admin/logout` | Cookie + CSRF |
 | `getStats()` | `GET /api/admin/stats` | Cookie |
+| `getDetailedStats()` | `GET /api/admin/stats/detailed` | Cookie |
+| `getSystemInfo()` | `GET /api/admin/system` | Cookie |
 | `getUsers(params)` | `GET /api/admin/users` | Cookie |
 | `getUser(userId)` | `GET /api/admin/users/:userId` | Cookie |
 | `suspendUser(userId, reason)` | `POST /api/admin/users/:userId/suspend` | Cookie + CSRF |
 | `unsuspendUser(userId)` | `POST /api/admin/users/:userId/unsuspend` | Cookie + CSRF |
 | `toggleAdmin(userId)` | `POST /api/admin/users/:userId/toggle-admin` | Cookie + CSRF |
-| `getRecentFeed(params)` | `GET /api/admin/feed/recent` | Cookie (⚠️ dead code — defined but never called) |
-| `getSystemInfo()` | `GET /api/admin/system` | Cookie |
+| `togglePremium(userId)` | `POST /api/admin/users/:userId/toggle-premium` | Cookie + CSRF |
+| `getUserVisionQuota(userId)` | `GET /api/admin/users/:userId/vision-quota` | Cookie |
+| `resetUserVisionQuota(userId)` | `POST /api/admin/users/:userId/vision-quota/reset` | Cookie + CSRF |
+| `setUserVisionQuota(userId, scansUsed)` | `PUT /api/admin/users/:userId/vision-quota` | Cookie + CSRF |
+| `getRecentFeed(params)` | `GET /api/admin/feed/recent` | Cookie |
+| `getJobs(params)` | `GET /api/admin/jobs` | Cookie |
+| `getJob(jobId)` | `GET /api/admin/jobs/:jobId` | Cookie |
+| `getAuditLogs(params)` | `GET /api/admin/audit-logs` | Cookie |
+| `getSettings()` | `GET /api/admin/settings` | Cookie |
+| `updateSetting(key, value, desc)` | `PUT /api/admin/settings/:key` | Cookie + CSRF |
+| `getShelves(params)` | `GET /api/admin/shelves` | Cookie |
+| `getShelf(shelfId)` | `GET /api/admin/shelves/:shelfId` | Cookie |
+| `getShelfItems(shelfId, params)` | `GET /api/admin/shelves/:shelfId/items` | Cookie |
 
 ### API ↔ Website Contract
 
@@ -1042,6 +1055,10 @@ src/App.jsx
   → src/pages/Login.jsx
   → src/pages/Dashboard.jsx
   → src/pages/Users.jsx
+  → src/pages/Content.jsx
+  → src/pages/ActivityFeed.jsx
+  → src/pages/Jobs.jsx
+  → src/pages/AuditLog.jsx
   → src/pages/Settings.jsx
 ```
 
@@ -1057,6 +1074,12 @@ src/context/AuthContext.jsx
 ```
 src/api/client.js
   (no internal imports — leaf node, uses axios)
+  Exports: login, getMe, logout, getStats, getDetailedStats, getSystemInfo,
+    getUsers, getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium,
+    getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota,
+    getRecentFeed, getJobs, getJob, getAuditLogs,
+    getSettings, updateSetting,
+    getShelves, getShelf, getShelfItems
 ```
 
 ### Pages
@@ -1066,8 +1089,9 @@ src/pages/Login.jsx
   → src/context/AuthContext.jsx (useAuth)
 
 src/pages/Dashboard.jsx
-  → src/api/client.js (getStats, getSystemInfo)
+  → src/api/client.js (getStats, getSystemInfo, getDetailedStats, getRecentFeed)
   → src/components/StatsCard.jsx
+  → src/components/UserAvatar.jsx
   → src/utils/errorUtils.js
 
 src/pages/Users.jsx
@@ -1076,8 +1100,30 @@ src/pages/Users.jsx
   → src/components/UserDetailModal.jsx
   → src/components/Pagination.jsx
 
+src/pages/Content.jsx
+  → src/api/client.js (getShelves)
+  → src/components/UserAvatar.jsx
+  → src/components/Pagination.jsx
+  → src/components/ShelfDetailModal.jsx
+
+src/pages/ActivityFeed.jsx
+  → src/api/client.js (getRecentFeed)
+  → src/components/UserAvatar.jsx
+  → src/components/Pagination.jsx
+
+src/pages/Jobs.jsx
+  → src/api/client.js (getJobs)
+  → src/components/Pagination.jsx
+  → src/components/JobDetailModal.jsx
+
+src/pages/AuditLog.jsx
+  → src/api/client.js (getAuditLogs)
+  → src/components/Pagination.jsx
+
 src/pages/Settings.jsx
   → src/context/AuthContext.jsx (useAuth)
+  → src/api/client.js (getSettings, updateSetting)
+  → src/utils/errorUtils.js
 ```
 
 ### Components
@@ -1091,15 +1137,25 @@ src/components/Sidebar.jsx
 
 src/components/UserTable.jsx
   → src/components/UserAvatar.jsx
-  → src/components/UserBadge.jsx (SuspendedBadge, AdminBadge)
+  → src/components/UserBadge.jsx (SuspendedBadge, AdminBadge, PremiumBadge)
 
 src/components/UserDetailModal.jsx
-  → src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin)
+  → src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota)
   → src/components/UserAvatar.jsx
   → src/components/UserBadge.jsx (default: UserBadge)
   → src/utils/errorUtils.js
 
-src/components/StatsCard.jsx     (leaf — no internal imports)
+src/components/JobDetailModal.jsx
+  → src/api/client.js (getJob)
+  → src/utils/errorUtils.js
+
+src/components/ShelfDetailModal.jsx
+  → src/api/client.js (getShelf, getShelfItems)
+  → src/components/UserAvatar.jsx
+  → src/components/Pagination.jsx
+  → src/utils/errorUtils.js
+
+src/components/StatsCard.jsx     (uses react-router-dom useNavigate)
 src/components/UserBadge.jsx     (leaf — no internal imports)
 src/components/UserAvatar.jsx    (leaf — no internal imports)
 src/components/Pagination.jsx    (leaf — no internal imports)
@@ -1115,17 +1171,19 @@ src/utils/errorUtils.js          (leaf — no internal imports)
 
 | File | Imported By |
 |---|---|
-| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal) |
+| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal), Content (via ShelfDetailModal), ActivityFeed, Jobs (via JobDetailModal), AuditLog, Settings |
 | `context/AuthContext.jsx` | main, App, Login, Settings, Sidebar |
 | `components/Layout.jsx` | App |
 | `components/Sidebar.jsx` | Layout |
 | `components/StatsCard.jsx` | Dashboard |
 | `components/UserTable.jsx` | Users |
 | `components/UserDetailModal.jsx` | Users |
+| `components/JobDetailModal.jsx` | Jobs |
+| `components/ShelfDetailModal.jsx` | Content |
 | `components/UserBadge.jsx` | UserTable, UserDetailModal |
-| `components/UserAvatar.jsx` | UserTable, UserDetailModal |
-| `components/Pagination.jsx` | Users |
-| `utils/errorUtils.js` | Dashboard, UserDetailModal |
+| `components/UserAvatar.jsx` | UserTable, UserDetailModal, Dashboard, ActivityFeed, Content, ShelfDetailModal |
+| `components/Pagination.jsx` | Users, ActivityFeed, Jobs, AuditLog, Content, ShelfDetailModal |
+| `utils/errorUtils.js` | Dashboard, UserDetailModal, JobDetailModal, ShelfDetailModal, Settings |
 
 ---
 

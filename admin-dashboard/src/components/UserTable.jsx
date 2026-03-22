@@ -1,5 +1,5 @@
 import UserAvatar from './UserAvatar';
-import { SuspendedBadge, AdminBadge } from './UserBadge';
+import { SuspendedBadge, AdminBadge, PremiumBadge } from './UserBadge';
 
 export default function UserTable({ users, onUserClick, loading }) {
   if (loading) {
@@ -34,6 +34,9 @@ export default function UserTable({ users, onUserClick, loading }) {
             </th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Role
+            </th>
+            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Premium
             </th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Joined
@@ -72,6 +75,9 @@ export default function UserTable({ users, onUserClick, loading }) {
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <AdminBadge isAdmin={user.isAdmin} variant="sm" />
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                {user.isPremium ? <PremiumBadge variant="sm" /> : <span className="text-xs text-gray-400">Free</span>}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 {user.createdAt

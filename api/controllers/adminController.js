@@ -6,6 +6,8 @@ const systemSettingsQueries = require('../database/queries/systemSettings');
 const jobRunsQueries = require('../database/queries/jobRuns');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
+const visionQuotaQueries = require('../database/queries/visionQuota');
+const adminContentQueries = require('../database/queries/adminContent');
 const logger = require('../logger');
 
 const normalizeIp = (ip) => {
@@ -116,6 +118,7 @@ async function listUsers(req, res) {
       sortOrder,
       suspended,
       admin,
+      premium,
     } = req.query;
 
     const result = await adminQueries.listUsers({
@@ -126,6 +129,7 @@ async function listUsers(req, res) {
       sortOrder: sortOrder || 'desc',
       filterSuspended: suspended === 'true' ? true : suspended === 'false' ? false : null,
       filterAdmin: admin === 'true' ? true : admin === 'false' ? false : null,
+      filterPremium: premium === 'true' ? true : premium === 'false' ? false : null,
     });
 
     res.json({
@@ -433,15 +437,242 @@ async function updateSetting(req, res) {
   }
 }
 
+/**
+ * POST /api/admin/users/:userId/toggle-premium
+ * Toggle premium status for a user (locks by admin)
+ */
+async function togglePremium(req, res) {
+  try {
+    const { userId } = req.params;
+
+    const result = await adminQueries.togglePremium(
+      userId,
+      req.user.id,
+      getAdminContext(req)
+    );
+
+    if (result.error) {
+      const status = result.error === 'User not found' ? 404 : 400;
+      return res.status(status).json({ error: result.error });
+    }
+
+    invalidateAuthCache(userId);
+
+    const message = result.user.isPremium
+      ? 'User granted premium status'
+      : 'Premium status removed';
+
+    res.json({ user: result.user, message });
+  } catch (err) {
+    logger.error('Admin togglePremium error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/users/:userId/vision-quota
+ * Get vision quota for a user
+ */
+async function getUserVisionQuota(req, res) {
+  try {
+    const { userId } = req.params;
+    const quota = await visionQuotaQueries.getQuota(userId);
+    res.json({ quota });
+  } catch (err) {
+    logger.error('Admin getUserVisionQuota error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * POST /api/admin/users/:userId/vision-quota/reset
+ * Reset vision quota for a user
+ */
+async function resetUserVisionQuota(req, res) {
+  try {
+    const { userId } = req.params;
+    await visionQuotaQueries.resetQuota(userId);
+
+    await adminQueries.logAction({
+      adminId: req.user.id,
+      action: 'VISION_QUOTA_RESET',
+      targetUserId: userId,
+      metadata: {},
+      ...getAdminContext(req),
+    });
+
+    const quota = await visionQuotaQueries.getQuota(userId);
+    res.json({ quota, message: 'Vision quota reset successfully' });
+  } catch (err) {
+    logger.error('Admin resetUserVisionQuota error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * PUT /api/admin/users/:userId/vision-quota
+ * Set vision quota scans_used for a user
+ */
+async function setUserVisionQuota(req, res) {
+  try {
+    const { userId } = req.params;
+    const { scansUsed } = req.body || {};
+
+    if (scansUsed === undefined || !Number.isFinite(scansUsed) || scansUsed < 0) {
+      return res.status(400).json({ error: 'scansUsed must be a non-negative number' });
+    }
+
+    await visionQuotaQueries.setQuota(userId, scansUsed);
+
+    await adminQueries.logAction({
+      adminId: req.user.id,
+      action: 'VISION_QUOTA_SET',
+      targetUserId: userId,
+      metadata: { scansUsed },
+      ...getAdminContext(req),
+    });
+
+    const quota = await visionQuotaQueries.getQuota(userId);
+    res.json({ quota, message: 'Vision quota updated successfully' });
+  } catch (err) {
+    logger.error('Admin setUserVisionQuota error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/audit-logs
+ * List admin action logs with filtering
+ */
+async function listAuditLogs(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+    const result = await adminQueries.listAuditLogs({
+      limit,
+      offset,
+      action: req.query.action || null,
+      adminId: req.query.adminId || null,
+      targetUserId: req.query.targetUserId || null,
+      startDate: req.query.startDate || null,
+      endDate: req.query.endDate || null,
+    });
+
+    res.json({
+      logs: result.logs,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin listAuditLogs error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/stats/detailed
+ * Get detailed statistics with breakdowns
+ */
+async function getDetailedStats(req, res) {
+  try {
+    const stats = await adminQueries.getDetailedStats();
+    res.json(stats);
+  } catch (err) {
+    logger.error('Admin getDetailedStats error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/shelves
+ * List shelves for content browsing
+ */
+async function listShelves(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+    const result = await adminContentQueries.listShelves({
+      limit,
+      offset,
+      type: req.query.type || null,
+      userId: req.query.userId || null,
+      search: req.query.search || null,
+    });
+
+    res.json({
+      shelves: result.shelves,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin listShelves error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/shelves/:shelfId
+ * Get shelf details
+ */
+async function getShelf(req, res) {
+  try {
+    const { shelfId } = req.params;
+    const shelf = await adminContentQueries.getShelfById(shelfId);
+    if (!shelf) {
+      return res.status(404).json({ error: 'Shelf not found' });
+    }
+    res.json({ shelf });
+  } catch (err) {
+    logger.error('Admin getShelf error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/shelves/:shelfId/items
+ * Get items on a shelf
+ */
+async function getShelfItems(req, res) {
+  try {
+    const { shelfId } = req.params;
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+    const result = await adminContentQueries.getShelfItems(shelfId, { limit, offset });
+
+    res.json({
+      items: result.items,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin getShelfItems error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   getMe,
   logout,
   getStats,
+  getDetailedStats,
   listUsers,
   getUser,
   suspendUser,
   unsuspendUser,
   toggleAdmin,
+  togglePremium,
+  getUserVisionQuota,
+  resetUserVisionQuota,
+  setUserVisionQuota,
   getRecentFeed,
   listJobs,
   getJob,
@@ -449,4 +680,8 @@ module.exports = {
   getSettings,
   getSetting,
   updateSetting,
+  listAuditLogs,
+  listShelves,
+  getShelf,
+  getShelfItems,
 };

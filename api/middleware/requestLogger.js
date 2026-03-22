@@ -31,33 +31,39 @@ function requestLogger(req, res, next) {
 
   store.run({ jobId }, () => {
     req.jobId = jobId;
-    safeAsync(
-      startJobRun({
-        jobId,
-        jobType: 'request',
-        jobName: `${req.method} ${req.originalUrl}`,
-        httpMethod: req.method,
-        httpPath: req.originalUrl,
-        ipAddress: ip,
-        metadata: {
-          userAgent: req.get('user-agent') || null,
-          referer: req.get('referer') || null,
-        },
-        startedAt,
-      }),
-      'startJobRun'
-    );
+    const runReady = startJobRun({
+      jobId,
+      jobType: 'request',
+      jobName: `${req.method} ${req.originalUrl}`,
+      httpMethod: req.method,
+      httpPath: req.originalUrl,
+      ipAddress: ip,
+      metadata: {
+        userAgent: req.get('user-agent') || null,
+        referer: req.get('referer') || null,
+      },
+      startedAt,
+    })
+      .then(() => true)
+      .catch((err) => {
+        if (err && err.code === '42P01') return false;
+        logger.warn('[requestLogger] startJobRun failed', { error: err.message });
+        return false;
+      });
 
     safeAsync(
-      appendJobEvent({
-        jobId,
-        level: 'info',
-        message: 'Request started',
-        metadata: {
-          method: req.method,
-          path: req.originalUrl,
-        },
-        createdAt: startedAt,
+      runReady.then((ready) => {
+        if (!ready) return null;
+        return appendJobEvent({
+          jobId,
+          level: 'info',
+          message: 'Request started',
+          metadata: {
+            method: req.method,
+            path: req.originalUrl,
+          },
+          createdAt: startedAt,
+        });
       }),
       'append start event'
     );
@@ -87,29 +93,35 @@ function requestLogger(req, res, next) {
         },
       };
       safeAsync(
-        success
-          ? completeJobRun({
-              ...finalizePayload,
-              success: true,
-            })
-          : failJobRun({
-              ...finalizePayload,
-              errorMessage: `HTTP ${res.statusCode}`,
-            }),
+        runReady.then((ready) => {
+          if (!ready) return null;
+          return success
+            ? completeJobRun({
+                ...finalizePayload,
+                success: true,
+              })
+            : failJobRun({
+                ...finalizePayload,
+                errorMessage: `HTTP ${res.statusCode}`,
+              });
+        }),
         'finalize job run'
       );
 
       safeAsync(
-        appendJobEvent({
-          jobId,
-          level: success ? 'info' : 'warn',
-          message: 'Request finished',
-          userId,
-          metadata: {
-            status: res.statusCode,
-            durationMs: roundedDurationMs,
-            success,
-          },
+        runReady.then((ready) => {
+          if (!ready) return null;
+          return appendJobEvent({
+            jobId,
+            level: success ? 'info' : 'warn',
+            message: 'Request finished',
+            userId,
+            metadata: {
+              status: res.statusCode,
+              durationMs: roundedDurationMs,
+              success,
+            },
+          });
         }),
         'append finish event'
       );

@@ -43,14 +43,32 @@ router.get('/me', adminController.getMe);
 
 // Dashboard statistics
 router.get('/stats', adminController.getStats);
+router.get('/stats/detailed', adminController.getDetailedStats);
 
-// User management
+// User management (read)
 router.get('/users', adminController.listUsers);
 router.get('/users/:userId', adminController.getUser);
+router.get('/users/:userId/vision-quota', adminController.getUserVisionQuota);
 
 // System settings (read — no CSRF required)
 router.get('/settings', adminController.getSettings);
 router.get('/settings/:key', adminController.getSetting);
+
+// Activity monitoring (read)
+router.get('/feed/recent', adminController.getRecentFeed);
+router.get('/jobs', adminController.listJobs);
+router.get('/jobs/:jobId', adminController.getJob);
+
+// Audit logs (read)
+router.get('/audit-logs', adminController.listAuditLogs);
+
+// Content browsing (read)
+router.get('/shelves', adminController.listShelves);
+router.get('/shelves/:shelfId', adminController.getShelf);
+router.get('/shelves/:shelfId/items', adminController.getShelfItems);
+
+// System info
+router.get('/system', adminController.getSystemInfo);
 
 // CSRF required for admin state-changing routes.
 router.use(requireAdminCsrf);
@@ -59,14 +77,9 @@ router.post('/logout', adminController.logout);
 router.post('/users/:userId/suspend', adminController.suspendUser);
 router.post('/users/:userId/unsuspend', adminController.unsuspendUser);
 router.post('/users/:userId/toggle-admin', adminController.toggleAdmin);
-
-// Activity monitoring
-router.get('/feed/recent', adminController.getRecentFeed);
-router.get('/jobs', adminController.listJobs);
-router.get('/jobs/:jobId', adminController.getJob);
-
-// System info
-router.get('/system', adminController.getSystemInfo);
+router.post('/users/:userId/toggle-premium', adminController.togglePremium);
+router.post('/users/:userId/vision-quota/reset', adminController.resetUserVisionQuota);
+router.put('/users/:userId/vision-quota', adminController.setUserVisionQuota);
 
 // System settings (write — CSRF required)
 router.put('/settings/:key', adminController.updateSetting);

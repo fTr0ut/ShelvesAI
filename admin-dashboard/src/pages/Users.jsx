@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getUsers } from '../api/client';
 import UserTable from '../components/UserTable';
 import UserDetailModal from '../components/UserDetailModal';
@@ -18,18 +19,26 @@ function fromFilterOptionValue(value) {
   return undefined;
 }
 
+function parseUrlFilter(value) {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
+
 export default function Users() {
+  const [searchParams] = useSearchParams();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ total: 0, hasMore: false });
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [queryState, setQueryState] = useState({
+  const [queryState, setQueryState] = useState(() => ({
     page: 0,
-    suspended: undefined,
-    admin: undefined,
-  });
+    suspended: parseUrlFilter(searchParams.get('suspended')),
+    admin: parseUrlFilter(searchParams.get('admin')),
+    premium: parseUrlFilter(searchParams.get('premium')),
+  }));
   const limit = 20;
 
   useEffect(() => {
@@ -53,6 +62,7 @@ export default function Users() {
         search: search || undefined,
         suspended: queryState.suspended,
         admin: queryState.admin,
+        premium: queryState.premium,
       };
       const response = await getUsers(params);
       setUsers(response.data.users);
@@ -62,7 +72,7 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  }, [queryState.page, queryState.suspended, queryState.admin, search]);
+  }, [queryState.page, queryState.suspended, queryState.admin, queryState.premium, search]);
 
   useEffect(() => {
     loadUsers();
@@ -118,6 +128,15 @@ export default function Users() {
             <option value="">All Roles</option>
             <option value="true">Admins</option>
             <option value="false">Users</option>
+          </select>
+          <select
+            value={toFilterOptionValue(queryState.premium)}
+            onChange={(e) => handleFilterChange('premium', e.target.value)}
+            className="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
+          >
+            <option value="">All Plans</option>
+            <option value="true">Premium</option>
+            <option value="false">Free</option>
           </select>
           <button
             type="submit"

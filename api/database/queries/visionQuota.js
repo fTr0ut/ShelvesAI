@@ -125,9 +125,44 @@ async function resetQuota(userId) {
     );
 }
 
+/**
+ * Set the scan usage to a specific value (for admin override).
+ * @param {string} userId - User ID
+ * @param {number} scansUsed - New scans_used value
+ */
+async function setQuota(userId, scansUsed) {
+    await query(
+        `INSERT INTO user_vision_quota (user_id, scans_used, period_start, created_at, updated_at)
+         VALUES ($1, $2, NOW(), NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           scans_used = $2,
+           updated_at = NOW()`,
+        [userId, scansUsed]
+    );
+}
+
+/**
+ * Get the monthly quota limit, checking system_settings first.
+ * @returns {Promise<number>}
+ */
+async function getMonthlyQuotaAsync() {
+    try {
+        const { getSystemSettingsCache } = require('../../services/config/SystemSettingsCache');
+        const cached = await getSystemSettingsCache().get('vision_monthly_quota');
+        if (cached !== null && Number.isFinite(cached) && cached > 0) {
+            return cached;
+        }
+    } catch (_) {
+        // Fall through to env/default
+    }
+    return getMonthlyQuota();
+}
+
 module.exports = {
     getQuota,
     incrementUsage,
     resetQuota,
+    setQuota,
     getMonthlyQuota,
+    getMonthlyQuotaAsync,
 };
