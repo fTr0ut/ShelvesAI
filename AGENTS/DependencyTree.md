@@ -673,6 +673,11 @@ scripts/backfillMetascore.js
   → services/catalog/MetadataScorer.js
   → services/config/shelfTypeResolver.js
   → database/queries/utils.js
+
+scripts/backfill-missing-cover-media.js
+  → database/pg.js
+  → database/queries/media.js
+  → logger.js
 ```
 
 ### Database Query Dependencies
@@ -686,7 +691,7 @@ database/queries/utils.js
 
 database/queries/auth.js → database/pg.js, database/queries/utils.js
 database/queries/shelves.js → database/pg.js, database/queries/utils.js
-database/queries/collectables.js → database/pg.js, database/queries/utils.js
+database/queries/collectables.js → database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
 database/queries/feed.js → database/pg.js, database/queries/utils.js, config/constants.js
 database/queries/eventSocial.js → database/pg.js, database/queries/utils.js
 database/queries/friendships.js → database/pg.js, database/queries/utils.js
@@ -698,7 +703,7 @@ database/queries/favorites.js → database/pg.js, database/queries/utils.js
 database/queries/lists.js → database/pg.js, database/queries/utils.js
 database/queries/ratings.js → database/pg.js, database/queries/utils.js
 database/queries/ownership.js → database/pg.js
-database/queries/media.js → database/pg.js
+database/queries/media.js → database/pg.js, services/s3.js, utils/imageValidation.js
 database/queries/manualMedia.js → database/pg.js, services/s3.js
 database/queries/profileMedia.js → database/pg.js, services/s3.js
 database/queries/passwordReset.js → database/pg.js

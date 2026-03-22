@@ -1,5 +1,6 @@
 const crypto = require('crypto');
-const { ADMIN_CSRF_COOKIE } = require('../utils/adminAuth');
+const { ADMIN_CSRF_COOKIE, getAdminCookieBaseOptions, createCsrfToken } = require('../utils/adminAuth');
+const logger = require('../logger');
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -20,8 +21,18 @@ function requireAdminCsrf(req, res, next) {
   const headerToken = req.get('x-csrf-token');
 
   if (!safeEquals(cookieToken, headerToken)) {
+    const ip = req.headers['cf-connecting-ip'] || req.ip;
+    logger.warn(`[CSRF] Invalid CSRF token on ${req.method} ${req.path} from ${ip}`);
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
+
+  // Rotate CSRF token after each state-changing request
+  const newCsrf = createCsrfToken();
+  res.cookie(ADMIN_CSRF_COOKIE, newCsrf, {
+    ...getAdminCookieBaseOptions(),
+    httpOnly: false,
+  });
+  res.set('x-csrf-token', newCsrf);
 
   return next();
 }

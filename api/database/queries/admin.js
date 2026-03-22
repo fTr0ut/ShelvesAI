@@ -144,12 +144,20 @@ async function getUserById(userId) {
  * Suspend a user
  */
 async function suspendUser(userId, reason = null, adminId, context = {}) {
-  // Prevent admin from suspending themselves
   if (userId === adminId) {
     return { error: 'Cannot suspend yourself' };
   }
 
   return transaction(async (client) => {
+    // Block suspending other admins — revoke their admin status first
+    const check = await client.query(
+      'SELECT is_admin FROM users WHERE id = $1',
+      [userId]
+    );
+    if (check.rows.length && check.rows[0].is_admin) {
+      return { error: 'Cannot suspend an admin. Remove admin privileges first.' };
+    }
+
     const result = await client.query(
       `UPDATE users
        SET is_suspended = true,
@@ -219,16 +227,27 @@ async function toggleAdmin(userId, adminId, context = {}) {
   }
 
   return transaction(async (client) => {
-    const result = await client.query(
-      `UPDATE users
-       SET is_admin = NOT is_admin
-       WHERE id = $1
-       RETURNING id, username, is_admin`,
+    // Read current state inside the transaction to prevent race conditions
+    const current = await client.query(
+      'SELECT id, username, is_admin FROM users WHERE id = $1 FOR UPDATE',
       [userId]
     );
 
-    if (result.rows.length === 0) {
+    if (current.rows.length === 0) {
       return { error: 'User not found' };
+    }
+
+    const targetValue = !current.rows[0].is_admin;
+    const result = await client.query(
+      `UPDATE users
+       SET is_admin = $2
+       WHERE id = $1 AND is_admin = $3
+       RETURNING id, username, is_admin`,
+      [userId, targetValue, current.rows[0].is_admin]
+    );
+
+    if (result.rows.length === 0) {
+      return { error: 'Concurrent modification detected, please retry' };
     }
 
     const updated = result.rows[0];

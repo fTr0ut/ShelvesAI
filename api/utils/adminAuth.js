@@ -5,15 +5,17 @@ const ADMIN_CSRF_COOKIE = 'admin_csrf';
 const ADMIN_COOKIE_PATH = '/api/admin';
 const ADMIN_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-function isProductionEnv() {
-  return String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+function isLocalDev() {
+  const env = String(process.env.NODE_ENV || '').toLowerCase();
+  return env === '' || env === 'development';
 }
 
 function getAdminCookieBaseOptions() {
   return {
     path: ADMIN_COOKIE_PATH,
     sameSite: 'strict',
-    secure: isProductionEnv(),
+    // Only allow insecure cookies in local development, not staging
+    secure: !isLocalDev(),
     maxAge: ADMIN_SESSION_TTL_MS,
   };
 }
@@ -60,6 +62,7 @@ module.exports = {
   ADMIN_COOKIE_PATH,
   ADMIN_SESSION_TTL_MS,
   createCsrfToken,
+  getAdminCookieBaseOptions,
   setAdminAuthCookies,
   clearAdminAuthCookies,
 };

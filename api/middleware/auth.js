@@ -6,6 +6,34 @@ const { setUserId } = require('../context');
 const logger = require('../logger');
 const authCache = new Map();
 
+// In-memory set of revoked JWT IDs (jti). Entries auto-expire so the set
+// doesn't grow unbounded — we only need to track tokens until their natural
+// JWT expiry (max 7d for user tokens, 2h for admin tokens).
+const revokedTokens = new Map();
+
+function revokeToken(jti, expiresAt) {
+  if (!jti) return;
+  revokedTokens.set(jti, expiresAt);
+  // Lazy cleanup: purge expired entries when set grows large
+  if (revokedTokens.size > 5000) {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [id, exp] of revokedTokens) {
+      if (exp <= now) revokedTokens.delete(id);
+    }
+  }
+}
+
+function isTokenRevoked(jti) {
+  if (!jti) return false;
+  const exp = revokedTokens.get(jti);
+  if (exp === undefined) return false;
+  if (exp <= Math.floor(Date.now() / 1000)) {
+    revokedTokens.delete(jti);
+    return false;
+  }
+  return true;
+}
+
 function getCachedUser(userId) {
   if (AUTH_CACHE_TTL_MS <= 0) return null;
   const entry = authCache.get(userId);
@@ -54,6 +82,10 @@ async function auth(req, res, next) {
     return res.status(401).json({ error: 'Invalid token' });
   }
 
+  if (isTokenRevoked(payload.jti)) {
+    return res.status(401).json({ error: 'Token revoked' });
+  }
+
   try {
     let user = getCachedUser(payload.id);
 
@@ -87,6 +119,7 @@ async function auth(req, res, next) {
       isPremium: !!user.is_premium,
       isAdmin: !!user.is_admin,
     };
+    req.tokenType = payload.type || 'user';
     setUserId(user.id);
     next();
   } catch (err) {
@@ -157,4 +190,12 @@ async function optionalAuth(req, res, next) {
   }
 }
 
-module.exports = { auth, optionalAuth };
+/**
+ * Remove a user from the auth cache so the next request hits the DB.
+ * Call this when a user's admin/suspension status changes.
+ */
+function invalidateAuthCache(userId) {
+  authCache.delete(userId);
+}
+
+module.exports = { auth, optionalAuth, revokeToken, invalidateAuthCache };

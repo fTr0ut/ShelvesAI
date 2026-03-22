@@ -324,7 +324,7 @@ async function upsert(data, client = null) {
             kind: normalizedKind,
             title,
             coverImageSource,
-        });
+        }, client);
         if (coverMedia?.id) {
             collectable.coverMediaId = coverMedia.id;
             if (coverMedia.localPath) {
@@ -332,7 +332,7 @@ async function upsert(data, client = null) {
             }
         }
         if (collectable.coverMediaId && !collectable.coverMediaPath) {
-            const mediaResult = await query(
+            const mediaResult = await q(
                 'SELECT local_path FROM media WHERE id = $1',
                 [collectable.coverMediaId],
             );
@@ -340,7 +340,13 @@ async function upsert(data, client = null) {
             if (localPath) collectable.coverMediaPath = localPath;
         }
     } catch (err) {
-        logger.warn('[collectables.upsert] media sync failed', { error: err.message || String(err) });
+        logger.warn('[collectables.upsert] media sync failed', {
+            collectableId: collectable.id,
+            title: collectable.title || title || null,
+            sourceUrl: resolvedCoverUrl || null,
+            kind: normalizedKind,
+            error: err.message || String(err),
+        });
     }
 
     return collectable;

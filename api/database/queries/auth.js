@@ -1,7 +1,12 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query } = require('../pg');
 const { rowToCamelCase, formatUserForResponse } = require('./utils');
+
+// Pre-computed hash so bcrypt.compare always runs even for non-existent users,
+// preventing timing-based username enumeration.
+const DUMMY_HASH = bcrypt.hashSync('__dummy_timing_pad__', 10);
 
 /**
  * Find user by username (case-insensitive)
@@ -66,18 +71,17 @@ async function register({ username, password, email }) {
  */
 async function login({ username, password }) {
     const user = await findByUsername(username);
-    if (!user) return null;
 
-    // Check if user is suspended before validating password
+    // Always run bcrypt to prevent timing-based username enumeration
+    const valid = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
+    if (!user || !valid) return null;
+
     if (user.is_suspended) {
         return {
             suspended: true,
             suspensionReason: user.suspension_reason || null,
         };
     }
-
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return null;
 
     const token = jwt.sign(
         { id: user.id, username: user.username },
@@ -98,9 +102,11 @@ async function login({ username, password }) {
  */
 async function loginAdmin({ username, password }) {
     const user = await findByUsername(username);
-    if (!user) return null;
 
-    // Check if user is suspended before validating password
+    // Always run bcrypt to prevent timing-based username enumeration
+    const valid = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
+    if (!user || !valid) return null;
+
     if (user.is_suspended) {
         return {
             suspended: true,
@@ -108,15 +114,12 @@ async function loginAdmin({ username, password }) {
         };
     }
 
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return null;
-
     if (!user.is_admin) {
         return { notAdmin: true };
     }
 
     const token = jwt.sign(
-        { id: user.id, username: user.username, admin: true, type: 'admin' },
+        { id: user.id, username: user.username, admin: true, type: 'admin', jti: crypto.randomUUID() },
         process.env.JWT_SECRET,
         { expiresIn: '2h' }
     );

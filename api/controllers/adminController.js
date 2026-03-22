@@ -1,9 +1,11 @@
+const jwt = require('jsonwebtoken');
 const adminQueries = require('../database/queries/admin');
 const { parsePagination } = require('../database/queries/utils');
-const { clearAdminAuthCookies } = require('../utils/adminAuth');
+const { clearAdminAuthCookies, ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
 const systemSettingsQueries = require('../database/queries/systemSettings');
 const jobRunsQueries = require('../database/queries/jobRuns');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
+const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
 const logger = require('../logger');
 
 const normalizeIp = (ip) => {
@@ -12,18 +14,26 @@ const normalizeIp = (ip) => {
 };
 
 const getClientIp = (req) => {
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  if (typeof cfConnectingIp === 'string' && cfConnectingIp.length > 0) {
-    return normalizeIp(cfConnectingIp.trim());
+  // Only trust proxy headers when Express confirms the request came through
+  // a trusted proxy (req.app.get('trust proxy')). Without this, any client
+  // can spoof cf-connecting-ip / x-forwarded-for to forge audit log entries.
+  const behindProxy = req.ip !== req.socket?.remoteAddress;
+
+  if (behindProxy) {
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    if (typeof cfConnectingIp === 'string' && cfConnectingIp.length > 0) {
+      return normalizeIp(cfConnectingIp.trim());
+    }
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+      return normalizeIp(forwardedFor.split(',')[0].trim());
+    }
+    const realIp = req.headers['x-real-ip'];
+    if (typeof realIp === 'string' && realIp.length > 0) {
+      return normalizeIp(realIp.trim());
+    }
   }
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
-    return normalizeIp(forwardedFor.split(',')[0].trim());
-  }
-  const realIp = req.headers['x-real-ip'];
-  if (typeof realIp === 'string' && realIp.length > 0) {
-    return normalizeIp(realIp.trim());
-  }
+
   return normalizeIp(req.socket?.remoteAddress || req.ip);
 };
 
@@ -59,6 +69,18 @@ async function getMe(req, res) {
  */
 async function logout(req, res) {
   try {
+    // Revoke the current JWT so it can't be reused even if captured
+    const token = req.cookies?.[ADMIN_AUTH_COOKIE];
+    if (token) {
+      try {
+        const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+        if (payload.jti && payload.exp) {
+          revokeToken(payload.jti, payload.exp);
+        }
+      } catch (_) {
+        // Token already expired or invalid — nothing to revoke
+      }
+    }
     clearAdminAuthCookies(res);
     res.status(204).send();
   } catch (err) {
@@ -162,6 +184,9 @@ async function suspendUser(req, res) {
       return res.status(status).json({ error: result.error });
     }
 
+    // Flush auth cache so the suspension takes effect immediately
+    invalidateAuthCache(userId);
+
     res.json({ user: result.user, message: 'User suspended successfully' });
   } catch (err) {
     logger.error('Admin suspendUser error:', err);
@@ -186,6 +211,8 @@ async function unsuspendUser(req, res) {
     if (result.error) {
       return res.status(404).json({ error: result.error });
     }
+
+    invalidateAuthCache(userId);
 
     res.json({ user: result.user, message: 'User unsuspended successfully' });
   } catch (err) {
@@ -212,6 +239,8 @@ async function toggleAdmin(req, res) {
       const status = result.error === 'User not found' ? 404 : 400;
       return res.status(status).json({ error: result.error });
     }
+
+    invalidateAuthCache(userId);
 
     const message = result.user.isAdmin
       ? 'User granted admin privileges'
@@ -289,7 +318,8 @@ async function getJob(req, res) {
     }
 
     const eventLimitRaw = Number.parseInt(req.query.eventLimit, 10);
-    const eventLimit = Number.isFinite(eventLimitRaw) ? eventLimitRaw : 200;
+    const MAX_EVENT_LIMIT = 1000;
+    const eventLimit = Number.isFinite(eventLimitRaw) ? Math.min(eventLimitRaw, MAX_EVENT_LIMIT) : 200;
     const events = await jobRunsQueries.getJobEvents(jobId, { limit: eventLimit });
 
     res.json({ job, events });
@@ -360,10 +390,17 @@ async function getSetting(req, res) {
  * PUT /api/admin/settings/:key
  * Create or update a system setting, invalidate cache, and log the action
  */
+// Setting keys must be lowercase alphanumeric with underscores, 1–100 chars
+const VALID_SETTING_KEY = /^[a-z][a-z0-9_]{0,99}$/;
+
 async function updateSetting(req, res) {
   try {
     const { key } = req.params;
     const { value, description } = req.body || {};
+
+    if (!VALID_SETTING_KEY.test(key)) {
+      return res.status(400).json({ error: 'Invalid setting key. Use lowercase alphanumeric with underscores.' });
+    }
 
     if (value === undefined) {
       return res.status(400).json({ error: 'value is required' });

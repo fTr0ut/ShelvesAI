@@ -37,6 +37,15 @@ const EXT_MAP = new Map([
   ['image/gif', '.gif'],
 ]);
 
+/**
+ * Resolve query executor: use transaction client when provided, otherwise pool query.
+ * @param {import('pg').PoolClient|null} client
+ * @returns {Function}
+ */
+function resolveQuery(client) {
+  return client ? client.query.bind(client) : query;
+}
+
 function normalizeString(value) {
   if (value == null) return '';
   return String(value).trim();
@@ -247,7 +256,10 @@ async function ensureCoverMediaForCollectable({
   title,
   coverImageSource,
   forceRefresh,
-} = {}) {
+  client: optionsClient,
+} = {}, client = null) {
+  const resolvedClient = client || optionsClient || null;
+  const q = resolveQuery(resolvedClient);
   // Skip local caching for external-only sources (e.g., OpenLibrary requires hot-linking)
   if (coverImageSource === 'external') {
     logger.info('[media] Skipping local cache for external source (hot-link required)');
@@ -263,7 +275,7 @@ async function ensureCoverMediaForCollectable({
     const useS3 = s3.isEnabled();
 
     if (allowReuse && coverMediaId) {
-      const existing = await query(
+      const existing = await q(
         'SELECT id, source_url, local_path FROM media WHERE id = $1',
         [coverMediaId],
       );
@@ -283,7 +295,7 @@ async function ensureCoverMediaForCollectable({
     }
 
     if (allowReuse) {
-      const existingByUrl = await query(
+      const existingByUrl = await q(
         'SELECT id, local_path FROM media WHERE collectable_id = $1 AND source_url = $2 LIMIT 1',
         [collectableId, candidate.url],
       );
@@ -294,7 +306,7 @@ async function ensureCoverMediaForCollectable({
           // For S3, trust the DB record; for local, verify file exists
           const fileValid = useS3 || (await fileExistsWithContent(toAbsolutePath(existingPath)));
           if (fileValid) {
-            await query(
+            await q(
               'UPDATE collectables SET cover_media_id = $1 WHERE id = $2 AND (cover_media_id IS NULL OR cover_media_id <> $1)',
               [existingId, collectableId],
             );
@@ -330,7 +342,7 @@ async function ensureCoverMediaForCollectable({
       }
     }
 
-    const insertResult = await query(
+    const insertResult = await q(
       `INSERT INTO media (
         collectable_id, kind, variant, provider, source_url, local_path, content_type, size_bytes, checksum
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -359,7 +371,7 @@ async function ensureCoverMediaForCollectable({
     const mediaPath = mediaRow?.local_path || localPath;
     if (mediaId) {
       // Update both cover_media_id and the provider-agnostic cover fields
-      await query(
+      await q(
         `UPDATE collectables 
          SET cover_media_id = $1,
              cover_image_url = $2,
@@ -378,11 +390,20 @@ async function ensureCoverMediaForCollectable({
 
     return null;
   } catch (err) {
+    const context = {
+      collectableId,
+      title: normalizeString(title) || null,
+      sourceUrl: candidate?.url || null,
+      provider: candidate?.provider || null,
+    };
     if (isMissingRelationError(err)) {
-      logger.warn('[media] media table missing; skipping cover cache.');
+      logger.warn('[media] media table missing; skipping cover cache.', context);
       return null;
     }
-    logger.warn('[media] cover download failed:', err.message || err);
+    logger.warn('[media] cover download failed:', {
+      ...context,
+      error: err.message || String(err),
+    });
     return null;
   }
 }
