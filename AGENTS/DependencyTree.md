@@ -55,6 +55,26 @@ ShelvesAI/
 | `services/ocr.js` | (on-device only, no API call) | N/A |
 | `services/imageUpload.js` | (prepares assets only, upload via apiRequest) | N/A |
 
+#### Vision Workflow Completion Contract (`mobile` <- `api`)
+
+- `POST /api/shelves/:shelfId/vision` (sync complete path) now includes:
+  - `addedCount`
+  - `needsReviewCount`
+  - `existingCount`
+  - `extractedCount`
+  - `summaryMessage`
+- `GET /api/shelves/:shelfId/vision/:jobId/status` (async complete path, `result`) now includes:
+  - `addedCount`
+  - `needsReviewCount`
+  - `existingCount`
+  - `extractedCount`
+  - `summaryMessage`
+- `POST /api/shelves/:shelfId/catalog-lookup` now includes the same completion fields:
+  - `addedCount`, `needsReviewCount`, `existingCount`, `extractedCount`, `summaryMessage`
+- Consumer paths:
+  - `mobile/src/screens/ShelfDetailScreen.js` uses these fields to render non-ambiguous completion alerts.
+  - `mobile/src/hooks/useVisionProcessing.js` uses these fields for background toast messaging and completion callbacks.
+
 ### API ↔ Admin Dashboard Contract
 
 | Admin Client Function | API Route | Auth |

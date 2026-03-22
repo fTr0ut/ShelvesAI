@@ -85,6 +85,47 @@ async function getBase64Payload(asset) {
     }
 }
 
+function formatItemCount(count) {
+    return `${count} item${count === 1 ? '' : 's'}`;
+}
+
+function buildVisionSummaryMessage({
+    addedCount = 0,
+    existingCount = 0,
+    needsReviewCount = 0,
+    extractedCount = 0,
+} = {}) {
+    if (needsReviewCount > 0) {
+        if (addedCount > 0 && existingCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(existingCount)} already on your shelf. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        if (addedCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        if (existingCount > 0) {
+            return `No new items added. ${formatItemCount(existingCount)} already on your shelf. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        return `${formatItemCount(needsReviewCount)} need review.`;
+    }
+
+    if (addedCount > 0) {
+        if (existingCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(existingCount)} already on your shelf.`;
+        }
+        return `${formatItemCount(addedCount)} added to your shelf.`;
+    }
+
+    if (existingCount > 0) {
+        return `No new items added. ${formatItemCount(existingCount)} already on your shelf.`;
+    }
+
+    if (extractedCount > 0) {
+        return `${formatItemCount(extractedCount)} detected, but no new items were added.`;
+    }
+
+    return 'No items were detected.';
+}
+
 export default function ShelfDetailScreen({ route, navigation }) {
     const { id, title, readOnly: readOnlyParam, autoAddItem } = route.params || {};
     const { token, apiBase, premiumEnabled, user } = useContext(AuthContext);
@@ -519,13 +560,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
                     const addedCount = response.result?.addedCount || 0;
                     const needsReviewCount = response.result?.needsReviewCount || 0;
+                    const existingCount = response.result?.existingCount || response.result?.results?.existing || 0;
+                    const extractedCount = response.result?.extractedCount || response.result?.results?.extracted || 0;
+                    const summaryMessage =
+                        response.result?.summaryMessage ||
+                        buildVisionSummaryMessage({ addedCount, existingCount, needsReviewCount, extractedCount });
 
                     if (needsReviewCount > 0) {
                         setTimeout(() => setVisionModalVisible(false), 1000);
                         setTimeout(() => {
                             Alert.alert(
                                 'Scan Complete',
-                                `${addedCount} items added. ${needsReviewCount} items need review.`,
+                                summaryMessage,
                                 [
                                     { text: 'Later', style: 'cancel' },
                                     { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
@@ -534,7 +580,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         }, 1200);
                     } else {
                         setTimeout(() => setVisionModalVisible(false), 1000);
-                        Alert.alert('Scan Complete', `${addedCount} items added to your shelf.`);
+                        Alert.alert('Scan Complete', summaryMessage);
                     }
                 } else if (response.status === 'failed' || response.status === 'aborted') {
                     clearInterval(pollIntervalRef.current);
@@ -672,8 +718,15 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 if (Array.isArray(data?.items)) {
                     setItems(data.items);
                 }
-                const detected = data?.analysis?.items?.length || 0;
-                Alert.alert('Scan complete', detected ? `Detected ${detected} items.` : 'No items detected.');
+                const summaryMessage =
+                    data?.summaryMessage ||
+                    buildVisionSummaryMessage({
+                        addedCount: data?.addedCount || 0,
+                        existingCount: data?.existingCount || 0,
+                        needsReviewCount: data?.needsReviewCount || 0,
+                        extractedCount: data?.extractedCount || data?.analysis?.items?.length || 0,
+                    });
+                Alert.alert('Scan Complete', summaryMessage);
                 return;
             }
 
@@ -704,20 +757,28 @@ export default function ShelfDetailScreen({ route, navigation }) {
             }
             const addedCount = data?.addedCount || 0;
             const needsReviewCount = data?.needsReviewCount || 0;
+            const existingCount = data?.existingCount || 0;
+            const extractedCount = data?.extractedCount || 0;
+            const summaryMessage = data?.summaryMessage || buildVisionSummaryMessage({
+                addedCount,
+                existingCount,
+                needsReviewCount,
+                extractedCount,
+            });
 
             if (needsReviewCount > 0) {
                 Alert.alert(
                     'Scan Complete',
-                    `${addedCount} item${addedCount !== 1 ? 's' : ''} added. ${needsReviewCount} item${needsReviewCount !== 1 ? 's' : ''} need review.`,
+                    summaryMessage,
                     [
                         { text: 'Later', style: 'cancel' },
                         { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
                     ]
                 );
             } else if (addedCount > 0) {
-                Alert.alert('Scan Complete', `${addedCount} item${addedCount !== 1 ? 's' : ''} added to your shelf.`);
+                Alert.alert('Scan Complete', summaryMessage);
             } else {
-                Alert.alert('Scan Complete', 'No new items were added. They may already be on your shelf.');
+                Alert.alert('Scan Complete', summaryMessage);
             }
         } catch (e) {
             const requiresPremium = e?.data?.requiresPremium;
@@ -760,20 +821,28 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     }
                     const addedCount = fallbackData?.addedCount || 0;
                     const needsReviewCount = fallbackData?.needsReviewCount || 0;
+                    const existingCount = fallbackData?.existingCount || 0;
+                    const extractedCount = fallbackData?.extractedCount || 0;
+                    const summaryMessage = fallbackData?.summaryMessage || buildVisionSummaryMessage({
+                        addedCount,
+                        existingCount,
+                        needsReviewCount,
+                        extractedCount,
+                    });
 
                     if (needsReviewCount > 0) {
                         Alert.alert(
                             'Scan Complete',
-                            `${addedCount} item${addedCount !== 1 ? 's' : ''} added. ${needsReviewCount} item${needsReviewCount !== 1 ? 's' : ''} need review.`,
+                            summaryMessage,
                             [
                                 { text: 'Later', style: 'cancel' },
                                 { text: 'Review Now', onPress: () => navigation.navigate('Unmatched') },
                             ]
                         );
                     } else if (addedCount > 0) {
-                        Alert.alert('Scan Complete', `${addedCount} item${addedCount !== 1 ? 's' : ''} added to your shelf.`);
+                        Alert.alert('Scan Complete', summaryMessage);
                     } else {
-                        Alert.alert('Scan Complete', 'No new items were added. They may already be on your shelf.');
+                        Alert.alert('Scan Complete', summaryMessage);
                     }
                 } catch (fallbackErr) {
                     Alert.alert('Error', fallbackErr.message || 'On-device scan failed');

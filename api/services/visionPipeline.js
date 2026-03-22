@@ -271,6 +271,7 @@ class VisionPipelineService {
         const normalizedItems = isOtherShelf
             ? rawItems.map(item => normalizeOtherManualItem(item, shelf.type))
             : rawItems;
+        const extractedCount = normalizedItems.length;
 
         // Step 1b: Categorize into three tiers using per-type thresholds
         checkAborted();
@@ -396,11 +397,22 @@ class VisionPipelineService {
             }
 
             const totalNeedsReview = lowConfidence.length + itemsToReview.length + skippedItems.length;
-            logger.info('[VisionPipeline] === processImage Complete (other) ===', { added: addedItems.length, needsReview: totalNeedsReview });
+            const existingItemsCount = matchedItems.length;
+            logger.info('[VisionPipeline] === processImage Complete (other) ===', {
+                extracted: extractedCount,
+                added: addedItems.length,
+                existing: existingItemsCount,
+                needsReview: totalNeedsReview,
+            });
 
             return {
                 analysis: { shelfConfirmed: true, items: allResolvedItems },
-                results: { added: addedItems.length, needsReview: totalNeedsReview },
+                results: {
+                    extracted: extractedCount,
+                    added: addedItems.length,
+                    existing: existingItemsCount,
+                    needsReview: totalNeedsReview,
+                },
                 addedItems,
                 needsReview: [...lowConfidence, ...itemsToReview, ...skippedItems],
                 warnings: warnings.length > 0 ? warnings : undefined,
@@ -801,11 +813,22 @@ class VisionPipelineService {
         }
 
         const totalNeedsReview = reviewQueueItems.length;
-        logger.info('[VisionPipeline] === processImage Complete ===', { added: addedItems.length, needsReview: totalNeedsReview });
+        const existingItemsCount = manualMatched.length;
+        logger.info('[VisionPipeline] === processImage Complete ===', {
+            extracted: extractedCount,
+            added: addedItems.length,
+            existing: existingItemsCount,
+            needsReview: totalNeedsReview,
+        });
 
         return {
             analysis: { shelfConfirmed: true, items: [...collectableResolvedItems, ...manualAdded, ...manualMatched] },
-            results: { added: addedItems.length, needsReview: totalNeedsReview },
+            results: {
+                extracted: extractedCount,
+                added: addedItems.length,
+                existing: existingItemsCount,
+                needsReview: totalNeedsReview,
+            },
             addedItems,
             needsReview: reviewQueueItems,
             warnings: warnings.length > 0 ? warnings : undefined

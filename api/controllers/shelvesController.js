@@ -199,6 +199,47 @@ function parsePaginationParams(reqQuery, { defaultLimit = 20, maxLimit = 100 } =
   return { limit, skip };
 }
 
+function formatItemCount(count) {
+  return `${count} item${count === 1 ? '' : 's'}`;
+}
+
+function buildVisionCompletionMessage({
+  addedCount = 0,
+  existingCount = 0,
+  needsReviewCount = 0,
+  extractedCount = 0,
+} = {}) {
+  if (needsReviewCount > 0) {
+    if (addedCount > 0 && existingCount > 0) {
+      return `Scan complete: ${formatItemCount(addedCount)} added, ${formatItemCount(existingCount)} already on this shelf, ${formatItemCount(needsReviewCount)} need review.`;
+    }
+    if (addedCount > 0) {
+      return `Scan complete: ${formatItemCount(addedCount)} added and ${formatItemCount(needsReviewCount)} need review.`;
+    }
+    if (existingCount > 0) {
+      return `Scan complete: no new items added, ${formatItemCount(existingCount)} already on this shelf, ${formatItemCount(needsReviewCount)} need review.`;
+    }
+    return `Scan complete: ${formatItemCount(needsReviewCount)} need review.`;
+  }
+
+  if (addedCount > 0) {
+    if (existingCount > 0) {
+      return `Scan complete: ${formatItemCount(addedCount)} added, ${formatItemCount(existingCount)} already on this shelf.`;
+    }
+    return `Scan complete: ${formatItemCount(addedCount)} added to your shelf.`;
+  }
+
+  if (existingCount > 0) {
+    return `Scan complete: no new items added; ${formatItemCount(existingCount)} already on this shelf.`;
+  }
+
+  if (extractedCount > 0) {
+    return `Scan complete: ${formatItemCount(extractedCount)} detected, but no new items were added.`;
+  }
+
+  return 'Scan complete: no items were detected.';
+}
+
 const VISION_FINGERPRINT_SOURCE = "vision-ocr";
 
 // PostgreSQL helper functions
@@ -998,6 +1039,16 @@ async function processShelfVision(req, res) {
       (async () => {
         try {
           const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, pipelineOptions);
+          const addedCount = result.addedItems?.length || result.results?.added || 0;
+          const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
+          const existingCount = result.results?.existing || 0;
+          const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
+          const summaryMessage = buildVisionCompletionMessage({
+            addedCount,
+            existingCount,
+            needsReviewCount,
+            extractedCount,
+          });
 
           // Increment quota on successful cloud vision processing
           if (isCloudVision) {
@@ -1012,8 +1063,11 @@ async function processShelfVision(req, res) {
           processingStatus.completeJob(jobId, {
             analysis: result.analysis,
             results: result.results,
-            addedCount: result.addedItems?.length || 0,
-            needsReviewCount: result.needsReview?.length || 0,
+            addedCount,
+            needsReviewCount,
+            existingCount,
+            extractedCount,
+            summaryMessage,
             warnings: result.warnings,
           });
         } catch (err) {
@@ -1052,6 +1106,16 @@ async function processShelfVision(req, res) {
 
     // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
+    const addedCount = result.addedItems?.length || result.results?.added || 0;
+    const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
+    const existingCount = result.results?.existing || 0;
+    const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
+    const summaryMessage = buildVisionCompletionMessage({
+      addedCount,
+      existingCount,
+      needsReviewCount,
+      extractedCount,
+    });
 
     res.json({
       jobId,
@@ -1059,6 +1123,11 @@ async function processShelfVision(req, res) {
       results: result.results,
       addedItems: result.addedItems,
       needsReview: result.needsReview,
+      addedCount,
+      needsReviewCount,
+      existingCount,
+      extractedCount,
+      summaryMessage,
       items,
       visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
       metadata: requestMetadata,
@@ -1168,10 +1237,23 @@ async function processCatalogLookup(req, res) {
     });
 
     const items = await hydrateShelfItems(userId, shelf.id);
+    const addedCount = result.addedItems?.length || result.results?.added || 0;
+    const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
+    const existingCount = result.results?.existing || 0;
+    const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
+    const summaryMessage = buildVisionCompletionMessage({
+      addedCount,
+      existingCount,
+      needsReviewCount,
+      extractedCount,
+    });
 
     res.json({
-      addedCount: result.addedItems?.length || 0,
-      needsReviewCount: result.needsReview?.length || 0,
+      addedCount,
+      needsReviewCount,
+      existingCount,
+      extractedCount,
+      summaryMessage,
       analysis: result.analysis,
       items,
     });

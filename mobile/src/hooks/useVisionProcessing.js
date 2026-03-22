@@ -4,6 +4,47 @@ import { apiRequest } from '../services/api';
 
 const POLL_INTERVAL_MS = 2000;
 
+function formatItemCount(count) {
+    return `${count} item${count === 1 ? '' : 's'}`;
+}
+
+function buildVisionSummaryMessage({
+    addedCount = 0,
+    existingCount = 0,
+    needsReviewCount = 0,
+    extractedCount = 0,
+} = {}) {
+    if (needsReviewCount > 0) {
+        if (addedCount > 0 && existingCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(existingCount)} already on your shelf. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        if (addedCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        if (existingCount > 0) {
+            return `No new items added. ${formatItemCount(existingCount)} already on your shelf. ${formatItemCount(needsReviewCount)} need review.`;
+        }
+        return `${formatItemCount(needsReviewCount)} need review.`;
+    }
+
+    if (addedCount > 0) {
+        if (existingCount > 0) {
+            return `${formatItemCount(addedCount)} added. ${formatItemCount(existingCount)} already on your shelf.`;
+        }
+        return `${formatItemCount(addedCount)} added to your shelf.`;
+    }
+
+    if (existingCount > 0) {
+        return `No new items added. ${formatItemCount(existingCount)} already on your shelf.`;
+    }
+
+    if (extractedCount > 0) {
+        return `${formatItemCount(extractedCount)} detected, but no new items were added.`;
+    }
+
+    return 'No items were detected.';
+}
+
 /**
  * Hook for managing vision processing with polling and abort support
  */
@@ -109,12 +150,17 @@ export function useVisionProcessing({ apiBase, token, shelfId, onComplete, navig
 
         const addedCount = response.result?.addedCount || response.addedItems?.length || 0;
         const needsReviewCount = response.result?.needsReviewCount || response.needsReview?.length || 0;
+        const existingCount = response.result?.existingCount || response.result?.results?.existing || 0;
+        const extractedCount = response.result?.extractedCount || response.result?.results?.extracted || 0;
+        const summaryMessage =
+            response.result?.summaryMessage ||
+            buildVisionSummaryMessage({ addedCount, existingCount, needsReviewCount, extractedCount });
 
         // If in background mode, show toast
         if (isBackground) {
             if (needsReviewCount > 0) {
                 showToast({
-                    message: `Scan complete! ${addedCount} items added, ${needsReviewCount} need review`,
+                    message: `Scan complete! ${summaryMessage}`,
                     type: 'warning',
                     actionLabel: 'View',
                     onAction: () => {
@@ -123,7 +169,7 @@ export function useVisionProcessing({ apiBase, token, shelfId, onComplete, navig
                 });
             } else {
                 showToast({
-                    message: `Scan complete! ${addedCount} items added to your shelf`,
+                    message: `Scan complete! ${summaryMessage}`,
                     type: 'success',
                 });
             }
@@ -133,6 +179,9 @@ export function useVisionProcessing({ apiBase, token, shelfId, onComplete, navig
             onComplete({
                 addedCount,
                 needsReviewCount,
+                existingCount,
+                extractedCount,
+                summaryMessage,
                 items: response.items,
             });
         }

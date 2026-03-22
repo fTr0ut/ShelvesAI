@@ -156,7 +156,7 @@ describe('shelvesController', () => {
             ]);
         });
 
-        it('should return addedCount, needsReviewCount, analysis, and hydrated items', async () => {
+        it('should return completion counts, summary, analysis, and hydrated items', async () => {
             mockPipelineInstance.processImage.mockResolvedValue({
                 analysis: { shelfConfirmed: true },
                 addedItems: [{ id: 1 }, { id: 2 }],
@@ -165,12 +165,35 @@ describe('shelvesController', () => {
 
             await shelvesController.processCatalogLookup(req, res);
 
-            expect(res.json).toHaveBeenCalledWith({
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 addedCount: 2,
                 needsReviewCount: 1,
+                existingCount: 0,
+                extractedCount: 0,
+                summaryMessage: expect.any(String),
                 analysis: { shelfConfirmed: true },
                 items: expect.any(Array),
+            }));
+        });
+
+        it('should return a duplicate-aware summary when items already exist on shelf', async () => {
+            mockPipelineInstance.processImage.mockResolvedValue({
+                analysis: { shelfConfirmed: true, items: [{ id: 'a' }, { id: 'b' }] },
+                results: { added: 0, existing: 2, needsReview: 0, extracted: 2 },
+                addedItems: [],
+                needsReview: [],
             });
+
+            await shelvesController.processCatalogLookup(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                addedCount: 0,
+                existingCount: 2,
+                extractedCount: 2,
+                needsReviewCount: 0,
+                summaryMessage: 'Scan complete: no new items added; 2 items already on this shelf.',
+                items: expect.any(Array),
+            }));
         });
 
         it('should handle pipeline result with no addedItems or needsReview gracefully', async () => {
