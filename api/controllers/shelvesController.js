@@ -5,6 +5,7 @@ const {
   makeCollectableFingerprint,
   makeManualFingerprint,
 } = require('../services/collectables/fingerprint');
+const crypto = require('crypto');
 const { BookCatalogService } = require("../services/catalog/BookCatalogService");
 const { GameCatalogService } = require("../services/catalog/GameCatalogService");
 const { MovieCatalogService } = require("../services/catalog/MovieCatalogService");
@@ -29,8 +30,11 @@ const {
   normalizeOtherManualItem,
   buildOtherManualPayload,
   hasRequiredOtherFields,
+  evaluateOtherManualFuzzyCandidate,
+  OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
 } = require('../services/manuals/otherManual');
 const { normalizeString, normalizeStringArray } = require('../utils/normalize');
+const visionResultCacheQueries = require('../database/queries/visionResultCache');
 const logger = require('../logger');
 const {
   DEFAULT_OCR_CONFIDENCE_THRESHOLD,
@@ -91,6 +95,61 @@ function normalizeIdentifiers(value) {
   return value;
 }
 
+function normalizeSourceLinks(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  return source
+    .map((entry) => {
+      if (!entry) return null;
+      if (typeof entry === 'string') {
+        const url = normalizeString(entry);
+        return url ? { url } : null;
+      }
+      if (typeof entry === 'object') {
+        const url = normalizeString(entry.url || entry.link || entry.href);
+        if (!url) return null;
+        const label = normalizeString(entry.label || entry.name || entry.title);
+        return label ? { url, label } : { url };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function decodeImageBase64Payload(imageBase64) {
+  const raw = String(imageBase64 || '');
+  const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.*)$/.exec(raw);
+  return match ? match[1] : raw;
+}
+
+function computeImageSha256(imageBase64) {
+  const payload = decodeImageBase64Payload(imageBase64);
+  const bytes = Buffer.from(payload, 'base64');
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function buildVisionCounts(result = {}, options = {}) {
+  const { cached = false } = options;
+  const addedCount = result.addedItems?.length || result.results?.added || 0;
+  const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
+  const existingCount = result.results?.existing || 0;
+  const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
+  const summaryMessage = buildVisionCompletionMessage({
+    addedCount,
+    existingCount,
+    needsReviewCount,
+    extractedCount,
+    cached,
+  });
+  return {
+    addedCount,
+    needsReviewCount,
+    existingCount,
+    extractedCount,
+    summaryMessage,
+  };
+}
+
 function buildCollectableUpsertPayload(input, shelfType) {
   const title = normalizeString(input?.title || input?.name);
   if (!title) return null;
@@ -124,6 +183,12 @@ function buildCollectableUpsertPayload(input, shelfType) {
   const fuzzyFingerprints = normalizeArray(input?.fuzzyFingerprints);
   const year = normalizeString(
     input?.year || input?.releaseYear || input?.publishYear,
+  );
+  const marketValue = normalizeString(
+    input?.marketValue || input?.market_value || input?.estimatedMarketValue,
+  );
+  const marketValueSources = normalizeSourceLinks(
+    input?.marketValueSources || input?.market_value_sources || input?.marketSources,
   );
   const subtitle = normalizeString(input?.subtitle);
   const description = normalizeString(input?.description);
@@ -169,6 +234,8 @@ function buildCollectableUpsertPayload(input, shelfType) {
     creators,
     publishers,
     year,
+    marketValue,
+    marketValueSources,
     formats,
     systemName,
     genre: normalizedGenre,
@@ -203,7 +270,28 @@ function formatItemCount(count) {
   return `${count} item${count === 1 ? '' : 's'}`;
 }
 
-function buildVisionCompletionMessage({
+function omitMarketValueSources(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+  const { marketValueSources, ...rest } = entity;
+  return rest;
+}
+
+function omitMarketValueSourcesDeep(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => omitMarketValueSourcesDeep(entry));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const { marketValueSources, ...rest } = value;
+  const output = {};
+  for (const [key, nested] of Object.entries(rest)) {
+    output[key] = omitMarketValueSourcesDeep(nested);
+  }
+  return output;
+}
+
+function buildStandardVisionCompletionMessage({
   addedCount = 0,
   existingCount = 0,
   needsReviewCount = 0,
@@ -240,6 +328,26 @@ function buildVisionCompletionMessage({
   return 'Scan complete: no items were detected.';
 }
 
+function buildVisionCompletionMessage({
+  addedCount = 0,
+  existingCount = 0,
+  needsReviewCount = 0,
+  extractedCount = 0,
+  cached = false,
+} = {}) {
+  const standard = buildStandardVisionCompletionMessage({
+    addedCount,
+    existingCount,
+    needsReviewCount,
+    extractedCount,
+  });
+
+  if (!cached) return standard;
+
+  const previousSummary = standard.replace(/^Scan complete:\s*/i, '');
+  return `Same photo detected: this image was already scanned in the last 24 hours. Previous result: ${previousSummary}`;
+}
+
 const VISION_FINGERPRINT_SOURCE = "vision-ocr";
 
 // PostgreSQL helper functions
@@ -261,6 +369,7 @@ function formatShelfItem(row) {
     publisher: collectablePublishers[0] || null,
     publishers: collectablePublishers,
     year: row.collectableYear || null,
+    marketValue: row.collectableMarketValue || null,
     formats: Array.isArray(row.collectableFormats) ? row.collectableFormats : [],
     systemName: row.collectableSystemName || null,
     tags: Array.isArray(row.collectableTags) ? row.collectableTags : [],
@@ -296,6 +405,7 @@ function formatShelfItem(row) {
     publisher: row.manualPublisher || null,
     format: row.manualFormat || null,
     year: row.manualYear || null,
+    marketValue: row.manualMarketValue || null,
     ageStatement: row.manualAgeStatement || null,
     specialMarkings: row.manualSpecialMarkings || null,
     labelColor: row.manualLabelColor || null,
@@ -631,6 +741,8 @@ async function addManualEntry(req, res) {
       tags,
       limitedEdition,
       itemSpecificText,
+      marketValue,
+      marketValueSources,
     } = req.body ?? {};
     if (!name) return res.status(400).json({ error: "name is required" });
 
@@ -644,6 +756,8 @@ async function addManualEntry(req, res) {
       publisher,
       format,
       year,
+      marketValue,
+      marketValueSources: normalizeSourceLinks(marketValueSources),
       ageStatement,
       specialMarkings,
       labelColor,
@@ -664,7 +778,7 @@ async function addManualEntry(req, res) {
     });
 
     res.status(201).json({
-      item: { id: result.collection.id, manual: result.manual, position: null, format: null, notes: null, rating: null },
+      item: { id: result.collection.id, manual: omitMarketValueSources(result.manual), position: null, format: null, notes: null, rating: null },
     });
   } catch (err) {
     logger.error('addManualEntry error:', err);
@@ -708,7 +822,16 @@ async function addCollectable(req, res) {
       },
     });
 
-    res.status(201).json({ item: { id: item.id, collectable, position: item.position, format: item.format, notes: item.notes, rating: item.rating } });
+    res.status(201).json({
+      item: {
+        id: item.id,
+        collectable: omitMarketValueSources(collectable),
+        position: item.position,
+        format: item.format,
+        notes: item.notes,
+        rating: item.rating,
+      },
+    });
   } catch (err) {
     logger.error('addCollectable error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -764,7 +887,7 @@ async function addCollectableFromApi(req, res) {
     res.status(201).json({
       item: {
         id: item.id,
-        collectable,
+        collectable: omitMarketValueSources(collectable),
         position: item.position,
         format: item.format,
         notes: item.notes,
@@ -814,7 +937,7 @@ async function searchCollectablesForShelf(req, res) {
     const limit = Math.min(parseInt(req.query.limit || "10", 10), 50);
 
     const results = await collectablesQueries.searchByTitle(q, shelf.type, limit);
-    res.json({ results });
+    res.json({ results: results.map(omitMarketValueSources) });
   } catch (err) {
     logger.error('searchCollectablesForShelf error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -836,6 +959,7 @@ async function updateManualEntry(req, res) {
       regionalItem: 'regional_item',
       limitedEdition: 'limited_edition',
       itemSpecificText: 'item_specific_text',
+      marketValue: 'market_value',
     };
 
     const allowedFields = [
@@ -846,6 +970,7 @@ async function updateManualEntry(req, res) {
       'publisher',
       'format',
       'year',
+      'marketValue',
       'ageStatement',
       'specialMarkings',
       'labelColor',
@@ -918,7 +1043,7 @@ async function updateManualEntry(req, res) {
       updatedNotes = notesValue;
     }
 
-    res.json({ item: { id: entry.id, notes: updatedNotes, manual: manualData } });
+    res.json({ item: { id: entry.id, notes: updatedNotes, manual: omitMarketValueSources(manualData) } });
   } catch (err) {
     logger.error('updateManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -969,7 +1094,7 @@ async function uploadManualCover(req, res) {
     res.json({
       success: true,
       manual: {
-        ...updatedManual,
+        ...omitMarketValueSources(updatedManual),
         coverMediaUrl,
       },
     });
@@ -1000,8 +1125,74 @@ async function processShelfVision(req, res) {
       });
     }
 
-    // Quota Check (only for cloud vision, not MLKit fallback)
+    // Quota applies only to uncached cloud-vision processing.
     const isCloudVision = !rawItems || rawItems.length === 0;
+
+    let imageSha256 = null;
+    let cachedVision = null;
+    if (isCloudVision && imageBase64) {
+      imageSha256 = computeImageSha256(imageBase64);
+      try {
+        cachedVision = await visionResultCacheQueries.getValid({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          imageSha256,
+        });
+      } catch (cacheReadErr) {
+        if (cacheReadErr?.code !== '42P01') {
+          logger.warn('[Vision] Cache read failed:', cacheReadErr?.message || cacheReadErr);
+        }
+      }
+      logger.info('[Vision] Image cache lookup', {
+        shelfId: shelf.id,
+        hashPrefix: imageSha256.slice(0, 12),
+        cacheHit: !!cachedVision,
+      });
+    }
+
+    logger.info(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
+
+    // Generate job ID and create job entry
+    const jobId = processingStatus.generateJobId(req.user.id, shelf.id);
+    processingStatus.createJob(jobId, req.user.id, shelf.id);
+
+    if (cachedVision?.resultJson) {
+      const cachedResult = cachedVision.resultJson;
+      const counts = buildVisionCounts(cachedResult, { cached: true });
+      processingStatus.completeJob(jobId, {
+        analysis: cachedResult.analysis,
+        results: cachedResult.results,
+        ...counts,
+        warnings: cachedResult.warnings,
+        cached: true,
+      });
+
+      if (asyncMode) {
+        return res.status(202).json({
+          jobId,
+          status: 'completed',
+          message: 'Same photo detected. Using previous scan result.',
+          metadata: requestMetadata,
+          cached: true,
+        });
+      }
+
+      const items = await hydrateShelfItems(req.user.id, shelf.id);
+      return res.json({
+        jobId,
+        analysis: omitMarketValueSourcesDeep(cachedResult.analysis),
+        results: cachedResult.results,
+        addedItems: omitMarketValueSourcesDeep(cachedResult.addedItems),
+        needsReview: omitMarketValueSourcesDeep(cachedResult.needsReview),
+        ...counts,
+        items,
+        visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
+        metadata: requestMetadata,
+        warnings: cachedResult.warnings,
+        cached: true,
+      });
+    }
+
     if (isCloudVision) {
       const quota = await visionQuotaQueries.getQuota(req.user.id);
       if (quota.scansRemaining <= 0) {
@@ -1018,12 +1209,6 @@ async function processShelfVision(req, res) {
       }
     }
 
-    logger.info(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
-
-    // Generate job ID and create job entry
-    const jobId = processingStatus.generateJobId(req.user.id, shelf.id);
-    processingStatus.createJob(jobId, req.user.id, shelf.id);
-
     // Instantiate new Pipeline
     const hooks = getVisionPipelineHooks();
     const pipeline = new VisionPipelineService({ hooks });
@@ -1039,16 +1224,7 @@ async function processShelfVision(req, res) {
       (async () => {
         try {
           const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, pipelineOptions);
-          const addedCount = result.addedItems?.length || result.results?.added || 0;
-          const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
-          const existingCount = result.results?.existing || 0;
-          const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
-          const summaryMessage = buildVisionCompletionMessage({
-            addedCount,
-            existingCount,
-            needsReviewCount,
-            extractedCount,
-          });
+          const counts = buildVisionCounts(result);
 
           // Increment quota on successful cloud vision processing
           if (isCloudVision) {
@@ -1059,15 +1235,32 @@ async function processShelfVision(req, res) {
             }
           }
 
+          if (isCloudVision && imageSha256) {
+            try {
+              await visionResultCacheQueries.set({
+                userId,
+                shelfId: shelf.id,
+                imageSha256,
+                resultJson: {
+                  analysis: result.analysis,
+                  results: result.results,
+                  addedItems: result.addedItems,
+                  needsReview: result.needsReview,
+                  warnings: result.warnings,
+                },
+              });
+            } catch (cacheWriteErr) {
+              if (cacheWriteErr?.code !== '42P01') {
+                logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
+              }
+            }
+          }
+
           // Mark job complete with result
           processingStatus.completeJob(jobId, {
             analysis: result.analysis,
             results: result.results,
-            addedCount,
-            needsReviewCount,
-            existingCount,
-            extractedCount,
-            summaryMessage,
+            ...counts,
             warnings: result.warnings,
           });
         } catch (err) {
@@ -1102,36 +1295,45 @@ async function processShelfVision(req, res) {
       }
     }
 
-    processingStatus.completeJob(jobId, result);
+    if (isCloudVision && imageSha256) {
+      try {
+        await visionResultCacheQueries.set({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          imageSha256,
+          resultJson: {
+            analysis: result.analysis,
+            results: result.results,
+            addedItems: result.addedItems,
+            needsReview: result.needsReview,
+            warnings: result.warnings,
+          },
+        });
+      } catch (cacheWriteErr) {
+        if (cacheWriteErr?.code !== '42P01') {
+          logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
+        }
+      }
+    }
+
+    const counts = buildVisionCounts(result);
+    processingStatus.completeJob(jobId, { ...result, ...counts });
 
     // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
-    const addedCount = result.addedItems?.length || result.results?.added || 0;
-    const needsReviewCount = result.needsReview?.length || result.results?.needsReview || 0;
-    const existingCount = result.results?.existing || 0;
-    const extractedCount = result.results?.extracted || result.analysis?.items?.length || 0;
-    const summaryMessage = buildVisionCompletionMessage({
-      addedCount,
-      existingCount,
-      needsReviewCount,
-      extractedCount,
-    });
 
     res.json({
       jobId,
-      analysis: result.analysis,
+      analysis: omitMarketValueSourcesDeep(result.analysis),
       results: result.results,
-      addedItems: result.addedItems,
-      needsReview: result.needsReview,
-      addedCount,
-      needsReviewCount,
-      existingCount,
-      extractedCount,
-      summaryMessage,
+      addedItems: omitMarketValueSourcesDeep(result.addedItems),
+      needsReview: omitMarketValueSourcesDeep(result.needsReview),
+      ...counts,
       items,
       visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
       metadata: requestMetadata,
-      warnings: result.warnings
+      warnings: result.warnings,
+      cached: false,
     });
 
   } catch (err) {
@@ -1169,7 +1371,7 @@ async function getVisionStatus(req, res) {
       step: job.step,
       progress: job.progress,
       message: job.message,
-      result: job.result,
+      result: omitMarketValueSourcesDeep(job.result),
       items,
     });
   } catch (err) {
@@ -1254,7 +1456,7 @@ async function processCatalogLookup(req, res) {
       existingCount,
       extractedCount,
       summaryMessage,
-      analysis: result.analysis,
+      analysis: omitMarketValueSourcesDeep(result.analysis),
       items,
     });
 
@@ -1270,7 +1472,7 @@ async function listReviewItems(req, res) {
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
     const items = await needsReviewQueries.listPending(req.user.id, shelf.id);
-    res.json({ items });
+    res.json({ items: omitMarketValueSourcesDeep(items) });
   } catch (err) {
     logger.error('listReviewItems error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1318,7 +1520,15 @@ async function completeReviewItem(req, res) {
           payload: { source: "review", reviewItemId: reviewItem.id },
         });
 
-        return res.json({ item: { id: item.id, collectable, position: item.position, notes: item.notes, rating: item.rating } });
+        return res.json({
+          item: {
+            id: item.id,
+            collectable: omitMarketValueSources(collectable),
+            position: item.position,
+            notes: item.notes,
+            rating: item.rating,
+          },
+        });
       }
 
       const manualFingerprint = makeManualFingerprint({
@@ -1329,33 +1539,78 @@ async function completeReviewItem(req, res) {
 
       let manualResult = null;
       let alreadyOnShelf = false;
+      let matchedManual = null;
+      let manualMatchSource = null;
+      let fuzzySimilarity = null;
 
       if (manualFingerprint) {
-        const existingManual = await shelvesQueries.findManualByFingerprint({
+        matchedManual = await shelvesQueries.findManualByFingerprint({
           userId: req.user.id,
           shelfId: shelf.id,
           manualFingerprint,
         });
+        if (matchedManual) {
+          manualMatchSource = 'fingerprint';
+        }
+      }
 
-        if (existingManual) {
-          const existingCollection = await shelvesQueries.findManualCollection({
+      if (!matchedManual) {
+        matchedManual = await shelvesQueries.findManualByBarcode({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          barcode: normalized.normalizedBarcode || normalized.barcode,
+        });
+        if (matchedManual) {
+          manualMatchSource = 'barcode';
+        }
+      }
+
+      if (!matchedManual) {
+        const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          canonicalTitle: normalized.canonicalTitle || normalized.title,
+          canonicalCreator: normalized.canonicalCreator || normalized.primaryCreator,
+          minCombinedSim: OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
+        });
+        const fuzzyDecision = evaluateOtherManualFuzzyCandidate(fuzzyCandidate);
+        if (fuzzyDecision.decision === 'fuzzy_auto' || fuzzyDecision.decision === 'fuzzy_review') {
+          matchedManual = fuzzyCandidate;
+          manualMatchSource = fuzzyDecision.decision;
+          fuzzySimilarity = fuzzyDecision;
+        }
+      }
+
+      if (matchedManual) {
+        const existingCollection = await shelvesQueries.findManualCollection({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          manualId: matchedManual.id,
+        });
+
+        if (existingCollection) {
+          manualResult = { collection: existingCollection, manual: matchedManual };
+          alreadyOnShelf = true;
+        } else {
+          const collection = await shelvesQueries.addManualCollection({
             userId: req.user.id,
             shelfId: shelf.id,
-            manualId: existingManual.id,
+            manualId: matchedManual.id,
           });
-
-          if (existingCollection) {
-            manualResult = { collection: existingCollection, manual: existingManual };
-            alreadyOnShelf = true;
-          } else {
-            const collection = await shelvesQueries.addManualCollection({
-              userId: req.user.id,
-              shelfId: shelf.id,
-              manualId: existingManual.id,
-            });
-            manualResult = { collection, manual: existingManual };
-          }
+          manualResult = { collection, manual: matchedManual };
         }
+
+        logger.info('[shelves.completeReviewItem] Matched other-review item to existing manual', {
+          shelfId: shelf.id,
+          reviewItemId: reviewItem.id,
+          sourceTable: 'user_manuals',
+          sourceId: matchedManual.id,
+          matchSource: manualMatchSource,
+          combinedSim: fuzzySimilarity?.combinedSim ?? null,
+          titleSim: fuzzySimilarity?.titleSim ?? null,
+          creatorSim: fuzzySimilarity?.creatorSim ?? null,
+          alreadyOnShelf,
+        });
       }
 
       if (!manualResult) {
@@ -1365,6 +1620,13 @@ async function completeReviewItem(req, res) {
           shelfId: shelf.id,
           ...payload,
           tags: completedData.tags,
+        });
+        logger.info('[shelves.completeReviewItem] Created new manual from review completion', {
+          shelfId: shelf.id,
+          reviewItemId: reviewItem.id,
+          matchSource: 'new_insert',
+          title: normalized.title,
+          primaryCreator: normalized.primaryCreator,
         });
       }
 
@@ -1389,7 +1651,7 @@ async function completeReviewItem(req, res) {
       return res.json({
         item: {
           id: manualResult.collection.id,
-          manual: manualResult.manual,
+          manual: omitMarketValueSources(manualResult.manual),
           position: manualResult.collection.position ?? null,
           format: manualResult.collection.format ?? null,
           notes: manualResult.collection.notes ?? null,
@@ -1441,7 +1703,15 @@ async function completeReviewItem(req, res) {
       payload: { source: "review", reviewItemId: reviewItem.id },
     });
 
-    res.json({ item: { id: item.id, collectable, position: item.position, notes: item.notes, rating: item.rating } });
+    res.json({
+      item: {
+        id: item.id,
+        collectable: omitMarketValueSources(collectable),
+        position: item.position,
+        notes: item.notes,
+        rating: item.rating,
+      },
+    });
   } catch (err) {
     logger.error('completeReviewItem error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1555,7 +1825,7 @@ async function getManualItem(req, res) {
       manual.coverMediaUrl = resolveMediaUrl(manual.coverMediaPath);
     }
 
-    res.json({ manual });
+    res.json({ manual: omitMarketValueSources(manual) });
   } catch (err) {
     logger.error('getManualItem error:', err);
     res.status(500).json({ error: 'Server error' });

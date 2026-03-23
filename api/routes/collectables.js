@@ -38,6 +38,33 @@ function normalizeString(value) {
   return trimmed || undefined;
 }
 
+function normalizeSourceLinks(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  return source
+    .map((entry) => {
+      if (!entry) return null;
+      if (typeof entry === 'string') {
+        const url = normalizeString(entry);
+        return url ? { url } : null;
+      }
+      if (typeof entry === 'object') {
+        const url = normalizeString(entry.url || entry.link || entry.href);
+        if (!url) return null;
+        const label = normalizeString(entry.label || entry.name || entry.title);
+        return label ? { url, label } : { url };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function omitMarketValueSources(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+  const { marketValueSources, ...rest } = entity;
+  return rest;
+}
+
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
 router.post("/", requireAdmin, async (req, res) => {
   try {
@@ -56,6 +83,8 @@ router.post("/", requireAdmin, async (req, res) => {
       formats,
       publisher,
       year,
+      marketValue,
+      marketValueSources,
       tags,
       genre,
       genres,
@@ -84,12 +113,14 @@ router.post("/", requireAdmin, async (req, res) => {
           : [],
       publishers: publisher ? [normalizeString(publisher)] : [],
       year: normalizeString(year),
+      marketValue: normalizeString(marketValue),
+      marketValueSources: normalizeSourceLinks(marketValueSources),
       tags: normalizeTags(tags),
       genre: normalizedGenre.length ? normalizedGenre : null,
       runtime: resolvedRuntime,
     });
 
-    res.status(201).json({ item });
+    res.status(201).json({ item: omitMarketValueSources(item) });
   } catch (err) {
     logger.error('POST /collectables error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -107,6 +138,8 @@ router.post("/from-news", requireAdmin, async (req, res) => {
       primaryCreator,
       coverUrl,
       year,
+      marketValue,
+      marketValueSources,
       description,
       genre,
       genres,
@@ -124,7 +157,7 @@ router.post("/from-news", requireAdmin, async (req, res) => {
     // Try to find existing collectable by source ID
     const existing = await collectablesQueries.findBySourceId(externalId, sourceApi);
     if (existing) {
-      return res.json({ collectable: existing, source: 'existing' });
+      return res.json({ collectable: omitMarketValueSources(existing), source: 'existing' });
     }
 
     // Create a minimal collectable
@@ -175,6 +208,8 @@ router.post("/from-news", requireAdmin, async (req, res) => {
       primaryCreator: normalizeString(primaryCreator),
       coverUrl: normalizeString(coverUrl),
       year: normalizeString(year),
+      marketValue: normalizeString(marketValue),
+      marketValueSources: normalizeSourceLinks(marketValueSources),
       description: normalizeString(description),
       genre: normalizedGenre.length ? normalizedGenre : null,
       runtime: resolvedRuntime,
@@ -183,7 +218,7 @@ router.post("/from-news", requireAdmin, async (req, res) => {
       sources: parsedSource ? [parsedSource] : [],
     });
 
-    res.status(201).json({ collectable: created, source: 'created' });
+    res.status(201).json({ collectable: omitMarketValueSources(created), source: 'created' });
   } catch (err) {
     logger.error('POST /collectables/from-news error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -216,7 +251,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       const total = parseInt(countResult.rows[0].total);
 
       return res.json({
-        results: result.rows.map(rowToCamelCase),
+        results: result.rows.map(rowToCamelCase).map(omitMarketValueSources),
         pagination: {
           limit,
           offset,
@@ -252,7 +287,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
     const total = parseInt(countResult.rows[0].total);
 
     res.json({
-      results,
+      results: results.map(omitMarketValueSources),
       pagination: {
         limit,
         offset,
@@ -273,7 +308,7 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
     const collectable = await collectablesQueries.findById(parseInt(req.params.collectableId, 10));
     if (!collectable)
       return res.status(404).json({ error: "Collectable not found" });
-    res.json({ collectable });
+    res.json({ collectable: omitMarketValueSources(collectable) });
   } catch (err) {
     logger.error('GET /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -328,6 +363,16 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
       values.push(normalizeString(body.year));
     }
 
+    if (body.marketValue !== undefined || body.market_value !== undefined) {
+      updates.push(`market_value = $${paramIndex++}`);
+      values.push(normalizeString(body.marketValue ?? body.market_value));
+    }
+
+    if (body.marketValueSources !== undefined || body.market_value_sources !== undefined) {
+      updates.push(`market_value_sources = $${paramIndex++}::jsonb`);
+      values.push(JSON.stringify(normalizeSourceLinks(body.marketValueSources ?? body.market_value_sources)));
+    }
+
     if (body.tags !== undefined) {
       updates.push(`tags = $${paramIndex++}`);
       values.push(normalizeTags(body.tags));
@@ -346,7 +391,7 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
     }
 
     if (!updates.length) {
-      return res.json({ collectable: rowToCamelCase(existingResult.rows[0]) });
+      return res.json({ collectable: omitMarketValueSources(rowToCamelCase(existingResult.rows[0])) });
     }
 
     values.push(collectableId);
@@ -357,7 +402,7 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
 
     const updated = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
     const hydrated = updated ? await collectablesQueries.findById(updated.id) : null;
-    res.json({ collectable: hydrated || updated });
+    res.json({ collectable: omitMarketValueSources(hydrated || updated) });
   } catch (err) {
     logger.error('PUT /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });

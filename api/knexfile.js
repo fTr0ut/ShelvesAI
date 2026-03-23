@@ -1,4 +1,9 @@
+const path = require('path');
 require('dotenv').config();
+// Load .env.local overrides only when USE_LOCAL_DB is set
+if (process.env.USE_LOCAL_DB) {
+  require('dotenv').config({ path: path.join(__dirname, '.env.local'), override: true });
+}
 
 const isDevelopment = String(process.env.NODE_ENV || '').toLowerCase() === 'development';
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;

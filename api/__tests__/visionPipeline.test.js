@@ -91,6 +91,18 @@ describe('VisionPipelineService', () => {
         expect(result.addedItems[0].source).toBe('catalog-match');
     });
 
+    it('should propagate vision extraction failures instead of silently succeeding with zero items', async () => {
+        mockGemini.detectShelfItemsFromImage.mockRejectedValue(
+            Object.assign(new Error('Vision extraction provider request failed. Please retry.'), {
+                code: 'VISION_PROVIDER_UNAVAILABLE',
+            }),
+        );
+
+        await expect(
+            service.processImage('base64', { id: 1, type: 'book' }, 100)
+        ).rejects.toThrow('Vision extraction provider request failed');
+    });
+
     describe('transaction safety', () => {
         it('saveToShelf wraps upsert+addCollectable in a transaction for new collectables', async () => {
             collectablesQueries.findByFingerprint.mockResolvedValue(null);
@@ -162,6 +174,65 @@ describe('VisionPipelineService', () => {
             // Should not throw
             await expect(service.saveToReviewQueue(items, 1, 10)).resolves.toBeUndefined();
             expect(service.reviewQueueAvailable).toBe(false);
+        });
+    });
+
+    describe('other shelf duplicate controls', () => {
+        beforeEach(() => {
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.findManualCollection.mockResolvedValue(null);
+            shelvesQueries.addManualCollection.mockResolvedValue({ id: 444 });
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: { id: 333 },
+                manual: { id: 222, name: 'Bottle A', author: 'Distillery' },
+            });
+            needsReviewQueries.create.mockResolvedValue({ id: 1 });
+        });
+
+        it('routes borderline fuzzy matches to review instead of creating duplicate manuals', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Weller Twelve', author: 'Buffalo Trace Distillery', confidence: 0.95 }],
+            });
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue({
+                id: 555,
+                name: 'Weller 12',
+                author: 'Buffalo Trace',
+                titleSim: 0.86,
+                creatorSim: 0.82,
+                combinedSim: 0.85,
+            });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(result.results.added).toBe(0);
+            expect(result.results.existing).toBe(0);
+            expect(result.results.needsReview).toBe(1);
+            expect(shelvesQueries.addManual).not.toHaveBeenCalled();
+            expect(needsReviewQueries.create).toHaveBeenCalledTimes(1);
+        });
+
+        it('auto-merges high-confidence fuzzy matches as existing items', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Weller Twelve', author: 'Buffalo Trace Distillery', confidence: 0.95 }],
+            });
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue({
+                id: 777,
+                name: 'Weller 12',
+                author: 'Buffalo Trace',
+                titleSim: 0.94,
+                creatorSim: 0.91,
+                combinedSim: 0.93,
+            });
+            shelvesQueries.findManualCollection.mockResolvedValue({ id: 901, manualId: 777 });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(result.results.added).toBe(0);
+            expect(result.results.existing).toBe(1);
+            expect(result.results.needsReview).toBe(0);
+            expect(shelvesQueries.addManual).not.toHaveBeenCalled();
+            expect(needsReviewQueries.create).not.toHaveBeenCalled();
         });
     });
 });

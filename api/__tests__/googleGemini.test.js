@@ -93,4 +93,39 @@ describe('GoogleGeminiService', () => {
             expect(result).toEqual([]);
         });
     });
+
+    describe('detectShelfItemsFromImage', () => {
+        it('should recover complete items from truncated JSON response', async () => {
+            mockGenerateContent.mockResolvedValue({
+                response: {
+                    text: () => '[{"title":"Dune","author":"Frank Herbert","confidence":0.95},{"title":"Found',
+                    candidates: [{ content: { role: 'model', parts: [{ text: 'partial' }] } }],
+                }
+            });
+
+            const result = await service.detectShelfItemsFromImage(
+                'data:image/jpeg;base64,aabbcc',
+                'book',
+            );
+
+            expect(result.items).toHaveLength(1);
+            expect(result.items[0]).toMatchObject({
+                title: 'Dune',
+                name: 'Dune',
+                author: 'Frank Herbert',
+                confidence: 0.95,
+            });
+            expect(result.warning).toMatch(/truncated/i);
+        });
+
+        it('should throw a provider unavailable error when Gemini request fails', async () => {
+            mockGenerateContent.mockRejectedValue(new TypeError('fetch failed'));
+
+            await expect(
+                service.detectShelfItemsFromImage('data:image/jpeg;base64,aabbcc', 'book')
+            ).rejects.toMatchObject({
+                code: 'VISION_PROVIDER_UNAVAILABLE',
+            });
+        });
+    });
 });

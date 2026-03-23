@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { requireFields, validateIntParam, validateStringLengths } = require('../middleware/validate');
+const { createWorkflowJobContext } = require('../middleware/workflowJobContext');
 const ctrl = require('../controllers/shelvesController');
 const { isAllowedImageMimeType } = require('../utils/imageValidation');
 
@@ -28,6 +29,8 @@ router.use(auth);
 const shelfIntParam = validateIntParam(['shelfId']);
 const shelfItemIntParams = validateIntParam(['shelfId', 'itemId']);
 const shelfReviewIntParams = validateIntParam(['shelfId', 'id']);
+const visionWorkflowContext = createWorkflowJobContext('vision');
+const catalogWorkflowContext = createWorkflowJobContext('catalog_lookup');
 
 router.get('/', ctrl.listShelves);
 router.post('/', requireFields(['name', 'type']), validateStringLengths({ name: 500, description: 5000 }), ctrl.createShelf);
@@ -47,10 +50,10 @@ router.put('/:shelfId/manual/:itemId', shelfItemIntParams, validateStringLengths
 router.post('/:shelfId/manual/:itemId/cover', shelfItemIntParams, upload.single('cover'), ctrl.uploadManualCover);
 
 router.get('/:shelfId/search', shelfIntParam, ctrl.searchCollectablesForShelf);
-router.post('/:shelfId/vision', shelfIntParam, requireFields(['imageBase64']), ctrl.processShelfVision);
+router.post('/:shelfId/vision', shelfIntParam, visionWorkflowContext, requireFields(['imageBase64']), ctrl.processShelfVision);
 router.get('/:shelfId/vision/:jobId/status', shelfIntParam, ctrl.getVisionStatus);
 router.delete('/:shelfId/vision/:jobId', shelfIntParam, ctrl.abortVision);
-router.post('/:shelfId/catalog-lookup', shelfIntParam, ctrl.processCatalogLookup);
+router.post('/:shelfId/catalog-lookup', shelfIntParam, catalogWorkflowContext, ctrl.processCatalogLookup);
 
 // Review Queue
 router.get('/:shelfId/review', shelfIntParam, ctrl.listReviewItems);

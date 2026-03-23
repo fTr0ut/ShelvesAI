@@ -11,6 +11,28 @@ function resolveQuery(client) {
 }
 const { rowToCamelCase, parsePagination } = require('./utils');
 
+function normalizeManualFuzzyToken(value) {
+    if (value === undefined || value === null) return '';
+    return String(value)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+}
+
+function normalizeBarcodeToken(value) {
+    if (value === undefined || value === null) return null;
+    const compact = String(value).toUpperCase().replace(/[^A-Z0-9]+/g, '');
+    return compact || null;
+}
+
+function toSimilarityNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+
 /**
  * List all shelves for a user with item counts
  */
@@ -136,6 +158,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             c.primary_creator as collectable_creator,
             c.publishers as collectable_publishers,
             c.year as collectable_year,
+            c.market_value as collectable_market_value,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
             c.tags as collectable_tags,
@@ -160,6 +183,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             um.publisher as manual_publisher,
             um.format as manual_format,
             um.year as manual_year,
+            um.market_value as manual_market_value,
             um.age_statement as manual_age_statement,
             um.special_markings as manual_special_markings,
             um.label_color as manual_label_color,
@@ -199,6 +223,7 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             c.primary_creator as collectable_creator,
             c.publishers as collectable_publishers,
             c.year as collectable_year,
+            c.market_value as collectable_market_value,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
             c.tags as collectable_tags,
@@ -223,6 +248,7 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             um.publisher as manual_publisher,
             um.format as manual_format,
             um.year as manual_year,
+            um.market_value as manual_market_value,
             um.age_statement as manual_age_statement,
             um.special_markings as manual_special_markings,
             um.label_color as manual_label_color,
@@ -285,6 +311,8 @@ async function addManual({
     manufacturer,
     format,
     year,
+    marketValue,
+    marketValueSources,
     ageStatement,
     specialMarkings,
     labelColor,
@@ -297,50 +325,68 @@ async function addManual({
     itemSpecificText,
 }, client = null) {
     const runWithClient = async (c) => {
-        // Create manual entry
-        const manualResult = await c.query(
-            `INSERT INTO user_manuals (
-        user_id, shelf_id, name, type, description, author, publisher, manufacturer, format, year,
+        let manual = null;
+        try {
+            const manualResult = await c.query(
+                `INSERT INTO user_manuals (
+        user_id, shelf_id, name, type, description, author, publisher, manufacturer, format, year, market_value, market_value_sources,
         age_statement, special_markings, label_color, regional_item, edition, barcode, manual_fingerprint, tags,
         limited_edition, item_specific_text
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING *`,
-            [
-                userId,
-                shelfId,
-                name,
-                type,
-                description,
-                author,
-                publisher,
-                manufacturer,
-                format,
-                year,
-                ageStatement,
-                specialMarkings,
-                labelColor,
-                regionalItem,
-                edition,
-                barcode,
-                manualFingerprint,
-                tags || [],
-                limitedEdition,
-                itemSpecificText,
-            ]
-        );
-        const manual = manualResult.rows[0];
+                [
+                    userId,
+                    shelfId,
+                    name,
+                    type,
+                    description,
+                    author,
+                    publisher,
+                    manufacturer,
+                    format,
+                    year,
+                    marketValue || null,
+                    JSON.stringify(Array.isArray(marketValueSources) ? marketValueSources : []),
+                    ageStatement,
+                    specialMarkings,
+                    labelColor,
+                    regionalItem,
+                    edition,
+                    barcode,
+                    manualFingerprint,
+                    tags || [],
+                    limitedEdition,
+                    itemSpecificText,
+                ]
+            );
+            manual = manualResult.rows[0];
+        } catch (err) {
+            const uniqueFingerprintConflict = err?.code === '23505' && manualFingerprint;
+            if (!uniqueFingerprintConflict) {
+                throw err;
+            }
+            const existingResult = await c.query(
+                `SELECT * FROM user_manuals
+                 WHERE user_id = $1 AND shelf_id = $2 AND manual_fingerprint = $3
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT 1`,
+                [userId, shelfId, manualFingerprint],
+            );
+            if (!existingResult.rows[0]) {
+                throw err;
+            }
+            manual = existingResult.rows[0];
+        }
 
-        // Add to user_collections
-        const collectionResult = await c.query(
-            `INSERT INTO user_collections (user_id, shelf_id, manual_id)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-            [userId, shelfId, manual.id]
-        );
+        const collection = await addManualCollection({
+            userId,
+            shelfId,
+            manualId: manual.id,
+        }, c);
 
         return {
-            collection: rowToCamelCase(collectionResult.rows[0]),
+            collection,
             manual: rowToCamelCase(manual),
         };
     };
@@ -358,10 +404,66 @@ async function findManualByFingerprint({ userId, shelfId, manualFingerprint }) {
     const result = await query(
         `SELECT * FROM user_manuals
      WHERE user_id = $1 AND shelf_id = $2 AND manual_fingerprint = $3
+     ORDER BY created_at ASC, id ASC
      LIMIT 1`,
         [userId, shelfId, manualFingerprint]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function findManualByBarcode({ userId, shelfId, barcode }) {
+    const normalizedBarcode = normalizeBarcodeToken(barcode);
+    if (!normalizedBarcode) return null;
+    const result = await query(
+        `SELECT * FROM user_manuals
+         WHERE user_id = $1
+           AND shelf_id = $2
+           AND barcode IS NOT NULL
+           AND regexp_replace(upper(barcode), '[^A-Z0-9]+', '', 'g') = $3
+         ORDER BY created_at ASC, id ASC
+         LIMIT 1`,
+        [userId, shelfId, normalizedBarcode],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function fuzzyFindManualForOther({
+    userId,
+    shelfId,
+    canonicalTitle,
+    canonicalCreator,
+    minCombinedSim = 0.82,
+}) {
+    const title = normalizeManualFuzzyToken(canonicalTitle);
+    const creator = normalizeManualFuzzyToken(canonicalCreator);
+    if (!title || !creator) return null;
+
+    const result = await query(
+        `SELECT um.*,
+                similarity(regexp_replace(lower(COALESCE(um.name, '')), '[^a-z0-9]+', ' ', 'g'), $3) AS title_sim,
+                similarity(regexp_replace(lower(COALESCE(um.author, '')), '[^a-z0-9]+', ' ', 'g'), $4) AS creator_sim,
+                (
+                  similarity(regexp_replace(lower(COALESCE(um.name, '')), '[^a-z0-9]+', ' ', 'g'), $3) * 0.7 +
+                  similarity(regexp_replace(lower(COALESCE(um.author, '')), '[^a-z0-9]+', ' ', 'g'), $4) * 0.3
+                ) AS combined_sim
+         FROM user_manuals um
+         WHERE um.user_id = $1
+           AND um.shelf_id = $2
+           AND similarity(regexp_replace(lower(COALESCE(um.name, '')), '[^a-z0-9]+', ' ', 'g'), $3) >= 0.4
+         ORDER BY combined_sim DESC, um.created_at ASC, um.id ASC
+         LIMIT 1`,
+        [userId, shelfId, title, creator],
+    );
+
+    if (!result.rows[0]) return null;
+    const candidate = rowToCamelCase(result.rows[0]);
+    candidate.titleSim = toSimilarityNumber(candidate.titleSim);
+    candidate.creatorSim = toSimilarityNumber(candidate.creatorSim);
+    candidate.combinedSim = toSimilarityNumber(candidate.combinedSim);
+    if (candidate.combinedSim < minCombinedSim) {
+        return null;
+    }
+    return candidate;
 }
 
 async function findManualCollection({ userId, shelfId, manualId }) {
@@ -374,14 +476,43 @@ async function findManualCollection({ userId, shelfId, manualId }) {
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
-async function addManualCollection({ userId, shelfId, manualId }) {
-    const result = await query(
-        `INSERT INTO user_collections (user_id, shelf_id, manual_id)
-     VALUES ($1, $2, $3)
-     RETURNING *`,
-        [userId, shelfId, manualId]
+async function addManualCollection({ userId, shelfId, manualId }, client = null) {
+    const q = resolveQuery(client);
+    try {
+        const result = await q(
+            `INSERT INTO user_collections (user_id, shelf_id, manual_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, shelf_id, manual_id) WHERE manual_id IS NOT NULL
+             DO UPDATE SET manual_id = EXCLUDED.manual_id
+             RETURNING *`,
+            [userId, shelfId, manualId],
+        );
+        return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    } catch (err) {
+        // Fallback for environments that haven't applied the manual unique index yet.
+        if (err?.code !== '42P10' && err?.code !== '23505') {
+            throw err;
+        }
+    }
+
+    const existing = await q(
+        `SELECT * FROM user_collections
+         WHERE user_id = $1 AND shelf_id = $2 AND manual_id = $3
+         ORDER BY created_at ASC, id ASC
+         LIMIT 1`,
+        [userId, shelfId, manualId],
     );
-    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    if (existing.rows[0]) {
+        return rowToCamelCase(existing.rows[0]);
+    }
+
+    const inserted = await q(
+        `INSERT INTO user_collections (user_id, shelf_id, manual_id)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [userId, shelfId, manualId],
+    );
+    return inserted.rows[0] ? rowToCamelCase(inserted.rows[0]) : null;
 }
 
 /**
@@ -477,6 +608,7 @@ async function getItemById(itemId, userId, shelfId) {
             c.title as collectable_title,
             c.subtitle as collectable_subtitle,
             c.primary_creator as collectable_creator,
+            c.market_value as collectable_market_value,
             c.cover_url as collectable_cover,
             c.cover_image_url as collectable_cover_image_url,
             c.cover_image_source as collectable_cover_image_source,
@@ -516,6 +648,8 @@ module.exports = {
     addCollectable,
     addManual,
     findManualByFingerprint,
+    findManualByBarcode,
+    fuzzyFindManualForOther,
     findManualCollection,
     addManualCollection,
     removeItem,

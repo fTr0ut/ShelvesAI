@@ -1,6 +1,8 @@
 const path = require('path');
 // Load .env from this folder explicitly so it works no matter CWD
 require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
+// .env.local overrides for local development (gitignored, highest priority)
+require('dotenv').config({ path: path.join(__dirname, '.env.local'), override: true });
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -9,7 +11,6 @@ const cookie = require('cookie');
 const signature = require('cookie-signature');
 
 const logger = require('./logger');
-const requestLogger = require('./middleware/requestLogger');
 
 const authRoutes = require('./routes/auth');
 const shelvesRoutes = require('./routes/shelves');
@@ -170,9 +171,6 @@ app.use((req, _res, next) => {
   req.signedCookies = signedCookies;
   next();
 });
-
-// Structured request logging with jobId
-app.use(requestLogger);
 
 app.use(express.json({ limit: '10mb' }));
 

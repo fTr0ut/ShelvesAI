@@ -26,7 +26,7 @@ module.exports = ({ config }) => {
 
   const apiBase = pickEnvValue(
     process.env.EXPO_PUBLIC_API_BASE,
-    process.env.API_BASE
+    pickEnvValue(process.env.API_BASE, process.env.LOCAL_API_ADDRESS)
   )
   if (apiBase !== undefined) {
     envOverrides.API_BASE = apiBase

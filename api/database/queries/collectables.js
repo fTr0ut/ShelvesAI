@@ -65,6 +65,28 @@ function normalizeStringArray(input) {
     return out;
 }
 
+function normalizeMarketValueSources(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const out = [];
+    for (const entry of source) {
+        if (!entry) continue;
+        if (typeof entry === 'string') {
+            const url = normalizeString(entry);
+            if (!url) continue;
+            out.push({ url });
+            continue;
+        }
+        if (typeof entry === 'object') {
+            const url = normalizeString(entry.url || entry.link || entry.href);
+            if (!url) continue;
+            const label = normalizeString(entry.label || entry.name || entry.title) || null;
+            out.push(label ? { url, label } : { url });
+        }
+    }
+    return out;
+}
+
 /**
  * Find collectable by fingerprint
  */
@@ -202,6 +224,8 @@ async function upsert(data, client = null) {
         creators = [],
         publishers = [],
         year,
+        marketValue,
+        marketValueSources = [],
         format,
         formats,
         systemName,
@@ -225,6 +249,7 @@ async function upsert(data, client = null) {
     const normalizedCreators = normalizeStringArray(creators);
     const resolvedPrimaryCreator = normalizeString(primaryCreator) || normalizedCreators[0] || null;
     const normalizedGenre = Array.isArray(genre) && genre.length ? genre : null;
+    const normalizedMarketValueSources = normalizeMarketValueSources(marketValueSources);
     const normalizedRuntime = runtime == null
         ? null
         : Number.isFinite(runtime)
@@ -239,9 +264,10 @@ async function upsert(data, client = null) {
         `INSERT INTO collectables (
        fingerprint, lightweight_fingerprint, kind, title, subtitle, description,
        primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,
+       market_value, market_value_sources,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
        cover_image_url, cover_image_source, attribution, metascore
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -250,6 +276,8 @@ async function upsert(data, client = null) {
        creators = COALESCE(EXCLUDED.creators, collectables.creators),
        publishers = COALESCE(EXCLUDED.publishers, collectables.publishers),
        year = COALESCE(EXCLUDED.year, collectables.year),
+       market_value = COALESCE(EXCLUDED.market_value, collectables.market_value),
+       market_value_sources = COALESCE(EXCLUDED.market_value_sources, collectables.market_value_sources),
        formats = (
          SELECT to_jsonb(ARRAY(
            SELECT DISTINCT value
@@ -279,7 +307,7 @@ async function upsert(data, client = null) {
         [
             fingerprint, lightweightFingerprint, normalizedKind, title, subtitle, description,
             resolvedPrimaryCreator, normalizedCreators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, normalizedGenre, normalizedRuntime,
-            JSON.stringify(identifiers), JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
+            normalizeString(marketValue) || null, JSON.stringify(normalizedMarketValueSources), JSON.stringify(identifiers), JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
             JSON.stringify(fuzzyFingerprints), coverImageUrl, coverImageSource,
             attribution ? JSON.stringify(attribution) : null,
             metascore ? JSON.stringify(metascore) : null

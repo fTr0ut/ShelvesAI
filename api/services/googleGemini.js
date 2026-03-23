@@ -10,7 +10,7 @@ const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
 // Higher output tokens for enrichment calls to prevent JSON truncation
 const ENRICHMENT_MAX_OUTPUT_TOKENS = 16384;
-const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 60000;
 
 // Load vision settings from config file
 let visionSettings = null;
@@ -78,6 +78,34 @@ function cleanJsonResponse(text) {
     return clean;
 }
 
+function isTransientGeminiRequestError(err) {
+    const message = String(err?.message || '').toLowerCase();
+    const stack = String(err?.stack || '').toLowerCase();
+    const haystack = `${message} ${stack}`;
+    return (
+        message.includes('fetch failed')
+        || message.includes('timed out')
+        || message.includes('abort')
+        || haystack.includes('etimedout')
+        || haystack.includes('econnreset')
+        || haystack.includes('enotfound')
+        || haystack.includes('eai_again')
+        || haystack.includes('und_err')
+    );
+}
+
+function buildVisionExtractionError(err) {
+    const transient = isTransientGeminiRequestError(err);
+    const wrapped = new Error(
+        transient
+            ? 'Vision extraction provider request failed. Please retry.'
+            : 'Vision extraction failed.',
+    );
+    wrapped.code = transient ? 'VISION_PROVIDER_UNAVAILABLE' : 'VISION_EXTRACTION_FAILED';
+    wrapped.cause = err;
+    return wrapped;
+}
+
 function parseInlineImage(base64Image) {
     const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/.exec(String(base64Image || ''));
     if (match) {
@@ -115,8 +143,9 @@ class GoogleGeminiService {
                 textModelName;
             this.textModelName = textModelName;
             this.visionModelName = visionModelName;
-            this.textModel = this.genAI.getGenerativeModel({ model: textModelName });
-            this.visionModel = this.genAI.getGenerativeModel({ model: visionModelName });
+            const requestOptions = { timeout: this.requestTimeoutMs };
+            this.textModel = this.genAI.getGenerativeModel({ model: textModelName }, requestOptions);
+            this.visionModel = this.genAI.getGenerativeModel({ model: visionModelName }, requestOptions);
             this.modelName = textModelName;
             this.model = this.textModel;
         } else {
@@ -137,6 +166,57 @@ class GoogleGeminiService {
 
     isVisionConfigured() {
         return !!this.visionModel;
+    }
+
+    /**
+     * Execute an enrichment request using chat mode (if conversation history is available
+     * and vision/text models match) or standalone generateContent as fallback.
+     * @param {string} prompt - The enrichment prompt text
+     * @param {Array|null} conversationHistory - Prior vision extraction conversation history
+     * @param {string} label - Label for logging/timeout messages
+     * @param {object} [options] - Optional settings
+     * @param {Array} [options.tools] - Tools to pass to the chat session (e.g., googleSearch)
+     * @returns {Promise<GenerateContentResult>}
+     */
+    async _executeEnrichmentRequest(prompt, conversationHistory, label, options = {}) {
+        const { tools } = options;
+        const canUseChatMode = Array.isArray(conversationHistory)
+            && conversationHistory.length > 0
+            && this.visionModelName === this.textModelName;
+
+        if (canUseChatMode) {
+            logger.info(`[GoogleGeminiService] Using chat mode for ${label} (vision context available)`);
+            const chatParams = {
+                history: conversationHistory,
+                generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+            };
+            if (tools) chatParams.tools = tools;
+            const chat = this.textModel.startChat(chatParams);
+            const result = await withTimeout(
+                () => chat.sendMessage(prompt),
+                this.requestTimeoutMs,
+                `Gemini chat ${label}`,
+            );
+            return result;
+        }
+
+        if (conversationHistory?.length > 0) {
+            logger.info(`[GoogleGeminiService] Skipping chat mode for ${label}: vision model (${this.visionModelName}) differs from text model (${this.textModelName})`);
+        } else {
+            logger.info(`[GoogleGeminiService] Using standalone mode for ${label} (no vision context)`);
+        }
+
+        const contentRequest = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
+        };
+        if (tools) contentRequest.tools = tools;
+        const result = await withTimeout(
+            () => this.textModel.generateContent(contentRequest),
+            this.requestTimeoutMs,
+            `Gemini standalone ${label}`,
+        );
+        return result;
     }
 
     /**
@@ -229,7 +309,7 @@ Do not include explanations or markdown.`;
      * @param {string} shelfType
      * @returns {Promise<Array<CollectableSchema>>}
      */
-    async enrichWithSchema(items, shelfType) {
+    async enrichWithSchema(items, shelfType, conversationHistory = null) {
         if (!this.textModel) {
             throw new Error('Google Gemini client not initialized.');
         }
@@ -242,10 +322,10 @@ Do not include explanations or markdown.`;
 
         // Fallback category prompts if no config-driven enrichmentPrompt exists
         const categoryPrompts = {
-            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
-            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
-            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
-            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
+            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable, and estimated market value (include currency). Include market value source links (URL + label). Cover URL from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) when ISBN is known.`,
+            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known, and estimated market value (include currency). Include market value source links (URL + label).`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio, and estimated market value (include currency). Include market value source links (URL + label). For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
+            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known, and estimated market value (include currency). Include market value source links (URL + label).`
         };
 
         // Use config enrichmentPrompt if available, otherwise fall back to category defaults
@@ -255,7 +335,45 @@ Do not include explanations or markdown.`;
             return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
         }).join('\n');
 
-        const prompt = `You are an expert librarian and cataloguer. Validate and enrich the following items found on a ${shelfType} shelf with CATALOG-QUALITY metadata.
+        // Schema definition shared by both prompt variants
+        const schemaBlock = `{
+  "title": "string - corrected full title",
+  "subtitle": "string or null",
+  "primaryCreator": "string - author/developer/director/artist",
+  "year": "string - publication/release year (4 digits)",
+  "kind": "${normalizedKind}",
+  "publishers": ["array of publisher names"],
+  "tags": ["genres", "categories", "notable attributes"],
+  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
+  "description": "string - brief synopsis (1-2 sentences)",
+  "marketValue": "string or null - estimated current market value with currency (for example: USD $45)",
+  "marketValueSources": [{"url":"string","label":"string or null"}],
+  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
+  "pageCount": number or null,
+  "series": { "name": "string or null", "number": number or null },
+  "coverUrl": "string - URL to cover image if you can construct one from ISBN, otherwise null",
+  "confidence": number 0.0-1.0
+}`;
+
+        // Determine if chat mode is available for prompt selection
+        const canUseChatMode = Array.isArray(conversationHistory)
+            && conversationHistory.length > 0
+            && this.visionModelName === this.textModelName;
+
+        const prompt = canUseChatMode
+            ? `From the items you extracted, the following could not be matched in our catalog and need your enrichment. Refer back to the shelf photo to correct any OCR misreadings.
+
+Items to enrich:
+${itemText}
+
+${specificInstruction}
+
+Output a JSON array with this schema for each item:
+${schemaBlock}
+
+Return ONLY valid JSON array. No markdown, no explanation.`
+            : `You are an expert librarian and cataloguer. Validate and enrich the following items found on a ${shelfType} shelf with CATALOG-QUALITY metadata.
 
 Input Items:
 ${itemText}
@@ -268,36 +386,13 @@ Task:
 ${specificInstruction}
 
 Output a JSON array with this schema for each item:
-{
-  "title": "string - corrected full title",
-  "subtitle": "string or null",
-  "primaryCreator": "string - author/developer/director/artist",
-  "year": "string - publication/release year (4 digits)",
-  "kind": "${normalizedKind}",
-  "publishers": ["array of publisher names"],
-  "tags": ["genres", "categories", "notable attributes"],
-  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
-  "description": "string - brief synopsis (1-2 sentences)",
-  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
-  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
-  "pageCount": number or null,
-  "series": { "name": "string or null", "number": number or null },
-  "coverUrl": "string - URL to cover image if you can construct one from ISBN, otherwise null",
-  "confidence": number 0.0-1.0
-}
+${schemaBlock}
 
-Return ONLY valid JSON array. No markdown, no explanation.
-        `;
+Return ONLY valid JSON array. No markdown, no explanation.`;
 
         try {
-            // Use higher maxOutputTokens to prevent truncation with many items
-            const result = await withTimeout(
-                () => this.textModel.generateContent({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
-                }),
-                this.requestTimeoutMs,
-                'Gemini schema enrichment request',
+            const result = await this._executeEnrichmentRequest(
+                prompt, conversationHistory, 'schema enrichment'
             );
             const response = await withTimeout(
                 () => result.response,
@@ -378,7 +473,7 @@ Return ONLY valid JSON array. No markdown, no explanation.
      * Enrich UNCERTAIN items (medium-confidence OCR) with special handling.
      * Returns catalog-quality metadata matching what OpenLibrary/Hardcover would return.
      */
-    async enrichWithSchemaUncertain(items, shelfType) {
+    async enrichWithSchemaUncertain(items, shelfType, conversationHistory = null) {
         if (!this.textModel) {
             throw new Error('Google Gemini client not initialized.');
         }
@@ -391,17 +486,56 @@ Return ONLY valid JSON array. No markdown, no explanation.
 
         // Fallback category prompts if no config-driven enrichmentPrompt exists
         const categoryPrompts = {
-            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known.`,
-            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known.`,
-            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access).`,
-            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known.`
+            book: `For books, include: ISBN-10 and ISBN-13 in identifiers, page count, binding format (Hardcover/Paperback/Mass Market), series name and number if applicable. Cover URLs from Open Library (https://covers.openlibrary.org/b/isbn/{ISBN}-L.jpg) or Google Books when ISBN is known. Include estimated market value with currency and source links (URL + label).`,
+            game: `For games, include: system/console (as systemName), platform(s), ESRB rating, developer, publisher, release date, cover art URL from IGDB or official sources if known, and estimated market value with currency. Include source links (URL + label) for market value.`,
+            movie: `For movies, include: runtime in minutes, MPAA rating, director, main cast (up to 5), studio. For coverUrl, provide a direct image URL to the movie poster from Wikipedia, IMDb, or any reliable public source - NOT a TMDB URL (those require API access). Include estimated market value with currency and source links (URL + label).`,
+            music: `For music, include: record label, track count, format (CD/Vinyl/Digital), genre tags, album art URL if known, and estimated market value with currency. Include source links (URL + label) for market value.`
         };
 
         // Use config enrichmentPrompt if available, otherwise fall back to category defaults
         const specificInstruction = visionTypeSettings.enrichmentPrompt || categoryPrompts[categoryKey] || categoryPrompts['book'];
         const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
 
-        const prompt = `You are an expert librarian and cataloguer with extensive knowledge of published works. The following items were extracted via OCR but recognition is UNCERTAIN or PARTIAL. Text may be incomplete or misspelled.
+        // Schema definition shared by both prompt variants
+        const schemaBlock = `{
+  "title": "string - corrected full title",
+  "subtitle": "string or null",
+  "primaryCreator": "string - author/developer/director/artist",
+  "year": "string - publication/release year (4 digits)",
+  "kind": "${normalizedKind}",
+  "publishers": ["array of publisher names"],
+  "tags": ["genres", "categories", "notable attributes"],
+  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
+  "description": "string - brief synopsis (1-2 sentences)",
+  "marketValue": "string or null - estimated current market value with currency (for example: USD $45)",
+  "marketValueSources": [{"url":"string","label":"string or null"}],
+  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
+  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
+  "pageCount": number or null,
+  "series": { "name": "string or null", "number": number or null },
+  "coverUrl": "string - URL to cover image if you can construct one from ISBN or known sources, otherwise null",
+  "confidence": number 0.0-1.0 (be honest - 0.9+ only if certain, 0.6-0.8 for educated guesses),
+  "_originalTitle": "string - keep the exact original OCR text for matching"
+}`;
+
+        // Determine if chat mode is available for prompt selection
+        const canUseChatMode = Array.isArray(conversationHistory)
+            && conversationHistory.length > 0
+            && this.visionModelName === this.textModelName;
+
+        const prompt = canUseChatMode
+            ? `Some of the items you extracted from the shelf photo had uncertain or partial OCR readings. Look at the shelf photo again and use what you can see to correct garbled text, missing letters, and partial titles. Make your best guess at identifying these items.
+
+Items with uncertain OCR:
+${itemText}
+
+${specificInstruction}
+
+Output a JSON array with this schema for each item:
+${schemaBlock}
+
+Return ONLY valid JSON array. No markdown, no explanation.`
+            : `You are an expert librarian and cataloguer with extensive knowledge of published works. The following items were extracted via OCR but recognition is UNCERTAIN or PARTIAL. Text may be incomplete or misspelled.
 
 Input Items (uncertain OCR):
 ${itemText}
@@ -417,36 +551,13 @@ Instructions:
 ${specificInstruction}
 
 Output a JSON array with this schema for each item:
-{
-  "title": "string - corrected full title",
-  "subtitle": "string or null",
-  "primaryCreator": "string - author/developer/director/artist",
-  "year": "string - publication/release year (4 digits)",
-  "kind": "${normalizedKind}",
-  "publishers": ["array of publisher names"],
-  "tags": ["genres", "categories", "notable attributes"],
-  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
-  "description": "string - brief synopsis (1-2 sentences)",
-  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
-  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
-  "pageCount": number or null,
-  "series": { "name": "string or null", "number": number or null },
-  "coverUrl": "string - URL to cover image if you can construct one from ISBN or known sources, otherwise null",
-  "confidence": number 0.0-1.0 (be honest - 0.9+ only if certain, 0.6-0.8 for educated guesses),
-  "_originalTitle": "string - keep the exact original OCR text for matching"
-}
+${schemaBlock}
 
 Return ONLY valid JSON array. No markdown, no explanation.`;
 
         try {
-            // Use higher maxOutputTokens to prevent truncation with many items
-            const result = await withTimeout(
-                () => this.textModel.generateContent({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    generationConfig: { maxOutputTokens: ENRICHMENT_MAX_OUTPUT_TOKENS }
-                }),
-                this.requestTimeoutMs,
-                'Gemini uncertain enrichment request',
+            const result = await this._executeEnrichmentRequest(
+                prompt, conversationHistory, 'uncertain enrichment'
             );
             const response = await withTimeout(
                 () => result.response,
@@ -521,7 +632,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
      * @param {string} shelfType
      * @param {string|null} shelfDescription
      * @param {string|null} shelfName
-     * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>}>}
+     * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>, conversationHistory: Array|null, warning: string|null}>}
      */
     async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null, shelfName = null) {
         if (!this.visionModel) {
@@ -530,32 +641,45 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
         const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
         const { data, mimeType } = parseInlineImage(base64Image);
-
-        // For "other" items, we do a 2-step process because Search Grounding only works on text requests
         const isOther = shelfType === 'other';
-
-        // 1. Vision Step: Get raw visual description/extraction
-        // If "other", we ask for visual details to help the search step
-        const visionPrompt = isOther
-            ? this.buildVisionPrompt('other_initial', shelfDescription, shelfName)
-            : this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
+        const visionPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
 
         try {
-            // STEP 1: Vision Extraction (No Tools)
-            const visionResult = await withTimeout(
-                () => this.visionModel.generateContent({
-                    contents: [
-                        {
-                            role: 'user', parts: [
-                                { text: visionPrompt },
-                                { inlineData: { data, mimeType } }
-                            ]
-                        }
-                    ]
-                }),
-                this.requestTimeoutMs,
-                'Gemini vision extraction request',
-            );
+            // Vision extraction — "other" shelves include search grounding to get full metadata in one call
+            // Thinking budget: 0 for standard shelves (pure OCR perception), 3000 for "other" (search + reasoning)
+            const generateOptions = {
+                contents: [
+                    {
+                        role: 'user', parts: [
+                            { text: visionPrompt },
+                            { inlineData: { data, mimeType } }
+                        ]
+                    }
+                ],
+                generationConfig: {
+                    thinkingConfig: { thinkingBudget: isOther ? 3000 : 0 }
+                }
+            };
+            if (isOther) {
+                generateOptions.tools = [{ googleSearch: {} }];
+            }
+
+            let visionResult = null;
+            const maxAttempts = 2;
+            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                try {
+                    visionResult = await withTimeout(
+                        () => this.visionModel.generateContent(generateOptions),
+                        this.requestTimeoutMs,
+                        `Gemini vision extraction request (attempt ${attempt})`,
+                    );
+                    break;
+                } catch (requestErr) {
+                    const canRetry = attempt < maxAttempts && isTransientGeminiRequestError(requestErr);
+                    if (!canRetry) throw requestErr;
+                    logger.warn('[GoogleGeminiService] Vision extraction request failed, retrying once:', requestErr?.message || requestErr);
+                }
+            }
             const visionResponse = await withTimeout(
                 () => visionResult.response,
                 this.requestTimeoutMs,
@@ -575,69 +699,42 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
             const jsonStr = cleanJsonResponse(visionText);
             let parsedItems = [];
+            let warning = null;
             try {
                 parsedItems = JSON.parse(jsonStr);
             } catch (e) {
-                logger.warn('[GoogleGeminiService] Failed to parse vision JSON:', e);
+                logger.warn('[GoogleGeminiService] Failed to parse vision JSON, attempting truncated repair:', e);
+                const repaired = this.repairTruncatedJsonArray(jsonStr);
+                if (repaired) {
+                    try {
+                        parsedItems = JSON.parse(repaired);
+                        warning = 'Vision response was truncated; only complete detected items were processed.';
+                        logger.info('[GoogleGeminiService] Recovered', parsedItems.length, 'items from truncated vision response');
+                    } catch (repairErr) {
+                        logger.warn('[GoogleGeminiService] Failed to parse repaired vision JSON:', repairErr);
+                    }
+                }
             }
 
             if (!Array.isArray(parsedItems)) {
-                logger.warn('[GoogleGeminiService] Vision response was not an array:', parsedItems);
-                parsedItems = []; // Continue with empty or retry logic if needed
-            }
-
-            // STEP 2: Enrichment via Search (Only for "other")
-            if (isOther && parsedItems.length > 0 && this.textModel) {
-                logger.info('[GoogleGeminiService] Performing search enrichment for "other" items...');
-                const configPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
-                const searchPrompt = `I have performed a visual scan of the items and extracted the following preliminary data:
-${JSON.stringify(parsedItems)}
-
-Using this visual data, please follow these instructions to search for and refine the metadata.
-CRITICAL: You must extract "Visual Description" details from the input (like label color, special markings, bottle shape) and map them to the "labelColor" and "specialMarkings" fields in the output if applicable.
-
-                ${configPrompt}
-
-CRITICAL: Return ONLY valid JSON. Do not include any conversational text before or after the JSON.`;
-
-                try {
-                    const searchResult = await withTimeout(
-                        () => this.textModel.generateContent({
-                            contents: [{ role: 'user', parts: [{ text: searchPrompt }] }],
-                            tools: [{ googleSearch: {} }]
-                        }),
-                        this.requestTimeoutMs,
-                        'Gemini search enrichment request',
-                    );
-                    const searchResponse = await withTimeout(
-                        () => searchResult.response,
-                        this.requestTimeoutMs,
-                        'Gemini search enrichment response',
-                    );
-                    const searchText = searchResponse.text();
-
-                    logPayload({
-                        source: 'google-gemini-search',
-                        operation: 'enrichOtherItems',
-                        payload: { text: searchText }
-                    });
-
-                    const searchJson = cleanJsonResponse(searchText);
-
-                    // Guard against empty or invalid JSON response
-                    if (!searchJson || !searchJson.startsWith('[') || !searchJson.endsWith(']')) {
-                        logger.warn('[GoogleGeminiService] Search enrichment returned invalid JSON, using raw vision items. Response preview:', (searchText || '').substring(0, 200));
-                    } else {
-                        const enriched = JSON.parse(searchJson);
-                        if (Array.isArray(enriched)) {
-                            parsedItems = enriched; // Replace raw items with enriched ones
-                        }
-                    }
-                } catch (err) {
-                    logger.error('[GoogleGeminiService] Search enrichment failed:', err);
-                    // Fallback to raw vision items if search fails
+                if (parsedItems && Array.isArray(parsedItems.items)) {
+                    parsedItems = parsedItems.items;
+                } else {
+                    logger.warn('[GoogleGeminiService] Vision response was not an array:', parsedItems);
+                    parsedItems = [];
                 }
             }
+
+            // Build conversation history from vision extraction for downstream enrichment
+            const userContent = {
+                role: 'user',
+                parts: [
+                    { text: visionPrompt },
+                    { inlineData: { data, mimeType } }
+                ]
+            };
+            const modelContent = visionResponse.candidates?.[0]?.content;
+            const conversationHistory = modelContent ? [userContent, modelContent] : null;
 
             const items = parsedItems.map(item => {
                 const raw = item && typeof item === 'object' ? item : {};
@@ -661,10 +758,10 @@ CRITICAL: Return ONLY valid JSON. Do not include any conversational text before 
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
 
-            return { items };
+            return { items, conversationHistory, warning };
         } catch (err) {
             logger.error('[GoogleGeminiService] Vision item detection failed:', err);
-            return { items: [] };
+            throw buildVisionExtractionError(err);
         }
     }
 

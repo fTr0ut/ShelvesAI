@@ -6,6 +6,7 @@
     "scripts": {
         "start": "node index.js",
         "dev": "nodemon index.js",
+        "dev:local": "cross-env NODE_ENV=development nodemon index.js",
         "test:backend": "jest --config jest.config.js",
         "build-indexes": "node scripts/build-indexes.js",
         "backfill:feed-aggregates": "node scripts/backfill-event-aggregates.js",
@@ -20,7 +21,9 @@
         "init-db:fresh": "node scripts/init-db.js --fresh",
         "drop-db": "node scripts/drop-db.js",
         "drop-db:confirm": "node scripts/drop-db.js --confirm",
-        "restore-db": "node scripts/restore-db.js"
+        "restore-db": "node scripts/restore-db.js",
+        "migrate:local": "cross-env USE_LOCAL_DB=1 npx knex migrate:latest",
+        "seed:local": "cross-env USE_LOCAL_DB=1 npx knex seed:run"
     },
     "keywords": [],
     "author": "",
@@ -56,6 +59,7 @@
         "@types/cookie-parser": "^1.4.9",
         "@types/cors": "^2.8.19",
         "@types/express": "^5.0.3",
+        "cross-env": "^10.1.0",
         "jest": "^30.2.0",
         "nodemon": "^3.1.10"
     }

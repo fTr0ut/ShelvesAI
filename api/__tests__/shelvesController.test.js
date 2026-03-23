@@ -1,9 +1,18 @@
 const shelvesController = require('../controllers/shelvesController');
 const { VisionPipelineService } = require('../services/visionPipeline');
 const shelvesQueries = require('../database/queries/shelves');
+const visionResultCacheQueries = require('../database/queries/visionResultCache');
+const needsReviewQueries = require('../database/queries/needsReview');
+const collectablesQueries = require('../database/queries/collectables');
 
 jest.mock('../services/visionPipeline');
 jest.mock('../database/queries/shelves');
+jest.mock('../database/queries/visionResultCache', () => ({
+    getValid: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/needsReview');
+jest.mock('../database/queries/collectables');
 jest.mock('../services/processingStatus', () => ({
     generateJobId: jest.fn(() => 'test-job-id'),
     createJob: jest.fn(),
@@ -57,6 +66,10 @@ describe('shelvesController', () => {
         // Controller calls loadShelfForUser which calls shelvesQueries.getById
         shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'book' });
         shelvesQueries.getItems.mockResolvedValue([]);
+        visionResultCacheQueries.getValid.mockResolvedValue(null);
+        needsReviewQueries.getById.mockResolvedValue(null);
+        needsReviewQueries.markCompleted.mockResolvedValue(true);
+        collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
     });
 
     describe('processShelfVision', () => {
@@ -96,6 +109,26 @@ describe('shelvesController', () => {
                 items: expect.any(Array)
             }));
             expect(shelvesQueries.getItems).toHaveBeenCalled();
+        });
+
+        it('returns cached result and skips pipeline processing when image hash matches', async () => {
+            visionResultCacheQueries.getValid.mockResolvedValue({
+                resultJson: {
+                    analysis: { shelfConfirmed: true },
+                    results: { added: 0, existing: 2, needsReview: 0, extracted: 2 },
+                    addedItems: [],
+                    needsReview: [],
+                },
+            });
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(mockPipelineInstance.processImage).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                cached: true,
+                existingCount: 2,
+                summaryMessage: 'Same photo detected: this image was already scanned in the last 24 hours. Previous result: no new items added; 2 items already on this shelf.',
+            }));
         });
     });
 
@@ -228,6 +261,50 @@ describe('shelvesController', () => {
             const callArgs = mockPipelineInstance.processImage.mock.calls[0];
             const passedOptions = callArgs[4];
             expect(passedOptions.rawItems[0].title).toBe('Neuromancer');
+        });
+    });
+
+    describe('completeReviewItem', () => {
+        it('reuses fuzzy-review manual match for other shelves instead of creating duplicate manual rows', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'other' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: {
+                    title: 'Weller Twelve',
+                    author: 'Buffalo Trace Distillery',
+                },
+            });
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue({
+                id: 701,
+                name: 'Weller 12',
+                author: 'Buffalo Trace',
+                titleSim: 0.86,
+                creatorSim: 0.84,
+                combinedSim: 0.85,
+            });
+            shelvesQueries.findManualCollection.mockResolvedValue({
+                id: 999,
+                position: null,
+                format: null,
+                notes: null,
+                rating: null,
+            });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(shelvesQueries.addManual).not.toHaveBeenCalled();
+            expect(needsReviewQueries.markCompleted).toHaveBeenCalledWith(55, 1);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 999,
+                    manual: expect.objectContaining({ id: 701 }),
+                }),
+            }));
         });
     });
 });

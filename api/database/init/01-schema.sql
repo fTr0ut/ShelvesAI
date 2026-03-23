@@ -120,6 +120,8 @@ CREATE TABLE collectables (
     -- Publishing
     publishers TEXT[] DEFAULT '{}',
     year TEXT,
+    market_value TEXT,
+    market_value_sources JSONB DEFAULT '[]',
     system_name TEXT,  -- e.g., "Nintendo 64", "PlayStation 2"
     formats JSONB DEFAULT '[]',
     format VARCHAR(20),  -- Legacy single format field
@@ -219,6 +221,8 @@ CREATE TABLE user_manuals (
     publisher TEXT,
     format TEXT,
     year TEXT,
+    market_value TEXT,
+    market_value_sources JSONB DEFAULT '[]',
     manufacturer VARCHAR(100),
 
     -- Extended metadata for "Other" shelf items
@@ -241,7 +245,7 @@ CREATE TABLE user_manuals (
 
 CREATE INDEX idx_user_manuals_user ON user_manuals(user_id);
 CREATE INDEX idx_user_manuals_shelf ON user_manuals(shelf_id);
-CREATE INDEX idx_user_manuals_manual_fingerprint ON user_manuals(user_id, shelf_id, manual_fingerprint) WHERE manual_fingerprint IS NOT NULL;
+CREATE UNIQUE INDEX idx_user_manuals_unique_fingerprint ON user_manuals(user_id, shelf_id, manual_fingerprint) WHERE manual_fingerprint IS NOT NULL;
 
 -- ============================================
 -- USER COLLECTIONS (Items on shelves)
@@ -276,6 +280,22 @@ CREATE TABLE user_collections (
 CREATE INDEX idx_user_collections_shelf ON user_collections(shelf_id);
 CREATE INDEX idx_user_collections_user ON user_collections(user_id);
 CREATE INDEX idx_user_collections_collectable ON user_collections(collectable_id) WHERE collectable_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_user_collections_unique_manual ON user_collections(user_id, shelf_id, manual_id) WHERE manual_id IS NOT NULL;
+
+-- ============================================
+-- VISION RESULT CACHE (Image idempotency)
+-- ============================================
+CREATE TABLE vision_result_cache (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    image_sha256 TEXT NOT NULL,
+    result_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, shelf_id, image_sha256)
+);
+
+CREATE INDEX idx_vision_result_cache_expires_at ON vision_result_cache(expires_at);
 
 -- ============================================
 -- USER RATINGS (Decoupled from collections)

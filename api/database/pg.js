@@ -10,6 +10,7 @@ const logger = require('../logger');
 
 // Build connection config from environment variables
 // Supports DATABASE_URL / POSTGRES_URL or individual POSTGRES_* variables
+const isDevelopment = String(process.env.NODE_ENV || '').toLowerCase() === 'development';
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const sslEnabled = process.env.POSTGRES_SSL === 'true' || process.env.POSTGRES_SSL === 'require';
 const sslConfig = sslEnabled ? { rejectUnauthorized: false } : false;
@@ -18,8 +19,8 @@ const idleTimeoutMillis = 30000;
 const connectionTimeoutMillis = 5000;
 const slowQueryThresholdMs = process.env.SLOW_QUERY_MS ? parseInt(process.env.SLOW_QUERY_MS, 10) : 250;
 
-// Validate required database configuration
-if (!connectionString && !process.env.POSTGRES_PASSWORD) {
+// Validate required database configuration (development mode uses defaults)
+if (!connectionString && !process.env.POSTGRES_PASSWORD && !process.env.DB_PASSWORD && !isDevelopment) {
   logger.error('FATAL: Database configuration missing.');
   logger.error('Set DATABASE_URL or POSTGRES_HOST/POSTGRES_PASSWORD environment variables.');
   process.exit(1);
@@ -35,11 +36,11 @@ const poolConfig = connectionString
       keepAlive: true,
     }
   : {
-      host: process.env.POSTGRES_HOST,
+      host: process.env.POSTGRES_HOST || process.env.DB_HOST || 'localhost',
       port: process.env.POSTGRES_PORT ? parseInt(process.env.POSTGRES_PORT, 10) : 5432,
-      database: process.env.POSTGRES_NAME || process.env.POSTGRES_DB,
-      user: process.env.POSTGRES_USER,
-      password: process.env.POSTGRES_PASSWORD,
+      database: process.env.POSTGRES_NAME || process.env.POSTGRES_DB || process.env.DB_NAME || 'shelvesai',
+      user: process.env.POSTGRES_USER || process.env.DB_USER || 'shelves',
+      password: process.env.POSTGRES_PASSWORD || process.env.DB_PASSWORD || (isDevelopment ? 'localdev123' : undefined),
       max: poolMax,
       idleTimeoutMillis,
       connectionTimeoutMillis,

@@ -89,7 +89,7 @@ function formatItemCount(count) {
     return `${count} item${count === 1 ? '' : 's'}`;
 }
 
-function buildVisionSummaryMessage({
+function buildStandardVisionSummaryMessage({
     addedCount = 0,
     existingCount = 0,
     needsReviewCount = 0,
@@ -124,6 +124,24 @@ function buildVisionSummaryMessage({
     }
 
     return 'No items were detected.';
+}
+
+function buildVisionSummaryMessage({
+    addedCount = 0,
+    existingCount = 0,
+    needsReviewCount = 0,
+    extractedCount = 0,
+    cached = false,
+} = {}) {
+    const standard = buildStandardVisionSummaryMessage({
+        addedCount,
+        existingCount,
+        needsReviewCount,
+        extractedCount,
+    });
+
+    if (!cached) return standard;
+    return `Same photo detected. This image was already scanned recently. Previous result: ${standard}`;
 }
 
 export default function ShelfDetailScreen({ route, navigation }) {
@@ -562,9 +580,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     const needsReviewCount = response.result?.needsReviewCount || 0;
                     const existingCount = response.result?.existingCount || response.result?.results?.existing || 0;
                     const extractedCount = response.result?.extractedCount || response.result?.results?.extracted || 0;
+                    const isCachedResult = !!(response?.cached || response.result?.cached);
                     const summaryMessage =
                         response.result?.summaryMessage ||
-                        buildVisionSummaryMessage({ addedCount, existingCount, needsReviewCount, extractedCount });
+                        buildVisionSummaryMessage({
+                            addedCount,
+                            existingCount,
+                            needsReviewCount,
+                            extractedCount,
+                            cached: isCachedResult,
+                        });
 
                     if (needsReviewCount > 0) {
                         setTimeout(() => setVisionModalVisible(false), 1000);
@@ -725,6 +750,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         existingCount: data?.existingCount || 0,
                         needsReviewCount: data?.needsReviewCount || 0,
                         extractedCount: data?.extractedCount || data?.analysis?.items?.length || 0,
+                        cached: !!data?.cached,
                     });
                 Alert.alert('Scan Complete', summaryMessage);
                 return;

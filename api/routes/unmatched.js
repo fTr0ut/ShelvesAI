@@ -13,7 +13,10 @@ const {
     normalizeOtherManualItem,
     buildOtherManualPayload,
     hasRequiredOtherFields,
+    evaluateOtherManualFuzzyCandidate,
+    OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
 } = require('../services/manuals/otherManual');
+const logger = require('../logger');
 
 const router = express.Router();
 
@@ -156,33 +159,76 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
 
             let manualResult = null;
             let alreadyOnShelf = false;
+            let matchedManual = null;
+            let matchSimilarity = null;
 
             if (manualFingerprint) {
-                const existingManual = await shelvesQueries.findManualByFingerprint({
+                matchedManual = await shelvesQueries.findManualByFingerprint({
                     userId: req.user.id,
                     shelfId: reviewItem.shelfId,
                     manualFingerprint,
                 });
+                if (matchedManual) {
+                    matchSource = 'manual-fingerprint';
+                }
+            }
 
-                if (existingManual) {
-                    const existingCollection = await shelvesQueries.findManualCollection({
+            if (!matchedManual) {
+                matchedManual = await shelvesQueries.findManualByBarcode({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    barcode: normalized.normalizedBarcode || normalized.barcode,
+                });
+                if (matchedManual) {
+                    matchSource = 'manual-barcode';
+                }
+            }
+
+            if (!matchedManual) {
+                const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    canonicalTitle: normalized.canonicalTitle || normalized.title,
+                    canonicalCreator: normalized.canonicalCreator || normalized.primaryCreator,
+                    minCombinedSim: OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
+                });
+                const fuzzyDecision = evaluateOtherManualFuzzyCandidate(fuzzyCandidate);
+                if (fuzzyDecision.decision === 'fuzzy_auto' || fuzzyDecision.decision === 'fuzzy_review') {
+                    matchedManual = fuzzyCandidate;
+                    matchSimilarity = fuzzyDecision;
+                    matchSource = fuzzyDecision.decision;
+                }
+            }
+
+            if (matchedManual) {
+                const existingCollection = await shelvesQueries.findManualCollection({
+                    userId: req.user.id,
+                    shelfId: reviewItem.shelfId,
+                    manualId: matchedManual.id,
+                });
+
+                if (existingCollection) {
+                    manualResult = { collection: existingCollection, manual: matchedManual };
+                    alreadyOnShelf = true;
+                } else {
+                    const collection = await shelvesQueries.addManualCollection({
                         userId: req.user.id,
                         shelfId: reviewItem.shelfId,
-                        manualId: existingManual.id,
+                        manualId: matchedManual.id,
                     });
-
-                    if (existingCollection) {
-                        manualResult = { collection: existingCollection, manual: existingManual };
-                        alreadyOnShelf = true;
-                    } else {
-                        const collection = await shelvesQueries.addManualCollection({
-                            userId: req.user.id,
-                            shelfId: reviewItem.shelfId,
-                            manualId: existingManual.id,
-                        });
-                        manualResult = { collection, manual: existingManual };
-                    }
+                    manualResult = { collection, manual: matchedManual };
                 }
+
+                logger.info('[PUT /api/unmatched/:id] Matched review item to existing manual', {
+                    reviewItemId: reviewItem.id,
+                    shelfId: reviewItem.shelfId,
+                    matchSource,
+                    sourceId: matchedManual.id,
+                    combinedSim: matchSimilarity?.combinedSim ?? null,
+                    titleSim: matchSimilarity?.titleSim ?? null,
+                    creatorSim: matchSimilarity?.creatorSim ?? null,
+                    alreadyOnShelf,
+                });
             }
 
             if (!manualResult) {
@@ -195,7 +241,7 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
                 });
                 matchSource = 'manual';
             } else {
-                matchSource = alreadyOnShelf ? 'manual-existing' : 'manual-fingerprint';
+                matchSource = alreadyOnShelf ? `${matchSource || 'manual'}-existing` : (matchSource || 'manual-existing');
             }
 
             await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
@@ -236,7 +282,6 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
         if (!collectable) {
             try {
                 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
-const logger = require('../logger');
                 const matchingService = getCollectableMatchingService();
                 const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
                 if (apiResult) {
