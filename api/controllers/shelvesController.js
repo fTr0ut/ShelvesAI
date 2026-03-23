@@ -24,7 +24,12 @@ const { resolveMediaUrl } = require('../services/mediaUrl');
 const needsReviewQueries = require('../database/queries/needsReview');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const manualMediaQueries = require('../database/queries/manualMedia');
+const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
+const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
+const visionItemCropsQueries = require('../database/queries/visionItemCrops');
+const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+const { extractRegionCrop } = require('../services/visionCropper');
 const { validateImageBuffer } = require('../utils/imageValidation');
 const {
   normalizeOtherManualItem,
@@ -127,6 +132,37 @@ function computeImageSha256(imageBase64) {
   const bytes = Buffer.from(payload, 'base64');
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
+
+function isMissingRelationError(err, relationName) {
+  if (!err) return false;
+  if (err.code === '42P01') return true;
+  if (!relationName) return false;
+  return String(err.message || '').includes(relationName);
+}
+
+function getRegionBox2d(region) {
+  if (!region || typeof region !== 'object') return null;
+  if (Array.isArray(region.box2d)) return region.box2d;
+  if (Array.isArray(region.box_2d)) return region.box_2d;
+  return null;
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return fallback;
+}
+
+function parseBooleanFlag(value, defaultValue = false) {
+  if (value == null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+const VISION_CROP_WARMUP_ENABLED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_ENABLED, true);
+const VISION_CROP_WARMUP_MAX_REGIONS = parsePositiveInt(process.env.VISION_CROP_WARMUP_MAX_REGIONS, 50);
 
 function buildVisionCounts(result = {}, options = {}) {
   const { cached = false } = options;
@@ -429,7 +465,53 @@ function formatShelfItem(row) {
     format: row.format ?? null,
     notes: row.notes ?? null,
     rating: row.rating ?? null,
+    ownerPhoto: row.ownerPhotoSource ? {
+      source: row.ownerPhotoSource,
+      visible: !!row.ownerPhotoVisible,
+      contentType: row.ownerPhotoContentType || null,
+      sizeBytes: row.ownerPhotoSizeBytes ?? null,
+      width: row.ownerPhotoWidth ?? null,
+      height: row.ownerPhotoHeight ?? null,
+      thumbnailContentType: row.ownerPhotoThumbContentType || null,
+      thumbnailSizeBytes: row.ownerPhotoThumbSizeBytes ?? null,
+      thumbnailWidth: row.ownerPhotoThumbWidth ?? null,
+      thumbnailHeight: row.ownerPhotoThumbHeight ?? null,
+      thumbnailBox: row.ownerPhotoThumbBox || null,
+      thumbnailUpdatedAt: row.ownerPhotoThumbUpdatedAt || null,
+      updatedAt: row.ownerPhotoUpdatedAt || null,
+      imageUrl: `/api/shelves/${row.shelfId}/items/${row.id}/owner-photo/image`,
+      thumbnailImageUrl: `/api/shelves/${row.shelfId}/items/${row.id}/owner-photo/thumbnail`,
+    } : null,
     createdAt: row.createdAt || null,
+  };
+}
+
+function canViewerAccessOwnerPhoto(itemRow, viewerUserId) {
+  if (!itemRow?.ownerPhotoSource) return false;
+  if (itemRow.userId && viewerUserId && itemRow.userId === viewerUserId) return true;
+  return !!(itemRow.ownerPhotoVisible && itemRow.showPersonalPhotos);
+}
+
+function formatOwnerPhotoResponse(itemRow, shelfId) {
+  const hasPhoto = !!itemRow?.ownerPhotoSource;
+  return {
+    hasPhoto,
+    source: itemRow?.ownerPhotoSource || null,
+    visible: !!itemRow?.ownerPhotoVisible,
+    contentType: itemRow?.ownerPhotoContentType || null,
+    sizeBytes: itemRow?.ownerPhotoSizeBytes ?? null,
+    width: itemRow?.ownerPhotoWidth ?? null,
+    height: itemRow?.ownerPhotoHeight ?? null,
+    thumbnailContentType: itemRow?.ownerPhotoThumbContentType || null,
+    thumbnailSizeBytes: itemRow?.ownerPhotoThumbSizeBytes ?? null,
+    thumbnailWidth: itemRow?.ownerPhotoThumbWidth ?? null,
+    thumbnailHeight: itemRow?.ownerPhotoThumbHeight ?? null,
+    thumbnailBox: itemRow?.ownerPhotoThumbBox || null,
+    thumbnailUpdatedAt: itemRow?.ownerPhotoThumbUpdatedAt || null,
+    updatedAt: itemRow?.ownerPhotoUpdatedAt || null,
+    showPersonalPhotosEnabled: !!itemRow?.showPersonalPhotos,
+    imageUrl: hasPhoto ? `/api/shelves/${shelfId}/items/${itemRow.id}/owner-photo/image` : null,
+    thumbnailImageUrl: hasPhoto ? `/api/shelves/${shelfId}/items/${itemRow.id}/owner-photo/thumbnail` : null,
   };
 }
 
@@ -645,9 +727,12 @@ async function listShelfItems(req, res) {
 
     const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 25, maxLimit: 200 });
     const isOwner = shelf.ownerId === req.user.id;
-    const items = isOwner
+    let items = isOwner
       ? await hydrateShelfItems(req.user.id, shelf.id, { limit, skip })
       : (await shelvesQueries.getItemsForViewing(shelf.id, { limit, offset: skip })).map(formatShelfItem).filter(Boolean);
+    if (!isOwner) {
+      items = items.map((item) => ({ ...item, ownerPhoto: null }));
+    }
 
     const countResult = await query(
       `SELECT COUNT(*) as total FROM user_collections WHERE shelf_id = $1${isOwner ? ' AND user_id = $2' : ''}`,
@@ -1105,6 +1190,555 @@ async function uploadManualCover(req, res) {
   }
 }
 
+async function getShelfItemOwnerPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId,
+      shelfId: shelf.id,
+    });
+    if (!item) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    const isOwner = item.userId === req.user.id;
+    if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
+      return res.status(404).json({ error: 'Owner photo not found' });
+    }
+
+    return res.json({
+      ownerPhoto: formatOwnerPhotoResponse(item, shelf.id),
+    });
+  } catch (err) {
+    logger.error('getShelfItemOwnerPhoto error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getShelfItemOwnerPhotoImage(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId,
+      shelfId: shelf.id,
+    });
+    if (!item?.ownerPhotoSource) {
+      return res.status(404).json({ error: 'Owner photo not found' });
+    }
+
+    const isOwner = item.userId === req.user.id;
+    if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
+      return res.status(404).json({ error: 'Owner photo not found' });
+    }
+
+    const payload = await userCollectionPhotosQueries.loadOwnerPhotoBuffer(item);
+    res.setHeader('Content-Type', payload.contentType || item.ownerPhotoContentType || 'image/jpeg');
+    if (Number.isFinite(payload.contentLength)) {
+      res.setHeader('Content-Length', String(payload.contentLength));
+    }
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.send(payload.buffer);
+  } catch (err) {
+    logger.error('getShelfItemOwnerPhotoImage error:', err);
+    return res.status(500).json({ error: 'Failed to load owner photo image' });
+  }
+}
+
+async function getShelfItemOwnerPhotoThumbnail(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId,
+      shelfId: shelf.id,
+    });
+    if (!item?.ownerPhotoSource) {
+      return res.status(404).json({ error: 'Owner photo not found' });
+    }
+
+    const isOwner = item.userId === req.user.id;
+    if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
+      return res.status(404).json({ error: 'Owner photo not found' });
+    }
+
+    const payload = await userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer(item);
+    res.setHeader('Content-Type', payload.contentType || item.ownerPhotoThumbContentType || 'image/jpeg');
+    if (Number.isFinite(payload.contentLength)) {
+      res.setHeader('Content-Length', String(payload.contentLength));
+    }
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.send(payload.buffer);
+  } catch (err) {
+    logger.error('getShelfItemOwnerPhotoThumbnail error:', err);
+    return res.status(500).json({ error: 'Failed to load owner photo thumbnail' });
+  }
+}
+
+async function updateShelfItemOwnerPhotoVisibility(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    const visible = !!req.body?.visible;
+    const updated = await userCollectionPhotosQueries.setOwnerPhotoVisibility({
+      itemId: item.id,
+      userId: req.user.id,
+      shelfId: shelf.id,
+      visible,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    const hydrated = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId: item.id,
+      shelfId: shelf.id,
+    });
+
+    return res.json({
+      ownerPhoto: formatOwnerPhotoResponse(hydrated || updated, shelf.id),
+    });
+  } catch (err) {
+    logger.error('updateShelfItemOwnerPhotoVisibility error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function uploadShelfItemOwnerPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    const updated = await userCollectionPhotosQueries.uploadOwnerPhotoForItem({
+      itemId: item.id,
+      userId: req.user.id,
+      shelfId: shelf.id,
+      buffer: req.file.buffer,
+      contentType: req.file.mimetype || 'image/jpeg',
+    });
+
+    const hydrated = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId: item.id,
+      shelfId: shelf.id,
+    });
+
+    return res.json({
+      ownerPhoto: formatOwnerPhotoResponse(hydrated || updated, shelf.id),
+    });
+  } catch (err) {
+    logger.error('uploadShelfItemOwnerPhoto error:', err);
+    const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
+    return res.status(statusCode).json({ error: err?.message || 'Failed to upload owner photo' });
+  }
+}
+
+async function updateShelfItemOwnerPhotoThumbnail(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+    if (!req.body || typeof req.body !== 'object' || !Object.prototype.hasOwnProperty.call(req.body, 'box')) {
+      return res.status(400).json({ error: 'box is required' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    await userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem({
+      itemId: item.id,
+      userId: req.user.id,
+      shelfId: shelf.id,
+      box: req.body.box,
+    });
+
+    const hydrated = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId: item.id,
+      shelfId: shelf.id,
+    });
+
+    return res.json({
+      ownerPhoto: formatOwnerPhotoResponse(hydrated || item, shelf.id),
+    });
+  } catch (err) {
+    logger.error('updateShelfItemOwnerPhotoThumbnail error:', err);
+    const message = String(err?.message || '');
+    if (/thumbnail box|box|owner photo is not set/i.test(message)) {
+      return res.status(400).json({ error: err?.message || 'Invalid thumbnail request' });
+    }
+    return res.status(500).json({ error: 'Failed to update owner photo thumbnail' });
+  }
+}
+
+async function deleteShelfItemOwnerPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const item = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    const updated = await userCollectionPhotosQueries.clearOwnerPhotoForItem({
+      itemId: item.id,
+      userId: req.user.id,
+      shelfId: shelf.id,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'Shelf item not found' });
+    }
+
+    const hydrated = await userCollectionPhotosQueries.getByCollectionItem({
+      itemId: item.id,
+      shelfId: shelf.id,
+    });
+
+    return res.json({
+      ownerPhoto: formatOwnerPhotoResponse(hydrated || updated, shelf.id),
+    });
+  } catch (err) {
+    logger.error('deleteShelfItemOwnerPhoto error:', err);
+    return res.status(500).json({ error: 'Failed to delete owner photo' });
+  }
+}
+
+async function extractVisionRegionCropPayload({ userId, shelfId, scanPhoto, region, scanImage = null }) {
+  const sourceImage = scanImage || await visionScanPhotosQueries.loadImageBuffer(scanPhoto);
+  const extracted = await extractRegionCrop({
+    imageBuffer: sourceImage.buffer,
+    box2d: getRegionBox2d(region),
+    imageWidth: scanPhoto.width,
+    imageHeight: scanPhoto.height,
+  });
+
+  const crop = await visionItemCropsQueries.upsertFromBuffer({
+    userId,
+    shelfId,
+    scanPhotoId: scanPhoto.id,
+    regionId: region.id,
+    buffer: extracted.buffer,
+    contentType: extracted.contentType,
+  });
+
+  return {
+    crop,
+    scanImage: sourceImage,
+    payload: {
+      buffer: extracted.buffer,
+      contentType: crop?.contentType || extracted.contentType || 'image/jpeg',
+      contentLength: extracted.buffer.length,
+    },
+  };
+}
+
+async function attachCropToCollectionItem({ userId, shelfId, shelfType = null, region, crop }) {
+  if (!crop || !region) return null;
+  const normalizedShelfType = String(shelfType || '').toLowerCase();
+  const collectableId = region.collectableId || region.collectable_id || null;
+  const manualId = region.manualId || region.manual_id || null;
+  if (!collectableId && !manualId) return null;
+
+  const collectionItem = await shelvesQueries.findCollectionByReference({
+    userId,
+    shelfId,
+    collectableId,
+    manualId,
+  });
+  if (!collectionItem?.id) return null;
+
+  let attached = null;
+  try {
+    attached = await userCollectionPhotosQueries.attachVisionCropToItem({
+      itemId: collectionItem.id,
+      userId,
+      shelfId,
+      cropId: crop.id,
+      contentType: crop.contentType || null,
+      sizeBytes: crop.sizeBytes ?? null,
+      width: crop.width ?? null,
+      height: crop.height ?? null,
+    });
+  } catch (err) {
+    logger.warn('[Vision] Failed to attach crop to collection item', {
+      shelfId,
+      regionId: region.id,
+      cropId: crop.id,
+      message: err?.message || String(err),
+    });
+    attached = null;
+  }
+
+  if (manualId && normalizedShelfType === 'other') {
+    try {
+      const manualCoverResult = await query(
+        `SELECT cover_media_path
+         FROM user_manuals
+         WHERE id = $1 AND user_id = $2
+         LIMIT 1`,
+        [manualId, userId],
+      );
+      const hasPrimaryCover = !!manualCoverResult.rows[0]?.cover_media_path;
+      if (hasPrimaryCover) {
+        return attached;
+      }
+
+      const cropPayload = await visionItemCropsQueries.loadImageBuffer(crop);
+      await manualMediaQueries.uploadFromBuffer({
+        userId,
+        manualId,
+        buffer: cropPayload.buffer,
+        contentType: cropPayload.contentType || crop.contentType || 'image/jpeg',
+      });
+    } catch (err) {
+      logger.warn('[Vision] Failed to promote manual cover from crop', {
+        shelfId,
+        manualId,
+        regionId: region.id,
+        cropId: crop.id,
+        message: err?.message || String(err),
+      });
+    }
+  }
+
+  return attached;
+}
+
+async function getOrCreateVisionRegionCrop({ userId, shelfId, shelfType = null, scanPhoto, region }) {
+  let crop = null;
+  let cropTableAvailable = true;
+  try {
+    crop = await visionItemCropsQueries.getByRegionIdForUser({
+      userId,
+      shelfId,
+      scanPhotoId: scanPhoto.id,
+      regionId: region.id,
+    });
+  } catch (err) {
+    if (!isMissingRelationError(err, 'vision_item_crops')) {
+      throw err;
+    }
+    cropTableAvailable = false;
+    logger.warn('[Vision] vision_item_crops table missing; generating crop without persistence.');
+  }
+
+  if (crop) {
+    await attachCropToCollectionItem({ userId, shelfId, shelfType, region, crop });
+    const payload = await visionItemCropsQueries.loadImageBuffer(crop);
+    return { crop, payload };
+  }
+
+  const scanImage = await visionScanPhotosQueries.loadImageBuffer(scanPhoto);
+  const extracted = await extractRegionCrop({
+    imageBuffer: scanImage.buffer,
+    box2d: getRegionBox2d(region),
+    imageWidth: scanPhoto.width,
+    imageHeight: scanPhoto.height,
+  });
+
+  if (cropTableAvailable) {
+    try {
+      crop = await visionItemCropsQueries.upsertFromBuffer({
+        userId,
+        shelfId,
+        scanPhotoId: scanPhoto.id,
+        regionId: region.id,
+        buffer: extracted.buffer,
+        contentType: extracted.contentType,
+      });
+    } catch (persistErr) {
+      if (!isMissingRelationError(persistErr, 'vision_item_crops')) {
+        throw persistErr;
+      }
+      cropTableAvailable = false;
+      logger.warn('[Vision] vision_item_crops table missing while persisting crop; continuing without persistence.');
+    }
+  }
+
+  if (crop) {
+    await attachCropToCollectionItem({ userId, shelfId, shelfType, region, crop });
+  }
+
+  return {
+    crop,
+    payload: {
+      buffer: extracted.buffer,
+      contentType: crop?.contentType || extracted.contentType || 'image/jpeg',
+      contentLength: extracted.buffer.length,
+    },
+  };
+}
+
+async function warmVisionScanCrops({ userId, shelfId, shelfType = null, scanPhotoId, jobId = null }) {
+  if (!VISION_CROP_WARMUP_ENABLED || !scanPhotoId) return;
+
+  try {
+    let resolvedShelfType = shelfType ? String(shelfType).toLowerCase() : null;
+    if (!resolvedShelfType) {
+      const shelf = await loadShelfForUser(userId, shelfId);
+      resolvedShelfType = String(shelf?.type || '').toLowerCase();
+    }
+
+    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+      id: scanPhotoId,
+      userId,
+      shelfId,
+    });
+    if (!scanPhoto) return;
+
+    const regions = await visionItemRegionsQueries.listForScan({
+      userId,
+      shelfId,
+      scanPhotoId: scanPhoto.id,
+    });
+    if (!regions.length) return;
+
+    let existingCrops = [];
+    try {
+      existingCrops = await visionItemCropsQueries.listForScan({
+        userId,
+        shelfId,
+        scanPhotoId: scanPhoto.id,
+      });
+    } catch (err) {
+      if (!isMissingRelationError(err, 'vision_item_crops')) {
+        throw err;
+      }
+      logger.warn('[Vision] vision_item_crops table missing; skipping crop warmup.');
+      return;
+    }
+
+    const existingByRegion = new Set(existingCrops.map((crop) => crop.regionId));
+    const warmupTargets = regions
+      .filter((region) => !existingByRegion.has(region.id))
+      .slice(0, VISION_CROP_WARMUP_MAX_REGIONS);
+    if (!warmupTargets.length) return;
+
+    let generated = 0;
+    let failed = 0;
+    let scanImage = null;
+
+    for (const region of warmupTargets) {
+      try {
+        const result = await extractVisionRegionCropPayload({
+          userId,
+          shelfId,
+          scanPhoto,
+          region,
+          scanImage,
+        });
+        scanImage = result.scanImage || scanImage;
+        await attachCropToCollectionItem({
+          userId,
+          shelfId,
+          shelfType: resolvedShelfType,
+          region,
+          crop: result.crop,
+        });
+        generated += 1;
+      } catch (err) {
+        failed += 1;
+        logger.warn('[Vision] Failed to warm crop for region', {
+          scanPhotoId: scanPhoto.id,
+          regionId: region.id,
+          message: err?.message || String(err),
+        });
+      }
+    }
+
+    logger.info('[Vision] Crop warmup complete', {
+      shelfId,
+      scanPhotoId: scanPhoto.id,
+      requested: warmupTargets.length,
+      generated,
+      failed,
+      jobId,
+    });
+  } catch (err) {
+    logger.warn('[Vision] Crop warmup failed', {
+      shelfId,
+      scanPhotoId,
+      jobId,
+      message: err?.message || String(err),
+    });
+  }
+}
+
+function queueVisionCropWarmup({ userId, shelfId, shelfType = null, scanPhotoId, jobId = null }) {
+  if (!VISION_CROP_WARMUP_ENABLED || !scanPhotoId) return;
+  setImmediate(() => {
+    warmVisionScanCrops({ userId, shelfId, shelfType, scanPhotoId, jobId }).catch((err) => {
+      logger.warn('[Vision] Unexpected crop warmup queue error', {
+        shelfId,
+        scanPhotoId,
+        jobId,
+        message: err?.message || String(err),
+      });
+    });
+  });
+}
+
 // Vision processing (simplified - preserves core logic)
 // Vision processing (using VisionPipelineService with async job tracking)
 async function processShelfVision(req, res) {
@@ -1130,8 +1764,25 @@ async function processShelfVision(req, res) {
 
     let imageSha256 = null;
     let cachedVision = null;
+    let scanPhotoId = null;
     if (isCloudVision && imageBase64) {
       imageSha256 = computeImageSha256(imageBase64);
+      try {
+        const payload = decodeImageBase64Payload(imageBase64);
+        const buffer = Buffer.from(payload, 'base64');
+        const scanPhoto = await visionScanPhotosQueries.upsertFromBuffer({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          imageSha256,
+          buffer,
+        });
+        scanPhotoId = scanPhoto?.id || null;
+      } catch (scanPhotoErr) {
+        logger.error('[Vision] Failed to persist scan photo:', scanPhotoErr?.message || scanPhotoErr);
+        const message = String(scanPhotoErr?.message || '');
+        const statusCode = /image|base64|unsupported|dimensions|payload/i.test(message) ? 400 : 500;
+        return res.status(statusCode).json({ error: scanPhotoErr?.message || 'Failed to persist scan photo' });
+      }
       try {
         cachedVision = await visionResultCacheQueries.getValid({
           userId: req.user.id,
@@ -1165,6 +1816,7 @@ async function processShelfVision(req, res) {
         ...counts,
         warnings: cachedResult.warnings,
         cached: true,
+        scanPhotoId,
       });
 
       if (asyncMode) {
@@ -1174,6 +1826,7 @@ async function processShelfVision(req, res) {
           message: 'Same photo detected. Using previous scan result.',
           metadata: requestMetadata,
           cached: true,
+          scanPhotoId,
         });
       }
 
@@ -1190,6 +1843,7 @@ async function processShelfVision(req, res) {
         metadata: requestMetadata,
         warnings: cachedResult.warnings,
         cached: true,
+        scanPhotoId,
       });
     }
 
@@ -1212,8 +1866,16 @@ async function processShelfVision(req, res) {
     // Instantiate new Pipeline
     const hooks = getVisionPipelineHooks();
     const pipeline = new VisionPipelineService({ hooks });
-    const pipelineOptions = Array.isArray(rawItems) && rawItems.length > 0
-      ? { rawItems, ocrProvider: 'mlkit' }
+    const pipelineOptions = {};
+    if (Array.isArray(rawItems) && rawItems.length > 0) {
+      pipelineOptions.rawItems = rawItems;
+      pipelineOptions.ocrProvider = 'mlkit';
+    }
+    if (scanPhotoId) {
+      pipelineOptions.scanPhotoId = scanPhotoId;
+    }
+    const resolvedPipelineOptions = Object.keys(pipelineOptions).length > 0
+      ? pipelineOptions
       : null;
 
     // If async mode (default), return immediately with jobId
@@ -1223,7 +1885,7 @@ async function processShelfVision(req, res) {
       // Start processing in background
       (async () => {
         try {
-          const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, pipelineOptions);
+          const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, resolvedPipelineOptions);
           const counts = buildVisionCounts(result);
 
           // Increment quota on successful cloud vision processing
@@ -1262,6 +1924,14 @@ async function processShelfVision(req, res) {
             results: result.results,
             ...counts,
             warnings: result.warnings,
+            scanPhotoId,
+          });
+          queueVisionCropWarmup({
+            userId,
+            shelfId: shelf.id,
+            shelfType: shelf.type,
+            scanPhotoId,
+            jobId,
           });
         } catch (err) {
           if (err.message === 'Processing cancelled by user') {
@@ -1280,11 +1950,12 @@ async function processShelfVision(req, res) {
         status: 'processing',
         message: 'Vision processing started. Poll /vision/:jobId/status for updates.',
         metadata: requestMetadata,
+        scanPhotoId,
       });
     }
 
     // Synchronous mode (for backwards compatibility)
-    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, pipelineOptions);
+    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, resolvedPipelineOptions);
 
     // Increment quota on successful cloud vision processing
     if (isCloudVision) {
@@ -1317,7 +1988,14 @@ async function processShelfVision(req, res) {
     }
 
     const counts = buildVisionCounts(result);
-    processingStatus.completeJob(jobId, { ...result, ...counts });
+    processingStatus.completeJob(jobId, { ...result, ...counts, scanPhotoId });
+    queueVisionCropWarmup({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      shelfType: shelf.type,
+      scanPhotoId,
+      jobId,
+    });
 
     // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
@@ -1334,11 +2012,206 @@ async function processShelfVision(req, res) {
       metadata: requestMetadata,
       warnings: result.warnings,
       cached: false,
+      scanPhotoId,
     });
 
   } catch (err) {
     logger.error("Vision analysis failed", err);
     res.status(502).json({ error: "Vision analysis failed" });
+  }
+}
+
+async function getVisionScanPhoto(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const scanPhotoId = parseInt(req.params.scanPhotoId, 10);
+    if (isNaN(scanPhotoId)) {
+      return res.status(400).json({ error: 'Invalid scan photo id' });
+    }
+
+    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+      id: scanPhotoId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+    });
+    if (!scanPhoto) {
+      return res.status(404).json({ error: 'Scan photo not found' });
+    }
+
+    const regionCount = await visionItemRegionsQueries.countForScan({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      scanPhotoId: scanPhoto.id,
+    });
+
+    res.json({
+      scanPhoto: {
+        id: scanPhoto.id,
+        shelfId: scanPhoto.shelfId,
+        contentType: scanPhoto.contentType,
+        sizeBytes: scanPhoto.sizeBytes,
+        width: scanPhoto.width,
+        height: scanPhoto.height,
+        createdAt: scanPhoto.createdAt,
+        regionCount,
+        imageUrl: `/api/shelves/${shelf.id}/vision/scans/${scanPhoto.id}/image`,
+      },
+    });
+  } catch (err) {
+    logger.error('getVisionScanPhoto error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getVisionScanPhotoImage(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const scanPhotoId = parseInt(req.params.scanPhotoId, 10);
+    if (isNaN(scanPhotoId)) {
+      return res.status(400).json({ error: 'Invalid scan photo id' });
+    }
+
+    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+      id: scanPhotoId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+    });
+    if (!scanPhoto) {
+      return res.status(404).json({ error: 'Scan photo not found' });
+    }
+
+    const image = await visionScanPhotosQueries.loadImageBuffer(scanPhoto);
+    res.setHeader('Content-Type', image.contentType || 'image/jpeg');
+    if (Number.isFinite(image.contentLength)) {
+      res.setHeader('Content-Length', String(image.contentLength));
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(image.buffer);
+  } catch (err) {
+    logger.error('getVisionScanPhotoImage error:', err);
+    res.status(500).json({ error: 'Failed to load scan photo image' });
+  }
+}
+
+async function listVisionScanRegions(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const scanPhotoId = parseInt(req.params.scanPhotoId, 10);
+    if (isNaN(scanPhotoId)) {
+      return res.status(400).json({ error: 'Invalid scan photo id' });
+    }
+
+    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+      id: scanPhotoId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+    });
+    if (!scanPhoto) {
+      return res.status(404).json({ error: 'Scan photo not found' });
+    }
+
+    const regions = await visionItemRegionsQueries.listForScan({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      scanPhotoId: scanPhoto.id,
+    });
+    let crops = [];
+    try {
+      crops = await visionItemCropsQueries.listForScan({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        scanPhotoId: scanPhoto.id,
+      });
+    } catch (err) {
+      if (!isMissingRelationError(err, 'vision_item_crops')) {
+        throw err;
+      }
+      logger.warn('[Vision] vision_item_crops table missing; returning regions without crop metadata.');
+    }
+    const cropByRegionId = new Map(crops.map((crop) => [crop.regionId, crop]));
+    const regionsWithCropStatus = regions.map((region) => {
+      const crop = cropByRegionId.get(region.id);
+      return {
+        ...region,
+        hasCrop: !!crop,
+        cropImageUrl: `/api/shelves/${shelf.id}/vision/scans/${scanPhoto.id}/regions/${region.id}/crop`,
+        cropContentType: crop?.contentType || null,
+        cropWidth: crop?.width ?? null,
+        cropHeight: crop?.height ?? null,
+        cropCreatedAt: crop?.createdAt ?? null,
+      };
+    });
+
+    res.json({
+      scanPhotoId: scanPhoto.id,
+      regions: regionsWithCropStatus,
+    });
+  } catch (err) {
+    logger.error('listVisionScanRegions error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getVisionScanRegionCrop(req, res) {
+  try {
+    const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const scanPhotoId = parseInt(req.params.scanPhotoId, 10);
+    if (isNaN(scanPhotoId)) {
+      return res.status(400).json({ error: 'Invalid scan photo id' });
+    }
+    const regionId = parseInt(req.params.regionId, 10);
+    if (isNaN(regionId)) {
+      return res.status(400).json({ error: 'Invalid region id' });
+    }
+
+    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+      id: scanPhotoId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+    });
+    if (!scanPhoto) {
+      return res.status(404).json({ error: 'Scan photo not found' });
+    }
+
+    const region = await visionItemRegionsQueries.getByIdForScan({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      scanPhotoId: scanPhoto.id,
+      regionId,
+    });
+    if (!region) {
+      return res.status(404).json({ error: 'Region not found' });
+    }
+
+    const { payload } = await getOrCreateVisionRegionCrop({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      shelfType: shelf.type,
+      scanPhoto,
+      region,
+    });
+
+    res.setHeader('Content-Type', payload.contentType || 'image/jpeg');
+    if (Number.isFinite(payload.contentLength)) {
+      res.setHeader('Content-Length', String(payload.contentLength));
+    }
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(payload.buffer);
+  } catch (err) {
+    logger.error('getVisionScanRegionCrop error:', err);
+    const message = String(err?.message || '');
+    if (/crop|box_2d|dimensions/i.test(message)) {
+      return res.status(422).json({ error: 'Unable to generate crop for this region' });
+    }
+    return res.status(500).json({ error: 'Failed to load region crop' });
   }
 }
 
@@ -1846,9 +2719,19 @@ module.exports = {
   removeShelfItem,
   processShelfVision,
   processCatalogLookup,
-  processCatalogLookup,
+  getVisionScanPhoto,
+  getVisionScanPhotoImage,
+  listVisionScanRegions,
+  getVisionScanRegionCrop,
   updateManualEntry,
   uploadManualCover,
+  getShelfItemOwnerPhoto,
+  getShelfItemOwnerPhotoImage,
+  getShelfItemOwnerPhotoThumbnail,
+  updateShelfItemOwnerPhotoVisibility,
+  uploadShelfItemOwnerPhoto,
+  updateShelfItemOwnerPhotoThumbnail,
+  deleteShelfItemOwnerPhoto,
   listReviewItems,
   completeReviewItem,
   dismissReviewItem,

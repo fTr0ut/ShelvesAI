@@ -8,6 +8,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 ]);
 
 const MAX_IMAGE_DIMENSION = 4096;
+const MAX_IMAGE_PIXELS = null;
 
 function normalizeMimeType(value) {
   return String(value || '')
@@ -28,6 +29,9 @@ async function validateImageBuffer(buffer, options = {}) {
   const maxDimension = Number.isFinite(options.maxDimension)
     ? options.maxDimension
     : MAX_IMAGE_DIMENSION;
+  const maxPixels = Number.isFinite(options.maxPixels)
+    ? options.maxPixels
+    : MAX_IMAGE_PIXELS;
   const allowedMimeTypes = options.allowedMimeTypes || ALLOWED_IMAGE_MIME_TYPES;
 
   const detected = await FileType.fromBuffer(buffer);
@@ -47,6 +51,10 @@ async function validateImageBuffer(buffer, options = {}) {
     throw new Error(`Image dimensions exceed ${maxDimension}x${maxDimension}`);
   }
 
+  if (Number.isFinite(maxPixels) && maxPixels > 0 && (width * height) > maxPixels) {
+    throw new Error(`Image area exceeds ${maxPixels} pixels`);
+  }
+
   return {
     ext: detected.ext,
     mime: detected.mime,
@@ -58,6 +66,7 @@ async function validateImageBuffer(buffer, options = {}) {
 module.exports = {
   ALLOWED_IMAGE_MIME_TYPES,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   normalizeMimeType,
   isAllowedImageMimeType,
   validateImageBuffer,

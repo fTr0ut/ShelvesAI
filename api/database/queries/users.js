@@ -56,7 +56,7 @@ async function updateProfile(id, updates) {
 
     const allowedFields = [
         'username', 'first_name', 'last_name', 'phone_number',
-        'picture', 'country', 'state', 'city', 'is_private', 'bio', 'email'
+        'picture', 'country', 'state', 'city', 'is_private', 'bio', 'email', 'show_personal_photos'
     ];
 
     for (const [key, value] of Object.entries(updates)) {
@@ -97,7 +97,7 @@ async function getPublicProfile(username, viewerId = null) {
     // First get the user's basic info
     const userResult = await query(
         `SELECT u.id, u.username, u.first_name, u.last_name, u.bio,
-                u.picture, u.city, u.state, u.country, u.is_private, u.is_suspended, u.created_at,
+                u.picture, u.city, u.state, u.country, u.is_private, u.show_personal_photos, u.is_suspended, u.created_at,
                 pm.local_path as profile_media_path
          FROM users u
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -186,6 +186,7 @@ async function getPublicProfile(username, viewerId = null) {
         state: user.state,
         country: user.country,
         isPrivate: user.is_private,
+        showPersonalPhotos: user.show_personal_photos,
         createdAt: user.created_at,
         isOwner,
         isFriend,
@@ -201,7 +202,7 @@ async function getFullProfile(userId) {
     const result = await query(
         `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone_number,
                 u.picture, u.country, u.state, u.city, u.is_private, u.bio,
-                u.onboarding_completed, u.created_at, u.updated_at,
+                u.onboarding_completed, u.show_personal_photos, u.created_at, u.updated_at,
                 pm.local_path as profile_media_path
          FROM users u
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id

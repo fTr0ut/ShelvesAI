@@ -118,6 +118,39 @@ describe('GoogleGeminiService', () => {
             expect(result.warning).toMatch(/truncated/i);
         });
 
+        it('normalizes box_2d and assigns extractionIndex for parsed items', async () => {
+            mockGenerateContent.mockResolvedValue({
+                response: {
+                    text: () => JSON.stringify([
+                        {
+                            title: 'Dune',
+                            author: 'Frank Herbert',
+                            box_2d: [120.4, -10, 1004, 180.9],
+                            confidence: 0.95,
+                        },
+                        {
+                            title: 'Invalid Box',
+                            author: 'Unknown',
+                            box_2d: [0, 0, 0, 0],
+                            confidence: 0.2,
+                        },
+                    ]),
+                    candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] } }],
+                }
+            });
+
+            const result = await service.detectShelfItemsFromImage(
+                'data:image/jpeg;base64,aabbcc',
+                'book',
+            );
+
+            expect(result.items).toHaveLength(2);
+            expect(result.items[0].box2d).toEqual([120, 0, 1000, 181]);
+            expect(result.items[0].extractionIndex).toBe(0);
+            expect(result.items[1].box2d).toBeNull();
+            expect(result.items[1].extractionIndex).toBe(1);
+        });
+
         it('should throw a provider unavailable error when Gemini request fails', async () => {
             mockGenerateContent.mockRejectedValue(new TypeError('fetch failed'));
 

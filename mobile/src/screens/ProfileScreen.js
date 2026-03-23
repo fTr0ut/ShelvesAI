@@ -55,6 +55,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [state, setState] = useState('');
     const [country, setCountry] = useState('');
     const [isPrivate, setIsPrivate] = useState(false);
+    const [showPersonalPhotos, setShowPersonalPhotos] = useState(false);
     const isMountedRef = useRef(false);
 
     const setStateIfMounted = useCallback((setter, value) => {
@@ -100,6 +101,7 @@ export default function ProfileScreen({ navigation, route }) {
                 setStateIfMounted(setState, profileData.profile.state || '');
                 setStateIfMounted(setCountry, profileData.profile.country || '');
                 setStateIfMounted(setIsPrivate, profileData.profile.isPrivate || false);
+                setStateIfMounted(setShowPersonalPhotos, profileData.profile.showPersonalPhotos || false);
             }
 
             // Load shelves and posts if not private or own profile
@@ -228,7 +230,7 @@ export default function ProfileScreen({ navigation, route }) {
                 path: '/api/profile',
                 method: 'PUT',
                 token,
-                body: { firstName, lastName, bio, city, state, country, isPrivate },
+                body: { firstName, lastName, bio, city, state, country, isPrivate, showPersonalPhotos },
             });
             setEditing(false);
             loadProfile();
@@ -238,7 +240,7 @@ export default function ProfileScreen({ navigation, route }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, token, firstName, lastName, bio, city, state, country, isPrivate]);
+    }, [apiBase, token, firstName, lastName, bio, city, state, country, isPrivate, showPersonalPhotos]);
 
     const handlePickPhoto = async () => {
         try {
@@ -673,6 +675,32 @@ export default function ProfileScreen({ navigation, route }) {
                         </View>
                     )}
 
+                    {editing && (
+                        <View style={styles.privacyRow}>
+                            <View style={styles.personalPhotoTextBlock}>
+                                <View style={styles.personalPhotoLabelRow}>
+                                    <Text style={styles.privacyLabel}>Show Personal Photos</Text>
+                                    <TouchableOpacity
+                                        onPress={() => Alert.alert(
+                                            'Show Personal Photos',
+                                            "When enabled, your 'Your photo' images can be visible based on each shelf's visibility. You can still turn visibility off on individual items.",
+                                        )}
+                                        style={styles.helpIconButton}
+                                    >
+                                        <Ionicons name="help-circle-outline" size={16} color={colors.textMuted} />
+                                    </TouchableOpacity>
+                                </View>
+                                <Text style={styles.privacyHint}>Allow friends/public visibility when item toggle is on</Text>
+                            </View>
+                            <Switch
+                                value={showPersonalPhotos}
+                                onValueChange={setShowPersonalPhotos}
+                                trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                                thumbColor={showPersonalPhotos ? colors.primary : colors.surfaceElevated}
+                            />
+                        </View>
+                    )}
+
                     {/* Save button */}
                     {editing && (
                         <TouchableOpacity
@@ -1062,6 +1090,18 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             backgroundColor: colors.surface,
             borderRadius: radius.md,
             marginBottom: spacing.md,
+        },
+        personalPhotoTextBlock: {
+            flex: 1,
+            paddingRight: spacing.sm,
+        },
+        personalPhotoLabelRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+        },
+        helpIconButton: {
+            marginLeft: spacing.xs,
+            padding: 2,
         },
         privacyLabel: {
             fontSize: 15,

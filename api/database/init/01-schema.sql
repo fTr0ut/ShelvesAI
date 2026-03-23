@@ -34,6 +34,7 @@ CREATE TABLE users (
     is_private BOOLEAN DEFAULT FALSE,
     is_premium BOOLEAN DEFAULT TRUE,
     onboarding_completed BOOLEAN DEFAULT FALSE,
+    show_personal_photos BOOLEAN DEFAULT FALSE,
 
     -- Admin & Suspension
     is_admin BOOLEAN DEFAULT FALSE NOT NULL,
@@ -264,6 +265,24 @@ CREATE TABLE user_collections (
     format TEXT,
     notes TEXT,
     rating DECIMAL(2,1) CHECK (rating >= 0 AND rating <= 5),
+    owner_photo_source TEXT,
+    owner_photo_crop_id INTEGER,
+    owner_photo_storage_provider TEXT,
+    owner_photo_storage_key TEXT,
+    owner_photo_content_type TEXT,
+    owner_photo_size_bytes INTEGER,
+    owner_photo_width INTEGER,
+    owner_photo_height INTEGER,
+    owner_photo_thumb_storage_provider TEXT,
+    owner_photo_thumb_storage_key TEXT,
+    owner_photo_thumb_content_type TEXT,
+    owner_photo_thumb_size_bytes INTEGER,
+    owner_photo_thumb_width INTEGER,
+    owner_photo_thumb_height INTEGER,
+    owner_photo_thumb_box JSONB,
+    owner_photo_thumb_updated_at TIMESTAMPTZ,
+    owner_photo_visible BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_photo_updated_at TIMESTAMPTZ,
 
     created_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -274,6 +293,44 @@ CREATE TABLE user_collections (
     CONSTRAINT item_reference_check CHECK (
         (collectable_id IS NOT NULL AND manual_id IS NULL) OR
         (collectable_id IS NULL AND manual_id IS NOT NULL)
+    ),
+    CONSTRAINT owner_photo_source_check CHECK (
+        owner_photo_source IS NULL OR owner_photo_source IN ('vision_crop', 'upload')
+    ),
+    CONSTRAINT owner_photo_reference_check CHECK (
+        (owner_photo_source IS NULL AND owner_photo_crop_id IS NULL AND owner_photo_storage_key IS NULL AND owner_photo_storage_provider IS NULL)
+        OR (owner_photo_source = 'vision_crop' AND owner_photo_crop_id IS NOT NULL)
+        OR (owner_photo_source = 'upload' AND owner_photo_storage_key IS NOT NULL AND owner_photo_storage_provider IS NOT NULL)
+    ),
+    CONSTRAINT owner_photo_thumb_box_check CHECK (
+        owner_photo_thumb_box IS NULL
+        OR (
+            jsonb_typeof(owner_photo_thumb_box) = 'object'
+            AND jsonb_exists(owner_photo_thumb_box, 'x')
+            AND jsonb_exists(owner_photo_thumb_box, 'y')
+            AND jsonb_exists(owner_photo_thumb_box, 'width')
+            AND jsonb_exists(owner_photo_thumb_box, 'height')
+            AND jsonb_typeof(owner_photo_thumb_box->'x') = 'number'
+            AND jsonb_typeof(owner_photo_thumb_box->'y') = 'number'
+            AND jsonb_typeof(owner_photo_thumb_box->'width') = 'number'
+            AND jsonb_typeof(owner_photo_thumb_box->'height') = 'number'
+            AND (owner_photo_thumb_box->>'x')::double precision >= 0
+            AND (owner_photo_thumb_box->>'x')::double precision <= 1
+            AND (owner_photo_thumb_box->>'y')::double precision >= 0
+            AND (owner_photo_thumb_box->>'y')::double precision <= 1
+            AND (owner_photo_thumb_box->>'width')::double precision > 0
+            AND (owner_photo_thumb_box->>'width')::double precision <= 1
+            AND (owner_photo_thumb_box->>'height')::double precision > 0
+            AND (owner_photo_thumb_box->>'height')::double precision <= 1
+            AND (
+                (owner_photo_thumb_box->>'x')::double precision
+                + (owner_photo_thumb_box->>'width')::double precision
+            ) <= 1.000001
+            AND (
+                (owner_photo_thumb_box->>'y')::double precision
+                + (owner_photo_thumb_box->>'height')::double precision
+            ) <= 1.000001
+        )
     )
 );
 
@@ -281,6 +338,78 @@ CREATE INDEX idx_user_collections_shelf ON user_collections(shelf_id);
 CREATE INDEX idx_user_collections_user ON user_collections(user_id);
 CREATE INDEX idx_user_collections_collectable ON user_collections(collectable_id) WHERE collectable_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_user_collections_unique_manual ON user_collections(user_id, shelf_id, manual_id) WHERE manual_id IS NOT NULL;
+CREATE INDEX idx_user_collections_owner_photo_crop ON user_collections(owner_photo_crop_id) WHERE owner_photo_crop_id IS NOT NULL;
+
+-- ============================================
+-- VISION SCAN PHOTOS (Private uploaded shelf photos)
+-- ============================================
+CREATE TABLE vision_scan_photos (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    image_sha256 TEXT NOT NULL,
+    storage_provider TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'image/jpeg',
+    size_bytes INTEGER,
+    width INTEGER,
+    height INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, shelf_id, image_sha256)
+);
+
+CREATE INDEX idx_vision_scan_photos_user_shelf ON vision_scan_photos(user_id, shelf_id);
+
+-- ============================================
+-- VISION ITEM REGIONS (Bounding boxes from vision scans)
+-- ============================================
+CREATE TABLE vision_item_regions (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    scan_photo_id INTEGER NOT NULL REFERENCES vision_scan_photos(id) ON DELETE CASCADE,
+    extraction_index INTEGER NOT NULL,
+    title TEXT,
+    primary_creator TEXT,
+    box_2d JSONB NOT NULL,
+    confidence DECIMAL(4,3),
+    collectable_id INTEGER REFERENCES collectables(id) ON DELETE SET NULL,
+    manual_id INTEGER REFERENCES user_manuals(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(scan_photo_id, extraction_index)
+);
+
+CREATE INDEX idx_vision_item_regions_scan ON vision_item_regions(scan_photo_id);
+CREATE INDEX idx_vision_item_regions_collectable ON vision_item_regions(collectable_id);
+CREATE INDEX idx_vision_item_regions_manual ON vision_item_regions(manual_id);
+CREATE INDEX idx_vision_item_regions_user_shelf ON vision_item_regions(user_id, shelf_id);
+
+-- ============================================
+-- VISION ITEM CROPS (Private generated crop artifacts)
+-- ============================================
+CREATE TABLE vision_item_crops (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    scan_photo_id INTEGER NOT NULL REFERENCES vision_scan_photos(id) ON DELETE CASCADE,
+    region_id INTEGER NOT NULL REFERENCES vision_item_regions(id) ON DELETE CASCADE,
+    storage_provider TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'image/jpeg',
+    size_bytes INTEGER,
+    width INTEGER,
+    height INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(region_id)
+);
+
+CREATE INDEX idx_vision_item_crops_scan ON vision_item_crops(scan_photo_id);
+CREATE INDEX idx_vision_item_crops_user_shelf ON vision_item_crops(user_id, shelf_id);
+
+ALTER TABLE user_collections
+    ADD CONSTRAINT user_collections_owner_photo_crop_id_fkey
+    FOREIGN KEY (owner_photo_crop_id) REFERENCES vision_item_crops(id) ON DELETE SET NULL;
 
 -- ============================================
 -- VISION RESULT CACHE (Image idempotency)

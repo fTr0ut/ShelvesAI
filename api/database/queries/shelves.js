@@ -151,6 +151,13 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.notes, uc.created_at,
+            uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_content_type,
+            uc.owner_photo_size_bytes, uc.owner_photo_width, uc.owner_photo_height,
+            uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
+            uc.owner_photo_thumb_content_type, uc.owner_photo_thumb_size_bytes,
+            uc.owner_photo_thumb_width, uc.owner_photo_thumb_height,
+            uc.owner_photo_thumb_box, uc.owner_photo_thumb_updated_at,
+            uc.owner_photo_visible, uc.owner_photo_updated_at,
             ur.rating as rating,
             c.title as collectable_title,
             c.subtitle as collectable_subtitle,
@@ -216,6 +223,13 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.notes, uc.created_at,
+            uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_content_type,
+            uc.owner_photo_size_bytes, uc.owner_photo_width, uc.owner_photo_height,
+            uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
+            uc.owner_photo_thumb_content_type, uc.owner_photo_thumb_size_bytes,
+            uc.owner_photo_thumb_width, uc.owner_photo_thumb_height,
+            uc.owner_photo_thumb_box, uc.owner_photo_thumb_updated_at,
+            uc.owner_photo_visible, uc.owner_photo_updated_at,
             ur.rating as rating,
             c.title as collectable_title,
             c.subtitle as collectable_subtitle,
@@ -515,6 +529,55 @@ async function addManualCollection({ userId, shelfId, manualId }, client = null)
     return inserted.rows[0] ? rowToCamelCase(inserted.rows[0]) : null;
 }
 
+async function findCollectionByReference({ userId, shelfId, collectableId = null, manualId = null }) {
+    if (!userId || !shelfId) return null;
+    if (!collectableId && !manualId) return null;
+
+    const filters = ['user_id = $1', 'shelf_id = $2'];
+    const params = [userId, shelfId];
+    if (collectableId) {
+        params.push(collectableId);
+        filters.push(`collectable_id = $${params.length}`);
+    }
+    if (manualId) {
+        params.push(manualId);
+        filters.push(`manual_id = $${params.length}`);
+    }
+
+    const result = await query(
+        `SELECT *
+         FROM user_collections
+         WHERE ${filters.join(' AND ')}
+         ORDER BY created_at ASC, id ASC
+         LIMIT 1`,
+        params,
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function getCollectionItemByIdForShelf(itemId, shelfId) {
+    if (!itemId || !shelfId) return null;
+    const result = await query(
+        `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
+                uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_storage_provider,
+                uc.owner_photo_storage_key, uc.owner_photo_content_type, uc.owner_photo_size_bytes,
+                uc.owner_photo_width, uc.owner_photo_height,
+                uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
+                uc.owner_photo_thumb_content_type, uc.owner_photo_thumb_size_bytes,
+                uc.owner_photo_thumb_width, uc.owner_photo_thumb_height,
+                uc.owner_photo_thumb_box, uc.owner_photo_thumb_updated_at,
+                uc.owner_photo_visible, uc.owner_photo_updated_at,
+                u.show_personal_photos
+         FROM user_collections uc
+         JOIN users u ON u.id = uc.user_id
+         WHERE uc.id = $1
+           AND uc.shelf_id = $2
+         LIMIT 1`,
+        [itemId, shelfId],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
 /**
  * Remove an item from a shelf
  */
@@ -652,6 +715,8 @@ module.exports = {
     fuzzyFindManualForOther,
     findManualCollection,
     addManualCollection,
+    findCollectionByReference,
+    getCollectionItemByIdForShelf,
     removeItem,
     listVisibleForUser,
     updateItemRating,

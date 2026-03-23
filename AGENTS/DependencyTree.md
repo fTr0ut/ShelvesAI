@@ -60,6 +60,16 @@ ShelvesAI/
 - 2026-03-23 | market-value | Added `market_value` + `market_value_sources` schema support on `collectables` and `user_manuals` (new migration `20260323020000_add_market_value_to_collectables_and_user_manuals` + init schema update). Wired Gemini prompts/schema parsing to request market value with source links, persisted values in vision/manual/collectable save flows, and intentionally omitted `marketValueSources` from API response payloads for now.
 - 2026-03-23 | other-shelf-dedupe | Hardened "other" manual matching with canonical normalization + barcode + conservative fuzzy matching (`fuzzy_auto`/`fuzzy_review`), added in-scan dedupe (`barcode` -> `manualFingerprint` -> canonical title+creator), and routed borderline matches to `needs_review` as `possible_duplicate`. Applied to both `VisionPipelineService` and review completion flows (`controllers/shelvesController.js`, `routes/unmatched.js`).
 - 2026-03-23 | vision-idempotency | Added persistent image-result cache for `POST /api/shelves/:shelfId/vision` (`database/queries/visionResultCache.js`, migration `20260323040000_create_vision_result_cache`). Controller now hashes image bytes, logs cache hit/miss, short-circuits sync/async cache hits, and stores successful uncached pipeline results with TTL.
+- 2026-03-23 | vision-scan-photos | Added private vision scan persistence + region linking: new tables `vision_scan_photos` and `vision_item_regions` with RLS, new query modules `database/queries/visionScanPhotos.js` and `database/queries/visionItemRegions.js`, `VisionPipelineService` propagation/linking for `box2d` + `extractionIndex`, and authenticated scan endpoints (`GET /api/shelves/:shelfId/vision/scans/:scanPhotoId`, `/image`, `/regions`). `POST /api/shelves/:shelfId/vision` now accepts `imageBase64` or `rawItems` at route-validation layer and returns `scanPhotoId` in sync/async/cached responses.
+- 2026-03-23 | vision-crops | Implemented Phase 2 crop generation with lazy private artifacts: added `vision_item_crops` table + RLS, new query module `database/queries/visionItemCrops.js`, new `services/visionCropper.js` (`sharp`-based crop extraction), and authenticated crop endpoint `GET /api/shelves/:shelfId/vision/scans/:scanPhotoId/regions/:regionId/crop`. Region list payload now includes `hasCrop` and `cropImageUrl` metadata.
+- 2026-03-23 | vision-crops | Added end-of-workflow crop warmup hook in `processShelfVision`: after successful pipeline completion, backend now queues best-effort generation of missing region crops for the scan (same crop logic as region-crop GET endpoint) via `warmVisionScanCrops`, with env controls `VISION_CROP_WARMUP_ENABLED` and `VISION_CROP_WARMUP_MAX_REGIONS`.
+- 2026-03-23 | owner-photo-secondary | Added secondary owner photo attachments on `user_collections` (new migration `20260323070000_add_owner_photo_secondary_media` + init schema updates) and global profile flag `users.show_personal_photos`. Added authenticated shelf-item endpoints: `GET /api/shelves/:shelfId/items/:itemId/owner-photo`, `GET /image`, `PUT /visibility`, `POST /owner-photo` (upload). Crop generation now auto-attaches vision crops to matching shelf items without changing primary cover fields; mobile `CollectableDetailScreen` now renders a new “Your photo” section with upload/replace + visibility toggle and `ProfileScreen` adds “Show Personal Photos” setting.
+- 2026-03-23 | owner-photo-secondary | Added owner-photo deletion flow: new authenticated endpoint `DELETE /api/shelves/:shelfId/items/:itemId/owner-photo`, query helper `clearOwnerPhotoForItem()` (clears `user_collections.owner_photo_*` and deletes stored upload asset when applicable), and mobile `CollectableDetailScreen` black `X` affordance with confirmation modal.
+- 2026-03-23 | owner-photo-thumbnails | Added persisted owner-photo thumbnail variant support (fixed 3:4 render, default 300x400): new migration `20260323110000_add_owner_photo_thumbnail_variant`, new service `services/ownerPhotoThumbnail.js`, `user_collections.owner_photo_thumb_*` fields + `owner_photo_thumb_box_check`, route endpoints `GET /api/shelves/:shelfId/items/:itemId/owner-photo/thumbnail` and `PUT /api/shelves/:shelfId/items/:itemId/owner-photo/thumbnail`, and lazy thumbnail generation/persistence in `database/queries/userCollectionPhotos.js`.
+- 2026-03-23 | owner-photo-thumbnails | Fixed migration SQL portability bug in `20260323110000_add_owner_photo_thumbnail_variant`: replaced JSONB key-existence operator checks (`?`) with `jsonb_exists(...)` to prevent Knex placeholder substitution (`$1/$2`) and migration failure; mirrored fix in init schema constraint.
+- 2026-03-23 | collectable-detail-ui | Expanded `CollectableDetailScreen` owner-photo UX: safe-area aware full-screen viewer, in-view editing tools (preset crops, rotate, reset, save), cache-busting via `ownerPhoto.updatedAt`, conditional auto-scan subtitle (`source === 'vision_crop'` only), manual hero replacement with owner photo for crop-backed manual items, and collectable hero-centered owner-photo placement/alignment refinements.
+- 2026-03-23 | db-tooling | Added `api/scripts/pgrewind.js` and `npm run pgrewind` for local-only rewind testing: deletes rows with `created_at >= now - --hours`, supports `--dry-run`, hardcodes `localhost:5432/shelvesai` + user `shelves`, and performs runtime safety checks to block non-local targets.
+- 2026-03-23 | vision-upload-limits | Raised private vision scan photo validation limits for modern phones: `visionScanPhotos.upsertFromBuffer()` now validates with `VISION_SCAN_MAX_DIMENSION` (default `8192`) and `VISION_SCAN_MAX_PIXELS` (default `40000000`) instead of the global 4096 cap. Added area-check support in `utils/imageValidation.js`, new unit tests (`__tests__/imageValidation.test.js`), and documented env knobs in `.env.local.example`.
 - 2026-03-22 | dev-workflow | Added `npm run dev:local` scripts to both `api/` and `mobile/` for fully local development. API: `server.js` now loads `.env.local` overrides (highest priority); `database/pg.js` uses development defaults matching `knexfile.js` (localhost/shelves/localdev123/shelvesai); added `cross-env` devDep. Mobile: new `scripts/dev-local.js` reads `LOCAL_API_ADDRESS` from `.env.local` (default `http://localhost:5001`), sets `EXPO_PUBLIC_API_BASE`, spawns Expo; `app.config.js` accepts `LOCAL_API_ADDRESS` as fallback for `API_BASE`. New files: `api/.env.local.example`, `mobile/.env.local.example`, root `.env.local.example`.
 
 ---
@@ -239,6 +249,10 @@ controllers/shelvesController.js
   -> database/queries/visionQuota.js
   -> database/queries/visionResultCache.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/manualMedia.js
+  -> database/queries/userCollectionPhotos.js
+  -> database/queries/visionScanPhotos.js
+  -> database/queries/visionItemRegions.js
+  -> database/queries/visionItemCrops.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/collectables/fingerprint.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/collectableMatchingService.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/catalog/BookCatalogService.js
@@ -246,6 +260,7 @@ controllers/shelvesController.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/catalog/GameCatalogService.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/visionPipeline.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/visionPipelineHooks.js
+  -> services/visionCropper.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/processingStatus.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/mediaUrl.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/manuals/otherManual.js
@@ -799,6 +814,10 @@ database/queries/ratings.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/p
 database/queries/ownership.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js
 database/queries/media.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js, utils/imageValidation.js
 database/queries/manualMedia.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js
+database/queries/userCollectionPhotos.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js, utils/imageValidation.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
+database/queries/visionScanPhotos.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/visionItemRegions.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js
+database/queries/visionItemCrops.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js, database/queries/visionScanPhotos.js
 database/queries/profileMedia.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/s3.js
 database/queries/passwordReset.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js
 database/queries/visionQuota.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
@@ -1044,7 +1063,7 @@ components/news/QuickCheckInModal.js
 | ShelfEditScreen | AuthContext, ThemeContext, api |
 | ShelfSelectScreen | ui/CategoryIcon, AuthContext, ThemeContext, api |
 | ItemSearchScreen | AuthContext, ThemeContext, api |
-| CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, assets/tmdb-logo.svg |
+| CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, assets/tmdb-logo.svg, expo-image-manipulator, expo-file-system/legacy |
 | CheckInScreen | AuthContext, ThemeContext, api, useSearch |
 | ManualEditScreen | AuthContext, ThemeContext, api |
 | AccountScreen | AuthContext, ThemeContext, PushContext, api, useAsync |
@@ -1365,7 +1384,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (46 files, 2026-01-10 -> 2026-03-23)
+### Migration History (51 files, 2026-01-10 -> 2026-03-23)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1415,6 +1434,12 @@ news_items (SERIAL PK)
 | `20260323_add_market_value_to_collectables_and_user_manuals` | + `collectables.market_value/market_value_sources`, + `user_manuals.market_value/market_value_sources` |
 | `20260323_reduce_other_manual_duplicates` | Data cleanup + unique partial indexes for `user_collections(user_id,shelf_id,manual_id)` and `user_manuals(user_id,shelf_id,manual_fingerprint)` |
 | `20260323_create_vision_result_cache` | + `vision_result_cache` table (`user_id,shelf_id,image_sha256` PK, `result_json`, TTL via `expires_at`) |
+| `20260323_create_vision_scan_photo_regions` | + `vision_scan_photos`, + `vision_item_regions` (scan storage + bbox region linking) |
+| `20260323_add_vision_scan_tables_rls` | RLS policies for `vision_scan_photos` and `vision_item_regions` |
+| `20260323_create_vision_item_crops` | + `vision_item_crops` (private generated region crop artifacts keyed by `region_id`) |
+| `20260323_add_vision_item_crops_rls` | RLS policies for `vision_item_crops` |
+| `20260323_add_owner_photo_secondary_media` | + `users.show_personal_photos` and `user_collections.owner_photo_*` secondary media columns + constraints/indexes |
+| `20260323_add_owner_photo_thumbnail_variant` | + `user_collections.owner_photo_thumb_*` metadata columns and normalized `owner_photo_thumb_box_check` constraint |
 
 ---
 

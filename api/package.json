@@ -19,8 +19,6 @@
         "init-db": "node scripts/init-db.js",
         "init-db:check": "node scripts/init-db.js --check",
         "init-db:fresh": "node scripts/init-db.js --fresh",
-        "drop-db": "node scripts/drop-db.js",
-        "drop-db:confirm": "node scripts/drop-db.js --confirm",
         "restore-db": "node scripts/restore-db.js",
         "migrate:local": "cross-env USE_LOCAL_DB=1 npx knex migrate:latest",
         "seed:local": "cross-env USE_LOCAL_DB=1 npx knex seed:run"
@@ -52,6 +50,7 @@
         "openai": "^4.54.0",
         "pg": "^8.16.3",
         "resend": "^6.9.4",
+        "sharp": "^0.34.5",
         "winston": "^3.19.0",
         "winston-daily-rotate-file": "^5.0.0"
     },

@@ -125,6 +125,16 @@ function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
     return Math.max(0, Math.min(1, num));
 }
 
+function normalizeBox2d(value) {
+    if (!Array.isArray(value) || value.length !== 4) return null;
+    const numeric = value.map((entry) => Number(entry));
+    if (!numeric.every((entry) => Number.isFinite(entry))) return null;
+    const clamped = numeric.map((entry) => Math.max(0, Math.min(1000, Math.round(entry))));
+    const [yMin, xMin, yMax, xMax] = clamped;
+    if (yMax <= yMin || xMax <= xMin) return null;
+    return clamped;
+}
+
 class GoogleGeminiService {
     constructor(options = {}) {
         const apiKey = process.env.GOOGLE_GEN_AI_KEY;
@@ -736,7 +746,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             const modelContent = visionResponse.candidates?.[0]?.content;
             const conversationHistory = modelContent ? [userContent, modelContent] : null;
 
-            const items = parsedItems.map(item => {
+            const items = parsedItems.map((item, index) => {
                 const raw = item && typeof item === 'object' ? item : {};
                 const title = normalizeString(raw.title || raw.name || raw.itemName);
                 if (!title) return null;
@@ -746,6 +756,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 const primaryCreator = normalizeString(
                     raw.primaryCreator || raw.author || raw.creator || raw.brand || raw.publisher || raw.manufacturer,
                 );
+                const box2d = normalizeBox2d(raw.box_2d || raw.box2d);
                 return {
                     ...raw,
                     name: title,
@@ -755,6 +766,8 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     type: normalizedKind,
                     kind: normalizedKind,
                     confidence: coerceConfidence(raw.confidence),
+                    extractionIndex: Number.isInteger(raw.extractionIndex) ? raw.extractionIndex : index,
+                    box2d,
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
 

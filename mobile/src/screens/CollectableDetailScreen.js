@@ -2,8 +2,10 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
     Image,
     Linking,
+    Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TouchableOpacity,
     View,
@@ -13,9 +15,11 @@ import {
     Modal,
     FlatList,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system/legacy';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
@@ -29,6 +33,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId, readOnly, id, collectableId, ownerId } = route.params || {}; // ownerId added for Scenario B/C
     const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -49,6 +54,15 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [manualCoverUrl, setManualCoverUrl] = useState(null);
     const [showWishlistModal, setShowWishlistModal] = useState(false);
     const [wishlists, setWishlists] = useState([]);
+    const [ownerPhoto, setOwnerPhoto] = useState(null);
+    const [ownerPhotoLoading, setOwnerPhotoLoading] = useState(false);
+    const [ownerPhotoBusy, setOwnerPhotoBusy] = useState(false);
+    const [imageAuthToken, setImageAuthToken] = useState(null);
+    const [ownerPhotoViewerVisible, setOwnerPhotoViewerVisible] = useState(false);
+    const [ownerPhotoViewerLoading, setOwnerPhotoViewerLoading] = useState(false);
+    const [ownerPhotoViewerApplying, setOwnerPhotoViewerApplying] = useState(false);
+    const [ownerPhotoViewerUri, setOwnerPhotoViewerUri] = useState(null);
+    const [ownerPhotoViewerOriginalUri, setOwnerPhotoViewerOriginalUri] = useState(null);
 
     const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
     const baseCollectable = item?.collectable
@@ -62,6 +76,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const hasCollectableContent = !!(collectable?.id && collectable?.title);
     const isManual = hasManualContent && !hasCollectableContent;
     const source = isManual ? manual : collectable;
+    const hasShelfItemContext = !!(shelfId && item?.id);
+    const canEditOwnerPhoto = hasShelfItemContext && !readOnly && !(ownerId && user?.id && ownerId !== user.id);
 
     // Fetch wishlists
     const fetchWishlists = async () => {
@@ -254,6 +270,57 @@ export default function CollectableDetailScreen({ route, navigation }) {
         return () => { isActive = false; };
     }, [apiBase, token, collectable?.id, manual?.id]);
 
+    useEffect(() => {
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        getValidToken(token)
+            .then((resolved) => {
+                if (isActive) setImageAuthToken(resolved || token);
+            })
+            .catch(() => {
+                if (isActive) setImageAuthToken(token);
+            });
+        return () => { isActive = false; };
+    }, [token]);
+
+    useEffect(() => {
+        let isActive = true;
+
+        const loadOwnerPhoto = async () => {
+            if (!hasShelfItemContext || !apiBase || !token) {
+                if (isActive) setOwnerPhoto(null);
+                return;
+            }
+            try {
+                if (isActive) setOwnerPhotoLoading(true);
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${shelfId}/items/${item.id}/owner-photo`,
+                    token,
+                });
+                if (isActive) {
+                    setOwnerPhoto(data?.ownerPhoto || null);
+                }
+            } catch (err) {
+                if (isActive) {
+                    if (err?.status === 404) {
+                        setOwnerPhoto(null);
+                    } else {
+                        console.warn('Failed to load owner photo:', err);
+                    }
+                }
+            } finally {
+                if (isActive) setOwnerPhotoLoading(false);
+            }
+        };
+
+        loadOwnerPhoto();
+        return () => { isActive = false; };
+    }, [apiBase, token, shelfId, item?.id, hasShelfItemContext]);
+
     const handleRateItem = async (newRating) => {
         // Allow rating even if readOnly (because it's now decoupled!)
         // Unless it's strictly a view-only mode imposed by something else,
@@ -423,6 +490,263 @@ export default function CollectableDetailScreen({ route, navigation }) {
         } finally {
             setIsUploadingCover(false);
         }
+    };
+
+    const resolveApiUri = (path) => {
+        if (!path) return null;
+        if (/^https?:/i.test(path)) return path;
+        if (!apiBase) return path;
+        return `${apiBase.replace(/\/+$/, '')}${path.startsWith('/') ? '' : '/'}${path}`;
+    };
+
+    const getTempOwnerPhotoUri = (ext = 'jpg') => {
+        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        if (!baseDir) {
+            throw new Error('Unable to access local cache directory');
+        }
+        return `${baseDir}owner-photo-${Date.now()}-${Math.round(Math.random() * 1000000)}.${ext}`;
+    };
+
+    const getImageSizeAsync = (uri) => (
+        new Promise((resolve, reject) => {
+            Image.getSize(
+                uri,
+                (width, height) => resolve({ width, height }),
+                (err) => reject(err || new Error('Failed to read image size')),
+            );
+        })
+    );
+
+    const getCenteredCrop = ({ width, height, aspectWidth, aspectHeight }) => {
+        if (!width || !height || !aspectWidth || !aspectHeight) {
+            throw new Error('Invalid crop dimensions');
+        }
+        const targetRatio = aspectWidth / aspectHeight;
+        const imageRatio = width / height;
+        let cropWidth = width;
+        let cropHeight = height;
+
+        if (imageRatio > targetRatio) {
+            cropHeight = height;
+            cropWidth = Math.round(height * targetRatio);
+        } else {
+            cropWidth = width;
+            cropHeight = Math.round(width / targetRatio);
+        }
+
+        return {
+            originX: Math.max(0, Math.floor((width - cropWidth) / 2)),
+            originY: Math.max(0, Math.floor((height - cropHeight) / 2)),
+            width: Math.max(1, cropWidth),
+            height: Math.max(1, cropHeight),
+        };
+    };
+
+    const uploadOwnerPhotoFromUri = async (uri, mimeType = 'image/jpeg') => {
+        if (!canEditOwnerPhoto) return null;
+        if (!uri) throw new Error('Photo URI is required');
+
+        setOwnerPhotoBusy(true);
+        try {
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Session expired. Please sign in again.');
+            }
+
+            const formData = new FormData();
+            const filename = uri.split('/').pop() || `owner-photo-${Date.now()}.jpg`;
+            formData.append('photo', {
+                uri,
+                name: filename,
+                type: mimeType || 'image/jpeg',
+            });
+
+            const response = await fetch(`${apiBase}/api/shelves/${shelfId}/items/${item.id}/owner-photo`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: formData,
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Upload failed');
+            }
+
+            const data = await response.json();
+            const nextOwnerPhoto = data?.ownerPhoto || null;
+            setOwnerPhoto(nextOwnerPhoto);
+            return nextOwnerPhoto;
+        } finally {
+            setOwnerPhotoBusy(false);
+        }
+    };
+
+    const handleUploadOwnerPhoto = async () => {
+        if (!canEditOwnerPhoto) return;
+        try {
+            const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permissionResult.granted) {
+                Alert.alert('Permission Required', 'Please grant photo library access to upload your photo.');
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                quality: 0.8,
+            });
+            if (result.canceled) return;
+
+            const selectedImage = result.assets[0];
+            if (!selectedImage?.uri) return;
+            const mimeType = selectedImage.mimeType || 'image/jpeg';
+            await uploadOwnerPhotoFromUri(selectedImage.uri, mimeType);
+        } catch (err) {
+            console.warn('Failed to upload owner photo:', err);
+            Alert.alert('Upload Failed', err?.message || 'Failed to upload your photo');
+        }
+    };
+
+    const handleOpenOwnerPhotoViewer = async () => {
+        if (!ownerPhoto?.hasPhoto || !ownerPhotoImageUri) return;
+        try {
+            setOwnerPhotoViewerLoading(true);
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Session expired. Please sign in again.');
+            }
+            const ext = ownerPhoto?.contentType?.includes('png') ? 'png' : 'jpg';
+            const localUri = getTempOwnerPhotoUri(ext);
+            const downloaded = await FileSystem.downloadAsync(ownerPhotoImageUri, localUri, {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
+            setOwnerPhotoViewerOriginalUri(downloaded.uri);
+            setOwnerPhotoViewerUri(downloaded.uri);
+            setOwnerPhotoViewerVisible(true);
+        } catch (err) {
+            console.warn('Failed to open owner photo viewer:', err);
+            Alert.alert('Error', err?.message || 'Unable to load your photo');
+        } finally {
+            setOwnerPhotoViewerLoading(false);
+        }
+    };
+
+    const handleCloseOwnerPhotoViewer = () => {
+        setOwnerPhotoViewerVisible(false);
+    };
+
+    const applyOwnerPhotoManipulation = async (actions) => {
+        if (!ownerPhotoViewerUri) return;
+        try {
+            setOwnerPhotoViewerApplying(true);
+            const manipulated = await ImageManipulator.manipulateAsync(
+                ownerPhotoViewerUri,
+                actions,
+                { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG },
+            );
+            if (manipulated?.uri) {
+                setOwnerPhotoViewerUri(manipulated.uri);
+            }
+        } catch (err) {
+            console.warn('Failed to edit owner photo:', err);
+            Alert.alert('Error', 'Unable to apply edit');
+        } finally {
+            setOwnerPhotoViewerApplying(false);
+        }
+    };
+
+    const handleRotateOwnerPhoto = async () => {
+        await applyOwnerPhotoManipulation([{ rotate: 90 }]);
+    };
+
+    const handlePresetOwnerPhotoCrop = async (aspectWidth, aspectHeight) => {
+        if (!ownerPhotoViewerUri) return;
+        try {
+            const size = await getImageSizeAsync(ownerPhotoViewerUri);
+            const crop = getCenteredCrop({
+                width: size.width,
+                height: size.height,
+                aspectWidth,
+                aspectHeight,
+            });
+            await applyOwnerPhotoManipulation([{ crop }]);
+        } catch (err) {
+            console.warn('Failed to crop owner photo:', err);
+            Alert.alert('Error', 'Unable to crop this photo');
+        }
+    };
+
+    const handleResetOwnerPhotoEdits = () => {
+        if (!ownerPhotoViewerOriginalUri) return;
+        setOwnerPhotoViewerUri(ownerPhotoViewerOriginalUri);
+    };
+
+    const handleSaveOwnerPhotoEdits = async () => {
+        if (!canEditOwnerPhoto || !ownerPhotoViewerUri) return;
+        try {
+            await uploadOwnerPhotoFromUri(ownerPhotoViewerUri, 'image/jpeg');
+            setOwnerPhotoViewerOriginalUri(ownerPhotoViewerUri);
+            setOwnerPhotoViewerVisible(false);
+        } catch (err) {
+            console.warn('Failed to save owner photo edits:', err);
+            Alert.alert('Save Failed', err?.message || 'Unable to save photo edits');
+        }
+    };
+
+    const handleToggleOwnerPhotoVisibility = async (nextVisible) => {
+        if (!canEditOwnerPhoto) return;
+        try {
+            setOwnerPhotoBusy(true);
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${shelfId}/items/${item.id}/owner-photo/visibility`,
+                method: 'PUT',
+                token,
+                body: { visible: !!nextVisible },
+            });
+            setOwnerPhoto(data?.ownerPhoto || null);
+        } catch (err) {
+            console.warn('Failed to update owner photo visibility:', err);
+            Alert.alert('Error', 'Failed to update photo visibility');
+        } finally {
+            setOwnerPhotoBusy(false);
+        }
+    };
+
+    const handleDeleteOwnerPhoto = async () => {
+        if (!canEditOwnerPhoto || !ownerPhoto?.hasPhoto) return;
+        try {
+            setOwnerPhotoBusy(true);
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${shelfId}/items/${item.id}/owner-photo`,
+                method: 'DELETE',
+                token,
+            });
+            setOwnerPhoto(data?.ownerPhoto || null);
+            setOwnerPhotoViewerVisible(false);
+        } catch (err) {
+            console.warn('Failed to delete owner photo:', err);
+            Alert.alert('Error', 'Failed to delete your photo');
+        } finally {
+            setOwnerPhotoBusy(false);
+        }
+    };
+
+    const handleConfirmDeleteOwnerPhoto = () => {
+        if (!canEditOwnerPhoto || !ownerPhoto?.hasPhoto) return;
+        Alert.alert(
+            'Delete your photo?',
+            'This removes your attached photo from this shelf item.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: handleDeleteOwnerPhoto },
+            ],
+        );
     };
 
     const resolveValue = (obj, path) => {
@@ -666,6 +990,38 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     const coverUri = resolveCoverUri();
+    const rawOwnerPhotoVersion = ownerPhoto?.updatedAt
+        ? new Date(ownerPhoto.updatedAt).getTime()
+        : null;
+    const ownerPhotoVersion = Number.isFinite(rawOwnerPhotoVersion) ? rawOwnerPhotoVersion : null;
+    const ownerPhotoImageUri = ownerPhoto?.imageUrl
+        ? (() => {
+            const baseUri = resolveApiUri(ownerPhoto.imageUrl);
+            if (!baseUri) return null;
+            if (!ownerPhotoVersion) return baseUri;
+            const hasQuery = baseUri.includes('?');
+            return `${baseUri}${hasQuery ? '&' : '?'}v=${ownerPhotoVersion}`;
+        })()
+        : null;
+    const ownerPhotoImageSource = ownerPhotoImageUri
+        ? {
+            uri: ownerPhotoImageUri,
+            ...(imageAuthToken ? { headers: { Authorization: `Bearer ${imageAuthToken}`, 'ngrok-skip-browser-warning': 'true' } } : {}),
+        }
+        : null;
+    const ownerPhotoViewerBusy = ownerPhotoViewerLoading || ownerPhotoViewerApplying || ownerPhotoBusy;
+    const showOwnerPhotoSection = hasShelfItemContext
+        ? (ownerPhotoLoading || !!ownerPhoto?.hasPhoto || canEditOwnerPhoto)
+        : !(ownerId && user?.id && ownerId !== user.id);
+    const shouldReplaceManualHeroWithOwnerPhoto = (
+        isManual
+        && ownerPhoto?.source === 'vision_crop'
+        && !!ownerPhoto?.hasPhoto
+        && !!ownerPhotoImageSource
+    );
+    const showAutoScanSubtext = ownerPhoto?.source === 'vision_crop' && !!ownerPhoto?.hasPhoto;
+    const showOwnerPhotoInRatingColumn = showOwnerPhotoSection && !shouldReplaceManualHeroWithOwnerPhoto;
+    const showOwnerPhotoInHeroForCollectable = showOwnerPhotoInRatingColumn && !isManual;
 
     const renderAttribution = () => {
         const attr = collectable?.attribution;
@@ -694,6 +1050,90 @@ export default function CollectableDetailScreen({ route, navigation }) {
         );
     };
 
+    const renderOwnerPhotoCard = (extraStyle = null) => (
+        <View style={[styles.ownerPhotoCard, extraStyle]}>
+            <Text style={[styles.sectionTitle, styles.ownerPhotoSectionTitle]}>Your photos</Text>
+            {showAutoScanSubtext && (
+                <Text style={styles.ownerPhotoSubtext}>added automatically from your scan</Text>
+            )}
+
+            {!hasShelfItemContext ? (
+                <Text style={styles.ownerPhotoHint}>
+                    Open this item from a shelf to upload or replace your photo.
+                </Text>
+            ) : ownerPhotoLoading ? (
+                <View style={styles.ownerPhotoLoading}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+            ) : (
+                <>
+                    {ownerPhoto?.hasPhoto && ownerPhotoImageSource ? (
+                        <View style={styles.ownerPhotoImageWrap}>
+                            <CachedImage
+                                key={ownerPhotoVersion ? `owner-photo-${ownerPhotoVersion}` : 'owner-photo-current'}
+                                source={ownerPhotoImageSource}
+                                style={styles.ownerPhotoImage}
+                                contentFit="cover"
+                            />
+                            <Pressable
+                                style={styles.ownerPhotoOpenPressable}
+                                onPress={handleOpenOwnerPhotoViewer}
+                                disabled={ownerPhotoViewerBusy}
+                            />
+                            <View style={styles.ownerPhotoZoomBadge}>
+                                <Ionicons name="expand-outline" size={12} color={colors.textInverted} />
+                                <Text style={styles.ownerPhotoZoomText}>Open</Text>
+                            </View>
+                            {canEditOwnerPhoto && (
+                                <TouchableOpacity
+                                    style={[styles.ownerPhotoDeleteButton, ownerPhotoBusy && styles.ownerPhotoButtonDisabled]}
+                                    onPress={handleConfirmDeleteOwnerPhoto}
+                                    disabled={ownerPhotoBusy}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="close" size={14} color="#000" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    ) : (
+                        <Text style={styles.ownerPhotoHint}>No personal photo attached yet.</Text>
+                    )}
+
+                    {canEditOwnerPhoto && (
+                        <>
+                            <TouchableOpacity
+                                style={[styles.ownerPhotoButton, ownerPhotoBusy && styles.ownerPhotoButtonDisabled]}
+                                onPress={handleUploadOwnerPhoto}
+                                disabled={ownerPhotoBusy}
+                            >
+                                <Ionicons name="camera-outline" size={16} color={colors.textInverted} />
+                                <Text style={styles.ownerPhotoButtonText}>
+                                    {ownerPhoto?.hasPhoto ? 'Replace your photo' : 'Upload your photo'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <View style={styles.ownerPhotoVisibilityRow}>
+                                <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                                    <Text style={styles.ownerPhotoVisibilityLabel}>Show to friends/public</Text>
+                                    <Text style={styles.ownerPhotoVisibilityHint}>
+                                        Controlled by your profile setting and shelf visibility
+                                    </Text>
+                                </View>
+                                <Switch
+                                    value={!!ownerPhoto?.visible}
+                                    onValueChange={handleToggleOwnerPhotoVisibility}
+                                    disabled={ownerPhotoBusy || !ownerPhoto?.hasPhoto}
+                                    trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                                    thumbColor={ownerPhoto?.visible ? colors.primary : colors.surfaceElevated}
+                                />
+                            </View>
+                        </>
+                    )}
+                </>
+            )}
+        </View>
+    );
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -718,39 +1158,49 @@ export default function CollectableDetailScreen({ route, navigation }) {
             <ScrollView style={styles.container} contentContainerStyle={styles.content}>
                 {/* Hero */}
                 <View style={styles.hero}>
-                    <View style={styles.coverBox}>
-                        {coverUri ? (
-                            <CachedImage
-                                source={{ uri: coverUri }}
-                                style={styles.coverImage}
-                                contentFit="cover"
-                            />
-                        ) : (
-                            <View style={styles.coverFallback}>
-                                <CategoryIcon type={type} size={48} />
-                            </View>
-                        )}
-                        {/* Camera overlay for manual items */}
-                        {isManual && !readOnly && (
-                            <TouchableOpacity
-                                style={styles.coverEditButton}
-                                onPress={handlePickCoverImage}
-                                disabled={isUploadingCover}
-                            >
-                                {isUploadingCover ? (
-                                    <ActivityIndicator size="small" color={colors.surface} />
-                                ) : (
-                                    <Ionicons name="camera" size={18} color={colors.surface} />
-                                )}
-                            </TouchableOpacity>
-                        )}
-                    </View>
+                    {shouldReplaceManualHeroWithOwnerPhoto ? (
+                        renderOwnerPhotoCard(styles.heroOwnerPhotoCard)
+                    ) : (
+                        <View style={styles.coverBox}>
+                            {coverUri ? (
+                                <CachedImage
+                                    source={{ uri: coverUri }}
+                                    style={styles.coverImage}
+                                    contentFit="cover"
+                                />
+                            ) : (
+                                <View style={styles.coverFallback}>
+                                    <CategoryIcon type={type} size={48} />
+                                </View>
+                            )}
+                            {/* Camera overlay for manual items */}
+                            {isManual && !readOnly && (
+                                <TouchableOpacity
+                                    style={styles.coverEditButton}
+                                    onPress={handlePickCoverImage}
+                                    disabled={isUploadingCover}
+                                >
+                                    {isUploadingCover ? (
+                                        <ActivityIndicator size="small" color={colors.surface} />
+                                    ) : (
+                                        <Ionicons name="camera" size={18} color={colors.surface} />
+                                    )}
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
                     <Text style={styles.title}>{title}</Text>
                     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+                    {showOwnerPhotoInHeroForCollectable && renderOwnerPhotoCard([
+                        styles.heroOwnerPhotoCard,
+                        styles.ownerPhotoUnderSubtitle,
+                    ])}
 
                     {/* Actions Row */}
                     <View style={styles.actionsRow}>
                         <View style={styles.ratingInfoColumn}>
+                            {showOwnerPhotoInRatingColumn && isManual && renderOwnerPhotoCard()}
+
                             {/* Aggregate Rating */}
                             <View style={styles.ratingBlock}>
                                 <Text style={styles.ratingLabel}>Community</Text>
@@ -789,7 +1239,12 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             </View>
                         </View>
 
-                        <View style={styles.actionButtonsColumn}>
+                        <View
+                            style={[
+                                styles.actionButtonsColumn,
+                                showOwnerPhotoInRatingColumn && isManual && styles.actionButtonsColumnAlignWithRatings,
+                            ]}
+                        >
                             {(collectable?.id || manual?.id) && (
                                 <TouchableOpacity
                                     onPress={handleToggleFavorite}
@@ -858,6 +1313,90 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 {/* Provider attribution */}
                 {renderAttribution()}
             </ScrollView>
+
+            <Modal
+                visible={ownerPhotoViewerVisible}
+                animationType="fade"
+                statusBarTranslucent
+                onRequestClose={handleCloseOwnerPhotoViewer}
+            >
+                <SafeAreaView
+                    style={[
+                        styles.viewerScreen,
+                        {
+                            paddingTop: Math.max(insets.top, spacing.xs),
+                            paddingBottom: Math.max(insets.bottom, spacing.sm),
+                        },
+                    ]}
+                    edges={['left', 'right']}
+                >
+                    <View style={styles.viewerHeader}>
+                        <TouchableOpacity onPress={handleCloseOwnerPhotoViewer} style={styles.viewerHeaderBtn}>
+                            <Ionicons name="close" size={22} color={colors.text} />
+                        </TouchableOpacity>
+                        <Text style={styles.viewerHeaderTitle}>Your photo</Text>
+                        <TouchableOpacity
+                            onPress={handleSaveOwnerPhotoEdits}
+                            style={[styles.viewerHeaderBtn, (!canEditOwnerPhoto || ownerPhotoViewerBusy) && styles.viewerHeaderBtnDisabled]}
+                            disabled={!canEditOwnerPhoto || ownerPhotoViewerBusy}
+                        >
+                            <Text style={styles.viewerSaveText}>Save</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.viewerImageArea}>
+                        {ownerPhotoViewerLoading || !ownerPhotoViewerUri ? (
+                            <ActivityIndicator size="large" color={colors.primary} />
+                        ) : (
+                            <Image source={{ uri: ownerPhotoViewerUri }} style={styles.viewerImage} resizeMode="contain" />
+                        )}
+                    </View>
+
+                    {canEditOwnerPhoto && (
+                        <>
+                            <View style={styles.viewerToolRow}>
+                                <TouchableOpacity
+                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
+                                    onPress={() => handlePresetOwnerPhotoCrop(1, 1)}
+                                    disabled={ownerPhotoViewerBusy}
+                                >
+                                    <Text style={styles.viewerToolText}>Square</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
+                                    onPress={() => handlePresetOwnerPhotoCrop(3, 4)}
+                                    disabled={ownerPhotoViewerBusy}
+                                >
+                                    <Text style={styles.viewerToolText}>3:4</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
+                                    onPress={() => handlePresetOwnerPhotoCrop(4, 3)}
+                                    disabled={ownerPhotoViewerBusy}
+                                >
+                                    <Text style={styles.viewerToolText}>4:3</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.viewerToolRow}>
+                                <TouchableOpacity
+                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
+                                    onPress={handleRotateOwnerPhoto}
+                                    disabled={ownerPhotoViewerBusy}
+                                >
+                                    <Text style={styles.viewerToolText}>Rotate</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
+                                    onPress={handleResetOwnerPhotoEdits}
+                                    disabled={ownerPhotoViewerBusy || !ownerPhotoViewerOriginalUri}
+                                >
+                                    <Text style={styles.viewerToolText}>Reset</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </>
+                    )}
+                </SafeAreaView>
+            </Modal>
 
             {/* Wishlist Selection Modal */}
             <Modal
@@ -1016,6 +1555,22 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         flex: 1,
         gap: spacing.md,
     },
+    ownerPhotoCard: {
+        marginBottom: spacing.sm,
+        alignItems: 'center',
+    },
+    ownerPhotoSectionTitle: {
+        textAlign: 'center',
+    },
+    heroOwnerPhotoCard: {
+        width: '100%',
+        maxWidth: 360,
+        alignSelf: 'center',
+        marginBottom: spacing.md,
+    },
+    ownerPhotoUnderSubtitle: {
+        marginTop: spacing.md,
+    },
     ratingBlock: {
         marginBottom: 2,
     },
@@ -1044,6 +1599,10 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         gap: spacing.md,
     },
+    actionButtonsColumnAlignWithRatings: {
+        alignSelf: 'flex-end',
+        paddingBottom: spacing.xs,
+    },
     actionIconBtn: {
         padding: 4,
     },
@@ -1062,6 +1621,176 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 15,
         color: colors.text,
         lineHeight: 22,
+    },
+    ownerPhotoSubtext: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginBottom: spacing.sm,
+        textAlign: 'center',
+    },
+    ownerPhotoLoading: {
+        paddingVertical: spacing.md,
+        alignItems: 'center',
+    },
+    ownerPhotoHint: {
+        fontSize: 13,
+        color: colors.textMuted,
+        lineHeight: 18,
+        textAlign: 'center',
+    },
+    ownerPhotoImageWrap: {
+        width: 160,
+        height: 200,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+        backgroundColor: colors.surface,
+        marginBottom: spacing.sm,
+        ...shadows.sm,
+    },
+    ownerPhotoImage: {
+        width: '100%',
+        height: '100%',
+    },
+    ownerPhotoOpenPressable: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 1,
+    },
+    ownerPhotoZoomBadge: {
+        position: 'absolute',
+        right: 8,
+        bottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        borderRadius: radius.sm,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        zIndex: 2,
+    },
+    ownerPhotoZoomText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: colors.textInverted,
+    },
+    ownerPhotoDeleteButton: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 3,
+    },
+    ownerPhotoButton: {
+        marginTop: spacing.xs,
+        marginBottom: spacing.sm,
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: colors.primary,
+        borderRadius: radius.md,
+        paddingVertical: spacing.xs + 2,
+        paddingHorizontal: spacing.sm + 2,
+    },
+    ownerPhotoButtonDisabled: {
+        opacity: 0.6,
+    },
+    ownerPhotoButtonText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: colors.textInverted,
+    },
+    ownerPhotoVisibilityRow: {
+        width: '100%',
+        maxWidth: 360,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: spacing.xs,
+    },
+    ownerPhotoVisibilityLabel: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: colors.text,
+    },
+    ownerPhotoVisibilityHint: {
+        fontSize: 11,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    viewerScreen: {
+        flex: 1,
+        backgroundColor: colors.background,
+    },
+    viewerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    viewerHeaderBtn: {
+        minWidth: 56,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.xs,
+    },
+    viewerHeaderBtnDisabled: {
+        opacity: 0.5,
+    },
+    viewerHeaderTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    viewerSaveText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.primary,
+    },
+    viewerImageArea: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+    },
+    viewerImage: {
+        width: '100%',
+        height: '100%',
+    },
+    viewerToolRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: spacing.sm,
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.sm,
+    },
+    viewerToolButton: {
+        minWidth: 84,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    viewerToolButtonDisabled: {
+        opacity: 0.55,
+    },
+    viewerToolText: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: colors.text,
     },
     metadataCard: {
         backgroundColor: colors.surface,

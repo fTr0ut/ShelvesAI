@@ -2,6 +2,11 @@ const shelvesController = require('../controllers/shelvesController');
 const { VisionPipelineService } = require('../services/visionPipeline');
 const shelvesQueries = require('../database/queries/shelves');
 const visionResultCacheQueries = require('../database/queries/visionResultCache');
+const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
+const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
+const visionItemCropsQueries = require('../database/queries/visionItemCrops');
+const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
+const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
 
@@ -10,6 +15,30 @@ jest.mock('../database/queries/shelves');
 jest.mock('../database/queries/visionResultCache', () => ({
     getValid: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/visionScanPhotos', () => ({
+    upsertFromBuffer: jest.fn().mockResolvedValue({ id: 77 }),
+    getByIdForUser: jest.fn().mockResolvedValue(null),
+    loadImageBuffer: jest.fn(),
+}));
+jest.mock('../database/queries/visionItemRegions', () => ({
+    countForScan: jest.fn().mockResolvedValue(0),
+    listForScan: jest.fn().mockResolvedValue([]),
+    getByIdForScan: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/visionItemCrops', () => ({
+    getByRegionIdForUser: jest.fn().mockResolvedValue(null),
+    listForScan: jest.fn().mockResolvedValue([]),
+    upsertFromBuffer: jest.fn().mockResolvedValue(null),
+    loadImageBuffer: jest.fn(),
+}));
+jest.mock('../database/queries/userCollectionPhotos', () => ({
+    getByCollectionItem: jest.fn().mockResolvedValue(null),
+    loadOwnerPhotoThumbnailBuffer: jest.fn(),
+    upsertOwnerPhotoThumbnailForItem: jest.fn(),
+}));
+jest.mock('../services/visionCropper', () => ({
+    extractRegionCrop: jest.fn(),
 }));
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/collectables');
@@ -49,7 +78,9 @@ describe('shelvesController', () => {
         };
         res = {
             json: jest.fn(),
-            status: jest.fn().mockReturnThis()
+            send: jest.fn(),
+            setHeader: jest.fn(),
+            status: jest.fn().mockReturnThis(),
         };
 
         mockPipelineInstance = {
@@ -67,9 +98,118 @@ describe('shelvesController', () => {
         shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'book' });
         shelvesQueries.getItems.mockResolvedValue([]);
         visionResultCacheQueries.getValid.mockResolvedValue(null);
+        visionScanPhotosQueries.upsertFromBuffer.mockResolvedValue({ id: 77 });
         needsReviewQueries.getById.mockResolvedValue(null);
         needsReviewQueries.markCompleted.mockResolvedValue(true);
         collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+        shelvesQueries.getForViewing.mockResolvedValue({ id: 10, ownerId: 1, visibility: 'private' });
+        shelvesQueries.getItemById.mockResolvedValue({ id: 55, userId: 1, shelfId: 10 });
+        userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue(null);
+        userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
+        userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
+    });
+
+    describe('getVisionScanRegionCrop', () => {
+        beforeEach(() => {
+            req.params = { shelfId: '10', scanPhotoId: '77', regionId: '8' };
+            visionScanPhotosQueries.getByIdForUser.mockResolvedValue({
+                id: 77,
+                shelfId: 10,
+                width: 1200,
+                height: 800,
+                contentType: 'image/jpeg',
+            });
+            visionItemRegionsQueries.getByIdForScan.mockResolvedValue({
+                id: 8,
+                box2d: [100, 200, 700, 900],
+            });
+        });
+
+        it('returns an existing crop when already generated', async () => {
+            const cropBuffer = Buffer.from('existing-crop');
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue({
+                id: 901,
+                regionId: 8,
+                contentType: 'image/jpeg',
+            });
+            visionItemCropsQueries.loadImageBuffer.mockResolvedValue({
+                buffer: cropBuffer,
+                contentType: 'image/jpeg',
+                contentLength: cropBuffer.length,
+            });
+
+            await shelvesController.getVisionScanRegionCrop(req, res);
+
+            expect(extractRegionCrop).not.toHaveBeenCalled();
+            expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+            expect(res.send).toHaveBeenCalledWith(cropBuffer);
+        });
+
+        it('generates and stores a crop lazily when none exists', async () => {
+            const generatedCrop = Buffer.from('generated-crop');
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue(null);
+            visionScanPhotosQueries.loadImageBuffer.mockResolvedValue({
+                buffer: Buffer.from('scan-photo'),
+                contentType: 'image/jpeg',
+                contentLength: 100,
+            });
+            extractRegionCrop.mockResolvedValue({
+                buffer: generatedCrop,
+                contentType: 'image/jpeg',
+                width: 300,
+                height: 400,
+            });
+            visionItemCropsQueries.upsertFromBuffer.mockResolvedValue({
+                id: 902,
+                regionId: 8,
+                contentType: 'image/jpeg',
+            });
+
+            await shelvesController.getVisionScanRegionCrop(req, res);
+
+            expect(extractRegionCrop).toHaveBeenCalledWith(expect.objectContaining({
+                box2d: [100, 200, 700, 900],
+                imageWidth: 1200,
+                imageHeight: 800,
+            }));
+            expect(visionItemCropsQueries.upsertFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 77,
+                regionId: 8,
+            }));
+            expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+            expect(res.send).toHaveBeenCalledWith(generatedCrop);
+        });
+
+        it('accepts region box_2d payloads from persistence for crop extraction', async () => {
+            const generatedCrop = Buffer.from('generated-crop');
+            visionItemRegionsQueries.getByIdForScan.mockResolvedValue({
+                id: 8,
+                box_2d: [100, 200, 700, 900],
+            });
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue(null);
+            visionScanPhotosQueries.loadImageBuffer.mockResolvedValue({
+                buffer: Buffer.from('scan-photo'),
+                contentType: 'image/jpeg',
+                contentLength: 100,
+            });
+            extractRegionCrop.mockResolvedValue({
+                buffer: generatedCrop,
+                contentType: 'image/jpeg',
+                width: 300,
+                height: 400,
+            });
+
+            await shelvesController.getVisionScanRegionCrop(req, res);
+
+            expect(extractRegionCrop).toHaveBeenCalledWith(expect.objectContaining({
+                box2d: [100, 200, 700, 900],
+                imageWidth: 1200,
+                imageHeight: 800,
+            }));
+            expect(res.send).toHaveBeenCalledWith(generatedCrop);
+        });
     });
 
     describe('processShelfVision', () => {
@@ -94,10 +234,11 @@ describe('shelvesController', () => {
                 expect.objectContaining({ id: 10 }),
                 1,
                 expect.any(String),
-                null
+                expect.objectContaining({ scanPhotoId: 77 })
             );
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-                visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' }
+                visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
+                scanPhotoId: 77,
             }));
         });
 
@@ -128,6 +269,7 @@ describe('shelvesController', () => {
                 cached: true,
                 existingCount: 2,
                 summaryMessage: 'Same photo detected: this image was already scanned in the last 24 hours. Previous result: no new items added; 2 items already on this shelf.',
+                scanPhotoId: 77,
             }));
         });
     });
@@ -261,6 +403,77 @@ describe('shelvesController', () => {
             const callArgs = mockPipelineInstance.processImage.mock.calls[0];
             const passedOptions = callArgs[4];
             expect(passedOptions.rawItems[0].title).toBe('Neuromancer');
+        });
+    });
+
+    describe('owner photo thumbnails', () => {
+        it('returns owner-photo thumbnail bytes for authorized viewers', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            const thumbBuffer = Buffer.from('thumb');
+            userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue({
+                id: 55,
+                userId: 1,
+                shelfId: 10,
+                ownerPhotoSource: 'upload',
+                ownerPhotoVisible: false,
+                showPersonalPhotos: false,
+                ownerPhotoThumbContentType: 'image/jpeg',
+            });
+            userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockResolvedValue({
+                buffer: thumbBuffer,
+                contentType: 'image/jpeg',
+                contentLength: thumbBuffer.length,
+            });
+
+            await shelvesController.getShelfItemOwnerPhotoThumbnail(req, res);
+
+            expect(userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer).toHaveBeenCalled();
+            expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+            expect(res.send).toHaveBeenCalledWith(thumbBuffer);
+        });
+
+        it('rejects thumbnail update when box is missing', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = {};
+
+            await shelvesController.updateShelfItemOwnerPhotoThumbnail(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({ error: 'box is required' });
+        });
+
+        it('updates thumbnail metadata with provided box', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { box: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 } };
+            userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue({
+                id: 55,
+                userId: 1,
+                shelfId: 10,
+                ownerPhotoSource: 'upload',
+                ownerPhotoVisible: true,
+                showPersonalPhotos: true,
+                ownerPhotoThumbContentType: 'image/jpeg',
+                ownerPhotoThumbWidth: 300,
+                ownerPhotoThumbHeight: 400,
+                ownerPhotoThumbBox: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+                ownerPhotoThumbUpdatedAt: '2026-03-23T17:00:00.000Z',
+                ownerPhotoUpdatedAt: '2026-03-23T16:00:00.000Z',
+            });
+
+            await shelvesController.updateShelfItemOwnerPhotoThumbnail(req, res);
+
+            expect(userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem).toHaveBeenCalledWith({
+                itemId: 55,
+                userId: 1,
+                shelfId: 10,
+                box: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+            });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                ownerPhoto: expect.objectContaining({
+                    thumbnailImageUrl: '/api/shelves/10/items/55/owner-photo/thumbnail',
+                    thumbnailBox: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+                }),
+            }));
         });
     });
 

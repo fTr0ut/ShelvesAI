@@ -3,12 +3,18 @@ const { GoogleGeminiService } = require('../services/googleGemini');
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
+const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const pg = require('../database/pg');
 
 jest.mock('../services/googleGemini');
 jest.mock('../database/queries/collectables');
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/shelves');
+jest.mock('../database/queries/visionItemRegions', () => ({
+    upsertRegionsForScan: jest.fn().mockResolvedValue([]),
+    linkCollectable: jest.fn().mockResolvedValue(null),
+    linkManual: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('../services/collectables/fingerprint', () => ({
     makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title),
     makeVisionOcrFingerprint: jest.fn(() => 'ocr-fingerprint'),
@@ -91,6 +97,32 @@ describe('VisionPipelineService', () => {
         expect(result.addedItems[0].source).toBe('catalog-match');
     });
 
+    it('preserves extractionIndex and box2d when catalog resolves an item', async () => {
+        const mockCatalog = {
+            lookupFirstPass: jest.fn().mockResolvedValue([
+                {
+                    status: 'resolved',
+                    input: {
+                        title: 'Known Book',
+                        extractionIndex: 4,
+                        box2d: [120, 90, 870, 210],
+                    },
+                    enrichment: { title: 'Known Book' },
+                },
+            ]),
+        };
+        service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue(mockCatalog);
+
+        const result = await service.lookupCatalog(
+            [{ title: 'Known Book', extractionIndex: 4, box2d: [120, 90, 870, 210] }],
+            'book',
+        );
+
+        expect(result.resolved).toHaveLength(1);
+        expect(result.resolved[0].extractionIndex).toBe(4);
+        expect(result.resolved[0].box2d).toEqual([120, 90, 870, 210]);
+    });
+
     it('should propagate vision extraction failures instead of silently succeeding with zero items', async () => {
         mockGemini.detectShelfItemsFromImage.mockRejectedValue(
             Object.assign(new Error('Vision extraction provider request failed. Please retry.'), {
@@ -104,6 +136,11 @@ describe('VisionPipelineService', () => {
     });
 
     describe('transaction safety', () => {
+        beforeEach(() => {
+            visionItemRegionsQueries.linkCollectable.mockClear();
+            visionItemRegionsQueries.linkManual.mockClear();
+        });
+
         it('saveToShelf wraps upsert+addCollectable in a transaction for new collectables', async () => {
             collectablesQueries.findByFingerprint.mockResolvedValue(null);
             collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
@@ -111,12 +148,17 @@ describe('VisionPipelineService', () => {
             collectablesQueries.upsert.mockResolvedValue({ id: 55, title: 'New Book', kind: 'book' });
             shelvesQueries.addCollectable.mockResolvedValue({ id: 77 });
 
-            const items = [{ title: 'New Book', confidence: 1.0, kind: 'book' }];
-            const added = await service.saveToShelf(items, 1, 10, 'book');
+            const items = [{ title: 'New Book', confidence: 1.0, kind: 'book', extractionIndex: 2 }];
+            const added = await service.saveToShelf(items, 1, 10, 'book', { scanPhotoId: 15 });
 
             expect(added).toHaveLength(1);
             expect(added[0].collectableId).toBe(55);
             expect(added[0].itemId).toBe(77);
+            expect(visionItemRegionsQueries.linkCollectable).toHaveBeenCalledWith({
+                scanPhotoId: 15,
+                extractionIndex: 2,
+                collectableId: 55,
+            });
             // transaction() from pg mock should have been called
             expect(pg.transaction).toHaveBeenCalled();
             // upsert and addCollectable should have been called with the transaction client
@@ -145,6 +187,26 @@ describe('VisionPipelineService', () => {
             expect(shelvesQueries.addCollectable).toHaveBeenCalledWith(
                 expect.objectContaining({ collectableId: 99 })
             );
+        });
+
+        it('saveManualToShelf links region metadata to matched manual records', async () => {
+            shelvesQueries.findManualByFingerprint.mockResolvedValue({ id: 501, name: 'Manual A', author: 'Author A' });
+            shelvesQueries.findManualCollection.mockResolvedValue({ id: 901 });
+
+            const result = await service.saveManualToShelf(
+                [{ title: 'Manual A', author: 'Author A', extractionIndex: 3 }],
+                1,
+                10,
+                'book',
+                { requireCreator: true, hookContext: { scanPhotoId: 21 } },
+            );
+
+            expect(result.matched).toHaveLength(1);
+            expect(visionItemRegionsQueries.linkManual).toHaveBeenCalledWith({
+                scanPhotoId: 21,
+                extractionIndex: 3,
+                manualId: 501,
+            });
         });
 
         it('saveToReviewQueue wraps all inserts in a single transaction', async () => {

@@ -28,9 +28,20 @@ router.use(auth);
 
 const shelfIntParam = validateIntParam(['shelfId']);
 const shelfItemIntParams = validateIntParam(['shelfId', 'itemId']);
+const shelfItemOwnerPhotoIntParams = validateIntParam(['shelfId', 'itemId']);
 const shelfReviewIntParams = validateIntParam(['shelfId', 'id']);
+const shelfVisionScanIntParams = validateIntParam(['shelfId', 'scanPhotoId']);
+const shelfVisionRegionIntParams = validateIntParam(['shelfId', 'scanPhotoId', 'regionId']);
 const visionWorkflowContext = createWorkflowJobContext('vision');
 const catalogWorkflowContext = createWorkflowJobContext('catalog_lookup');
+
+function requireVisionPayload(req, res, next) {
+    const { imageBase64, rawItems } = req.body ?? {};
+    if (imageBase64 || (Array.isArray(rawItems) && rawItems.length > 0)) {
+        return next();
+    }
+    return res.status(400).json({ error: 'imageBase64 or rawItems are required' });
+}
 
 router.get('/', ctrl.listShelves);
 router.post('/', requireFields(['name', 'type']), validateStringLengths({ name: 500, description: 5000 }), ctrl.createShelf);
@@ -48,9 +59,20 @@ router.delete('/:shelfId/items/:itemId', shelfItemIntParams, ctrl.removeShelfIte
 router.put('/:shelfId/items/:itemId/rating', shelfItemIntParams, ctrl.rateShelfItem);
 router.put('/:shelfId/manual/:itemId', shelfItemIntParams, validateStringLengths({ name: 500, description: 5000 }), ctrl.updateManualEntry);
 router.post('/:shelfId/manual/:itemId/cover', shelfItemIntParams, upload.single('cover'), ctrl.uploadManualCover);
+router.get('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams, ctrl.getShelfItemOwnerPhoto);
+router.get('/:shelfId/items/:itemId/owner-photo/image', shelfItemOwnerPhotoIntParams, ctrl.getShelfItemOwnerPhotoImage);
+router.get('/:shelfId/items/:itemId/owner-photo/thumbnail', shelfItemOwnerPhotoIntParams, ctrl.getShelfItemOwnerPhotoThumbnail);
+router.put('/:shelfId/items/:itemId/owner-photo/thumbnail', shelfItemOwnerPhotoIntParams, ctrl.updateShelfItemOwnerPhotoThumbnail);
+router.put('/:shelfId/items/:itemId/owner-photo/visibility', shelfItemOwnerPhotoIntParams, ctrl.updateShelfItemOwnerPhotoVisibility);
+router.post('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams, upload.single('photo'), ctrl.uploadShelfItemOwnerPhoto);
+router.delete('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams, ctrl.deleteShelfItemOwnerPhoto);
 
 router.get('/:shelfId/search', shelfIntParam, ctrl.searchCollectablesForShelf);
-router.post('/:shelfId/vision', shelfIntParam, visionWorkflowContext, requireFields(['imageBase64']), ctrl.processShelfVision);
+router.post('/:shelfId/vision', shelfIntParam, visionWorkflowContext, requireVisionPayload, ctrl.processShelfVision);
+router.get('/:shelfId/vision/scans/:scanPhotoId', shelfVisionScanIntParams, ctrl.getVisionScanPhoto);
+router.get('/:shelfId/vision/scans/:scanPhotoId/image', shelfVisionScanIntParams, ctrl.getVisionScanPhotoImage);
+router.get('/:shelfId/vision/scans/:scanPhotoId/regions', shelfVisionScanIntParams, ctrl.listVisionScanRegions);
+router.get('/:shelfId/vision/scans/:scanPhotoId/regions/:regionId/crop', shelfVisionRegionIntParams, ctrl.getVisionScanRegionCrop);
 router.get('/:shelfId/vision/:jobId/status', shelfIntParam, ctrl.getVisionStatus);
 router.delete('/:shelfId/vision/:jobId', shelfIntParam, ctrl.abortVision);
 router.post('/:shelfId/catalog-lookup', shelfIntParam, catalogWorkflowContext, ctrl.processCatalogLookup);

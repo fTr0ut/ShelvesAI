@@ -52,3 +52,7 @@ nul
 .expo/*
 .claude/*
 .jks
+
+#script for local development, should not be committed
+pgrewind.js
+drop-db.js

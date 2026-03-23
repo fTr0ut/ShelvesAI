@@ -52,7 +52,7 @@ async function updateMyProfile(req, res) {
         const updates = {};
         const allowedFields = [
             'first_name', 'last_name', 'bio', 'city', 'state',
-            'country', 'is_private', 'phone_number'
+            'country', 'is_private', 'phone_number', 'show_personal_photos'
         ];
 
         // Map camelCase to snake_case for the update
@@ -61,6 +61,7 @@ async function updateMyProfile(req, res) {
             lastName: 'last_name',
             phoneNumber: 'phone_number',
             isPrivate: 'is_private',
+            showPersonalPhotos: 'show_personal_photos',
         };
 
         if (Object.prototype.hasOwnProperty.call(body, 'email')) {

@@ -4,6 +4,7 @@ const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const feedQueries = require('../database/queries/feed');
+const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const { transaction } = require('../database/pg');
 const {
     makeCollectableFingerprint,
@@ -105,6 +106,23 @@ function normalizeIdentifiers(value) {
     if (Array.isArray(value)) return {};
     if (typeof value === 'object') return value;
     return {};
+}
+
+function normalizeExtractionIndex(value) {
+    if (!Number.isInteger(value) || value < 0) return null;
+    return value;
+}
+
+function hasValidBox2d(value) {
+    if (!Array.isArray(value) || value.length !== 4) return false;
+    if (!value.every((entry) => Number.isFinite(Number(entry)))) return false;
+    const [yMin, xMin, yMax, xMax] = value.map((entry) => Number(entry));
+    return yMax > yMin && xMax > xMin;
+}
+
+function normalizeBox2d(value) {
+    if (!hasValidBox2d(value)) return null;
+    return value.map((entry) => Number(entry));
 }
 
 function normalizeSourceLinks(value) {
@@ -238,6 +256,9 @@ class VisionPipelineService {
             jobId = null;
         }
         const resolvedOptions = options || {};
+        const scanPhotoId = Number.isInteger(resolvedOptions.scanPhotoId)
+            ? resolvedOptions.scanPhotoId
+            : null;
 
         // Helper to update progress if jobId is provided (uses config for messaging)
         const updateProgress = (key, vars = {}) => {
@@ -272,6 +293,7 @@ class VisionPipelineService {
             shelfType: shelf.type,
             thresholds: { max: confidenceMax, min: confidenceMin },
             ocrProvider,
+            scanPhotoId,
         };
 
         // Step 1: Extract items from image
@@ -301,10 +323,19 @@ class VisionPipelineService {
             },
         });
         const isOtherShelf = isOtherShelfType(shelf.type);
-        const normalizedItems = isOtherShelf
+        const normalizedItems = (isOtherShelf
             ? rawItems.map(item => normalizeOtherManualItem(item, shelf.type))
-            : rawItems;
+            : rawItems
+        ).map((item, index) => ({
+            ...item,
+            extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
+            box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
+        }));
         const extractedCount = normalizedItems.length;
+
+        if (scanPhotoId && normalizedItems.length > 0) {
+            await this.persistVisionRegions(normalizedItems, userId, shelf.id, scanPhotoId);
+        }
 
         // Step 1b: Categorize into three tiers using per-type thresholds
         checkAborted();
@@ -335,7 +366,11 @@ class VisionPipelineService {
             checkAborted();
             updateProgress('matching', { count: highConfidence.length });
             const candidates = [...highConfidence, ...mediumConfidence]
-                .map((item) => normalizeOtherManualItem(item, shelf.type))
+                .map((item) => ({
+                    ...normalizeOtherManualItem(item, shelf.type),
+                    extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
+                    box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
+                }))
                 .map((item) => ({
                     ...item,
                     manualFingerprint: item.manualFingerprint || makeManualFingerprint(
@@ -528,6 +563,8 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
 
                 const rawOcrFingerprints = new Map();
+                const unresolvedByTitle = new Map();
+                const unresolvedByIndex = new Map();
                 for (const item of catalogResults.unresolved) {
                     const rawFp = makeVisionOcrFingerprint(
                         item.title || item.name,
@@ -537,6 +574,14 @@ class VisionPipelineService {
                     if (rawFp) {
                         rawOcrFingerprints.set(item.title || item.name, rawFp);
                     }
+                    const normalizedTitle = normalizeString(item.title || item.name).toLowerCase();
+                    if (normalizedTitle && !unresolvedByTitle.has(normalizedTitle)) {
+                        unresolvedByTitle.set(normalizedTitle, item);
+                    }
+                    const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+                    if (extractionIndex != null && !unresolvedByIndex.has(extractionIndex)) {
+                        unresolvedByIndex.set(extractionIndex, item);
+                    }
                 }
 
                 const enrichResult = await this.enrichUnresolved(catalogResults.unresolved, shelf.type, conversationHistory);
@@ -545,13 +590,26 @@ class VisionPipelineService {
                 if (enrichResult.warning) {
                     warnings.push(enrichResult.warning);
                 }
-                enrichedHighConf = enrichedArray.map(enrichedItem => {
+                enrichedHighConf = enrichedArray.map((enrichedItem, index) => {
                     const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
                     const rawFp = rawOcrFingerprints.get(originalTitle);
+                    const titleKey = normalizeString(originalTitle).toLowerCase();
+                    const sourceItem = unresolvedByIndex.get(normalizeExtractionIndex(enrichedItem?.extractionIndex))
+                        || unresolvedByTitle.get(titleKey)
+                        || catalogResults.unresolved[index]
+                        || null;
+                    const inheritedExtractionIndex = normalizeExtractionIndex(sourceItem?.extractionIndex);
+                    const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
+                    const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
+                    const merged = {
+                        ...enrichedItem,
+                        extractionIndex: normalizeExtractionIndex(enrichedItem?.extractionIndex) ?? inheritedExtractionIndex,
+                        box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
+                    };
                     if (rawFp) {
-                        return { ...enrichedItem, rawOcrFingerprint: rawFp };
+                        return { ...merged, rawOcrFingerprint: rawFp };
                     }
-                    return enrichedItem;
+                    return merged;
                 });
 
                 logger.info('[VisionPipeline] Step 4a Complete: Enriched', enrichedHighConf.length, 'high-confidence items');
@@ -637,6 +695,8 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline] Step 4d: Enrichment for', mediumCatalogResults.unresolved.length, 'unresolved medium-confidence items...');
 
                 const rawOcrFingerprints = new Map();
+                const unresolvedByTitle = new Map();
+                const unresolvedByIndex = new Map();
                 for (const item of mediumCatalogResults.unresolved) {
                     const rawFp = makeVisionOcrFingerprint(
                         item.title || item.name,
@@ -645,6 +705,14 @@ class VisionPipelineService {
                     );
                     if (rawFp) {
                         rawOcrFingerprints.set(item.title || item.name, rawFp);
+                    }
+                    const normalizedTitle = normalizeString(item.title || item.name).toLowerCase();
+                    if (normalizedTitle && !unresolvedByTitle.has(normalizedTitle)) {
+                        unresolvedByTitle.set(normalizedTitle, item);
+                    }
+                    const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+                    if (extractionIndex != null && !unresolvedByIndex.has(extractionIndex)) {
+                        unresolvedByIndex.set(extractionIndex, item);
                     }
                 }
 
@@ -657,13 +725,26 @@ class VisionPipelineService {
                 if (enrichResult.warning) {
                     warnings.push(enrichResult.warning);
                 }
-                enrichedMediumConf = enrichedArray.map(enrichedItem => {
+                enrichedMediumConf = enrichedArray.map((enrichedItem, index) => {
                     const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
                     const rawFp = rawOcrFingerprints.get(originalTitle);
+                    const titleKey = normalizeString(originalTitle).toLowerCase();
+                    const sourceItem = unresolvedByIndex.get(normalizeExtractionIndex(enrichedItem?.extractionIndex))
+                        || unresolvedByTitle.get(titleKey)
+                        || mediumCatalogResults.unresolved[index]
+                        || null;
+                    const inheritedExtractionIndex = normalizeExtractionIndex(sourceItem?.extractionIndex);
+                    const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
+                    const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
+                    const merged = {
+                        ...enrichedItem,
+                        extractionIndex: normalizeExtractionIndex(enrichedItem?.extractionIndex) ?? inheritedExtractionIndex,
+                        box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
+                    };
                     if (rawFp) {
-                        return { ...enrichedItem, rawOcrFingerprint: rawFp };
+                        return { ...merged, rawOcrFingerprint: rawFp };
                     }
-                    return enrichedItem;
+                    return merged;
                 });
 
                 logger.info('[VisionPipeline] Step 4d Complete: Enriched', enrichedMediumConf.length, 'medium-confidence items');
@@ -887,6 +968,76 @@ class VisionPipelineService {
         };
     }
 
+    async persistVisionRegions(items, userId, shelfId, scanPhotoId) {
+        if (!scanPhotoId || !Array.isArray(items) || items.length === 0) return;
+        const regions = items
+            .map((item) => ({
+                extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
+                title: item?.title || item?.name || null,
+                primaryCreator: item?.primaryCreator || item?.author || item?.creator || null,
+                box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
+                confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : null,
+            }))
+            .filter((item) => item.extractionIndex != null && hasValidBox2d(item.box2d));
+
+        if (!regions.length) return;
+
+        try {
+            await visionItemRegionsQueries.upsertRegionsForScan({
+                userId,
+                shelfId,
+                scanPhotoId,
+                regions,
+            });
+        } catch (err) {
+            if (isMissingRelationError(err, 'vision_item_regions')) {
+                logger.warn('[VisionPipeline] vision_item_regions table missing; skipping region persistence.');
+                return;
+            }
+            throw err;
+        }
+    }
+
+    async linkRegionToCollectable(item, collectableId, hookContext = {}) {
+        const scanPhotoId = hookContext?.scanPhotoId;
+        const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+        if (!scanPhotoId || extractionIndex == null || !collectableId) return;
+
+        try {
+            await visionItemRegionsQueries.linkCollectable({
+                scanPhotoId,
+                extractionIndex,
+                collectableId,
+            });
+        } catch (err) {
+            if (isMissingRelationError(err, 'vision_item_regions')) {
+                logger.warn('[VisionPipeline] vision_item_regions table missing; skipping collectable region link.');
+                return;
+            }
+            throw err;
+        }
+    }
+
+    async linkRegionToManual(item, manualId, hookContext = {}) {
+        const scanPhotoId = hookContext?.scanPhotoId;
+        const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+        if (!scanPhotoId || extractionIndex == null || !manualId) return;
+
+        try {
+            await visionItemRegionsQueries.linkManual({
+                scanPhotoId,
+                extractionIndex,
+                manualId,
+            });
+        } catch (err) {
+            if (isMissingRelationError(err, 'vision_item_regions')) {
+                logger.warn('[VisionPipeline] vision_item_regions table missing; skipping manual region link.');
+                return;
+            }
+            throw err;
+        }
+    }
+
     async extractItems(imageBase64, shelfType, shelfDescription = null, shelfName = null) {
         // Gemini Vision Detect (Cloud Vision temporarily disabled)
         const detectionResult = await this.geminiService.detectShelfItemsFromImage(
@@ -940,6 +1091,8 @@ class VisionPipelineService {
                                 kind: shelfType,
                                 confidence: 1.0,
                                 source: 'catalog-match',
+                                extractionIndex: input?.extractionIndex ?? null,
+                                box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
                             });
                             continue;
                         }
@@ -962,6 +1115,8 @@ class VisionPipelineService {
                                 kind: shelfType,
                                 confidence: 0.9,
                                 source: 'catalog-match',
+                                extractionIndex: input?.extractionIndex ?? null,
+                                box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
                             });
                             continue;
                         }
@@ -1355,6 +1510,7 @@ class VisionPipelineService {
                         shelfItem: savedShelfItem,
                         collectable,
                     });
+                    await this.linkRegionToCollectable(item, collectable.id, hookContext);
 
                     added.push({
                         ...item,
@@ -1391,6 +1547,7 @@ class VisionPipelineService {
                     shelfItem,
                     collectable,
                 });
+                await this.linkRegionToCollectable(item, collectable.id, hookContext);
 
                 added.push({
                     ...item,
@@ -1489,7 +1646,13 @@ class VisionPipelineService {
 
         for (let i = 0; i < items.length; i++) {
             const rawItem = items[i];
-            const item = isOther ? normalizeOtherManualItem(rawItem, shelfType) : rawItem;
+            const item = isOther
+                ? {
+                    ...normalizeOtherManualItem(rawItem, shelfType),
+                    extractionIndex: normalizeExtractionIndex(rawItem?.extractionIndex),
+                    box2d: normalizeBox2d(rawItem?.box2d ?? rawItem?.box_2d),
+                }
+                : rawItem;
             const title = normalizeString(item.title || item.name);
             const primaryCreator = normalizeString(
                 item.primaryCreator || item.author || item.creator || item.brand || item.publisher || item.manufacturer,
@@ -1564,6 +1727,7 @@ class VisionPipelineService {
                         creatorSim: similarity?.creatorSim ?? null,
                         shelfId,
                     });
+                    await this.linkRegionToManual(item, matchedManual.id, hookContext);
                     matched.push({
                         ...item,
                         itemId: existingCollection.id,
@@ -1598,6 +1762,7 @@ class VisionPipelineService {
                     shelfItem: collection,
                     manual: matchedManual,
                 });
+                await this.linkRegionToManual(item, matchedManual.id, hookContext);
                 added.push({
                     ...item,
                     itemId: collection.id,
@@ -1635,6 +1800,7 @@ class VisionPipelineService {
                 shelfItem: result.collection,
                 manual: result.manual,
             });
+            await this.linkRegionToManual(item, result.manual.id, hookContext);
 
             added.push({
                 ...item,

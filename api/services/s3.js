@@ -3,7 +3,12 @@
  * Handles file uploads, deletions, and URL generation for S3 storage
  */
 
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} = require('@aws-sdk/client-s3');
 const logger = require('../logger');
 
 // Lazy-initialize client to allow graceful fallback when credentials missing
@@ -77,6 +82,40 @@ async function uploadBuffer(buffer, key, contentType) {
 }
 
 /**
+ * Upload a private buffer to S3.
+ * Intended for user-owned assets that must be accessed via authenticated proxy endpoints.
+ * @param {Buffer} buffer - The file buffer to upload
+ * @param {string} key - The S3 object key (path within bucket)
+ * @param {string} contentType - MIME type of the file
+ * @returns {Promise<string>} The S3 key of the uploaded object
+ */
+async function uploadPrivateBuffer(buffer, key, contentType) {
+  const s3Client = getClient();
+  if (!s3Client) {
+    throw new Error('S3 is not configured. Missing AWS credentials.');
+  }
+
+  const bucket = process.env.S3_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error('S3_BUCKET_NAME environment variable is not set.');
+  }
+
+  const normalizedKey = key.replace(/\\/g, '/');
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: normalizedKey,
+      Body: buffer,
+      ContentType: contentType || 'application/octet-stream',
+      CacheControl: 'private, max-age=0, no-cache',
+    })
+  );
+
+  return normalizedKey;
+}
+
+/**
  * Get the public URL for an S3 object
  * @param {string} key - The S3 object key
  * @returns {string} The public URL
@@ -137,6 +176,54 @@ async function deleteObject(key) {
 }
 
 /**
+ * Download an object from S3 as a Buffer.
+ * @param {string} key - The S3 object key to fetch
+ * @returns {Promise<{buffer: Buffer, contentType: string|null, contentLength: number|null}>}
+ */
+async function getObjectBuffer(key) {
+  const s3Client = getClient();
+  if (!s3Client) {
+    throw new Error('S3 is not configured. Missing AWS credentials.');
+  }
+
+  const bucket = process.env.S3_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error('S3_BUCKET_NAME environment variable is not set.');
+  }
+
+  const normalizedKey = key.replace(/\\/g, '/');
+  const result = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: normalizedKey,
+    })
+  );
+
+  const body = result.Body;
+  if (!body) {
+    throw new Error(`S3 object has no body: ${normalizedKey}`);
+  }
+
+  let buffer = null;
+  if (typeof body.transformToByteArray === 'function') {
+    const bytes = await body.transformToByteArray();
+    buffer = Buffer.from(bytes);
+  } else {
+    const chunks = [];
+    for await (const chunk of body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    buffer = Buffer.concat(chunks);
+  }
+
+  return {
+    buffer,
+    contentType: result.ContentType || null,
+    contentLength: Number.isFinite(result.ContentLength) ? result.ContentLength : null,
+  };
+}
+
+/**
  * Get the S3 bucket name from environment
  */
 function getBucket() {
@@ -146,7 +233,9 @@ function getBucket() {
 module.exports = {
   isEnabled,
   uploadBuffer,
+  uploadPrivateBuffer,
   getPublicUrl,
+  getObjectBuffer,
   deleteObject,
   getBucket,
 };
