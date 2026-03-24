@@ -6,6 +6,12 @@ const THUMB_TARGET_WIDTH = 300;
 const THUMB_TARGET_HEIGHT = 400;
 const THUMB_JPEG_QUALITY = 85;
 const BOX_DECIMALS = 6;
+const CENTER_TWO_THIRDS_BOX = Object.freeze({
+  x: 1 / 6,
+  y: 1 / 6,
+  width: 2 / 3,
+  height: 2 / 3,
+});
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -53,6 +59,21 @@ function normalizeThumbnailBox(box, { allowNull = true } = {}) {
     width: roundBox(width),
     height: roundBox(height),
   };
+}
+
+function getDefaultVisionCropThumbnailBox() {
+  return normalizeThumbnailBox(CENTER_TWO_THIRDS_BOX, { allowNull: false });
+}
+
+function resolveThumbnailBoxForOwnerPhoto({ ownerPhotoSource = null, box = null } = {}) {
+  const normalized = normalizeThumbnailBox(box, { allowNull: true });
+  if (normalized) return normalized;
+
+  if (String(ownerPhotoSource || '').toLowerCase() === 'vision_crop') {
+    return getDefaultVisionCropThumbnailBox();
+  }
+
+  return null;
 }
 
 function toPixelRect(box, imageWidth, imageHeight) {
@@ -177,8 +198,10 @@ module.exports = {
   THUMB_ASPECT_HEIGHT,
   THUMB_TARGET_WIDTH,
   THUMB_TARGET_HEIGHT,
+  CENTER_TWO_THIRDS_BOX,
   normalizeThumbnailBox,
+  getDefaultVisionCropThumbnailBox,
+  resolveThumbnailBoxForOwnerPhoto,
   computeThumbnailRect,
   renderOwnerPhotoThumbnail,
 };
-

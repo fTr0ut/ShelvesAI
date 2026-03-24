@@ -39,12 +39,29 @@ function mapRegionRow(row) {
   return mapped;
 }
 
-async function upsertRegionsForScan({ userId, shelfId, scanPhotoId, regions = [] }, client = null) {
-  if (!userId || !shelfId || !scanPhotoId || !Array.isArray(regions) || regions.length === 0) {
+async function upsertRegionsForScan(
+  { userId, shelfId, scanPhotoId, regions = [], replaceExisting = false },
+  client = null,
+) {
+  if (!userId || !shelfId || !scanPhotoId || !Array.isArray(regions)) {
     return [];
   }
 
   const q = resolveQuery(client);
+  if (replaceExisting) {
+    await q(
+      `DELETE FROM vision_item_regions
+       WHERE user_id = $1
+         AND shelf_id = $2
+         AND scan_photo_id = $3`,
+      [userId, shelfId, scanPhotoId],
+    );
+  }
+
+  if (regions.length === 0) {
+    return [];
+  }
+
   const saved = [];
   for (const region of regions) {
     const extractionIndex = normalizeExtractionIndex(region?.extractionIndex);
@@ -113,6 +130,20 @@ async function linkManual({ scanPhotoId, extractionIndex, manualId }, client = n
   return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
 }
 
+async function linkCollectionItem({ scanPhotoId, extractionIndex, collectionItemId }, client = null) {
+  if (!scanPhotoId || normalizeExtractionIndex(extractionIndex) == null || !collectionItemId) return null;
+  const q = resolveQuery(client);
+  const result = await q(
+    `UPDATE vision_item_regions
+     SET collection_item_id = $1
+     WHERE scan_photo_id = $2
+       AND extraction_index = $3
+     RETURNING *`,
+    [collectionItemId, scanPhotoId, extractionIndex],
+  );
+  return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
+}
+
 async function listForScan({ userId, shelfId, scanPhotoId }) {
   if (!userId || !shelfId || !scanPhotoId) return [];
   const result = await query(
@@ -159,6 +190,7 @@ module.exports = {
   upsertRegionsForScan,
   linkCollectable,
   linkManual,
+  linkCollectionItem,
   listForScan,
   countForScan,
   getByIdForScan,

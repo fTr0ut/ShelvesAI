@@ -83,6 +83,31 @@ describe('collectables.upsert media sync transaction behavior', () => {
     expect(result.coverMediaPath).toBe('books/test/cover.jpg');
   });
 
+  it('binds identifiers/market value/market value sources in the correct SQL parameter slots', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 31, title: 'Param Book' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-31',
+        lightweightFingerprint: 'lwf-31',
+        kind: 'books',
+        title: 'Param Book',
+        identifiers: { upc: '123456789012' },
+        marketValue: 'USD $35',
+        marketValueSources: [{ url: 'https://example.com', label: 'Example' }],
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[15]).toBe(JSON.stringify({ upc: '123456789012' })); // $16 identifiers
+    expect(params[16]).toBe('USD $35'); // $17 market_value
+    expect(params[17]).toBe(JSON.stringify([{ url: 'https://example.com', label: 'Example' }])); // $18 market_value_sources
+  });
+
   it('remains non-blocking when media sync throws', async () => {
     const txClient = {
       query: jest

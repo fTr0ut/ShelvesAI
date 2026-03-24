@@ -19,7 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
@@ -166,6 +166,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [totalItems, setTotalItems] = useState(0);
+    const [imageAuthToken, setImageAuthToken] = useState(null);
+    const [ownerPhotoSourceFailures, setOwnerPhotoSourceFailures] = useState({});
 
     // Favorites state
     const [favorites, setFavorites] = useState({}); // Map of collectableId -> isFavorite
@@ -180,9 +182,29 @@ export default function ShelfDetailScreen({ route, navigation }) {
         };
     }, []);
 
+    useEffect(() => {
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        getValidToken(token)
+            .then((resolved) => {
+                if (isActive) setImageAuthToken(resolved || token);
+            })
+            .catch(() => {
+                if (isActive) setImageAuthToken(token);
+            });
+        return () => { isActive = false; };
+    }, [token]);
+
     const loadShelf = useCallback(async () => {
         try {
             if (!refreshing && isMountedRef.current) setLoading(true);
+            const resolvedImageToken = token ? await getValidToken(token) : null;
+            if (isMountedRef.current) {
+                setImageAuthToken(resolvedImageToken || token || null);
+            }
             const [shelfData, itemsData] = await Promise.all([
                 apiRequest({ apiBase, path: `/api/shelves/${id}`, token }),
                 apiRequest({ apiBase, path: `/api/shelves/${id}/items?limit=25&skip=0`, token }),
@@ -191,6 +213,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
             setShelf(shelfData.shelf);
             const loadedItems = Array.isArray(itemsData.items) ? itemsData.items : [];
             setItems(loadedItems);
+            setOwnerPhotoSourceFailures({});
             // Track pagination state from response
             if (itemsData.pagination) {
                 setHasMore(itemsData.pagination.hasMore || false);
@@ -459,21 +482,81 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return config.icon;
     };
 
+    const resolveApiUri = (value) => {
+        if (!value) return null;
+        if (/^https?:/i.test(value)) return value;
+        if (!apiBase) return value.startsWith('/') ? value : `/${value}`;
+        return `${apiBase.replace(/\/+$/, '')}${value.startsWith('/') ? '' : '/'}${value}`;
+    };
+
+    const withVersion = (uri, rawVersion) => {
+        if (!uri) return null;
+        const versionTs = rawVersion ? new Date(rawVersion).getTime() : NaN;
+        if (!Number.isFinite(versionTs)) return uri;
+        return `${uri}${uri.includes('?') ? '&' : '?'}v=${versionTs}`;
+    };
+
+    const ownerPhotoHeaders = imageAuthToken
+        ? {
+            Authorization: `Bearer ${imageAuthToken}`,
+            'ngrok-skip-browser-warning': 'true',
+        }
+        : null;
+
     // Provider-agnostic cover resolution using shared utilities
-    const resolveCoverUri = (item) => {
+    const resolveCoverSource = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
         const manual = item.manual || item.manualSnapshot;
-
-        return (
+        const ownerPhoto = item.ownerPhoto || null;
+        const manualType = String(manual?.type || '').toLowerCase();
+        const ownerFailureState = ownerPhotoSourceFailures[item.id] || null;
+        const coverUri = (
             resolveCollectableCoverUrl(collectable, apiBase) ||
             resolveManualCoverUrl(manual, apiBase) ||
             null
         );
+        const fallback = coverUri ? { source: { uri: coverUri }, kind: 'fallback' } : null;
+
+        // For manual "other" items, prefer persisted owner-photo thumbnail in list cards.
+        // Cache-bust with thumbnail update timestamp so edits appear immediately after save.
+        if (manualType === 'other' && ownerPhotoHeaders) {
+            if (ownerFailureState !== 'thumb_failed' && ownerFailureState !== 'image_failed' && ownerPhoto?.thumbnailImageUrl) {
+                const thumbUri = resolveApiUri(ownerPhoto.thumbnailImageUrl);
+                const thumbVersion = ownerPhoto.thumbnailUpdatedAt || ownerPhoto.updatedAt || null;
+                const versionedThumb = withVersion(thumbUri, thumbVersion);
+                if (versionedThumb) {
+                    return {
+                        source: {
+                            uri: versionedThumb,
+                            headers: ownerPhotoHeaders,
+                        },
+                        kind: 'owner_thumb',
+                    };
+                }
+            }
+            if (ownerFailureState !== 'image_failed' && ownerPhoto?.imageUrl) {
+                const ownerUri = resolveApiUri(ownerPhoto.imageUrl);
+                const ownerVersion = ownerPhoto.updatedAt || null;
+                const versionedOwner = withVersion(ownerUri, ownerVersion);
+                if (versionedOwner) {
+                    return {
+                        source: {
+                            uri: versionedOwner,
+                            headers: ownerPhotoHeaders,
+                        },
+                        kind: 'owner_image',
+                    };
+                }
+            }
+        }
+
+        return fallback;
     };
 
     const renderItem = ({ item }) => {
         const info = getItemInfo(item);
-        const coverUri = resolveCoverUri(item);
+        const coverEntry = resolveCoverSource(item);
+        const coverSource = coverEntry?.source || null;
         const collectableId = item.collectable?.id || item.collectableId;
         const manualId = item.manual?.id || item.manualId;
         const isFavorited = collectableId ? favorites[collectableId] : false;
@@ -485,11 +568,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>
-                    {coverUri ? (
+                    {coverSource ? (
                         <CachedImage
-                            source={{ uri: coverUri }}
+                            source={coverSource}
                             style={styles.itemCoverImage}
                             contentFit="cover"
+                            onError={() => {
+                                if (coverEntry?.kind === 'owner_thumb') {
+                                    setOwnerPhotoSourceFailures((prev) => ({ ...prev, [item.id]: 'thumb_failed' }));
+                                    return;
+                                }
+                                if (coverEntry?.kind === 'owner_image') {
+                                    setOwnerPhotoSourceFailures((prev) => ({ ...prev, [item.id]: 'image_failed' }));
+                                }
+                            }}
                         />
                     ) : (
                         <View style={styles.itemCoverFallback}>

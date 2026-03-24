@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { Appearance, KeyboardAvoidingView, Platform } from 'react-native'
+import { Appearance, KeyboardAvoidingView, Platform, View } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import Constants from 'expo-constants'
 import {
@@ -321,19 +321,22 @@ export default Sentry.wrap(function App() {
 
   if (!ready || !fontsLoaded) return null
 
+  const AppShell = Platform.OS === 'android' ? KeyboardAvoidingView : View
+  const appShellProps = Platform.OS === 'android' ? { behavior: 'height' } : {}
+
   return (
     <SafeAreaProvider>
       <ThemeProvider>
         <ToastProvider>
           <AuthContext.Provider value={authValue}>
             <PushProvider navigationRef={navigationRef}>
-              <KeyboardAvoidingView
+              <AppShell
                 style={{ flex: 1 }}
-                behavior={Platform.OS === 'android' ? 'height' : undefined}
+                {...appShellProps}
               >
                 <AppNavigator token={token} needsOnboarding={needsOnboarding} navigationRef={navigationRef} />
                 <ToastContainer />
-              </KeyboardAvoidingView>
+              </AppShell>
             </PushProvider>
           </AuthContext.Provider>
         </ToastProvider>

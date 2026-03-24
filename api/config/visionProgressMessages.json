@@ -23,7 +23,7 @@
         "enriching": {
             "step": "enriching",
             "progress": 65,
-            "messageTemplate": "Yelling at AI louder for {count} unresolved items..."
+            "messageTemplate": "Yelling at AI louder to find {count} unresolved items..."
         },
         "enrichingMedium": {
             "step": "enriching-medium",

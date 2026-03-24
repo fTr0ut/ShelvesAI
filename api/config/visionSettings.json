@@ -30,11 +30,11 @@
         "vinyl": {
             "confidenceMax": 0.85,
             "confidenceMin": 0.75,
-            "prompt": "You are cataloging a vinyl record collection. Identify all visible records by reading their spines.\nFor each record, extract:\n- title: The album title\n- author: The artist/band name (usually printed on the spine)\n- box_2d: Bounding box [y_min, x_min, y_max, x_max] normalized to 0-1000\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Abbey Road\", \"author\": \"The Beatles\", \"box_2d\": [130, 120, 890, 260], \"confidence\": 0.95}]\nIf no records are visible, return []."
+            "prompt": "You are cataloging a vinyl record collection. Identify all visible records by matching their cover art to search records or extracting visible text.\nFor each record, extract:\n- title: The album title\n- author: The artist/band name\n- box_2d: Bounding box [y_min, x_min, y_max, x_max] normalized to 0-1000\n- confidence: How confident you are in the reading (0-1)\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Abbey Road\", \"author\": \"The Beatles\", \"box_2d\": [130, 120, 890, 260], \"confidence\": 0.95}]\nIf no records are visible, return []."
         },
         "other": {
             "confidenceMax": 0.89,
-            "confidenceMin": 0.8,
+            "confidenceMin": 0.85,
             "prompt": "You are assisting with cataloging physical collections. Identify visible items on a shelf described as: {shelfDescription}.\nLook for title/item name, brand/publisher/manufacturer (as author), age statements, special markings, UPC barcode, estimated market value, and market value source links.\n\nIMPORTANT:\n- Map 'Brand', 'Maker', or 'Director' to the 'author' field.\n- Map the manufacturing company to the 'manufacturer' field (can be same as author).\n- If there is a LIMITED EDITION notation (like '37/50', 'Limited to 500'), capture in 'limitedEdition'.\n- Capture ALL unique text visible on the item in 'itemSpecificText'.\n- Include 'marketValueSources' as an array of source links, each with {\"url\":\"...\",\"label\":\"...\"}.\n- Include box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000.\n\nReturn ONLY a valid JSON array. Example: [{\"title\":\"Weller 12\",\"author\":\"Buffalo Trace\",\"manufacturer\":\"Buffalo Trace Distillery\",\"year\":\"2025\",\"marketValue\":\"USD $180\",\"marketValueSources\":[{\"url\":\"https://example.com/listing/1\",\"label\":\"PriceCharting\"}],\"limitedEdition\":\"Bottle 37 of 500\",\"itemSpecificText\":\"Store Pick #2847\",\"barcode\":\"123456789012\",\"box_2d\":[125,90,710,230],\"confidence\":0.95}].\nIf no items are visible, return []."
         }
     }

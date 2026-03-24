@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { normalizeCollectableKind } = require('./collectables/kind');
 const { withTimeout } = require('../utils/withTimeout');
+const { normalizeVisionBox2d } = require('../utils/visionBox2d');
 const logger = require('../logger');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
@@ -11,6 +12,9 @@ const MAX_VISION_ITEMS = 50;
 // Higher output tokens for enrichment calls to prevent JSON truncation
 const ENRICHMENT_MAX_OUTPUT_TOKENS = 16384;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60000;
+const DEFAULT_OTHER_FIRST_PASS_THINKING_BUDGET = 800;
+const DEFAULT_OTHER_SECOND_PASS_THINKING_BUDGET = 2200;
+const MAX_SECOND_PASS_HINT_ITEMS = 20;
 
 // Load vision settings from config file
 let visionSettings = null;
@@ -41,7 +45,7 @@ function resolveVisionSettingsKey(shelfType) {
 
 function resolveVisionCategory(shelfType) {
     const normalized = normalizeCollectableKind(shelfType, shelfType);
-    if (normalized === 'album') return 'music';
+    if (['album', 'vinyl', 'record', 'records', 'lp', 'music'].includes(normalized)) return 'music';
     return normalized;
 }
 
@@ -76,6 +80,16 @@ function cleanJsonResponse(text) {
         clean = clean.substring(firstOpen, lastClose + 1);
     }
     return clean;
+}
+
+function buildJsonStrictnessReminder() {
+    return `JSON STRICTNESS:
+- Return valid JSON only.
+- Every item must include confidence as a number between 0 and 1.
+- If confidence is uncertain, provide a lower numeric value (for example: 0.55), never omit it.
+- Never leave a value blank after a key.
+- If unknown, use null (for example: "box_2d": null).
+- Do not emit trailing commas.`;
 }
 
 function isTransientGeminiRequestError(err) {
@@ -126,13 +140,139 @@ function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
 }
 
 function normalizeBox2d(value) {
-    if (!Array.isArray(value) || value.length !== 4) return null;
-    const numeric = value.map((entry) => Number(entry));
-    if (!numeric.every((entry) => Number.isFinite(entry))) return null;
-    const clamped = numeric.map((entry) => Math.max(0, Math.min(1000, Math.round(entry))));
-    const [yMin, xMin, yMax, xMax] = clamped;
-    if (yMax <= yMin || xMax <= xMin) return null;
-    return clamped;
+    return normalizeVisionBox2d(value);
+}
+
+function parseNonNegativeInteger(value, fallback) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+function resolveOtherThinkingBudget(pass = 'first') {
+    if (pass === 'second') {
+        return parseNonNegativeInteger(
+            process.env.VISION_OTHER_SECOND_PASS_THINKING_BUDGET,
+            DEFAULT_OTHER_SECOND_PASS_THINKING_BUDGET,
+        );
+    }
+
+    return parseNonNegativeInteger(
+        process.env.VISION_OTHER_FIRST_PASS_THINKING_BUDGET,
+        DEFAULT_OTHER_FIRST_PASS_THINKING_BUDGET,
+    );
+}
+
+function coerceExtractionIndex(value, fallback = null) {
+    const num = Number(value);
+    if (Number.isInteger(num) && num >= 0) return num;
+    return fallback;
+}
+
+function normalizeSecondPassHintItems(items) {
+    if (!Array.isArray(items)) return [];
+
+    return items
+        .map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const extractionIndex = coerceExtractionIndex(item.extractionIndex, null);
+            const title = normalizeString(item.title || item.name);
+            const author = normalizeString(
+                item.author || item.primaryCreator || item.creator || item.brand || item.publisher || item.manufacturer,
+            );
+            const barcode = normalizeString(item.barcode || item.upc);
+            const limitedEdition = normalizeString(item.limitedEdition);
+            const itemSpecificText = normalizeString(item.itemSpecificText);
+            const confidence = Number(item.confidence);
+
+            const hasSignal = extractionIndex != null
+                || title
+                || author
+                || barcode
+                || limitedEdition
+                || itemSpecificText;
+            if (!hasSignal) return null;
+
+            return {
+                extractionIndex,
+                title: title || null,
+                author: author || null,
+                barcode: barcode || null,
+                limitedEdition: limitedEdition || null,
+                itemSpecificText: itemSpecificText || null,
+                confidence: Number.isFinite(confidence) ? confidence : null,
+            };
+        })
+        .filter(Boolean)
+        .slice(0, MAX_SECOND_PASS_HINT_ITEMS);
+}
+
+function buildConfidencePatchPrompt(items = []) {
+    const itemLines = items
+        .map((item) => {
+            const extractionIndex = Number.isInteger(item?.extractionIndex) ? item.extractionIndex : null;
+            const title = normalizeString(item?.title || item?.name) || null;
+            const author = normalizeString(item?.author || item?.primaryCreator) || null;
+            const parts = [
+                extractionIndex != null ? `extractionIndex=${extractionIndex}` : null,
+                title ? `title="${title}"` : null,
+                author ? `author="${author}"` : null,
+            ].filter(Boolean);
+            return `- ${parts.join(', ')}`;
+        })
+        .join('\n');
+
+    return `The previous extraction response omitted confidence for some items.
+Return ONLY a valid JSON array with one object per listed item using this schema:
+{"extractionIndex": number, "confidence": number}
+
+Rules:
+- confidence must be a number between 0 and 1.
+- Do not include markdown or extra fields.
+- Keep extractionIndex values unchanged.
+
+Items:
+${itemLines}`;
+}
+
+function buildEnrichmentSchemaBlock(normalizedKind, categoryKey) {
+    const schemaHintsByCategory = {
+        book: {
+            identifiersHint: '{ "isbn": "...", "isbn13": "...", "asin": "...", etc }',
+            formatHint: 'Hardcover, Paperback, Mass Market, etc',
+            pageCountHint: 'number or null',
+            seriesHint: '{ "name": "string or null", "number": number or null }',
+            coverUrlHint: 'URL to cover image if you can construct one from ISBN, otherwise null',
+        },
+        music: {
+            identifiersHint: '{ "upc": "...", "discogsReleaseId": "...", "musicbrainzReleaseId": "...", etc }',
+            formatHint: 'Vinyl LP, EP, 7-inch, 12-inch, CD, Cassette, etc',
+            pageCountHint: 'number or null (books only)',
+            seriesHint: '{ "name": "string or null", "number": number or null } (box set/series if applicable)',
+            coverUrlHint: 'URL to album art from reliable public sources, otherwise null',
+        },
+    };
+
+    const hints = schemaHintsByCategory[categoryKey] || schemaHintsByCategory.book;
+    return `{
+  "title": "string - corrected full title",
+  "subtitle": "string or null",
+  "primaryCreator": "string - author/developer/director/artist",
+  "year": "string - publication/release year (4 digits)",
+  "kind": "${normalizedKind}",
+  "publishers": ["array of publisher names"],
+  "tags": ["genres", "categories", "notable attributes"],
+  "identifiers": ${hints.identifiersHint},
+  "description": "string - brief synopsis (1-2 sentences)",
+  "marketValue": "string or null - estimated current market value with currency (for example: USD $45)",
+  "marketValueSources": [{"url":"string","label":"string or null"}],
+  "format": "string - physical format (${hints.formatHint})",
+  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
+  "pageCount": ${hints.pageCountHint},
+  "series": ${hints.seriesHint},
+  "coverUrl": "string - ${hints.coverUrlHint}",
+  "confidence": number 0.0-1.0
+}`;
 }
 
 class GoogleGeminiService {
@@ -178,6 +318,38 @@ class GoogleGeminiService {
         return !!this.visionModel;
     }
 
+    buildOtherSecondPassPrompt(basePrompt, lowConfidenceItems = []) {
+        const hintLines = lowConfidenceItems.length > 0
+            ? lowConfidenceItems
+                .map((item) => {
+                    const parts = [
+                        item.extractionIndex != null ? `extractionIndex=${item.extractionIndex}` : null,
+                        item.title ? `title="${item.title}"` : null,
+                        item.author ? `author="${item.author}"` : null,
+                        item.barcode ? `barcode="${item.barcode}"` : null,
+                        item.limitedEdition ? `limitedEdition="${item.limitedEdition}"` : null,
+                        item.itemSpecificText ? `itemSpecificText="${item.itemSpecificText}"` : null,
+                        Number.isFinite(item.confidence) ? `confidence=${item.confidence}` : null,
+                    ].filter(Boolean);
+                    return `- ${parts.join(', ')}`;
+                })
+                .join('\n')
+            : '- No low-confidence hint items supplied.';
+
+        return `${basePrompt}
+
+SECOND PASS INSTRUCTIONS FOR OTHER SHELVES:
+- Some first-pass detections were low confidence. Re-check those items with a different grounded search strategy.
+- Use alternate search queries combining visible title fragments, manufacturer/brand, barcode/UPC, edition text, age statement, and unique markings.
+- Prefer evidence-backed grounded results over assumptions.
+- Keep the same JSON array schema from the first pass.
+- For each rechecked item, include extractionIndex to match the first-pass item.
+- Preserve box_2d as normalized [y_min, x_min, y_max, x_max] (0-1000).
+
+LOW-CONFIDENCE ITEMS FROM FIRST PASS:
+${hintLines}`;
+    }
+
     /**
      * Execute an enrichment request using chat mode (if conversation history is available
      * and vision/text models match) or standalone generateContent as fallback.
@@ -193,6 +365,13 @@ class GoogleGeminiService {
         const canUseChatMode = Array.isArray(conversationHistory)
             && conversationHistory.length > 0
             && this.visionModelName === this.textModelName;
+
+        logger.info('[GoogleGeminiService] Enrichment request stage', {
+            stage: 'enrichment',
+            label,
+            mode: canUseChatMode ? 'chat_continuation' : 'standalone',
+            conversationHistoryEntries: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
+        });
 
         if (canUseChatMode) {
             logger.info(`[GoogleGeminiService] Using chat mode for ${label} (vision context available)`);
@@ -261,6 +440,115 @@ class GoogleGeminiService {
         }
 
         return null;
+    }
+
+    /**
+     * Repair common malformed JSON patterns from model responses without changing
+     * quoted text content. Example: `"box_2d":,` becomes `"box_2d": null,`.
+     * @param {string} jsonStr
+     * @returns {string|null}
+     */
+    repairMalformedJsonValues(jsonStr) {
+        if (typeof jsonStr !== 'string' || jsonStr.length === 0) return null;
+
+        let output = '';
+        let changed = false;
+        let inString = false;
+        let escaped = false;
+
+        for (let i = 0; i < jsonStr.length; i += 1) {
+            const ch = jsonStr[i];
+
+            if (inString) {
+                output += ch;
+                if (escaped) {
+                    escaped = false;
+                } else if (ch === '\\') {
+                    escaped = true;
+                } else if (ch === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch === '"') {
+                inString = true;
+                output += ch;
+                continue;
+            }
+
+            if (ch === ':') {
+                output += ch;
+                let j = i + 1;
+                while (j < jsonStr.length && /\s/.test(jsonStr[j])) {
+                    output += jsonStr[j];
+                    j += 1;
+                }
+                const next = jsonStr[j];
+                if (next === ',' || next === ']' || next === '}') {
+                    output += 'null';
+                    changed = true;
+                }
+                i = j - 1;
+                continue;
+            }
+
+            if (ch === ',') {
+                let j = i + 1;
+                while (j < jsonStr.length && /\s/.test(jsonStr[j])) {
+                    j += 1;
+                }
+                const next = jsonStr[j];
+                if (next === ']' || next === '}') {
+                    changed = true;
+                    continue;
+                }
+            }
+
+            output += ch;
+        }
+
+        return changed ? output : null;
+    }
+
+    /**
+     * Parse vision JSON with staged repair attempts.
+     * @param {string} jsonStr
+     * @returns {{ parsedItems: any, repairMode: string|null, parseError: Error|null }}
+     */
+    parseVisionJsonWithRepairs(jsonStr) {
+        const attempts = [];
+        const seen = new Set();
+        const pushAttempt = (mode, candidate) => {
+            if (typeof candidate !== 'string') return;
+            const normalized = candidate.trim();
+            if (!normalized || seen.has(normalized)) return;
+            seen.add(normalized);
+            attempts.push({ mode, value: normalized });
+        };
+
+        pushAttempt('raw', jsonStr);
+        const malformedRepaired = this.repairMalformedJsonValues(jsonStr);
+        pushAttempt('malformed', malformedRepaired);
+        pushAttempt('truncated', this.repairTruncatedJsonArray(jsonStr));
+        if (malformedRepaired) {
+            pushAttempt('malformed+truncated', this.repairTruncatedJsonArray(malformedRepaired));
+        }
+
+        let parseError = null;
+        for (const attempt of attempts) {
+            try {
+                return {
+                    parsedItems: JSON.parse(attempt.value),
+                    repairMode: attempt.mode === 'raw' ? null : attempt.mode,
+                    parseError: null,
+                };
+            } catch (err) {
+                parseError = err;
+            }
+        }
+
+        return { parsedItems: [], repairMode: null, parseError };
     }
 
     buildVisionPrompt(shelfType, shelfDescription = null, shelfName = null) {
@@ -346,25 +634,7 @@ Do not include explanations or markdown.`;
         }).join('\n');
 
         // Schema definition shared by both prompt variants
-        const schemaBlock = `{
-  "title": "string - corrected full title",
-  "subtitle": "string or null",
-  "primaryCreator": "string - author/developer/director/artist",
-  "year": "string - publication/release year (4 digits)",
-  "kind": "${normalizedKind}",
-  "publishers": ["array of publisher names"],
-  "tags": ["genres", "categories", "notable attributes"],
-  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
-  "description": "string - brief synopsis (1-2 sentences)",
-  "marketValue": "string or null - estimated current market value with currency (for example: USD $45)",
-  "marketValueSources": [{"url":"string","label":"string or null"}],
-  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
-  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
-  "pageCount": number or null,
-  "series": { "name": "string or null", "number": number or null },
-  "coverUrl": "string - URL to cover image if you can construct one from ISBN, otherwise null",
-  "confidence": number 0.0-1.0
-}`;
+        const schemaBlock = buildEnrichmentSchemaBlock(normalizedKind, categoryKey);
 
         // Determine if chat mode is available for prompt selection
         const canUseChatMode = Array.isArray(conversationHistory)
@@ -507,24 +777,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
         const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
 
         // Schema definition shared by both prompt variants
-        const schemaBlock = `{
-  "title": "string - corrected full title",
-  "subtitle": "string or null",
-  "primaryCreator": "string - author/developer/director/artist",
-  "year": "string - publication/release year (4 digits)",
-  "kind": "${normalizedKind}",
-  "publishers": ["array of publisher names"],
-  "tags": ["genres", "categories", "notable attributes"],
-  "identifiers": { "isbn": "...", "isbn13": "...", "asin": "...", etc },
-  "description": "string - brief synopsis (1-2 sentences)",
-  "marketValue": "string or null - estimated current market value with currency (for example: USD $45)",
-  "marketValueSources": [{"url":"string","label":"string or null"}],
-  "format": "string - physical format (Hardcover, Paperback, DVD, PS5, etc)",
-  "systemName": "string or null - console/system name (PlayStation 5, Nintendo Switch, Xbox Series X, etc)",
-  "pageCount": number or null,
-  "series": { "name": "string or null", "number": number or null },
-  "coverUrl": "string - URL to cover image if you can construct one from ISBN or known sources, otherwise null",
-  "confidence": number 0.0-1.0 (be honest - 0.9+ only if certain, 0.6-0.8 for educated guesses),
+        const schemaBlock = `${buildEnrichmentSchemaBlock(normalizedKind, categoryKey).slice(0, -1)},
   "_originalTitle": "string - keep the exact original OCR text for matching"
 }`;
 
@@ -642,21 +895,49 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
      * @param {string} shelfType
      * @param {string|null} shelfDescription
      * @param {string|null} shelfName
+     * @param {{pass?: 'first'|'second', lowConfidenceItems?: Array<object>}|null} [options]
      * @returns {Promise<{items: Array<{name: string, title: string, author: string|null, type: string, confidence: number}>, conversationHistory: Array|null, warning: string|null}>}
      */
-    async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null, shelfName = null) {
+    async detectShelfItemsFromImage(base64Image, shelfType, shelfDescription = null, shelfName = null, options = null) {
         if (!this.visionModel) {
             throw new Error('Google Gemini vision model not initialized.');
         }
 
+        const resolvedOptions = options && typeof options === 'object' ? options : {};
+        const pass = resolvedOptions.pass === 'second' ? 'second' : 'first';
         const normalizedKind = normalizeCollectableKind(shelfType, shelfType);
         const { data, mimeType } = parseInlineImage(base64Image);
         const isOther = shelfType === 'other';
-        const visionPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
+        const priorConversationHistory = Array.isArray(resolvedOptions.conversationHistory)
+            ? resolvedOptions.conversationHistory
+            : null;
+        const canUseVisionChatMode = pass === 'second'
+            && Array.isArray(priorConversationHistory)
+            && priorConversationHistory.length > 0
+            && typeof this.visionModel?.startChat === 'function';
+        const lowConfidenceItems = normalizeSecondPassHintItems(resolvedOptions.lowConfidenceItems);
+        let visionPrompt = this.buildVisionPrompt(shelfType, shelfDescription, shelfName);
+        if (isOther && pass === 'second') {
+            visionPrompt = this.buildOtherSecondPassPrompt(visionPrompt, lowConfidenceItems);
+        }
+        visionPrompt = `${visionPrompt}\n\n${buildJsonStrictnessReminder()}`;
+        const thinkingBudget = isOther ? resolveOtherThinkingBudget(pass) : 0;
 
         try {
-            // Vision extraction — "other" shelves include search grounding to get full metadata in one call
-            // Thinking budget: 0 for standard shelves (pure OCR perception), 3000 for "other" (search + reasoning)
+            logger.info('[GoogleGeminiService] Vision extraction request config', {
+                stage: 'ocr_extraction',
+                shelfType,
+                pass,
+                isOther,
+                thinkingBudget,
+                lowConfidenceHintCount: lowConfidenceItems.length,
+                googleSearchEnabled: isOther,
+                chatModeEnabled: canUseVisionChatMode,
+            });
+
+            const requestGenerationConfig = {
+                thinkingConfig: { thinkingBudget }
+            };
             const generateOptions = {
                 contents: [
                     {
@@ -666,9 +947,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                         ]
                     }
                 ],
-                generationConfig: {
-                    thinkingConfig: { thinkingBudget: isOther ? 3000 : 0 }
-                }
+                generationConfig: requestGenerationConfig
             };
             if (isOther) {
                 generateOptions.tools = [{ googleSearch: {} }];
@@ -678,11 +957,27 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             const maxAttempts = 2;
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                 try {
-                    visionResult = await withTimeout(
-                        () => this.visionModel.generateContent(generateOptions),
-                        this.requestTimeoutMs,
-                        `Gemini vision extraction request (attempt ${attempt})`,
-                    );
+                    if (canUseVisionChatMode) {
+                        const chatParams = {
+                            history: priorConversationHistory,
+                            generationConfig: requestGenerationConfig,
+                        };
+                        if (isOther) {
+                            chatParams.tools = [{ googleSearch: {} }];
+                        }
+                        const chat = this.visionModel.startChat(chatParams);
+                        visionResult = await withTimeout(
+                            () => chat.sendMessage(visionPrompt),
+                            this.requestTimeoutMs,
+                            `Gemini vision extraction chat request (attempt ${attempt})`,
+                        );
+                    } else {
+                        visionResult = await withTimeout(
+                            () => this.visionModel.generateContent(generateOptions),
+                            this.requestTimeoutMs,
+                            `Gemini vision extraction request (attempt ${attempt})`,
+                        );
+                    }
                     break;
                 } catch (requestErr) {
                     const canRetry = attempt < maxAttempts && isTransientGeminiRequestError(requestErr);
@@ -708,22 +1003,19 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             });
 
             const jsonStr = cleanJsonResponse(visionText);
-            let parsedItems = [];
+            const { parsedItems: parsed, repairMode, parseError } = this.parseVisionJsonWithRepairs(jsonStr);
+            let parsedItems = parsed;
             let warning = null;
-            try {
-                parsedItems = JSON.parse(jsonStr);
-            } catch (e) {
-                logger.warn('[GoogleGeminiService] Failed to parse vision JSON, attempting truncated repair:', e);
-                const repaired = this.repairTruncatedJsonArray(jsonStr);
-                if (repaired) {
-                    try {
-                        parsedItems = JSON.parse(repaired);
-                        warning = 'Vision response was truncated; only complete detected items were processed.';
-                        logger.info('[GoogleGeminiService] Recovered', parsedItems.length, 'items from truncated vision response');
-                    } catch (repairErr) {
-                        logger.warn('[GoogleGeminiService] Failed to parse repaired vision JSON:', repairErr);
-                    }
+
+            if (repairMode) {
+                if (repairMode.includes('truncated')) {
+                    warning = 'Vision response was truncated; only complete detected items were processed.';
+                } else if (repairMode.includes('malformed')) {
+                    warning = 'Vision response contained malformed JSON; invalid fields were auto-corrected.';
                 }
+                logger.info('[GoogleGeminiService] Repaired vision JSON response', { repairMode });
+            } else if (parseError) {
+                logger.warn('[GoogleGeminiService] Failed to parse vision JSON after repair attempts:', parseError);
             }
 
             if (!Array.isArray(parsedItems)) {
@@ -736,15 +1028,26 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             }
 
             // Build conversation history from vision extraction for downstream enrichment
-            const userContent = {
-                role: 'user',
-                parts: [
-                    { text: visionPrompt },
-                    { inlineData: { data, mimeType } }
-                ]
-            };
+            const userContent = canUseVisionChatMode
+                ? {
+                    role: 'user',
+                    parts: [{ text: visionPrompt }],
+                }
+                : {
+                    role: 'user',
+                    parts: [
+                        { text: visionPrompt },
+                        { inlineData: { data, mimeType } }
+                    ]
+                };
             const modelContent = visionResponse.candidates?.[0]?.content;
-            const conversationHistory = modelContent ? [userContent, modelContent] : null;
+            let conversationHistory = modelContent
+                ? (
+                    canUseVisionChatMode
+                        ? [...priorConversationHistory, userContent, modelContent]
+                        : [userContent, modelContent]
+                )
+                : (canUseVisionChatMode ? [...priorConversationHistory] : null);
 
             const items = parsedItems.map((item, index) => {
                 const raw = item && typeof item === 'object' ? item : {};
@@ -756,6 +1059,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 const primaryCreator = normalizeString(
                     raw.primaryCreator || raw.author || raw.creator || raw.brand || raw.publisher || raw.manufacturer,
                 );
+                const confidenceProvided = Number.isFinite(Number(raw.confidence));
                 const box2d = normalizeBox2d(raw.box_2d || raw.box2d);
                 return {
                     ...raw,
@@ -766,10 +1070,102 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     type: normalizedKind,
                     kind: normalizedKind,
                     confidence: coerceConfidence(raw.confidence),
-                    extractionIndex: Number.isInteger(raw.extractionIndex) ? raw.extractionIndex : index,
+                    confidenceProvided,
+                    extractionIndex: coerceExtractionIndex(raw.extractionIndex, index),
                     box2d,
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
+            const missingConfidenceCount = items.filter((item) => item.confidenceProvided === false).length;
+            let confidencePatchedCount = 0;
+            let confidencePatchRequested = false;
+            if (
+                missingConfidenceCount > 0
+                && Array.isArray(conversationHistory)
+                && conversationHistory.length > 0
+                && typeof this.visionModel?.startChat === 'function'
+            ) {
+                confidencePatchRequested = true;
+                const missingItems = items.filter((item) => item.confidenceProvided === false);
+                try {
+                    const patchChat = this.visionModel.startChat({
+                        history: conversationHistory,
+                        generationConfig: {
+                            maxOutputTokens: 512,
+                            thinkingConfig: { thinkingBudget: 0 },
+                        },
+                    });
+                    const patchResult = await withTimeout(
+                        () => patchChat.sendMessage(buildConfidencePatchPrompt(missingItems)),
+                        this.requestTimeoutMs,
+                        'Gemini vision confidence patch request',
+                    );
+                    const patchResponse = await withTimeout(
+                        () => patchResult.response,
+                        this.requestTimeoutMs,
+                        'Gemini vision confidence patch response',
+                    );
+                    const patchText = patchResponse.text();
+                    const patchJsonStr = cleanJsonResponse(patchText);
+                    const { parsedItems: parsedPatchItems } = this.parseVisionJsonWithRepairs(patchJsonStr);
+                    const patchArray = Array.isArray(parsedPatchItems) ? parsedPatchItems : [];
+                    const patchedConfidenceByIndex = new Map(
+                        patchArray
+                            .map((entry) => {
+                                const extractionIndex = coerceExtractionIndex(entry?.extractionIndex, null);
+                                if (extractionIndex == null) return null;
+                                const confidenceNum = Number(entry?.confidence);
+                                if (!Number.isFinite(confidenceNum)) return null;
+                                return [extractionIndex, coerceConfidence(confidenceNum)];
+                            })
+                            .filter(Boolean),
+                    );
+                    if (patchedConfidenceByIndex.size > 0) {
+                        items.forEach((item) => {
+                            if (item.confidenceProvided !== false) return;
+                            const patched = patchedConfidenceByIndex.get(item.extractionIndex);
+                            if (!Number.isFinite(patched)) return;
+                            item.confidence = patched;
+                            item.confidenceProvided = true;
+                            confidencePatchedCount += 1;
+                        });
+                    }
+
+                    const patchModelContent = patchResponse.candidates?.[0]?.content;
+                    if (patchModelContent) {
+                        conversationHistory = [
+                            ...conversationHistory,
+                            { role: 'user', parts: [{ text: buildConfidencePatchPrompt(missingItems) }] },
+                            patchModelContent,
+                        ];
+                    }
+                } catch (patchErr) {
+                    logger.warn('[GoogleGeminiService] Vision confidence patch request failed; fallback confidence retained', {
+                        shelfType,
+                        pass,
+                        error: patchErr?.message || String(patchErr),
+                    });
+                }
+            }
+
+            if (missingConfidenceCount > 0 && confidencePatchedCount < missingConfidenceCount) {
+                logger.warn('[GoogleGeminiService] Vision extraction omitted confidence on some items; fallback confidence applied', {
+                    shelfType,
+                    pass,
+                    missingConfidenceCount,
+                    confidencePatchRequested,
+                    confidencePatchedCount,
+                    totalItems: items.length,
+                });
+            }
+
+            logger.info('[GoogleGeminiService] Vision extraction confidence patch summary', {
+                shelfType,
+                pass,
+                confidenceMissingCount: missingConfidenceCount,
+                confidencePatchRequested,
+                confidencePatchedCount,
+                totalItems: items.length,
+            });
 
             return { items, conversationHistory, warning };
         } catch (err) {

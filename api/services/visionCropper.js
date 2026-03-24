@@ -1,36 +1,22 @@
 const sharp = require('sharp');
-
-const BOX_SCALE = 1000;
+const {
+  BOX_SCALE,
+  normalizeVisionDimension,
+  normalizeVisionBox2d,
+} = require('../utils/visionBox2d');
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function normalizeDimension(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return null;
-  return Math.round(numeric);
-}
-
-function normalizeBox2d(box2d) {
-  if (!Array.isArray(box2d) || box2d.length !== 4) return null;
-  const parsed = box2d.map((value) => Number(value));
-  if (!parsed.every((value) => Number.isFinite(value))) return null;
-
-  const [yMinRaw, xMinRaw, yMaxRaw, xMaxRaw] = parsed;
-  const yMin = clamp(yMinRaw, 0, BOX_SCALE);
-  const xMin = clamp(xMinRaw, 0, BOX_SCALE);
-  const yMax = clamp(yMaxRaw, 0, BOX_SCALE);
-  const xMax = clamp(xMaxRaw, 0, BOX_SCALE);
-
-  if (yMax <= yMin || xMax <= xMin) return null;
-  return [yMin, xMin, yMax, xMax];
+function normalizeBox2d(box2d, options = {}) {
+  return normalizeVisionBox2d(box2d, options);
 }
 
 function computeCropRect(box2d, imageWidth, imageHeight) {
-  const normalized = normalizeBox2d(box2d);
-  const width = normalizeDimension(imageWidth);
-  const height = normalizeDimension(imageHeight);
+  const width = normalizeVisionDimension(imageWidth);
+  const height = normalizeVisionDimension(imageHeight);
+  const normalized = normalizeBox2d(box2d, { imageWidth: width, imageHeight: height });
   if (!normalized || !width || !height) return null;
 
   const [yMin, xMin, yMax, xMax] = normalized;
@@ -65,8 +51,8 @@ async function extractRegionCrop({
 
   const source = sharp(imageBuffer, { failOnError: false });
   const metadata = await source.metadata();
-  const width = normalizeDimension(imageWidth) || normalizeDimension(metadata?.width);
-  const height = normalizeDimension(imageHeight) || normalizeDimension(metadata?.height);
+  const width = normalizeVisionDimension(imageWidth) || normalizeVisionDimension(metadata?.width);
+  const height = normalizeVisionDimension(imageHeight) || normalizeVisionDimension(metadata?.height);
 
   if (!width || !height) {
     throw new Error('Unable to determine scan photo dimensions for crop extraction');

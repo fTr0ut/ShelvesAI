@@ -147,6 +147,15 @@ function getRegionBox2d(region) {
   return null;
 }
 
+function sanitizeBox2dForLog(box2d) {
+  if (!Array.isArray(box2d)) return null;
+  return box2d.slice(0, 4).map((value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.round(numeric * 1000) / 1000;
+  });
+}
+
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (Number.isInteger(parsed) && parsed > 0) return parsed;
@@ -163,6 +172,34 @@ function parseBooleanFlag(value, defaultValue = false) {
 
 const VISION_CROP_WARMUP_ENABLED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_ENABLED, true);
 const VISION_CROP_WARMUP_MAX_REGIONS = parsePositiveInt(process.env.VISION_CROP_WARMUP_MAX_REGIONS, 50);
+const OWNER_PHOTO_DEBUG_ENABLED = parseBooleanFlag(process.env.OWNER_PHOTO_DEBUG_ENABLED, false);
+const OWNER_PHOTO_DEBUG_ITEM_ID = parsePositiveInt(process.env.OWNER_PHOTO_DEBUG_ITEM_ID, null);
+
+function shouldLogOwnerPhotoDebug(itemId = null) {
+  if (!OWNER_PHOTO_DEBUG_ENABLED) return false;
+  if (!OWNER_PHOTO_DEBUG_ITEM_ID) return true;
+  return Number(itemId) === Number(OWNER_PHOTO_DEBUG_ITEM_ID);
+}
+
+function sanitizeThumbnailBoxForLog(box) {
+  if (!box || typeof box !== 'object') return null;
+  const toRounded = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * 1000000) / 1000000;
+  };
+  return {
+    x: toRounded(box.x),
+    y: toRounded(box.y),
+    width: toRounded(box.width),
+    height: toRounded(box.height),
+  };
+}
+
+function logOwnerPhotoDebug(stage, payload = {}) {
+  if (!OWNER_PHOTO_DEBUG_ENABLED) return;
+  logger.info(`[OwnerPhotoDebug] ${stage}`, payload);
+}
 
 function buildVisionCounts(result = {}, options = {}) {
   const { cached = false } = options;
@@ -457,7 +494,7 @@ function formatShelfItem(row) {
     coverMediaUrl: resolveMediaUrl(row.manualCoverMediaPath),
   } : null;
 
-  return {
+  const formatted = {
     id: row.id,
     collectable,
     manual,
@@ -484,6 +521,29 @@ function formatShelfItem(row) {
     } : null,
     createdAt: row.createdAt || null,
   };
+
+  if (shouldLogOwnerPhotoDebug(row.id)) {
+    logOwnerPhotoDebug('formatShelfItem', {
+      shelfId: row.shelfId,
+      itemId: row.id,
+      manualType: row.manualType || null,
+      hasOwnerPhoto: !!row.ownerPhotoSource,
+      ownerPhotoSource: row.ownerPhotoSource || null,
+      ownerPhotoVisible: !!row.ownerPhotoVisible,
+      ownerPhotoUpdatedAt: row.ownerPhotoUpdatedAt || null,
+      thumbProvider: row.ownerPhotoThumbStorageProvider || null,
+      thumbHasKey: !!row.ownerPhotoThumbStorageKey,
+      thumbUpdatedAt: row.ownerPhotoThumbUpdatedAt || null,
+      thumbSize: row.ownerPhotoThumbSizeBytes ?? null,
+      thumbDimensions: {
+        width: row.ownerPhotoThumbWidth ?? null,
+        height: row.ownerPhotoThumbHeight ?? null,
+      },
+      thumbnailBox: sanitizeThumbnailBoxForLog(row.ownerPhotoThumbBox),
+    });
+  }
+
+  return formatted;
 }
 
 function canViewerAccessOwnerPhoto(itemRow, viewerUserId) {
@@ -732,6 +792,22 @@ async function listShelfItems(req, res) {
       : (await shelvesQueries.getItemsForViewing(shelf.id, { limit, offset: skip })).map(formatShelfItem).filter(Boolean);
     if (!isOwner) {
       items = items.map((item) => ({ ...item, ownerPhoto: null }));
+    }
+
+    if (OWNER_PHOTO_DEBUG_ENABLED) {
+      const target = OWNER_PHOTO_DEBUG_ITEM_ID
+        ? items.find((entry) => Number(entry?.id) === Number(OWNER_PHOTO_DEBUG_ITEM_ID))
+        : null;
+      logOwnerPhotoDebug('listShelfItems.response', {
+        shelfId: shelf.id,
+        viewerUserId: req.user?.id || null,
+        isOwner,
+        limit,
+        skip,
+        itemCount: items.length,
+        targetItemId: OWNER_PHOTO_DEBUG_ITEM_ID || null,
+        targetItemOwnerPhoto: target?.ownerPhoto || null,
+      });
     }
 
     const countResult = await query(
@@ -1214,6 +1290,22 @@ async function getShelfItemOwnerPhoto(req, res) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
 
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.meta', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        viewerUserId: req.user?.id || null,
+        isOwner,
+        ownerPhotoSource: item.ownerPhotoSource || null,
+        ownerPhotoVisible: !!item.ownerPhotoVisible,
+        ownerPhotoUpdatedAt: item.ownerPhotoUpdatedAt || null,
+        thumbProvider: item.ownerPhotoThumbStorageProvider || null,
+        thumbHasKey: !!item.ownerPhotoThumbStorageKey,
+        thumbUpdatedAt: item.ownerPhotoThumbUpdatedAt || null,
+        thumbnailBox: sanitizeThumbnailBoxForLog(item.ownerPhotoThumbBox),
+      });
+    }
+
     return res.json({
       ownerPhoto: formatOwnerPhotoResponse(item, shelf.id),
     });
@@ -1247,7 +1339,27 @@ async function getShelfItemOwnerPhotoImage(req, res) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
 
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.image.request', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        viewerUserId: req.user?.id || null,
+        isOwner,
+        source: item.ownerPhotoSource || null,
+        storageProvider: item.ownerPhotoStorageProvider || null,
+        hasStorageKey: !!item.ownerPhotoStorageKey,
+      });
+    }
+
     const payload = await userCollectionPhotosQueries.loadOwnerPhotoBuffer(item);
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.image.response', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        contentType: payload?.contentType || null,
+        contentLength: Number.isFinite(payload?.contentLength) ? payload.contentLength : (payload?.buffer?.length ?? null),
+      });
+    }
     res.setHeader('Content-Type', payload.contentType || item.ownerPhotoContentType || 'image/jpeg');
     if (Number.isFinite(payload.contentLength)) {
       res.setHeader('Content-Length', String(payload.contentLength));
@@ -1284,7 +1396,29 @@ async function getShelfItemOwnerPhotoThumbnail(req, res) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
 
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.thumbnail.request', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        viewerUserId: req.user?.id || null,
+        isOwner,
+        source: item.ownerPhotoSource || null,
+        thumbProvider: item.ownerPhotoThumbStorageProvider || null,
+        thumbHasKey: !!item.ownerPhotoThumbStorageKey,
+        thumbUpdatedAt: item.ownerPhotoThumbUpdatedAt || null,
+        thumbnailBox: sanitizeThumbnailBoxForLog(item.ownerPhotoThumbBox),
+      });
+    }
+
     const payload = await userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer(item);
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.thumbnail.response', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        contentType: payload?.contentType || null,
+        contentLength: Number.isFinite(payload?.contentLength) ? payload.contentLength : (payload?.buffer?.length ?? null),
+      });
+    }
     res.setHeader('Content-Type', payload.contentType || item.ownerPhotoThumbContentType || 'image/jpeg');
     if (Number.isFinite(payload.contentLength)) {
       res.setHeader('Content-Length', String(payload.contentLength));
@@ -1412,6 +1546,18 @@ async function updateShelfItemOwnerPhotoThumbnail(req, res) {
       shelfId: shelf.id,
     });
 
+    if (shouldLogOwnerPhotoDebug(item.id)) {
+      logOwnerPhotoDebug('ownerPhoto.thumbnail.update', {
+        shelfId: shelf.id,
+        itemId: item.id,
+        inputBox: sanitizeThumbnailBoxForLog(req.body?.box),
+        persistedBox: sanitizeThumbnailBoxForLog(hydrated?.ownerPhotoThumbBox || null),
+        thumbProvider: hydrated?.ownerPhotoThumbStorageProvider || null,
+        thumbHasKey: !!hydrated?.ownerPhotoThumbStorageKey,
+        thumbUpdatedAt: hydrated?.ownerPhotoThumbUpdatedAt || null,
+      });
+    }
+
     return res.json({
       ownerPhoto: formatOwnerPhotoResponse(hydrated || item, shelf.id),
     });
@@ -1496,16 +1642,34 @@ async function extractVisionRegionCropPayload({ userId, shelfId, scanPhoto, regi
 async function attachCropToCollectionItem({ userId, shelfId, shelfType = null, region, crop }) {
   if (!crop || !region) return null;
   const normalizedShelfType = String(shelfType || '').toLowerCase();
+  const collectionItemId = region.collectionItemId || region.collection_item_id || null;
   const collectableId = region.collectableId || region.collectable_id || null;
   const manualId = region.manualId || region.manual_id || null;
-  if (!collectableId && !manualId) return null;
+  let collectionItem = null;
 
-  const collectionItem = await shelvesQueries.findCollectionByReference({
-    userId,
-    shelfId,
-    collectableId,
-    manualId,
-  });
+  if (collectionItemId) {
+    const byId = await shelvesQueries.getCollectionItemByIdForShelf(collectionItemId, shelfId);
+    if (byId?.id && String(byId.userId) === String(userId)) {
+      collectionItem = byId;
+    } else {
+      logger.warn('[Vision] Region collection item link did not resolve for user/shelf', {
+        shelfId,
+        regionId: region.id,
+        collectionItemId,
+      });
+    }
+  }
+
+  if (!collectionItem?.id) {
+    if (!collectableId && !manualId) return null;
+    collectionItem = await shelvesQueries.findCollectionByReference({
+      userId,
+      shelfId,
+      collectableId,
+      manualId,
+    });
+  }
+
   if (!collectionItem?.id) return null;
 
   let attached = null;
@@ -1702,6 +1866,7 @@ async function warmVisionScanCrops({ userId, shelfId, shelfType = null, scanPhot
         logger.warn('[Vision] Failed to warm crop for region', {
           scanPhotoId: scanPhoto.id,
           regionId: region.id,
+          box2d: sanitizeBox2dForLog(getRegionBox2d(region)),
           message: err?.message || String(err),
         });
       }
@@ -1765,6 +1930,7 @@ async function processShelfVision(req, res) {
     let imageSha256 = null;
     let cachedVision = null;
     let scanPhotoId = null;
+    let scanPhotoDimensions = null;
     if (isCloudVision && imageBase64) {
       imageSha256 = computeImageSha256(imageBase64);
       try {
@@ -1777,6 +1943,12 @@ async function processShelfVision(req, res) {
           buffer,
         });
         scanPhotoId = scanPhoto?.id || null;
+        if (Number.isFinite(Number(scanPhoto?.width)) && Number.isFinite(Number(scanPhoto?.height))) {
+          scanPhotoDimensions = {
+            width: Number(scanPhoto.width),
+            height: Number(scanPhoto.height),
+          };
+        }
       } catch (scanPhotoErr) {
         logger.error('[Vision] Failed to persist scan photo:', scanPhotoErr?.message || scanPhotoErr);
         const message = String(scanPhotoErr?.message || '');
@@ -1873,6 +2045,9 @@ async function processShelfVision(req, res) {
     }
     if (scanPhotoId) {
       pipelineOptions.scanPhotoId = scanPhotoId;
+      if (scanPhotoDimensions) {
+        pipelineOptions.scanPhotoDimensions = scanPhotoDimensions;
+      }
     }
     const resolvedPipelineOptions = Object.keys(pipelineOptions).length > 0
       ? pipelineOptions

@@ -57,6 +57,10 @@ export default function ProfileScreen({ navigation, route }) {
     const [isPrivate, setIsPrivate] = useState(false);
     const [showPersonalPhotos, setShowPersonalPhotos] = useState(false);
     const isMountedRef = useRef(false);
+    const isEditingRef = useRef(false);
+    const cityInputRef = useRef(null);
+    const stateInputRef = useRef(null);
+    const countryInputRef = useRef(null);
 
     const setStateIfMounted = useCallback((setter, value) => {
         if (isMountedRef.current) {
@@ -71,12 +75,28 @@ export default function ProfileScreen({ navigation, route }) {
 
     const isOwnProfile = !route.params?.username || profile?.username === currentUser?.username;
 
+    const hydrateEditableFields = useCallback((profileData) => {
+        if (!profileData) return;
+        setStateIfMounted(setFirstName, profileData.firstName || '');
+        setStateIfMounted(setLastName, profileData.lastName || '');
+        setStateIfMounted(setBio, profileData.bio || '');
+        setStateIfMounted(setCity, profileData.city || '');
+        setStateIfMounted(setState, profileData.state || '');
+        setStateIfMounted(setCountry, profileData.country || '');
+        setStateIfMounted(setIsPrivate, profileData.isPrivate || false);
+        setStateIfMounted(setShowPersonalPhotos, profileData.showPersonalPhotos || false);
+    }, [setStateIfMounted]);
+
     useEffect(() => {
         isMountedRef.current = true;
         return () => {
             isMountedRef.current = false;
         };
     }, []);
+
+    useEffect(() => {
+        isEditingRef.current = editing;
+    }, [editing]);
 
     useEffect(() => {
         loadProfile();
@@ -92,16 +112,9 @@ export default function ProfileScreen({ navigation, route }) {
             if (!isMountedRef.current) return;
             setProfile(profileData.profile);
 
-            // Set editable fields
-            if (profileData.profile) {
-                setStateIfMounted(setFirstName, profileData.profile.firstName || '');
-                setStateIfMounted(setLastName, profileData.profile.lastName || '');
-                setStateIfMounted(setBio, profileData.profile.bio || '');
-                setStateIfMounted(setCity, profileData.profile.city || '');
-                setStateIfMounted(setState, profileData.profile.state || '');
-                setStateIfMounted(setCountry, profileData.profile.country || '');
-                setStateIfMounted(setIsPrivate, profileData.profile.isPrivate || false);
-                setStateIfMounted(setShowPersonalPhotos, profileData.profile.showPersonalPhotos || false);
+            // Avoid clobbering in-progress typing while edit mode is active.
+            if (profileData.profile && !isEditingRef.current) {
+                hydrateEditableFields(profileData.profile);
             }
 
             // Load shelves and posts if not private or own profile
@@ -241,6 +254,20 @@ export default function ProfileScreen({ navigation, route }) {
             setSaving(false);
         }
     }, [apiBase, token, firstName, lastName, bio, city, state, country, isPrivate, showPersonalPhotos]);
+
+    const handleStartEditing = useCallback(() => {
+        if (profile) {
+            hydrateEditableFields(profile);
+        }
+        setEditing(true);
+    }, [profile, hydrateEditableFields]);
+
+    const handleStopEditing = useCallback(() => {
+        setEditing(false);
+        if (profile) {
+            hydrateEditableFields(profile);
+        }
+    }, [profile, hydrateEditableFields]);
 
     const handlePickPhoto = async () => {
         try {
@@ -532,7 +559,12 @@ export default function ProfileScreen({ navigation, route }) {
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            <ScrollView
+                contentContainerStyle={styles.content}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            >
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -540,11 +572,11 @@ export default function ProfileScreen({ navigation, route }) {
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Profile</Text>
                     {isOwnProfile && !editing ? (
-                        <TouchableOpacity onPress={() => setEditing(true)} style={styles.editButton}>
+                        <TouchableOpacity onPress={handleStartEditing} style={styles.editButton}>
                             <Ionicons name="pencil" size={18} color={colors.text} />
                         </TouchableOpacity>
                     ) : isOwnProfile && editing ? (
-                        <TouchableOpacity onPress={() => setEditing(false)} style={styles.editButton}>
+                        <TouchableOpacity onPress={handleStopEditing} style={styles.editButton}>
                             <Ionicons name="close" size={20} color={colors.text} />
                         </TouchableOpacity>
                     ) : (
@@ -620,7 +652,7 @@ export default function ProfileScreen({ navigation, route }) {
                     ) : profile.bio ? (
                         <Text style={styles.bio}>{profile.bio}</Text>
                     ) : isOwnProfile ? (
-                        <TouchableOpacity onPress={() => setEditing(true)}>
+                        <TouchableOpacity onPress={handleStartEditing}>
                             <Text style={styles.addBioHint}>+ Add bio</Text>
                         </TouchableOpacity>
                     ) : null}
@@ -629,25 +661,44 @@ export default function ProfileScreen({ navigation, route }) {
                     {editing ? (
                         <View style={styles.locationEditRow}>
                             <TextInput
+                                ref={cityInputRef}
                                 style={styles.locationInput}
                                 value={city}
                                 onChangeText={setCity}
                                 placeholder="City"
                                 placeholderTextColor={colors.textMuted}
+                                autoCorrect={false}
+                                spellCheck={false}
+                                autoComplete="off"
+                                returnKeyType="next"
+                                blurOnSubmit={false}
+                                onSubmitEditing={() => stateInputRef.current?.focus()}
                             />
                             <TextInput
+                                ref={stateInputRef}
                                 style={styles.locationInput}
                                 value={state}
                                 onChangeText={setState}
                                 placeholder="State"
                                 placeholderTextColor={colors.textMuted}
+                                autoCorrect={false}
+                                spellCheck={false}
+                                autoComplete="off"
+                                returnKeyType="next"
+                                blurOnSubmit={false}
+                                onSubmitEditing={() => countryInputRef.current?.focus()}
                             />
                             <TextInput
+                                ref={countryInputRef}
                                 style={styles.locationInput}
                                 value={country}
                                 onChangeText={setCountry}
                                 placeholder="Country"
                                 placeholderTextColor={colors.textMuted}
+                                autoCorrect={false}
+                                spellCheck={false}
+                                autoComplete="off"
+                                returnKeyType="done"
                             />
                         </View>
                     ) : (profile.city || profile.state || profile.country) ? (

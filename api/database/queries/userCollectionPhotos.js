@@ -3,12 +3,13 @@ const path = require('path');
 const crypto = require('crypto');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
+const logger = require('../../logger');
 const { validateImageBuffer } = require('../../utils/imageValidation');
 const visionItemCropsQueries = require('./visionItemCrops');
 const s3 = require('../../services/s3');
 const {
-  normalizeThumbnailBox,
   renderOwnerPhotoThumbnail,
+  resolveThumbnailBoxForOwnerPhoto,
 } = require('../../services/ownerPhotoThumbnail');
 
 const API_ROOT = path.resolve(__dirname, '..', '..');
@@ -16,6 +17,11 @@ const RAW_PRIVATE_ROOT = process.env.VISION_PRIVATE_STORAGE_DIR || path.join(API
 const PRIVATE_ROOT = path.isAbsolute(RAW_PRIVATE_ROOT)
   ? RAW_PRIVATE_ROOT
   : path.resolve(API_ROOT, RAW_PRIVATE_ROOT);
+const OWNER_PHOTO_DEBUG_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.OWNER_PHOTO_DEBUG_ENABLED || '').trim().toLowerCase());
+const parsedOwnerPhotoDebugItemId = Number.parseInt(String(process.env.OWNER_PHOTO_DEBUG_ITEM_ID || ''), 10);
+const OWNER_PHOTO_DEBUG_ITEM_ID = Number.isInteger(parsedOwnerPhotoDebugItemId) && parsedOwnerPhotoDebugItemId > 0
+  ? parsedOwnerPhotoDebugItemId
+  : null;
 
 const EXT_MAP = new Map([
   ['image/jpeg', '.jpg'],
@@ -27,6 +33,32 @@ const EXT_MAP = new Map([
 
 function normalizePathSegment(value) {
   return String(value || '').replace(/[^a-zA-Z0-9_-]+/g, '_');
+}
+
+function shouldLogOwnerPhotoDebug(itemId = null) {
+  if (!OWNER_PHOTO_DEBUG_ENABLED) return false;
+  if (!OWNER_PHOTO_DEBUG_ITEM_ID) return true;
+  return Number(itemId) === Number(OWNER_PHOTO_DEBUG_ITEM_ID);
+}
+
+function sanitizeThumbnailBoxForLog(box) {
+  if (!box || typeof box !== 'object') return null;
+  const rounded = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return Math.round(numeric * 1000000) / 1000000;
+  };
+  return {
+    x: rounded(box.x),
+    y: rounded(box.y),
+    width: rounded(box.width),
+    height: rounded(box.height),
+  };
+}
+
+function logOwnerPhotoQueryDebug(stage, payload = {}) {
+  if (!OWNER_PHOTO_DEBUG_ENABLED) return;
+  logger.info(`[OwnerPhotoDebug.query] ${stage}`, payload);
 }
 
 function extFromContentType(contentType) {
@@ -117,7 +149,10 @@ async function persistOwnerPhotoThumbnail({
   if (!itemRecord?.id || !itemRecord?.userId || !itemRecord?.shelfId) {
     throw new Error('Invalid collection item for thumbnail persistence');
   }
-  const normalizedBox = normalizeThumbnailBox(box, { allowNull: true });
+  const normalizedBox = resolveThumbnailBoxForOwnerPhoto({
+    ownerPhotoSource: itemRecord.ownerPhotoSource,
+    box,
+  });
   const thumbnail = await renderOwnerPhotoThumbnail({
     sourceBuffer,
     box: normalizedBox,
@@ -419,6 +454,17 @@ async function loadOwnerPhotoBuffer(photoRecord) {
     throw new Error('Owner photo is not set');
   }
 
+  if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+    logOwnerPhotoQueryDebug('loadOwnerPhotoBuffer.begin', {
+      itemId: photoRecord.id,
+      shelfId: photoRecord.shelfId,
+      userId: photoRecord.userId,
+      source: photoRecord.ownerPhotoSource,
+      storageProvider: photoRecord.ownerPhotoStorageProvider || null,
+      hasStorageKey: !!photoRecord.ownerPhotoStorageKey,
+    });
+  }
+
   if (photoRecord.ownerPhotoSource === 'vision_crop') {
     const crop = await visionItemCropsQueries.getByIdForUser({
       id: photoRecord.ownerPhotoCropId,
@@ -427,6 +473,12 @@ async function loadOwnerPhotoBuffer(photoRecord) {
     });
     if (!crop) {
       throw new Error('Owner photo crop not found');
+    }
+    if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+      logOwnerPhotoQueryDebug('loadOwnerPhotoBuffer.visionCrop', {
+        itemId: photoRecord.id,
+        cropId: photoRecord.ownerPhotoCropId || null,
+      });
     }
     return visionItemCropsQueries.loadImageBuffer(crop);
   }
@@ -439,6 +491,14 @@ async function loadOwnerPhotoBuffer(photoRecord) {
     }
     if (storageProvider === 's3') {
       const remote = await s3.getObjectBuffer(storageKey);
+      if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+        logOwnerPhotoQueryDebug('loadOwnerPhotoBuffer.upload.s3', {
+          itemId: photoRecord.id,
+          storageKey,
+          contentLength: remote.contentLength ?? remote.buffer?.length ?? null,
+          contentType: remote.contentType || photoRecord.ownerPhotoContentType || 'image/jpeg',
+        });
+      }
       return {
         buffer: remote.buffer,
         contentType: remote.contentType || photoRecord.ownerPhotoContentType || 'image/jpeg',
@@ -447,6 +507,14 @@ async function loadOwnerPhotoBuffer(photoRecord) {
     }
     if (storageProvider === 'local') {
       const buffer = await fs.readFile(toAbsolutePath(storageKey));
+      if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+        logOwnerPhotoQueryDebug('loadOwnerPhotoBuffer.upload.local', {
+          itemId: photoRecord.id,
+          storageKey,
+          contentLength: buffer.length,
+          contentType: photoRecord.ownerPhotoContentType || 'image/jpeg',
+        });
+      }
       return {
         buffer,
         contentType: photoRecord.ownerPhotoContentType || 'image/jpeg',
@@ -464,7 +532,26 @@ async function loadOwnerPhotoThumbnailBuffer(photoRecord) {
     throw new Error('Owner photo is not set');
   }
 
+  if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+    logOwnerPhotoQueryDebug('loadOwnerPhotoThumbnailBuffer.begin', {
+      itemId: photoRecord.id,
+      shelfId: photoRecord.shelfId,
+      userId: photoRecord.userId,
+      source: photoRecord.ownerPhotoSource,
+      thumbProvider: photoRecord.ownerPhotoThumbStorageProvider || null,
+      thumbHasKey: !!photoRecord.ownerPhotoThumbStorageKey,
+      thumbnailBox: sanitizeThumbnailBoxForLog(photoRecord.ownerPhotoThumbBox),
+    });
+  }
+
   if (!photoRecord?.ownerPhotoThumbStorageKey || !photoRecord?.ownerPhotoThumbStorageProvider) {
+    if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+      logOwnerPhotoQueryDebug('loadOwnerPhotoThumbnailBuffer.missingThumbStorage', {
+        itemId: photoRecord.id,
+        reason: 'missing thumb storage metadata',
+        thumbnailBox: sanitizeThumbnailBoxForLog(photoRecord.ownerPhotoThumbBox),
+      });
+    }
     const generated = await upsertOwnerPhotoThumbnailForItem({
       itemId: photoRecord.id,
       userId: photoRecord.userId,
@@ -474,11 +561,27 @@ async function loadOwnerPhotoThumbnailBuffer(photoRecord) {
     if (!generated?.ownerPhotoThumbStorageKey || !generated?.ownerPhotoThumbStorageProvider) {
       throw new Error('Unable to generate owner photo thumbnail');
     }
+    if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+      logOwnerPhotoQueryDebug('loadOwnerPhotoThumbnailBuffer.generated', {
+        itemId: photoRecord.id,
+        thumbProvider: generated.ownerPhotoThumbStorageProvider || null,
+        thumbHasKey: !!generated.ownerPhotoThumbStorageKey,
+        thumbnailBox: sanitizeThumbnailBoxForLog(generated.ownerPhotoThumbBox),
+      });
+    }
     return loadOwnerPhotoThumbnailBuffer(generated);
   }
 
   if (photoRecord.ownerPhotoThumbStorageProvider === 's3') {
     const remote = await s3.getObjectBuffer(photoRecord.ownerPhotoThumbStorageKey);
+    if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+      logOwnerPhotoQueryDebug('loadOwnerPhotoThumbnailBuffer.s3', {
+        itemId: photoRecord.id,
+        storageKey: photoRecord.ownerPhotoThumbStorageKey,
+        contentLength: remote.contentLength ?? remote.buffer?.length ?? null,
+        contentType: remote.contentType || photoRecord.ownerPhotoThumbContentType || 'image/jpeg',
+      });
+    }
     return {
       buffer: remote.buffer,
       contentType: remote.contentType || photoRecord.ownerPhotoThumbContentType || 'image/jpeg',
@@ -488,6 +591,14 @@ async function loadOwnerPhotoThumbnailBuffer(photoRecord) {
 
   if (photoRecord.ownerPhotoThumbStorageProvider === 'local') {
     const buffer = await fs.readFile(toAbsolutePath(photoRecord.ownerPhotoThumbStorageKey));
+    if (shouldLogOwnerPhotoDebug(photoRecord.id)) {
+      logOwnerPhotoQueryDebug('loadOwnerPhotoThumbnailBuffer.local', {
+        itemId: photoRecord.id,
+        storageKey: photoRecord.ownerPhotoThumbStorageKey,
+        contentLength: buffer.length,
+        contentType: photoRecord.ownerPhotoThumbContentType || 'image/jpeg',
+      });
+    }
     return {
       buffer,
       contentType: photoRecord.ownerPhotoThumbContentType || 'image/jpeg',
@@ -512,12 +623,38 @@ async function upsertOwnerPhotoThumbnailForItem({
     throw new Error('Owner photo is not set');
   }
 
+  if (shouldLogOwnerPhotoDebug(itemId)) {
+    logOwnerPhotoQueryDebug('upsertOwnerPhotoThumbnailForItem.begin', {
+      itemId,
+      shelfId,
+      userId,
+      source: item.ownerPhotoSource,
+      inputBox: sanitizeThumbnailBoxForLog(box),
+      existingBox: sanitizeThumbnailBoxForLog(item.ownerPhotoThumbBox),
+    });
+  }
+
   const source = await loadOwnerPhotoBuffer(item);
   const result = await persistOwnerPhotoThumbnail({
     itemRecord: item,
     sourceBuffer: source.buffer,
     box,
   });
+
+  if (shouldLogOwnerPhotoDebug(itemId)) {
+    logOwnerPhotoQueryDebug('upsertOwnerPhotoThumbnailForItem.done', {
+      itemId,
+      shelfId,
+      thumbProvider: result?.item?.ownerPhotoThumbStorageProvider || item.ownerPhotoThumbStorageProvider || null,
+      thumbHasKey: !!(result?.item?.ownerPhotoThumbStorageKey || item.ownerPhotoThumbStorageKey),
+      persistedBox: sanitizeThumbnailBoxForLog(result?.thumbnail?.box || result?.item?.ownerPhotoThumbBox || null),
+      thumbSizeBytes: result?.item?.ownerPhotoThumbSizeBytes ?? null,
+      thumbDimensions: {
+        width: result?.item?.ownerPhotoThumbWidth ?? null,
+        height: result?.item?.ownerPhotoThumbHeight ?? null,
+      },
+    });
+  }
 
   return result.item || item;
 }

@@ -23,6 +23,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
+import ImageCropper from '../components/ui/ImageCropper';
 import { apiRequest, getValidToken } from '../services/api';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 
@@ -63,6 +64,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [ownerPhotoViewerApplying, setOwnerPhotoViewerApplying] = useState(false);
     const [ownerPhotoViewerUri, setOwnerPhotoViewerUri] = useState(null);
     const [ownerPhotoViewerOriginalUri, setOwnerPhotoViewerOriginalUri] = useState(null);
+    const [ownerPhotoViewerEditing, setOwnerPhotoViewerEditing] = useState(false);
 
     const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
     const baseCollectable = item?.collectable
@@ -626,6 +628,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             });
             setOwnerPhotoViewerOriginalUri(downloaded.uri);
             setOwnerPhotoViewerUri(downloaded.uri);
+            setOwnerPhotoViewerEditing(false);
             setOwnerPhotoViewerVisible(true);
         } catch (err) {
             console.warn('Failed to open owner photo viewer:', err);
@@ -636,64 +639,336 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     const handleCloseOwnerPhotoViewer = () => {
+        setOwnerPhotoViewerEditing(false);
         setOwnerPhotoViewerVisible(false);
     };
 
-    const applyOwnerPhotoManipulation = async (actions) => {
-        if (!ownerPhotoViewerUri) return;
+    const handleEnterOwnerPhotoEditMode = () => {
+        if (!canEditOwnerPhoto || !ownerPhotoViewerUri) return;
+        setOwnerPhotoViewerEditing(true);
+    };
+
+    const handleCancelOwnerPhotoCropper = () => {
+        setOwnerPhotoViewerEditing(false);
+    };
+
+    const roundDebug = (value, precision = 3) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return null;
+        const scale = 10 ** precision;
+        return Math.round(numeric * scale) / scale;
+    };
+
+    const rectDebug = (rect) => {
+        if (!rect || typeof rect !== 'object') return null;
+        return {
+            left: roundDebug(rect.left),
+            top: roundDebug(rect.top),
+            right: roundDebug(rect.right),
+            bottom: roundDebug(rect.bottom),
+            width: roundDebug((Number(rect.right) || 0) - (Number(rect.left) || 0)),
+            height: roundDebug((Number(rect.bottom) || 0) - (Number(rect.top) || 0)),
+        };
+    };
+
+    const cropDebug = (stage, payload) => {
+        if (!__DEV__) return;
         try {
-            setOwnerPhotoViewerApplying(true);
+            console.log(`[OwnerPhotoCropDebug] [CollectableDetail] ${stage}`, JSON.stringify(payload));
+        } catch {
+            console.log(`[OwnerPhotoCropDebug] [CollectableDetail] ${stage}`, payload);
+        }
+    };
+
+    const handleSaveOwnerPhotoCropper = async (cropData) => {
+        if (!canEditOwnerPhoto || !ownerPhotoViewerUri) return;
+        setOwnerPhotoViewerApplying(true);
+        let debugSnapshot = { stage: 'start' };
+        try {
+            const { mainCrop, thumbnailBox, viewSize, imageSize, displayBaseScale } = cropData;
+            if (!mainCrop || !viewSize || !imageSize) {
+                throw new Error('Editor payload is incomplete');
+            }
+
+            const clamp01 = (value) => Math.max(0, Math.min(1, value));
+            const rotation = Number(mainCrop.rotation || 0);
+            const absRotationRad = Math.abs(rotation * Math.PI / 180);
+            cropDebug('save.begin', {
+                mainCrop,
+                thumbnailBox,
+                viewSize,
+                imageSize,
+                displayBaseScale,
+                canEditOwnerPhoto,
+            });
+
+            const largestInscribedRect = (width, height, angleRad) => {
+                const w = Math.max(1, Number(width) || 1);
+                const h = Math.max(1, Number(height) || 1);
+                const sinA = Math.abs(Math.sin(angleRad));
+                const cosA = Math.abs(Math.cos(angleRad));
+
+                if (sinA < 1e-8 || cosA < 1e-8) {
+                    return { width: w, height: h };
+                }
+
+                const widthIsLonger = w >= h;
+                const sideLong = widthIsLonger ? w : h;
+                const sideShort = widthIsLonger ? h : w;
+
+                let inscribedW;
+                let inscribedH;
+                if (sideShort <= 2 * sinA * cosA * sideLong || Math.abs(sinA - cosA) < 1e-10) {
+                    const x = 0.5 * sideShort;
+                    if (widthIsLonger) {
+                        inscribedW = x / sinA;
+                        inscribedH = x / cosA;
+                    } else {
+                        inscribedW = x / cosA;
+                        inscribedH = x / sinA;
+                    }
+                } else {
+                    const cos2A = (cosA * cosA) - (sinA * sinA);
+                    inscribedW = ((w * cosA) - (h * sinA)) / cos2A;
+                    inscribedH = ((h * cosA) - (w * sinA)) / cos2A;
+                }
+
+                return {
+                    width: Math.max(1, Math.min(w, Math.round(inscribedW))),
+                    height: Math.max(1, Math.min(h, Math.round(inscribedH))),
+                };
+            };
+
+            // 1) Rotate first, then crop against measured rotated output dimensions.
+            let rotated = {
+                uri: ownerPhotoViewerUri,
+                width: Number(imageSize.width) || 0,
+                height: Number(imageSize.height) || 0,
+            };
+            if (Math.abs(rotation) > 0.01) {
+                rotated = await ImageManipulator.manipulateAsync(
+                    ownerPhotoViewerUri,
+                    [{ rotate: rotation }],
+                    { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+                );
+            }
+            const rotatedWidth = Math.max(1, Number(rotated.width) || 0);
+            const rotatedHeight = Math.max(1, Number(rotated.height) || 0);
+            cropDebug('save.rotated', {
+                rotation: roundDebug(rotation),
+                rotatedWidth,
+                rotatedHeight,
+                sourceWidth: Number(imageSize.width) || 0,
+                sourceHeight: Number(imageSize.height) || 0,
+            });
+
+            // 2) Recompute crop from live transform state.
+            const derivedBaseScale = Math.min(
+                Number(viewSize.width) / Math.max(1, Number(imageSize.width)),
+                Number(viewSize.height) / Math.max(1, Number(imageSize.height)),
+            );
+            const initialImgScale = Number.isFinite(Number(displayBaseScale)) && Number(displayBaseScale) > 0
+                ? Number(displayBaseScale)
+                : derivedBaseScale;
+            const finalScale = initialImgScale * Math.max(0.01, Number(mainCrop.scale) || 1);
+            const cropW = Number(viewSize.width) / finalScale;
+            const cropH = Number(viewSize.height) / finalScale;
+
+            const centerImageX = rotatedWidth / 2;
+            const centerImageY = rotatedHeight / 2;
+            const originX = centerImageX - (Number(mainCrop.translateX || 0) / finalScale) - (cropW / 2);
+            const originY = centerImageY - (Number(mainCrop.translateY || 0) / finalScale) - (cropH / 2);
+
+            const left = originX;
+            const top = originY;
+            const right = originX + cropW;
+            const bottom = originY + cropH;
+            const requestedRect = { left, top, right, bottom };
+
+            let validBounds = { left: 0, top: 0, right: rotatedWidth, bottom: rotatedHeight };
+            if (Math.abs(rotation) > 0.01) {
+                const inscribed = largestInscribedRect(
+                    Number(imageSize.width) || rotatedWidth,
+                    Number(imageSize.height) || rotatedHeight,
+                    absRotationRad,
+                );
+                const validLeft = (rotatedWidth - inscribed.width) / 2;
+                const validTop = (rotatedHeight - inscribed.height) / 2;
+                validBounds = {
+                    left: validLeft,
+                    top: validTop,
+                    right: validLeft + inscribed.width,
+                    bottom: validTop + inscribed.height,
+                };
+            }
+
+            const safeLeft = Math.max(validBounds.left, left);
+            const safeTop = Math.max(validBounds.top, top);
+            const safeRight = Math.min(validBounds.right, right);
+            const safeBottom = Math.min(validBounds.bottom, bottom);
+            const safeWidth = Math.floor(safeRight - safeLeft);
+            const safeHeight = Math.floor(safeBottom - safeTop);
+            const safeRect = {
+                left: safeLeft,
+                top: safeTop,
+                right: safeRight,
+                bottom: safeBottom,
+            };
+            debugSnapshot = {
+                stage: 'computed_bounds',
+                rotation: roundDebug(rotation),
+                initialImgScale: roundDebug(initialImgScale, 6),
+                derivedBaseScale: roundDebug(derivedBaseScale, 6),
+                finalScale: roundDebug(finalScale, 6),
+                input: {
+                    viewSize,
+                    imageSize,
+                    mainCrop: {
+                        scale: roundDebug(mainCrop.scale, 6),
+                        translateX: roundDebug(mainCrop.translateX),
+                        translateY: roundDebug(mainCrop.translateY),
+                        rotation: roundDebug(mainCrop.rotation),
+                    },
+                },
+                rotatedSize: { width: rotatedWidth, height: rotatedHeight },
+                requestedRect: rectDebug(requestedRect),
+                validBounds: rectDebug(validBounds),
+                safeRect: rectDebug(safeRect),
+                safeWidth,
+                safeHeight,
+                outOfBounds: safeWidth < 1 || safeHeight < 1,
+            };
+            cropDebug('save.bounds', debugSnapshot);
+
+            if (safeWidth < 1 || safeHeight < 1) {
+                cropDebug('save.reject.out_of_bounds', debugSnapshot);
+                throw new Error('Selected crop area is outside valid image bounds. Please adjust and try again.');
+            }
+
             const manipulated = await ImageManipulator.manipulateAsync(
-                ownerPhotoViewerUri,
-                actions,
+                rotated.uri,
+                [{
+                    crop: {
+                        originX: Math.floor(safeLeft),
+                        originY: Math.floor(safeTop),
+                        width: safeWidth,
+                        height: safeHeight,
+                    },
+                }],
                 { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG },
             );
-            if (manipulated?.uri) {
-                setOwnerPhotoViewerUri(manipulated.uri);
-            }
-        } catch (err) {
-            console.warn('Failed to edit owner photo:', err);
-            Alert.alert('Error', 'Unable to apply edit');
-        } finally {
-            setOwnerPhotoViewerApplying(false);
-        }
-    };
-
-    const handleRotateOwnerPhoto = async () => {
-        await applyOwnerPhotoManipulation([{ rotate: 90 }]);
-    };
-
-    const handlePresetOwnerPhotoCrop = async (aspectWidth, aspectHeight) => {
-        if (!ownerPhotoViewerUri) return;
-        try {
-            const size = await getImageSizeAsync(ownerPhotoViewerUri);
-            const crop = getCenteredCrop({
-                width: size.width,
-                height: size.height,
-                aspectWidth,
-                aspectHeight,
+            cropDebug('save.cropped', {
+                manipulatedWidth: Number(manipulated.width) || null,
+                manipulatedHeight: Number(manipulated.height) || null,
+                cropRect: {
+                    originX: Math.floor(safeLeft),
+                    originY: Math.floor(safeTop),
+                    width: safeWidth,
+                    height: safeHeight,
+                },
             });
-            await applyOwnerPhotoManipulation([{ crop }]);
-        } catch (err) {
-            console.warn('Failed to crop owner photo:', err);
-            Alert.alert('Error', 'Unable to crop this photo');
-        }
-    };
 
-    const handleResetOwnerPhotoEdits = () => {
-        if (!ownerPhotoViewerOriginalUri) return;
-        setOwnerPhotoViewerUri(ownerPhotoViewerOriginalUri);
-    };
+            // 3. Upload main owner photo
+            await uploadOwnerPhotoFromUri(manipulated.uri, 'image/jpeg');
+            
+            // 4. Send thumbnail box if provided
+            if (thumbnailBox && thumbnailBox.scale) {
+                const baseThumbW = viewSize.width * 0.6;
+                const baseThumbH = baseThumbW * (4 / 3);
+                const safeThumbScale = Math.max(0.05, Number(thumbnailBox.scale) || 1);
+                const thumbScreenW = baseThumbW * safeThumbScale;
+                const thumbScreenH = baseThumbH * safeThumbScale;
+                const thumbScreenX = (viewSize.width / 2) - (thumbScreenW / 2) + Number(thumbnailBox.translateX || 0);
+                const thumbScreenY = (viewSize.height / 2) - (thumbScreenH / 2) + Number(thumbnailBox.translateY || 0);
+                
+                // Convert thumbScreen to original unclipped crop coordinates:
+                const unclippedScaleX = cropW / viewSize.width;
+                const unclippedScaleY = cropH / viewSize.height;
 
-    const handleSaveOwnerPhotoEdits = async () => {
-        if (!canEditOwnerPhoto || !ownerPhotoViewerUri) return;
-        try {
-            await uploadOwnerPhotoFromUri(ownerPhotoViewerUri, 'image/jpeg');
-            setOwnerPhotoViewerOriginalUri(ownerPhotoViewerUri);
+                const thumbUnclippedX = thumbScreenX * unclippedScaleX;
+                const thumbUnclippedY = thumbScreenY * unclippedScaleY;
+                const thumbUnclippedW = thumbScreenW * unclippedScaleX;
+                const thumbUnclippedH = thumbScreenH * unclippedScaleY;
+
+                // Now offset by the amount we clipped off
+                const finalThumbX = thumbUnclippedX - (safeLeft - left);
+                const finalThumbY = thumbUnclippedY - (safeTop - top);
+                const finalThumbW = thumbUnclippedW;
+                const finalThumbH = thumbUnclippedH;
+                const manipulatedWidth = Math.max(1, Number(manipulated.width) || 1);
+                const manipulatedHeight = Math.max(1, Number(manipulated.height) || 1);
+                const thumbRect = {
+                    left: finalThumbX,
+                    top: finalThumbY,
+                    right: finalThumbX + finalThumbW,
+                    bottom: finalThumbY + finalThumbH,
+                };
+                const clippedRect = {
+                    left: Math.max(0, Math.min(manipulatedWidth, thumbRect.left)),
+                    top: Math.max(0, Math.min(manipulatedHeight, thumbRect.top)),
+                    right: Math.max(0, Math.min(manipulatedWidth, thumbRect.right)),
+                    bottom: Math.max(0, Math.min(manipulatedHeight, thumbRect.bottom)),
+                };
+                const clippedWidth = Math.max(0, clippedRect.right - clippedRect.left);
+                const clippedHeight = Math.max(0, clippedRect.bottom - clippedRect.top);
+
+                const normalizedBox = {
+                    x: clamp01(clippedRect.left / manipulatedWidth),
+                    y: clamp01(clippedRect.top / manipulatedHeight),
+                    width: clamp01(clippedWidth / manipulatedWidth),
+                    height: clamp01(clippedHeight / manipulatedHeight),
+                };
+                cropDebug('save.thumbnail', {
+                    thumbScreen: {
+                        x: roundDebug(thumbScreenX),
+                        y: roundDebug(thumbScreenY),
+                        width: roundDebug(thumbScreenW),
+                        height: roundDebug(thumbScreenH),
+                    },
+                    normalizedBox: {
+                        x: roundDebug(normalizedBox.x, 6),
+                        y: roundDebug(normalizedBox.y, 6),
+                        width: roundDebug(normalizedBox.width, 6),
+                        height: roundDebug(normalizedBox.height, 6),
+                    },
+                    thumbRect: rectDebug(thumbRect),
+                    clippedRect: rectDebug(clippedRect),
+                    manipulatedWidth,
+                    manipulatedHeight,
+                });
+                if (normalizedBox.width <= 0 || normalizedBox.height <= 0) {
+                    throw new Error('Thumbnail selection is invalid. Please reframe and try again.');
+                }
+                
+                const authToken = await getValidToken(token);
+                const thumbResp = await fetch(`${apiBase}/api/shelves/${shelfId}/items/${item.id}/owner-photo/thumbnail`, {
+                    method: 'PUT',
+                    headers: {
+                        Authorization: `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        box: normalizedBox
+                    })
+                });
+                if (!thumbResp.ok) {
+                    const bodyText = await thumbResp.text().catch(() => '');
+                    throw new Error(`Thumbnail update failed (${thumbResp.status}): ${bodyText || thumbResp.statusText}`);
+                }
+            }
+
             setOwnerPhotoViewerVisible(false);
         } catch (err) {
-            console.warn('Failed to save owner photo edits:', err);
-            Alert.alert('Save Failed', err?.message || 'Unable to save photo edits');
+            const message = err?.message || 'Unable to process and save photo edits';
+            cropDebug('save.error', {
+                message,
+                stage: debugSnapshot?.stage || null,
+                snapshot: debugSnapshot,
+            });
+            console.warn('Failed to save owner photo cropper:', message, err);
+            Alert.alert('Save Failed', message);
+        } finally {
+            setOwnerPhotoViewerApplying(false);
         }
     };
 
@@ -1013,9 +1288,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const showOwnerPhotoSection = hasShelfItemContext
         ? (ownerPhotoLoading || !!ownerPhoto?.hasPhoto || canEditOwnerPhoto)
         : !(ownerId && user?.id && ownerId !== user.id);
+    const isOtherManualItem = isManual && String(manual?.type || '').toLowerCase() === 'other';
     const shouldReplaceManualHeroWithOwnerPhoto = (
-        isManual
-        && ownerPhoto?.source === 'vision_crop'
+        isOtherManualItem
         && !!ownerPhoto?.hasPhoto
         && !!ownerPhotoImageSource
     );
@@ -1317,85 +1592,60 @@ export default function CollectableDetailScreen({ route, navigation }) {
             <Modal
                 visible={ownerPhotoViewerVisible}
                 animationType="fade"
-                statusBarTranslucent
+                presentationStyle="fullScreen"
                 onRequestClose={handleCloseOwnerPhotoViewer}
             >
-                <SafeAreaView
-                    style={[
-                        styles.viewerScreen,
-                        {
-                            paddingTop: Math.max(insets.top, spacing.xs),
-                            paddingBottom: Math.max(insets.bottom, spacing.sm),
-                        },
-                    ]}
-                    edges={['left', 'right']}
-                >
-                    <View style={styles.viewerHeader}>
-                        <TouchableOpacity onPress={handleCloseOwnerPhotoViewer} style={styles.viewerHeaderBtn}>
-                            <Ionicons name="close" size={22} color={colors.text} />
-                        </TouchableOpacity>
-                        <Text style={styles.viewerHeaderTitle}>Your photo</Text>
-                        <TouchableOpacity
-                            onPress={handleSaveOwnerPhotoEdits}
-                            style={[styles.viewerHeaderBtn, (!canEditOwnerPhoto || ownerPhotoViewerBusy) && styles.viewerHeaderBtnDisabled]}
-                            disabled={!canEditOwnerPhoto || ownerPhotoViewerBusy}
-                        >
-                            <Text style={styles.viewerSaveText}>Save</Text>
-                        </TouchableOpacity>
+                {ownerPhotoViewerUri && ownerPhotoViewerEditing ? (
+                    <ImageCropper
+                        uri={ownerPhotoViewerUri}
+                        colors={colors}
+                        forcedInsets={insets}
+                        onSave={handleSaveOwnerPhotoCropper}
+                        onCancel={handleCancelOwnerPhotoCropper}
+                    />
+                ) : ownerPhotoViewerUri ? (
+                    <View
+                        style={[
+                            styles.viewerScreen,
+                            {
+                                paddingTop: insets.top,
+                                paddingBottom: insets.bottom,
+                                paddingLeft: insets.left,
+                                paddingRight: insets.right,
+                            },
+                        ]}
+                    >
+                        <View style={styles.viewerHeader}>
+                            <TouchableOpacity
+                                style={styles.viewerHeaderBtn}
+                                onPress={handleCloseOwnerPhotoViewer}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.viewerToolText}>Close</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.viewerHeaderTitle}>Your photo</Text>
+                            {canEditOwnerPhoto ? (
+                                <TouchableOpacity
+                                    style={[styles.viewerHeaderBtn, ownerPhotoViewerBusy && styles.viewerHeaderBtnDisabled]}
+                                    onPress={handleEnterOwnerPhotoEditMode}
+                                    disabled={ownerPhotoViewerBusy}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={styles.viewerSaveText}>Edit</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <View style={styles.viewerHeaderBtn} />
+                            )}
+                        </View>
+                        <View style={styles.viewerImageArea}>
+                            <CachedImage
+                                source={{ uri: ownerPhotoViewerUri }}
+                                style={styles.viewerImage}
+                                contentFit="contain"
+                            />
+                        </View>
                     </View>
-
-                    <View style={styles.viewerImageArea}>
-                        {ownerPhotoViewerLoading || !ownerPhotoViewerUri ? (
-                            <ActivityIndicator size="large" color={colors.primary} />
-                        ) : (
-                            <Image source={{ uri: ownerPhotoViewerUri }} style={styles.viewerImage} resizeMode="contain" />
-                        )}
-                    </View>
-
-                    {canEditOwnerPhoto && (
-                        <>
-                            <View style={styles.viewerToolRow}>
-                                <TouchableOpacity
-                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
-                                    onPress={() => handlePresetOwnerPhotoCrop(1, 1)}
-                                    disabled={ownerPhotoViewerBusy}
-                                >
-                                    <Text style={styles.viewerToolText}>Square</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
-                                    onPress={() => handlePresetOwnerPhotoCrop(3, 4)}
-                                    disabled={ownerPhotoViewerBusy}
-                                >
-                                    <Text style={styles.viewerToolText}>3:4</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
-                                    onPress={() => handlePresetOwnerPhotoCrop(4, 3)}
-                                    disabled={ownerPhotoViewerBusy}
-                                >
-                                    <Text style={styles.viewerToolText}>4:3</Text>
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.viewerToolRow}>
-                                <TouchableOpacity
-                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
-                                    onPress={handleRotateOwnerPhoto}
-                                    disabled={ownerPhotoViewerBusy}
-                                >
-                                    <Text style={styles.viewerToolText}>Rotate</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.viewerToolButton, ownerPhotoViewerBusy && styles.viewerToolButtonDisabled]}
-                                    onPress={handleResetOwnerPhotoEdits}
-                                    disabled={ownerPhotoViewerBusy || !ownerPhotoViewerOriginalUri}
-                                >
-                                    <Text style={styles.viewerToolText}>Reset</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </>
-                    )}
-                </SafeAreaView>
+                ) : null}
             </Modal>
 
             {/* Wishlist Selection Modal */}

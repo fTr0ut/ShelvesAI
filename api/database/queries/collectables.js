@@ -87,6 +87,16 @@ function normalizeMarketValueSources(input) {
     return out;
 }
 
+function ensureJsonParam(value, fieldName) {
+    if (value == null) return null;
+    if (typeof value === 'string') return value;
+    try {
+        return JSON.stringify(value);
+    } catch (err) {
+        throw new Error(`[collectables.upsert] Failed to serialize ${fieldName} as JSON`);
+    }
+}
+
 /**
  * Find collectable by fingerprint
  */
@@ -259,6 +269,17 @@ async function upsert(data, client = null) {
                 : null;
 
     const normalizedKind = normalizeCollectableKind(kind, 'item');
+    const normalizedIdentifiers = identifiers && typeof identifiers === 'object' && !Array.isArray(identifiers)
+        ? identifiers
+        : {};
+    const identifiersJson = ensureJsonParam(normalizedIdentifiers, 'identifiers');
+    const marketValueSourcesJson = ensureJsonParam(normalizedMarketValueSources, 'marketValueSources');
+    const formatsJson = ensureJsonParam(normalizedFormats, 'formats');
+    const imagesJson = ensureJsonParam(images, 'images');
+    const sourcesJson = ensureJsonParam(sources, 'sources');
+    const fuzzyFingerprintsJson = ensureJsonParam(fuzzyFingerprints, 'fuzzyFingerprints');
+    const attributionJson = attribution ? ensureJsonParam(attribution, 'attribution') : null;
+    const metascoreJson = metascore ? ensureJsonParam(metascore, 'metascore') : null;
     const q = resolveQuery(client);
     const result = await q(
         `INSERT INTO collectables (
@@ -306,11 +327,11 @@ async function upsert(data, client = null) {
      RETURNING *`,
         [
             fingerprint, lightweightFingerprint, normalizedKind, title, subtitle, description,
-            resolvedPrimaryCreator, normalizedCreators, publishers, year, JSON.stringify(normalizedFormats), systemName, tags, normalizedGenre, normalizedRuntime,
-            normalizeString(marketValue) || null, JSON.stringify(normalizedMarketValueSources), JSON.stringify(identifiers), JSON.stringify(images), resolvedCoverUrl, JSON.stringify(sources), externalId,
-            JSON.stringify(fuzzyFingerprints), coverImageUrl, coverImageSource,
-            attribution ? JSON.stringify(attribution) : null,
-            metascore ? JSON.stringify(metascore) : null
+            resolvedPrimaryCreator, normalizedCreators, publishers, year, formatsJson, systemName, tags, normalizedGenre, normalizedRuntime,
+            identifiersJson, normalizeString(marketValue) || null, marketValueSourcesJson, imagesJson, resolvedCoverUrl, sourcesJson, externalId,
+            fuzzyFingerprintsJson, coverImageUrl, coverImageSource,
+            attributionJson,
+            metascoreJson
         ]
     );
     const collectable = rowToCamelCase(result.rows[0]);

@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Platform,
@@ -27,6 +27,9 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
     const [state, setState] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const hasEditedFormRef = useRef(false);
+    const cityInputRef = useRef(null);
+    const stateInputRef = useRef(null);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -58,13 +61,33 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
     }, [apiBase, setUser, token, user]);
 
     useEffect(() => {
-        if (user) {
+        if (user && !hasEditedFormRef.current) {
             setEmail(user.email || '');
             setFirstName(user.firstName || '');
             setCity(user.city || '');
             setState(user.state || '');
         }
     }, [user]);
+
+    const handleCityChange = useCallback((value) => {
+        hasEditedFormRef.current = true;
+        setCity(value);
+    }, []);
+
+    const handleStateChange = useCallback((value) => {
+        hasEditedFormRef.current = true;
+        setState(value);
+    }, []);
+
+    const handleEmailChange = useCallback((value) => {
+        hasEditedFormRef.current = true;
+        setEmail(value);
+    }, []);
+
+    const handleFirstNameChange = useCallback((value) => {
+        hasEditedFormRef.current = true;
+        setFirstName(value);
+    }, []);
 
     const validate = useCallback(() => {
         const trimmedEmail = email.trim();
@@ -155,7 +178,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                         <TextInput
                             style={styles.input}
                             value={email}
-                            onChangeText={setEmail}
+                            onChangeText={handleEmailChange}
                             placeholder={onboardingConfig.required.fields.emailPlaceholder}
                             placeholderTextColor={colors.textMuted}
                             autoCapitalize="none"
@@ -169,7 +192,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                         <TextInput
                             style={styles.input}
                             value={firstName}
-                            onChangeText={setFirstName}
+                            onChangeText={handleFirstNameChange}
                             placeholder={onboardingConfig.required.fields.firstNamePlaceholder}
                             placeholderTextColor={colors.textMuted}
                             editable={!loading}
@@ -182,10 +205,17 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                             <TextInput
                                 style={styles.input}
                                 value={city}
-                                onChangeText={setCity}
+                                onChangeText={handleCityChange}
                                 placeholder={onboardingConfig.required.fields.cityPlaceholder}
                                 placeholderTextColor={colors.textMuted}
                                 editable={!loading}
+                                ref={cityInputRef}
+                                autoCorrect={false}
+                                spellCheck={false}
+                                autoComplete="off"
+                                returnKeyType="next"
+                                blurOnSubmit={false}
+                                onSubmitEditing={() => stateInputRef.current?.focus()}
                             />
                         </View>
                         <View style={styles.inputHalf}>
@@ -193,10 +223,15 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                             <TextInput
                                 style={styles.input}
                                 value={state}
-                                onChangeText={setState}
+                                onChangeText={handleStateChange}
                                 placeholder={onboardingConfig.required.fields.statePlaceholder}
                                 placeholderTextColor={colors.textMuted}
                                 editable={!loading}
+                                ref={stateInputRef}
+                                autoCorrect={false}
+                                spellCheck={false}
+                                autoComplete="off"
+                                returnKeyType="done"
                             />
                         </View>
                     </View>

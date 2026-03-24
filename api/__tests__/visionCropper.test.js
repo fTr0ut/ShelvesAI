@@ -16,6 +16,28 @@ describe('visionCropper', () => {
         });
     });
 
+    it('repairs out-of-range absolute box_2d coordinates using image dimensions', () => {
+        const rect = computeCropRect([200, 400, 1200, 800], 2000, 2000);
+
+        expect(rect).toEqual({
+            left: 400,
+            top: 200,
+            width: 400,
+            height: 1000,
+        });
+    });
+
+    it('does not add implicit padding when using persisted padded box coordinates', () => {
+        const rect = computeCropRect([70, 160, 730, 940], 1200, 800);
+
+        expect(rect).toEqual({
+            left: 192,
+            top: 56,
+            width: 936,
+            height: 528,
+        });
+    });
+
     it('extracts a jpeg crop buffer with expected dimensions', async () => {
         const imageBuffer = await sharp({
             create: {

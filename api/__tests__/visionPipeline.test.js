@@ -14,6 +14,7 @@ jest.mock('../database/queries/visionItemRegions', () => ({
     upsertRegionsForScan: jest.fn().mockResolvedValue([]),
     linkCollectable: jest.fn().mockResolvedValue(null),
     linkManual: jest.fn().mockResolvedValue(null),
+    linkCollectionItem: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../services/collectables/fingerprint', () => ({
     makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title),
@@ -135,10 +136,216 @@ describe('VisionPipelineService', () => {
         ).rejects.toThrow('Vision extraction provider request failed');
     });
 
+    describe('persistVisionRegions', () => {
+        it('pads normalized box_2d values before persistence when scan dimensions are known', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 1,
+                        title: 'Padded Box',
+                        box2d: [100, 200, 700, 900],
+                        confidence: 0.9,
+                    },
+                ],
+                1,
+                10,
+                21,
+                { width: 1200, height: 800 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 21,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 1,
+                        box2d: [70, 160, 730, 940],
+                    }),
+                ],
+            });
+        });
+
+        it('clamps padded boxes to image boundaries', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 3,
+                        title: 'Edge Box',
+                        box2d: [10, 5, 990, 995],
+                    },
+                ],
+                1,
+                10,
+                23,
+                { width: 1000, height: 1000 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 23,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 3,
+                        box2d: [0, 0, 1000, 1000],
+                    }),
+                ],
+            });
+        });
+
+        it('keeps normalized boxes unchanged when scan dimensions are unavailable', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 4,
+                        title: 'No Dims',
+                        box2d: [100, 200, 700, 900],
+                    },
+                ],
+                1,
+                10,
+                24,
+                null,
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 24,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 4,
+                        box2d: [100, 200, 700, 900],
+                    }),
+                ],
+            });
+        });
+
+        it('does not persist invalid raw box_2d values when normalized box2d is null', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 0,
+                        title: 'Invalid Box',
+                        box2d: null,
+                        box_2d: [700, 200, 700, 300],
+                    },
+                ],
+                1,
+                10,
+                15,
+                { width: 1200, height: 800 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 15,
+                regions: [],
+                replaceExisting: true,
+            });
+        });
+
+        it('repairs absolute-style box_2d values using scan dimensions', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 2,
+                        title: 'Absolute Box',
+                        box2d: null,
+                        box_2d: [200, 400, 1200, 800],
+                        confidence: 0.9,
+                    },
+                ],
+                1,
+                10,
+                22,
+                { width: 2000, height: 2000 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 22,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 2,
+                        box2d: [88, 176, 612, 424],
+                    }),
+                ],
+            });
+        });
+    });
+
+    describe('medium enrichment dedupe guards', () => {
+        it('keeps medium enrichment scoped to unresolved medium items when chat continuation returns extra entries', async () => {
+            const saveToShelfSpy = jest.spyOn(service, 'saveToShelf').mockImplementation(async (items) => ({
+                added: items.map((item, index) => ({
+                    ...item,
+                    itemId: index + 1,
+                    collectableId: index + 100,
+                })),
+                failed: [],
+            }));
+            const matchSpy = jest.spyOn(service, 'matchCollectable').mockResolvedValue(null);
+            const lookupSpy = jest.spyOn(service, 'lookupCatalog')
+                .mockImplementationOnce(async (items) => ({
+                    // High-confidence branch resolves two items.
+                    resolved: items.map((item) => ({ ...item, confidence: 1.0, source: 'catalog-match' })),
+                    unresolved: [],
+                }))
+                .mockImplementationOnce(async (items) => ({
+                    // Medium-confidence branch leaves one unresolved item for enrichment.
+                    resolved: [],
+                    unresolved: items,
+                }));
+
+            mockGemini.enrichWithSchemaUncertain = jest.fn().mockResolvedValue([
+                // Extra entries from prior chat context that should be dropped.
+                { title: 'High Item One', confidence: 0.9, extractionIndex: 0, kind: 'vinyl' },
+                { title: 'High Item Two', confidence: 0.9, extractionIndex: 1, kind: 'vinyl' },
+                // Only this unresolved medium item should survive.
+                { title: 'Medium Item', confidence: 0.9, extractionIndex: 2, kind: 'vinyl' },
+            ]);
+
+            const result = await service.processImage(
+                'base64',
+                { id: 28, type: 'vinyl' },
+                100,
+                {
+                    rawItems: [
+                        { title: 'High Item One', confidence: 0.98, extractionIndex: 0, box2d: [0.1, 0.1, 0.2, 0.2] },
+                        { title: 'High Item Two', confidence: 0.95, extractionIndex: 1, box2d: [0.2, 0.2, 0.3, 0.3] },
+                        { title: 'Medium Item', confidence: 0.86, extractionIndex: 2, box2d: [0.3, 0.3, 0.4, 0.4] },
+                    ],
+                },
+            );
+
+            expect(matchSpy).toHaveBeenCalledTimes(3);
+            expect(lookupSpy).toHaveBeenCalledTimes(2);
+            expect(saveToShelfSpy).toHaveBeenCalledTimes(2);
+            // Step 4d medium save should only include the single unresolved medium item.
+            expect(saveToShelfSpy.mock.calls[0][0]).toHaveLength(1);
+            expect(saveToShelfSpy.mock.calls[0][0][0]).toEqual(expect.objectContaining({
+                title: 'Medium Item',
+                extractionIndex: 2,
+            }));
+            // Step 5 save should only include high-confidence resolved items.
+            expect(saveToShelfSpy.mock.calls[1][0]).toHaveLength(2);
+            expect(result.results.added).toBe(3);
+        });
+    });
+
     describe('transaction safety', () => {
         beforeEach(() => {
             visionItemRegionsQueries.linkCollectable.mockClear();
             visionItemRegionsQueries.linkManual.mockClear();
+            visionItemRegionsQueries.linkCollectionItem.mockClear();
         });
 
         it('saveToShelf wraps upsert+addCollectable in a transaction for new collectables', async () => {
@@ -149,15 +356,22 @@ describe('VisionPipelineService', () => {
             shelvesQueries.addCollectable.mockResolvedValue({ id: 77 });
 
             const items = [{ title: 'New Book', confidence: 1.0, kind: 'book', extractionIndex: 2 }];
-            const added = await service.saveToShelf(items, 1, 10, 'book', { scanPhotoId: 15 });
+            const result = await service.saveToShelf(items, 1, 10, 'book', { scanPhotoId: 15 });
+            const added = result.added;
 
             expect(added).toHaveLength(1);
             expect(added[0].collectableId).toBe(55);
             expect(added[0].itemId).toBe(77);
+            expect(result.failed).toEqual([]);
             expect(visionItemRegionsQueries.linkCollectable).toHaveBeenCalledWith({
                 scanPhotoId: 15,
                 extractionIndex: 2,
                 collectableId: 55,
+            });
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledWith({
+                scanPhotoId: 15,
+                extractionIndex: 2,
+                collectionItemId: 77,
             });
             // transaction() from pg mock should have been called
             expect(pg.transaction).toHaveBeenCalled();
@@ -177,16 +391,51 @@ describe('VisionPipelineService', () => {
             shelvesQueries.addCollectable.mockResolvedValue({ id: 88 });
 
             const items = [{ title: 'Existing Book', confidence: 1.0, collectable: existingCollectable }];
-            const added = await service.saveToShelf(items, 1, 10, 'book');
+            const result = await service.saveToShelf(items, 1, 10, 'book');
+            const added = result.added;
 
             expect(added).toHaveLength(1);
             expect(added[0].collectableId).toBe(99);
+            expect(result.failed).toEqual([]);
             // upsert should NOT be called for pre-matched collectables
             expect(collectablesQueries.upsert).not.toHaveBeenCalled();
             // addCollectable should be called with only the params object (no client arg)
             expect(shelvesQueries.addCollectable).toHaveBeenCalledWith(
                 expect.objectContaining({ collectableId: 99 })
             );
+        });
+
+        it('saveToShelf routes failed saves to review queue with reason save_error', async () => {
+            const existingCollectable = { id: 99, title: 'Existing Book', kind: 'book' };
+            shelvesQueries.addCollectable.mockRejectedValue(Object.assign(new Error('db exploded'), { code: 'XX001' }));
+            const saveToReviewQueueSpy = jest
+                .spyOn(service, 'saveToReviewQueue')
+                .mockResolvedValue(undefined);
+
+            const items = [{ title: 'Existing Book', confidence: 1.0, collectable: existingCollectable }];
+            const result = await service.saveToShelf(items, 1, 10, 'book');
+
+            expect(result.added).toEqual([]);
+            expect(result.failed).toHaveLength(1);
+            expect(result.failed[0]).toMatchObject({
+                title: 'Existing Book',
+                _saveError: expect.objectContaining({
+                    code: 'XX001',
+                    message: 'db exploded',
+                }),
+            });
+            expect(saveToReviewQueueSpy).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        title: 'Existing Book',
+                        _saveError: expect.objectContaining({ code: 'XX001' }),
+                    }),
+                ]),
+                1,
+                10,
+                expect.objectContaining({ reason: 'save_error' }),
+            );
+            saveToReviewQueueSpy.mockRestore();
         });
 
         it('saveManualToShelf links region metadata to matched manual records', async () => {
@@ -206,6 +455,42 @@ describe('VisionPipelineService', () => {
                 scanPhotoId: 21,
                 extractionIndex: 3,
                 manualId: 501,
+            });
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledWith({
+                scanPhotoId: 21,
+                extractionIndex: 3,
+                collectionItemId: 901,
+            });
+        });
+
+        it('linkRegionToCollectionItem disables further writes when collection_item_id column is missing', async () => {
+            const missingColumnErr = new Error('column "collection_item_id" of relation "vision_item_regions" does not exist');
+            missingColumnErr.code = '42703';
+            visionItemRegionsQueries.linkCollectionItem
+                .mockRejectedValueOnce(missingColumnErr)
+                .mockResolvedValue(null);
+
+            await expect(
+                service.linkRegionToCollectionItem(
+                    { extractionIndex: 4 },
+                    123,
+                    { scanPhotoId: 88 },
+                ),
+            ).resolves.toBeUndefined();
+            await expect(
+                service.linkRegionToCollectionItem(
+                    { extractionIndex: 5 },
+                    124,
+                    { scanPhotoId: 88 },
+                ),
+            ).resolves.toBeUndefined();
+
+            expect(service.collectionItemRegionLinkAvailable).toBe(false);
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledTimes(1);
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledWith({
+                scanPhotoId: 88,
+                extractionIndex: 4,
+                collectionItemId: 123,
             });
         });
 
@@ -295,6 +580,157 @@ describe('VisionPipelineService', () => {
             expect(result.results.needsReview).toBe(0);
             expect(shelvesQueries.addManual).not.toHaveBeenCalled();
             expect(needsReviewQueries.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('other shelf low-confidence second pass', () => {
+        beforeEach(() => {
+            service.saveToReviewQueue = jest.fn().mockResolvedValue(undefined);
+            service.saveManualToShelf = jest.fn().mockResolvedValue({
+                added: [{ itemId: 11, manualId: 22, title: 'Weller Twelve', primaryCreator: 'Buffalo Trace Distillery' }],
+                matched: [],
+                skipped: [],
+                review: [],
+            });
+        });
+
+        it('runs second pass for low-confidence other items and merges by extractionIndex', async () => {
+            const priorConversationHistory = [
+                { role: 'user', parts: [{ text: 'first pass prompt' }] },
+                { role: 'model', parts: [{ text: 'first pass result' }] },
+            ];
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: [{
+                        title: 'Weller Twlve',
+                        author: 'Buffalo Trace Distillery',
+                        confidence: 0.55,
+                        extractionIndex: 0,
+                        box2d: [100, 200, 300, 400],
+                    }],
+                    conversationHistory: priorConversationHistory,
+                })
+                .mockResolvedValueOnce({
+                    items: [{
+                        title: 'Weller Twelve',
+                        author: 'Buffalo Trace Distillery',
+                        confidence: 0.94,
+                        extractionIndex: 0,
+                        box2d: [5, 10, 15, 20],
+                    }],
+                });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(mockGemini.detectShelfItemsFromImage).toHaveBeenCalledTimes(2);
+            expect(mockGemini.detectShelfItemsFromImage).toHaveBeenNthCalledWith(
+                2,
+                'base64',
+                'other',
+                null,
+                null,
+                expect.objectContaining({
+                    pass: 'second',
+                    lowConfidenceItems: expect.arrayContaining([
+                        expect.objectContaining({ extractionIndex: 0, confidence: 0.55 }),
+                    ]),
+                    conversationHistory: priorConversationHistory,
+                }),
+            );
+            expect(service.saveManualToShelf).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        extractionIndex: 0,
+                        title: 'Weller Twelve',
+                        confidence: 0.94,
+                        box2d: [100, 200, 300, 400],
+                    }),
+                ]),
+                100,
+                9,
+                'other',
+                expect.any(Object),
+            );
+            expect(service.saveToReviewQueue).not.toHaveBeenCalled();
+            expect(result.results.needsReview).toBe(0);
+        });
+
+        it('ignores unmatched second-pass indexes and keeps first-pass low-confidence items in review', async () => {
+            service.saveManualToShelf = jest.fn().mockResolvedValue({
+                added: [],
+                matched: [],
+                skipped: [],
+                review: [],
+            });
+
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: [{ title: 'Weller Twlve', author: 'Buffalo Trace Distillery', confidence: 0.55, extractionIndex: 0 }],
+                })
+                .mockResolvedValueOnce({
+                    items: [{ title: 'Different Item', author: 'Other Maker', confidence: 0.95, extractionIndex: 99 }],
+                });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(mockGemini.detectShelfItemsFromImage).toHaveBeenCalledTimes(2);
+            expect(service.saveToReviewQueue).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({ extractionIndex: 0, confidence: 0.55 }),
+                ]),
+                100,
+                9,
+                expect.objectContaining({ reason: 'low_confidence' }),
+            );
+            expect(service.saveManualToShelf).toHaveBeenCalledWith(
+                [],
+                100,
+                9,
+                'other',
+                expect.any(Object),
+            );
+            expect(result.results.needsReview).toBe(1);
+        });
+
+        it('keeps first-pass confidence when second-pass confidence was not provided by model', async () => {
+            service.saveManualToShelf = jest.fn().mockResolvedValue({
+                added: [],
+                matched: [],
+                skipped: [],
+                review: [],
+            });
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: [{ title: 'Weller Twlve', author: 'Buffalo Trace Distillery', confidence: 0.55, extractionIndex: 0 }],
+                })
+                .mockResolvedValueOnce({
+                    items: [{
+                        title: 'Weller Twelve',
+                        author: 'Buffalo Trace Distillery',
+                        confidence: 0.7,
+                        confidenceProvided: false,
+                        extractionIndex: 0,
+                    }],
+                });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(service.saveToReviewQueue).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({ extractionIndex: 0, confidence: 0.55 }),
+                ]),
+                100,
+                9,
+                expect.objectContaining({ reason: 'low_confidence' }),
+            );
+            expect(service.saveManualToShelf).toHaveBeenCalledWith(
+                [],
+                100,
+                9,
+                'other',
+                expect.any(Object),
+            );
+            expect(result.results.needsReview).toBe(1);
         });
     });
 });

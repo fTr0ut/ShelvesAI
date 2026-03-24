@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { colors } from '../../../../shared/theme/tokens';
 
@@ -9,6 +9,7 @@ export default function CachedImage({
     contentFit = 'cover',
     placeholder,
     transition = 200,
+    onError,
     ...props
 }) {
     const [hasError, setHasError] = useState(false);
@@ -20,6 +21,26 @@ export default function CachedImage({
     const imageSource = typeof source === 'string'
         ? { uri: source }
         : source;
+
+    const sourceSignature = useMemo(() => {
+        if (!imageSource) return '';
+        try {
+            return JSON.stringify(imageSource);
+        } catch {
+            return String(imageSource?.uri || '');
+        }
+    }, [imageSource]);
+
+    useEffect(() => {
+        setHasError(false);
+    }, [sourceSignature]);
+
+    const handleError = useCallback((event) => {
+        setHasError(true);
+        if (typeof onError === 'function') {
+            onError(event);
+        }
+    }, [onError]);
 
     if (hasError) {
         return (
@@ -37,7 +58,7 @@ export default function CachedImage({
             placeholder={placeholder}
             transition={transition}
             cachePolicy="memory-disk"
-            onError={() => setHasError(true)}
+            onError={handleError}
             {...props}
         />
     );

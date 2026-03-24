@@ -24,6 +24,14 @@ const {
     OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
 } = require('./manuals/otherManual');
 const { HOOK_TYPES } = require('./visionPipelineHooks');
+const {
+    normalizeVisionDimension,
+    normalizeVisionBox2d,
+    isOutOfRangeBox2d,
+    toNumericBox2d,
+    normalizePixelPadding,
+    expandVisionBox2dByPixels,
+} = require('../utils/visionBox2d');
 
 // Catalog Services
 const { BookCatalogService } = require('./catalog/BookCatalogService');
@@ -68,6 +76,16 @@ const DEFAULT_CONFIDENCE_MAX = parseFloat(process.env.VISION_CONFIDENCE_MAX || '
 const DEFAULT_CONFIDENCE_MIN = parseFloat(process.env.VISION_CONFIDENCE_MIN || '0.85');
 const FEED_EVENT_ITEM_ID_CAP = parseInt(process.env.FEED_EVENT_ITEM_ID_CAP || '250', 10);
 const OTHER_SHELF_TYPE = 'other';
+const DEFAULT_VISION_BBOX_PADDING_X_PX = 48;
+const DEFAULT_VISION_BBOX_PADDING_Y_PX = 24;
+const VISION_BBOX_PADDING_X_PX = normalizePixelPadding(
+    process.env.VISION_BBOX_PADDING_X_PX,
+    DEFAULT_VISION_BBOX_PADDING_X_PX,
+);
+const VISION_BBOX_PADDING_Y_PX = normalizePixelPadding(
+    process.env.VISION_BBOX_PADDING_Y_PX,
+    DEFAULT_VISION_BBOX_PADDING_Y_PX,
+);
 
 function isOtherShelfType(value) {
     return String(value || '').toLowerCase() === OTHER_SHELF_TYPE;
@@ -114,15 +132,34 @@ function normalizeExtractionIndex(value) {
 }
 
 function hasValidBox2d(value) {
-    if (!Array.isArray(value) || value.length !== 4) return false;
-    if (!value.every((entry) => Number.isFinite(Number(entry)))) return false;
-    const [yMin, xMin, yMax, xMax] = value.map((entry) => Number(entry));
+    const numeric = toNumericBox2d(value);
+    if (!numeric) return false;
+    const [yMin, xMin, yMax, xMax] = numeric;
     return yMax > yMin && xMax > xMin;
 }
 
-function normalizeBox2d(value) {
-    if (!hasValidBox2d(value)) return null;
-    return value.map((entry) => Number(entry));
+function normalizeBox2d(value, options = {}) {
+    const imageWidth = options?.imageWidth ?? options?.width ?? null;
+    const imageHeight = options?.imageHeight ?? options?.height ?? null;
+    return normalizeVisionBox2d(value, { imageWidth, imageHeight });
+}
+
+function resolveScanDimensions(value) {
+    if (!value || typeof value !== 'object') return null;
+    const width = normalizeVisionDimension(value.width);
+    const height = normalizeVisionDimension(value.height);
+    if (!width || !height) return null;
+    return { width, height };
+}
+
+function pickPreferredBox2d(item) {
+    const parsedRaw = toNumericBox2d(item?.box_2d);
+    const parsedNormalized = toNumericBox2d(item?.box2d);
+
+    if (parsedRaw && isOutOfRangeBox2d(parsedRaw)) {
+        return parsedRaw;
+    }
+    return parsedNormalized || parsedRaw || null;
 }
 
 function normalizeSourceLinks(value) {
@@ -144,6 +181,14 @@ function normalizeSourceLinks(value) {
             return null;
         })
         .filter(Boolean);
+}
+
+function sanitizeSaveError(err) {
+    return {
+        code: normalizeString(err?.code) || null,
+        message: normalizeString(err?.message) || 'Unknown save error',
+        severity: normalizeString(err?.severity) || null,
+    };
 }
 
 function buildGenericManualPayload(item, shelfType, manualFingerprint) {
@@ -187,8 +232,100 @@ function pickCoverUrl(images, fallback) {
 function isMissingRelationError(err, tableName) {
     if (!err) return false;
     if (err.code === '42P01') return true;
+    if (err.code) return false;
     const message = String(err.message || err);
-    return tableName ? message.includes(tableName) : false;
+    if (!tableName) return false;
+    return (
+        message.includes(`relation "${tableName}" does not exist`)
+        || message.includes(`relation '${tableName}' does not exist`)
+    );
+}
+
+function isMissingColumnError(err, tableName, columnName) {
+    if (!err) return false;
+    if (err.code !== '42703') return false;
+    const message = String(err.message || err);
+    const hasTable = tableName ? message.includes(tableName) : true;
+    const hasColumn = columnName ? message.includes(columnName) : true;
+    return hasTable && hasColumn;
+}
+
+function mapEnrichedItemsToUnresolved(enrichedItems, unresolvedItems, unresolvedByIndex, unresolvedByTitle, rawOcrFingerprints) {
+    const mapped = [];
+    const seenSources = new Set();
+    const allowPositionalFallback = enrichedItems.length <= unresolvedItems.length;
+    let droppedCount = 0;
+
+    for (let index = 0; index < enrichedItems.length; index++) {
+        const enrichedItem = enrichedItems[index];
+        const enrichedIndex = normalizeExtractionIndex(enrichedItem?.extractionIndex);
+        const originalTitle = enrichedItem?._originalTitle || enrichedItem?.title || enrichedItem?.name || '';
+        const titleKey = normalizeString(originalTitle).toLowerCase();
+
+        let sourceItem = null;
+        if (enrichedIndex != null) {
+            sourceItem = unresolvedByIndex.get(enrichedIndex) || null;
+        }
+        if (!sourceItem && titleKey) {
+            sourceItem = unresolvedByTitle.get(titleKey) || null;
+        }
+        if (!sourceItem && allowPositionalFallback) {
+            sourceItem = unresolvedItems[index] || null;
+        }
+        if (!sourceItem && unresolvedItems.length === 1 && mapped.length === 0 && enrichedIndex == null) {
+            sourceItem = unresolvedItems[0];
+        }
+        if (!sourceItem) {
+            droppedCount += 1;
+            continue;
+        }
+
+        const sourceIndex = normalizeExtractionIndex(sourceItem?.extractionIndex);
+        const sourceTitle = sourceItem?.title || sourceItem?.name || '';
+        const sourceTitleKey = normalizeString(sourceTitle).toLowerCase();
+        const sourceKey = sourceIndex != null
+            ? `idx:${sourceIndex}`
+            : `title:${sourceTitleKey}`;
+        if (seenSources.has(sourceKey)) {
+            droppedCount += 1;
+            continue;
+        }
+        seenSources.add(sourceKey);
+
+        const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
+        const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
+        const merged = {
+            ...enrichedItem,
+            extractionIndex: enrichedIndex ?? sourceIndex,
+            box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
+        };
+        const rawFp = rawOcrFingerprints.get(sourceTitle);
+        mapped.push(rawFp ? { ...merged, rawOcrFingerprint: rawFp } : merged);
+    }
+
+    return { mapped, droppedCount };
+}
+
+function dedupeByExtractionIndex(items) {
+    const deduped = [];
+    const seen = new Set();
+    let droppedCount = 0;
+
+    for (const item of items) {
+        const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+        if (extractionIndex == null) {
+            deduped.push(item);
+            continue;
+        }
+        if (seen.has(extractionIndex)) {
+            droppedCount += 1;
+            continue;
+        }
+        seen.add(extractionIndex);
+        deduped.push(item);
+    }
+
+    return { deduped, droppedCount };
 }
 
 class VisionPipelineService {
@@ -199,6 +336,7 @@ class VisionPipelineService {
         this.geminiService = options.geminiService || new GoogleGeminiService();
         // this.visionService = new GoogleCloudVisionService();
         this.reviewQueueAvailable = true;
+        this.collectionItemRegionLinkAvailable = true;
         this.hooks = options.hooks || null;
 
         // Initialize catalogs
@@ -259,6 +397,7 @@ class VisionPipelineService {
         const scanPhotoId = Number.isInteger(resolvedOptions.scanPhotoId)
             ? resolvedOptions.scanPhotoId
             : null;
+        const scanPhotoDimensions = resolveScanDimensions(resolvedOptions.scanPhotoDimensions);
 
         // Helper to update progress if jobId is provided (uses config for messaging)
         const updateProgress = (key, vars = {}) => {
@@ -294,6 +433,7 @@ class VisionPipelineService {
             thresholds: { max: confidenceMax, min: confidenceMin },
             ocrProvider,
             scanPhotoId,
+            scanPhotoDimensions,
         };
 
         // Step 1: Extract items from image
@@ -323,25 +463,31 @@ class VisionPipelineService {
             },
         });
         const isOtherShelf = isOtherShelfType(shelf.type);
-        const normalizedItems = (isOtherShelf
+        let normalizedItems = (isOtherShelf
             ? rawItems.map(item => normalizeOtherManualItem(item, shelf.type))
             : rawItems
         ).map((item, index) => ({
             ...item,
             extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
-            box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
+            box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
         }));
         const extractedCount = normalizedItems.length;
 
-        if (scanPhotoId && normalizedItems.length > 0) {
-            await this.persistVisionRegions(normalizedItems, userId, shelf.id, scanPhotoId);
+        if (scanPhotoId) {
+            await this.persistVisionRegions(
+                normalizedItems,
+                userId,
+                shelf.id,
+                scanPhotoId,
+                scanPhotoDimensions || null,
+            );
         }
 
         // Step 1b: Categorize into three tiers using per-type thresholds
         checkAborted();
         updateProgress('categorizing', { count: normalizedItems.length });
         logger.info('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
-        const { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
+        let { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
             normalizedItems,
             confidenceMax,
             confidenceMin,
@@ -353,8 +499,104 @@ class VisionPipelineService {
             lowConfidence,
         });
 
-        // Low confidence items go directly to needs_review
-        if (lowConfidence.length > 0) {
+        const canRunOtherSecondPass = isOtherShelf
+            && !providedRawItems
+            && this.ocrEnabled
+            && !!imageBase64
+            && lowConfidence.length > 0;
+
+        if (canRunOtherSecondPass) {
+            checkAborted();
+            updateProgress('extracting');
+            logger.info('[VisionPipeline] Step 1c: Running other-shelf low-confidence second pass...', {
+                firstPassLowConfidence: lowConfidence.length,
+            });
+
+            const secondPassResult = await this.extractItems(
+                imageBase64,
+                shelf.type,
+                shelf.description,
+                shelf.name,
+                {
+                    pass: 'second',
+                    lowConfidenceItems: lowConfidence,
+                    conversationHistory,
+                },
+            );
+            conversationHistory = secondPassResult.conversationHistory || conversationHistory;
+            if (secondPassResult.warning) warnings.push(secondPassResult.warning);
+
+            const secondPassItems = (secondPassResult.items || []).map((item, index) => ({
+                ...normalizeOtherManualItem(item, shelf.type),
+                extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
+                box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
+            }));
+
+            const lowConfidenceIndexes = new Set(
+                lowConfidence
+                    .map((item) => normalizeExtractionIndex(item?.extractionIndex))
+                    .filter((value) => value != null),
+            );
+            const secondPassByIndex = new Map(
+                secondPassItems
+                    .map((item) => [normalizeExtractionIndex(item?.extractionIndex), item])
+                    .filter(([value]) => value != null),
+            );
+
+            let replacementCount = 0;
+            normalizedItems = normalizedItems.map((item) => {
+                const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+                if (extractionIndex == null || !lowConfidenceIndexes.has(extractionIndex)) return item;
+                const replacement = secondPassByIndex.get(extractionIndex);
+                if (!replacement) return item;
+                replacementCount += 1;
+                const replacementConfidenceProvided = replacement?.confidenceProvided !== false;
+                return {
+                    ...item,
+                    ...replacement,
+                    extractionIndex,
+                    confidence: replacementConfidenceProvided
+                        ? replacement.confidence
+                        : item.confidence,
+                    // Keep first-pass regions stable for crop linkage; second pass is metadata-focused.
+                    box2d: item.box2d ?? replacement.box2d ?? null,
+                };
+            });
+
+            logger.info('[VisionPipeline] Other-shelf second pass merge complete', {
+                firstPassLowConfidence: lowConfidence.length,
+                secondPassItems: secondPassItems.length,
+                replacedItems: replacementCount,
+            });
+
+            ({ highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
+                normalizedItems,
+                confidenceMax,
+                confidenceMin,
+            ));
+
+            await this.executeHook(HOOK_TYPES.AFTER_CONFIDENCE_CATEGORIZATION, {
+                ...baseHookContext,
+                highConfidence,
+                mediumConfidence,
+                lowConfidence,
+                metadata: { pass: 'second' },
+            });
+
+            if (scanPhotoId && replacementCount > 0) {
+                await this.persistVisionRegions(
+                    normalizedItems,
+                    userId,
+                    shelf.id,
+                    scanPhotoId,
+                    scanPhotoDimensions || null,
+                );
+            }
+        }
+
+        // Low confidence items go directly to needs_review.
+        // For "other", this runs after the optional second pass recategorization.
+        if (!isOtherShelf && lowConfidence.length > 0) {
             logger.info('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
             await this.saveToReviewQueue(lowConfidence, userId, shelf.id, {
                 ...baseHookContext,
@@ -363,13 +605,21 @@ class VisionPipelineService {
         }
 
         if (isOtherShelf) {
+            if (lowConfidence.length > 0) {
+                logger.info('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
+                await this.saveToReviewQueue(lowConfidence, userId, shelf.id, {
+                    ...baseHookContext,
+                    reason: 'low_confidence',
+                });
+            }
+
             checkAborted();
             updateProgress('matching', { count: highConfidence.length });
             const candidates = [...highConfidence, ...mediumConfidence]
                 .map((item) => ({
                     ...normalizeOtherManualItem(item, shelf.type),
                     extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
-                    box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
+                    box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
                 }))
                 .map((item) => ({
                     ...item,
@@ -561,6 +811,13 @@ class VisionPipelineService {
         if (catalogResults.unresolved.length > 0) {
             if (this.enrichmentEnabled) {
                 logger.info('[VisionPipeline] Step 4a: Standard enrichment for', catalogResults.unresolved.length, 'unresolved high-confidence items...');
+                logger.info('[VisionPipeline] Enrichment stage request', {
+                    stage: 'enrichment',
+                    tier: 'high',
+                    mode: Array.isArray(conversationHistory) && conversationHistory.length > 0
+                        ? 'chat_continuation'
+                        : 'standalone',
+                });
 
                 const rawOcrFingerprints = new Map();
                 const unresolvedByTitle = new Map();
@@ -590,27 +847,21 @@ class VisionPipelineService {
                 if (enrichResult.warning) {
                     warnings.push(enrichResult.warning);
                 }
-                enrichedHighConf = enrichedArray.map((enrichedItem, index) => {
-                    const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
-                    const rawFp = rawOcrFingerprints.get(originalTitle);
-                    const titleKey = normalizeString(originalTitle).toLowerCase();
-                    const sourceItem = unresolvedByIndex.get(normalizeExtractionIndex(enrichedItem?.extractionIndex))
-                        || unresolvedByTitle.get(titleKey)
-                        || catalogResults.unresolved[index]
-                        || null;
-                    const inheritedExtractionIndex = normalizeExtractionIndex(sourceItem?.extractionIndex);
-                    const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
-                    const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
-                    const merged = {
-                        ...enrichedItem,
-                        extractionIndex: normalizeExtractionIndex(enrichedItem?.extractionIndex) ?? inheritedExtractionIndex,
-                        box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
-                    };
-                    if (rawFp) {
-                        return { ...merged, rawOcrFingerprint: rawFp };
-                    }
-                    return merged;
-                });
+                const mappedHigh = mapEnrichedItemsToUnresolved(
+                    enrichedArray,
+                    catalogResults.unresolved,
+                    unresolvedByIndex,
+                    unresolvedByTitle,
+                    rawOcrFingerprints,
+                );
+                enrichedHighConf = mappedHigh.mapped;
+                if (mappedHigh.droppedCount > 0) {
+                    logger.warn('[VisionPipeline] Step 4a dropped enrichment items that did not map to unresolved high-confidence entries', {
+                        droppedCount: mappedHigh.droppedCount,
+                        unresolvedCount: catalogResults.unresolved.length,
+                        enrichedCount: enrichedArray.length,
+                    });
+                }
 
                 logger.info('[VisionPipeline] Step 4a Complete: Enriched', enrichedHighConf.length, 'high-confidence items');
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
@@ -693,6 +944,13 @@ class VisionPipelineService {
             if (this.enrichmentEnabled) {
                 updateProgress('enriching', { count: mediumCatalogResults.unresolved.length });
                 logger.info('[VisionPipeline] Step 4d: Enrichment for', mediumCatalogResults.unresolved.length, 'unresolved medium-confidence items...');
+                logger.info('[VisionPipeline] Enrichment stage request', {
+                    stage: 'enrichment',
+                    tier: 'medium',
+                    mode: Array.isArray(conversationHistory) && conversationHistory.length > 0
+                        ? 'chat_continuation'
+                        : 'standalone',
+                });
 
                 const rawOcrFingerprints = new Map();
                 const unresolvedByTitle = new Map();
@@ -725,27 +983,21 @@ class VisionPipelineService {
                 if (enrichResult.warning) {
                     warnings.push(enrichResult.warning);
                 }
-                enrichedMediumConf = enrichedArray.map((enrichedItem, index) => {
-                    const originalTitle = enrichedItem._originalTitle || enrichedItem.title || enrichedItem.name;
-                    const rawFp = rawOcrFingerprints.get(originalTitle);
-                    const titleKey = normalizeString(originalTitle).toLowerCase();
-                    const sourceItem = unresolvedByIndex.get(normalizeExtractionIndex(enrichedItem?.extractionIndex))
-                        || unresolvedByTitle.get(titleKey)
-                        || mediumCatalogResults.unresolved[index]
-                        || null;
-                    const inheritedExtractionIndex = normalizeExtractionIndex(sourceItem?.extractionIndex);
-                    const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
-                    const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
-                    const merged = {
-                        ...enrichedItem,
-                        extractionIndex: normalizeExtractionIndex(enrichedItem?.extractionIndex) ?? inheritedExtractionIndex,
-                        box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
-                    };
-                    if (rawFp) {
-                        return { ...merged, rawOcrFingerprint: rawFp };
-                    }
-                    return merged;
-                });
+                const mappedMedium = mapEnrichedItemsToUnresolved(
+                    enrichedArray,
+                    mediumCatalogResults.unresolved,
+                    unresolvedByIndex,
+                    unresolvedByTitle,
+                    rawOcrFingerprints,
+                );
+                enrichedMediumConf = mappedMedium.mapped;
+                if (mappedMedium.droppedCount > 0) {
+                    logger.warn('[VisionPipeline] Step 4d dropped enrichment items that did not map to unresolved medium-confidence entries', {
+                        droppedCount: mappedMedium.droppedCount,
+                        unresolvedCount: mediumCatalogResults.unresolved.length,
+                        enrichedCount: enrichedArray.length,
+                    });
+                }
 
                 logger.info('[VisionPipeline] Step 4d Complete: Enriched', enrichedMediumConf.length, 'medium-confidence items');
                 await this.executeHook(HOOK_TYPES.AFTER_GEMINI_ENRICHMENT, {
@@ -778,27 +1030,33 @@ class VisionPipelineService {
         } = this.categorizeByConfidence(enrichedMediumConf, confidenceMax, confidenceMin);
 
         // Medium+ enriched items can be saved as collectables
-        const mediumItemsToSave = [...mediumCatalogResults.resolved, ...enrichedMediumToSave, ...enrichedMediumMid];
+        const mediumItemsToSaveRaw = [...mediumCatalogResults.resolved, ...enrichedMediumToSave, ...enrichedMediumMid];
+        const mediumItemsToSaveResult = dedupeByExtractionIndex(mediumItemsToSaveRaw);
+        const mediumItemsToSave = mediumItemsToSaveResult.deduped;
         // Low confidence enriched items and unresolved items go to manual
         const mediumItemsToManual = [...enrichedMediumToManual, ...unresolvedMediumForManual];
 
         logger.info('[VisionPipeline] Step 4d: Medium-conf items split:', {
             toSaveAsCollectable: mediumItemsToSave.length,
-            toSaveAsManual: mediumItemsToManual.length
+            toSaveAsManual: mediumItemsToManual.length,
+            dedupedSaveEntries: mediumItemsToSaveResult.droppedCount,
         });
 
         // Save resolved medium-confidence items as collectables
         let mediumAddedCollectables = [];
+        let mediumSaveFailures = [];
         if (mediumItemsToSave.length > 0) {
             checkAborted();
             updateProgress('saving', { count: mediumItemsToSave.length });
-            mediumAddedCollectables = await this.saveToShelf(
+            const mediumSaveResult = await this.saveToShelf(
                 mediumItemsToSave,
                 userId,
                 shelf.id,
                 shelf.type,
                 { ...baseHookContext, tier: 'medium' },
             );
+            mediumAddedCollectables = mediumSaveResult.added || [];
+            mediumSaveFailures = mediumSaveResult.failed || [];
             logger.info('[VisionPipeline] Saved', mediumAddedCollectables.length, 'medium-confidence items as collectables');
         }
 
@@ -876,23 +1134,35 @@ class VisionPipelineService {
         });
 
         // Combine all items to save: DB matches + catalog matches + enriched items meeting threshold
-        const collectableResolvedItems = [
+        const collectableResolvedItemsRaw = [
             ...matched.map(m => ({ ...m, confidence: 1.0 })),
             ...catalogResults.resolved,
             ...itemsToSave
         ];
+        const collectableResolvedItemsResult = dedupeByExtractionIndex(collectableResolvedItemsRaw);
+        const collectableResolvedItems = collectableResolvedItemsResult.deduped;
         logger.info('[VisionPipeline] Step 5: Saving', collectableResolvedItems.length, 'resolved items to shelf...');
+        if (collectableResolvedItemsResult.droppedCount > 0) {
+            logger.warn('[VisionPipeline] Step 5 dropped duplicate resolved entries by extractionIndex', {
+                droppedCount: collectableResolvedItemsResult.droppedCount,
+            });
+        }
         checkAborted();
         updateProgress('saving', { count: collectableResolvedItems.length });
-        const addedCollectables = await this.saveToShelf(
+        const collectableSaveResult = await this.saveToShelf(
             collectableResolvedItems,
             userId,
             shelf.id,
             shelf.type,
             baseHookContext,
         );
+        const addedCollectables = collectableSaveResult.added || [];
+        const saveFailedItems = [...mediumSaveFailures, ...(collectableSaveResult.failed || [])];
         const addedItems = [...addedCollectables, ...mediumAddedCollectables, ...manualAdded];
-        logger.info('[VisionPipeline] Step 5 Complete: Added', addedItems.length, 'items to shelf');
+        logger.info('[VisionPipeline] Step 5 Complete: Save summary', {
+            added: addedItems.length,
+            failedToReview: saveFailedItems.length,
+        });
 
         if (addedItems.length > 0) {
             const previewLimit = parseInt(process.env.FEED_AGGREGATE_PREVIEW_LIMIT || '5', 10);
@@ -926,7 +1196,7 @@ class VisionPipelineService {
             }
         }
 
-        const reviewQueueItems = [...lowConfidence, ...manualSkipped, ...itemsToReview, ...unresolvedHighForReview];
+        const reviewQueueItems = [...lowConfidence, ...manualSkipped, ...itemsToReview, ...unresolvedHighForReview, ...saveFailedItems];
 
         // Send enriched items that didn't meet threshold to review queue
         if (itemsToReview.length > 0) {
@@ -952,6 +1222,7 @@ class VisionPipelineService {
             added: addedItems.length,
             existing: existingItemsCount,
             needsReview: totalNeedsReview,
+            saveFailedToReview: saveFailedItems.length,
         });
 
         return {
@@ -968,19 +1239,62 @@ class VisionPipelineService {
         };
     }
 
-    async persistVisionRegions(items, userId, shelfId, scanPhotoId) {
-        if (!scanPhotoId || !Array.isArray(items) || items.length === 0) return;
+    async persistVisionRegions(items, userId, shelfId, scanPhotoId, scanPhotoDimensions = null) {
+        if (!scanPhotoId || !Array.isArray(items)) return;
+        const resolvedDimensions = resolveScanDimensions(scanPhotoDimensions);
+        let repairedBoxes = 0;
+        let rejectedBoxes = 0;
+        let paddedBoxes = 0;
         const regions = items
-            .map((item) => ({
-                extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
-                title: item?.title || item?.name || null,
-                primaryCreator: item?.primaryCreator || item?.author || item?.creator || null,
-                box2d: normalizeBox2d(item?.box2d ?? item?.box_2d),
-                confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : null,
-            }))
+            .map((item) => {
+                const preferredBox2d = pickPreferredBox2d(item);
+                const normalizedBox2d = normalizeBox2d(preferredBox2d, resolvedDimensions || {});
+                if (normalizedBox2d && resolvedDimensions && isOutOfRangeBox2d(preferredBox2d)) {
+                    repairedBoxes += 1;
+                }
+                let box2d = normalizedBox2d;
+                if (box2d && resolvedDimensions) {
+                    const padded = expandVisionBox2dByPixels(box2d, {
+                        imageWidth: resolvedDimensions.width,
+                        imageHeight: resolvedDimensions.height,
+                        paddingXPx: VISION_BBOX_PADDING_X_PX,
+                        paddingYPx: VISION_BBOX_PADDING_Y_PX,
+                    });
+                    if (padded) {
+                        const changed = padded.some((value, index) => value !== box2d[index]);
+                        if (changed) paddedBoxes += 1;
+                        box2d = padded;
+                    }
+                }
+                if (!box2d) {
+                    rejectedBoxes += 1;
+                }
+                return {
+                    extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
+                    title: item?.title || item?.name || null,
+                    primaryCreator: item?.primaryCreator || item?.author || item?.creator || null,
+                    box2d,
+                    confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : null,
+                };
+            })
             .filter((item) => item.extractionIndex != null && hasValidBox2d(item.box2d));
 
-        if (!regions.length) return;
+        if (repairedBoxes > 0 || rejectedBoxes > 0 || paddedBoxes > 0) {
+            logger.info('[VisionPipeline.persistVisionRegions] BBox normalization summary', {
+                shelfId,
+                scanPhotoId,
+                repaired: repairedBoxes,
+                padded: paddedBoxes,
+                rejected: rejectedBoxes,
+                inputCount: items.length,
+                persistedCount: regions.length,
+                usedScanDimensions: !!resolvedDimensions,
+                paddingPx: {
+                    x: VISION_BBOX_PADDING_X_PX,
+                    y: VISION_BBOX_PADDING_Y_PX,
+                },
+            });
+        }
 
         try {
             await visionItemRegionsQueries.upsertRegionsForScan({
@@ -988,6 +1302,7 @@ class VisionPipelineService {
                 shelfId,
                 scanPhotoId,
                 regions,
+                replaceExisting: true,
             });
         } catch (err) {
             if (isMissingRelationError(err, 'vision_item_regions')) {
@@ -1038,13 +1353,47 @@ class VisionPipelineService {
         }
     }
 
-    async extractItems(imageBase64, shelfType, shelfDescription = null, shelfName = null) {
+    async linkRegionToCollectionItem(item, collectionItemId, hookContext = {}) {
+        if (!this.collectionItemRegionLinkAvailable) return;
+        const scanPhotoId = hookContext?.scanPhotoId;
+        const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+        if (!scanPhotoId || extractionIndex == null || !collectionItemId) return;
+
+        try {
+            await visionItemRegionsQueries.linkCollectionItem({
+                scanPhotoId,
+                extractionIndex,
+                collectionItemId,
+            });
+        } catch (err) {
+            if (isMissingRelationError(err, 'vision_item_regions')) {
+                this.collectionItemRegionLinkAvailable = false;
+                logger.warn('[VisionPipeline] vision_item_regions table missing; skipping collection item region link.');
+                return;
+            }
+            if (isMissingColumnError(err, 'vision_item_regions', 'collection_item_id')) {
+                this.collectionItemRegionLinkAvailable = false;
+                logger.warn('[VisionPipeline] vision_item_regions.collection_item_id missing; skipping collection item region link.');
+                return;
+            }
+            throw err;
+        }
+    }
+
+    async extractItems(imageBase64, shelfType, shelfDescription = null, shelfName = null, options = null) {
+        const pass = options?.pass === 'second' ? 'second' : 'first';
+        logger.info('[VisionPipeline] OCR extraction stage request', {
+            stage: 'ocr_extraction',
+            shelfType,
+            pass,
+        });
         // Gemini Vision Detect (Cloud Vision temporarily disabled)
         const detectionResult = await this.geminiService.detectShelfItemsFromImage(
             imageBase64,
             shelfType,
             shelfDescription,
             shelfName,
+            options,
         );
         return {
             items: detectionResult.items || [],
@@ -1368,6 +1717,7 @@ class VisionPipelineService {
     async saveToShelf(items, userId, shelfId, shelfType, hookContext = {}) {
         logger.info('[VisionPipeline.saveToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
+        const failed = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             logger.info(`[VisionPipeline.saveToShelf] Item ${i + 1}/${items.length}:`, item.title || item.name);
@@ -1511,6 +1861,7 @@ class VisionPipelineService {
                         collectable,
                     });
                     await this.linkRegionToCollectable(item, collectable.id, hookContext);
+                    await this.linkRegionToCollectionItem(item, savedShelfItem?.id, hookContext);
 
                     added.push({
                         ...item,
@@ -1548,6 +1899,7 @@ class VisionPipelineService {
                     collectable,
                 });
                 await this.linkRegionToCollectable(item, collectable.id, hookContext);
+                await this.linkRegionToCollectionItem(item, shelfItem?.id, hookContext);
 
                 added.push({
                     ...item,
@@ -1561,11 +1913,32 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
             } catch (err) {
                 logger.error(`Failed to save item ${item.title}:`, err);
-                // Fail safe: maybe add to review queue instead?
-                // For now, just skip
+                failed.push({
+                    ...item,
+                    reviewReason: 'save_error',
+                    _saveError: sanitizeSaveError(err),
+                });
             }
         }
-        return added;
+        if (failed.length > 0) {
+            logger.info('[VisionPipeline.saveToShelf] Routing failed saves to review queue', {
+                failedCount: failed.length,
+                shelfId,
+                shelfType,
+            });
+            try {
+                await this.saveToReviewQueue(failed, userId, shelfId, {
+                    ...hookContext,
+                    reason: 'save_error',
+                });
+            } catch (reviewErr) {
+                logger.error('[VisionPipeline.saveToShelf] Failed to route save errors to review queue', {
+                    failedCount: failed.length,
+                    error: reviewErr?.message || String(reviewErr),
+                });
+            }
+        }
+        return { added, failed };
     }
 
     async resolveOtherManualMatch(item, userId, shelfId, manualFingerprint) {
@@ -1728,6 +2101,7 @@ class VisionPipelineService {
                         shelfId,
                     });
                     await this.linkRegionToManual(item, matchedManual.id, hookContext);
+                    await this.linkRegionToCollectionItem(item, existingCollection.id, hookContext);
                     matched.push({
                         ...item,
                         itemId: existingCollection.id,
@@ -1763,6 +2137,7 @@ class VisionPipelineService {
                     manual: matchedManual,
                 });
                 await this.linkRegionToManual(item, matchedManual.id, hookContext);
+                await this.linkRegionToCollectionItem(item, collection.id, hookContext);
                 added.push({
                     ...item,
                     itemId: collection.id,
@@ -1801,6 +2176,7 @@ class VisionPipelineService {
                 manual: result.manual,
             });
             await this.linkRegionToManual(item, result.manual.id, hookContext);
+            await this.linkRegionToCollectionItem(item, result.collection.id, hookContext);
 
             added.push({
                 ...item,

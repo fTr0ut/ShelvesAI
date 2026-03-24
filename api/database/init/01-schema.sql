@@ -375,6 +375,7 @@ CREATE TABLE vision_item_regions (
     confidence DECIMAL(4,3),
     collectable_id INTEGER REFERENCES collectables(id) ON DELETE SET NULL,
     manual_id INTEGER REFERENCES user_manuals(id) ON DELETE SET NULL,
+    collection_item_id INTEGER REFERENCES user_collections(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(scan_photo_id, extraction_index)
 );
@@ -382,6 +383,7 @@ CREATE TABLE vision_item_regions (
 CREATE INDEX idx_vision_item_regions_scan ON vision_item_regions(scan_photo_id);
 CREATE INDEX idx_vision_item_regions_collectable ON vision_item_regions(collectable_id);
 CREATE INDEX idx_vision_item_regions_manual ON vision_item_regions(manual_id);
+CREATE INDEX idx_vision_item_regions_collection_item ON vision_item_regions(collection_item_id);
 CREATE INDEX idx_vision_item_regions_user_shelf ON vision_item_regions(user_id, shelf_id);
 
 -- ============================================

@@ -1,6 +1,8 @@
 const sharp = require('sharp');
 const {
   normalizeThumbnailBox,
+  getDefaultVisionCropThumbnailBox,
+  resolveThumbnailBoxForOwnerPhoto,
   computeThumbnailRect,
   renderOwnerPhotoThumbnail,
   THUMB_TARGET_WIDTH,
@@ -45,6 +47,40 @@ describe('ownerPhotoThumbnail service', () => {
       });
       const ratio = result.rect.width / result.rect.height;
       expect(ratio).toBeCloseTo(3 / 4, 2);
+    });
+  });
+
+  describe('resolveThumbnailBoxForOwnerPhoto', () => {
+    it('uses centered two-thirds box for vision-crop thumbnails when no box is provided', () => {
+      const box = resolveThumbnailBoxForOwnerPhoto({
+        ownerPhotoSource: 'vision_crop',
+        box: null,
+      });
+
+      expect(box).toEqual(getDefaultVisionCropThumbnailBox());
+    });
+
+    it('keeps upload thumbnails full-frame by default when no box is provided', () => {
+      const box = resolveThumbnailBoxForOwnerPhoto({
+        ownerPhotoSource: 'upload',
+        box: null,
+      });
+
+      expect(box).toBeNull();
+    });
+
+    it('preserves explicit thumbnail boxes', () => {
+      const box = resolveThumbnailBoxForOwnerPhoto({
+        ownerPhotoSource: 'vision_crop',
+        box: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+      });
+
+      expect(box).toEqual({
+        x: 0.1,
+        y: 0.2,
+        width: 0.5,
+        height: 0.6,
+      });
     });
   });
 
