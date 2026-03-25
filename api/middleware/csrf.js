@@ -26,10 +26,12 @@ function requireAdminCsrf(req, res, next) {
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }
 
-  // Rotate CSRF token after each state-changing request
+  // Rotate CSRF token after each state-changing request.
+  // Path must be '/' so the SPA can read it via document.cookie.
   const newCsrf = createCsrfToken();
   res.cookie(ADMIN_CSRF_COOKIE, newCsrf, {
     ...getAdminCookieBaseOptions(),
+    path: '/',
     httpOnly: false,
   });
   res.set('x-csrf-token', newCsrf);

@@ -5,13 +5,11 @@
 
 const favoritesQueries = require('../database/queries/favorites');
 const collectablesQueries = require('../database/queries/collectables');
-const feedQueries = require('../database/queries/feed');
 const usersQueries = require('../database/queries/users');
 const friendshipsQueries = require('../database/queries/friendships');
 const shelvesQueries = require('../database/queries/shelves');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { sendError, logError } = require('../utils/errorHandler');
-const logger = require('../logger');
 
 function hydrateFavoriteMedia(favorite) {
     if (!favorite || typeof favorite !== 'object') return favorite;
@@ -54,8 +52,6 @@ async function addFavorite(req, res) {
         }
 
         let favorite;
-        let logPayload = {};
-
         if (collectableId) {
             // Verify collectable exists
             const collectable = await collectablesQueries.findById(parseInt(collectableId));
@@ -63,14 +59,6 @@ async function addFavorite(req, res) {
                 return res.status(404).json({ error: 'Collectable not found' });
             }
             favorite = await favoritesQueries.addFavorite(req.user.id, parseInt(collectableId), null);
-
-            logPayload = {
-                collectableId: collectable.id,
-                title: collectable.title,
-                primaryCreator: collectable.primaryCreator,
-                coverUrl: collectable.coverUrl || '',
-                type: collectable.kind,
-            };
         } else if (manualId) {
             // Verify manual item exists
             const manual = await shelvesQueries.getManualById(parseInt(manualId));
@@ -78,26 +66,6 @@ async function addFavorite(req, res) {
                 return res.status(404).json({ error: 'Manual item not found' });
             }
             favorite = await favoritesQueries.addFavorite(req.user.id, null, parseInt(manualId));
-
-            logPayload = {
-                manualId: manual.id,
-                title: manual.name, // Manual items have 'name'
-                primaryCreator: manual.author,
-                type: 'manual',
-                // coverUrl might be tricky if not resolved, skipping for now or assuming frontend handles
-            };
-        }
-
-        // Log feed event (non-blocking).
-        try {
-            await feedQueries.logEvent({
-                userId: req.user.id,
-                shelfId: null, // Favorites aren't shelf-specific
-                eventType: 'item.favorited',
-                payload: logPayload,
-            });
-        } catch (e) {
-            logger.warn('Failed to log favorite event:', e.message);
         }
 
         res.status(201).json({

@@ -28,8 +28,11 @@ function setAdminAuthCookies(res, token, csrfToken = createCsrfToken()) {
     httpOnly: true,
   });
 
+  // CSRF cookie needs path '/' so the SPA (served at /) can read it via document.cookie.
+  // The auth cookie keeps the restricted /api/admin path since it's httpOnly.
   res.cookie(ADMIN_CSRF_COOKIE, csrfToken, {
     ...baseOptions,
+    path: '/',
     httpOnly: false,
   });
 
@@ -45,7 +48,7 @@ function clearAdminAuthCookies(res) {
     httpOnly: true,
   });
   res.clearCookie(ADMIN_CSRF_COOKIE, {
-    path: baseOptions.path,
+    path: '/',
     sameSite: baseOptions.sameSite,
     secure: baseOptions.secure,
     httpOnly: false,
