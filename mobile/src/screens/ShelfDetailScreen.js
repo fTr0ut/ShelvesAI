@@ -4,6 +4,7 @@ import {
     Alert,
     FlatList,
     Image,
+    InteractionManager,
     Modal,
     RefreshControl,
     StyleSheet,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { AuthContext } from '../context/AuthContext';
@@ -25,6 +27,7 @@ import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
 import { useVisionProcessing } from '../hooks/useVisionProcessing';
+import { normalizeSearchText } from '../utils/searchNormalization';
 
 const CAMERA_QUALITY = 0.6;
 const SUPPORTED_VISION_MIME_TYPES = new Set([
@@ -161,6 +164,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const autoAddHandledRef = useRef(false);
     const isMountedRef = useRef(true);
     const loadingMoreRef = useRef(false);
+    const hasLoadedShelfRef = useRef(false);
+    const shelfLoadInFlightRef = useRef(false);
 
     // Pagination state
     const [hasMore, setHasMore] = useState(false);
@@ -183,6 +188,19 @@ export default function ShelfDetailScreen({ route, navigation }) {
     }, []);
 
     useEffect(() => {
+        hasLoadedShelfRef.current = false;
+        shelfLoadInFlightRef.current = false;
+        setShelf(null);
+        setItems([]);
+        setFavorites({});
+        setHasMore(false);
+        setTotalItems(0);
+        setOwnerPhotoSourceFailures({});
+        setLoading(true);
+        setRefreshing(false);
+    }, [id]);
+
+    useEffect(() => {
         let isActive = true;
         if (!token) {
             setImageAuthToken(null);
@@ -198,9 +216,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return () => { isActive = false; };
     }, [token]);
 
-    const loadShelf = useCallback(async () => {
+    const loadShelf = useCallback(async (options = {}) => {
+        const { showBlockingLoader = false } = options;
+        if (shelfLoadInFlightRef.current) return;
+        shelfLoadInFlightRef.current = true;
         try {
-            if (!refreshing && isMountedRef.current) setLoading(true);
+            if (showBlockingLoader && isMountedRef.current) setLoading(true);
             const resolvedImageToken = token ? await getValidToken(token) : null;
             if (isMountedRef.current) {
                 setImageAuthToken(resolvedImageToken || token || null);
@@ -243,15 +264,17 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     console.warn('Failed to load favorites:', e);
                 }
             }
+            hasLoadedShelfRef.current = true;
         } catch (e) {
             console.warn('Failed to load shelf:', e);
         } finally {
+            shelfLoadInFlightRef.current = false;
             if (isMountedRef.current) {
                 setLoading(false);
                 setRefreshing(false);
             }
         }
-    }, [apiBase, id, token, refreshing]);
+    }, [apiBase, id, token]);
 
     const loadMore = useCallback(async () => {
         if (loadingMoreRef.current || !hasMore) return;
@@ -282,16 +305,25 @@ export default function ShelfDetailScreen({ route, navigation }) {
         }
     }, [apiBase, id, token, items.length, hasMore]);
 
-    useEffect(() => { loadShelf(); }, [loadShelf]);
-
     useEffect(() => {
-        const unsubscribe = navigation.addListener('focus', loadShelf);
-        return unsubscribe;
-    }, [navigation, loadShelf]);
+        loadShelf({ showBlockingLoader: true });
+    }, [loadShelf]);
+
+    useFocusEffect(
+        useCallback(() => {
+            if (!hasLoadedShelfRef.current) return undefined;
+            const refreshTask = InteractionManager.runAfterInteractions(() => {
+                loadShelf({ showBlockingLoader: false });
+            });
+            return () => {
+                if (refreshTask?.cancel) refreshTask.cancel();
+            };
+        }, [loadShelf]),
+    );
 
     const onRefresh = () => {
         setRefreshing(true);
-        loadShelf();
+        loadShelf({ showBlockingLoader: false });
     };
 
     const handleDeleteItem = useCallback(async (itemId) => {
@@ -384,11 +416,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
 
     const visibleItems = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
+        const query = normalizeSearchText(searchQuery);
         const base = query
             ? items.filter(item => {
                 const title = item.collectable?.title || item.manual?.title || item.title || '';
-                return title.toLowerCase().includes(query);
+                return normalizeSearchText(title).includes(query);
             })
             : [...items];
 

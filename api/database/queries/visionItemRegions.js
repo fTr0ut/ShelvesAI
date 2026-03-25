@@ -144,6 +144,51 @@ async function linkCollectionItem({ scanPhotoId, extractionIndex, collectionItem
   return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
 }
 
+async function clearCollectionItemLink({ scanPhotoId, extractionIndex }, client = null) {
+  if (!scanPhotoId || normalizeExtractionIndex(extractionIndex) == null) return null;
+  const q = resolveQuery(client);
+  const result = await q(
+    `UPDATE vision_item_regions
+     SET collection_item_id = NULL
+     WHERE scan_photo_id = $1
+       AND extraction_index = $2
+     RETURNING *`,
+    [scanPhotoId, extractionIndex],
+  );
+  return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
+}
+
+async function hasCollectionItemLinkForReference({
+  scanPhotoId,
+  collectableId = null,
+  manualId = null,
+}) {
+  if (!scanPhotoId || (!collectableId && !manualId)) return false;
+  const filters = ['scan_photo_id = $1', 'collection_item_id IS NOT NULL'];
+  const params = [scanPhotoId];
+  const refClauses = [];
+
+  if (collectableId) {
+    params.push(collectableId);
+    refClauses.push(`collectable_id = $${params.length}`);
+  }
+  if (manualId) {
+    params.push(manualId);
+    refClauses.push(`manual_id = $${params.length}`);
+  }
+  if (!refClauses.length) return false;
+
+  const result = await query(
+    `SELECT 1
+     FROM vision_item_regions
+     WHERE ${filters.join(' AND ')}
+       AND (${refClauses.join(' OR ')})
+     LIMIT 1`,
+    params,
+  );
+  return result.rows.length > 0;
+}
+
 async function listForScan({ userId, shelfId, scanPhotoId }) {
   if (!userId || !shelfId || !scanPhotoId) return [];
   const result = await query(
@@ -191,6 +236,8 @@ module.exports = {
   linkCollectable,
   linkManual,
   linkCollectionItem,
+  clearCollectionItemLink,
+  hasCollectionItemLinkForReference,
   listForScan,
   countForScan,
   getByIdForScan,

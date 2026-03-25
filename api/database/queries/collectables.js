@@ -5,6 +5,11 @@ const { normalizeCollectableKind } = require('../../services/collectables/kind')
 const { appendJobEvent } = require('./jobRuns');
 const { getJobId, getUserId } = require('../../context');
 const logger = require('../../logger');
+const {
+    normalizeSearchText,
+    normalizeSearchWildcardPattern,
+    buildNormalizedSqlExpression,
+} = require('../../utils/searchNormalization');
 
 /**
  * Resolve the query executor: use the provided client if given, otherwise use the shared pool query.
@@ -196,17 +201,25 @@ async function findById(id) {
  * Search collectables by title using trigram similarity
  */
 async function searchByTitle(term, kind = null, limit = 20) {
+    const normalizedTerm = normalizeSearchText(term);
+    const normalizedTitleExpr = buildNormalizedSqlExpression('c.title');
+
     let sql = `
-    SELECT c.*, similarity(c.title, $1) as sim, m.local_path as cover_media_path
+    SELECT c.*,
+           GREATEST(
+             similarity(c.title, $1),
+             similarity(${normalizedTitleExpr}, $2)
+           ) AS sim,
+           m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title % $1
+    WHERE c.title % $1 OR ${normalizedTitleExpr} % $2
   `;
-    const params = [term];
+    const params = [term, normalizedTerm];
 
     const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
     if (normalizedKind) {
-        sql += ` AND c.kind = $2`;
+        sql += ` AND c.kind = $3`;
         params.push(normalizedKind);
     }
 
@@ -405,16 +418,29 @@ async function upsert(data, client = null) {
  * Search in global catalog with optional kind filter
  */
 async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
+    const normalizedQuery = normalizeSearchText(q);
+    const normalizedTitleExpr = buildNormalizedSqlExpression('c.title');
+    const normalizedCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
+
     let sql = `
     SELECT c.*, 
            similarity(c.title, $1) as title_sim,
-           similarity(c.primary_creator, $1) as creator_sim,
+           similarity(COALESCE(c.primary_creator, ''), $1) as creator_sim,
+           GREATEST(
+             similarity(c.title, $1),
+             similarity(COALESCE(c.primary_creator, ''), $1),
+             similarity(${normalizedTitleExpr}, $2),
+             similarity(${normalizedCreatorExpr}, $2)
+           ) as search_score,
            m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title % $1 OR c.primary_creator % $1
+    WHERE c.title % $1
+       OR COALESCE(c.primary_creator, '') % $1
+       OR ${normalizedTitleExpr} % $2
+       OR ${normalizedCreatorExpr} % $2
   `;
-    const params = [q];
+    const params = [q, normalizedQuery];
 
     const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
     if (normalizedKind) {
@@ -422,7 +448,7 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
         params.push(normalizedKind);
     }
 
-    sql += ` ORDER BY GREATEST(similarity(c.title, $1), similarity(c.primary_creator, $1)) DESC`;
+    sql += ` ORDER BY search_score DESC`;
     sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
@@ -437,14 +463,20 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
 async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
     // Convert * to % for SQL ILIKE
     const sqlPattern = pattern.replace(/\*/g, '%');
+    const normalizedPattern = normalizeSearchWildcardPattern(pattern);
+    const normalizedTitleExpr = buildNormalizedSqlExpression('c.title');
+    const normalizedCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
 
     let sql = `
     SELECT c.*, m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title ILIKE $1 OR c.primary_creator ILIKE $1
+    WHERE c.title ILIKE $1
+       OR c.primary_creator ILIKE $1
+       OR ${normalizedTitleExpr} ILIKE $2
+       OR ${normalizedCreatorExpr} ILIKE $2
   `;
-    const params = [sqlPattern];
+    const params = [sqlPattern, normalizedPattern];
 
     const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
     if (normalizedKind) {
@@ -472,22 +504,36 @@ async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
  */
 async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
     if (!title) return null;
+    const normalizedTitle = normalizeSearchText(title);
+    const normalizedCreator = normalizeSearchText(primaryCreator || '');
+    const normalizedTitleExpr = buildNormalizedSqlExpression('c.title');
+    const normalizedCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
 
     let sql = `
     SELECT c.*,
-           similarity(c.title, $1) AS title_sim,
-           similarity(COALESCE(c.primary_creator, ''), $2) AS creator_sim,
-           (similarity(c.title, $1) * 0.7 + similarity(COALESCE(c.primary_creator, ''), $2) * 0.3) AS combined_sim,
+           GREATEST(
+             similarity(c.title, $1),
+             similarity(${normalizedTitleExpr}, $3)
+           ) AS title_sim,
+           GREATEST(
+             similarity(COALESCE(c.primary_creator, ''), $2),
+             similarity(${normalizedCreatorExpr}, $4)
+           ) AS creator_sim,
+           (
+             GREATEST(similarity(c.title, $1), similarity(${normalizedTitleExpr}, $3)) * 0.7 +
+             GREATEST(similarity(COALESCE(c.primary_creator, ''), $2), similarity(${normalizedCreatorExpr}, $4)) * 0.3
+           ) AS combined_sim,
            m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE similarity(c.title, $1) > $3
+    WHERE similarity(c.title, $1) > $5
+       OR similarity(${normalizedTitleExpr}, $3) > $5
   `;
-    const params = [title, primaryCreator || '', threshold];
+    const params = [title, primaryCreator || '', normalizedTitle, normalizedCreator, threshold];
 
     const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
     if (normalizedKind) {
-        sql += ` AND c.kind = $4`;
+        sql += ` AND c.kind = $6`;
         params.push(normalizedKind);
     }
 

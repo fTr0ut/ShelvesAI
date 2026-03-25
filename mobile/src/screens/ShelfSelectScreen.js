@@ -66,7 +66,7 @@ export default function ShelfSelectScreen({ navigation }) {
 
 
     const handleSelectShelf = useCallback((shelf) => {
-        navigation.navigate('ShelfDetail', {
+        navigation.replace('ShelfDetail', {
             id: shelf.id,
             title: shelf.name,
             type: shelf.type,
@@ -75,7 +75,7 @@ export default function ShelfSelectScreen({ navigation }) {
     }, [navigation]);
 
     const handleCreateShelf = useCallback(() => {
-        navigation.navigate('ShelfCreateScreen', { autoAddItem: true });
+        navigation.replace('ShelfCreateScreen', { autoAddItem: true });
     }, [navigation]);
 
     const renderItem = ({ item }) => (

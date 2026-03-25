@@ -22,6 +22,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
+import { normalizeSearchText } from '../utils/searchNormalization';
 
 // Reuse usage of these if available, otherwise fallback to local impl
 // Assuming CachedImage is available based on ShelfDetailScreen usage
@@ -108,13 +109,13 @@ export default function WishlistScreen({ navigation, route }) {
     // --- Local List Logic ---
 
     const visibleItems = useMemo(() => {
-        const query = localSearchQuery.trim().toLowerCase();
+        const query = normalizeSearchText(localSearchQuery);
         let filtered = items;
 
         if (query) {
             filtered = items.filter(item => {
                 const title = item.collectableTitle || item.manualText || '';
-                return title.toLowerCase().includes(query);
+                return normalizeSearchText(title).includes(query);
             });
         }
 

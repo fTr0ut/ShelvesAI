@@ -1,7 +1,8 @@
-import React, { useCallback, useContext, useEffect, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    InteractionManager,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -37,40 +39,101 @@ export default function ShelfEditScreen({ route, navigation }) {
     const [visibility, setVisibility] = useState(initialShelf?.visibility || 'private');
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
+    const hasLoadedShelfRef = useRef(false);
+    const shelfLoadInFlightRef = useRef(false);
+    const isMountedRef = useRef(true);
+
+    useEffect(() => {
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    const isOtherShelf = String(shelf?.type || initialShelf?.type || '').toLowerCase() === 'other';
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
-    // Load shelf data from API if not passed or to refresh
-    useEffect(() => {
+    const loadShelf = useCallback(async (options = {}) => {
+        const { showBlockingLoader = false } = options;
         if (!shelfId) return;
-
-        const loadShelf = async () => {
-            try {
+        if (shelfLoadInFlightRef.current) return;
+        shelfLoadInFlightRef.current = true;
+        try {
+            if (showBlockingLoader && isMountedRef.current) {
                 setLoading(true);
-                const data = await apiRequest({
-                    apiBase,
-                    path: `/api/shelves/${shelfId}`,
-                    token,
-                });
-                const fetchedShelf = data.shelf || data;
-                setShelf(fetchedShelf);
-                setName(fetchedShelf?.name || '');
-                setDescription(fetchedShelf?.description || '');
-                setVisibility(fetchedShelf?.visibility || 'private');
-            } catch (e) {
-                console.warn('Failed to load shelf:', e);
-                Alert.alert('Error', 'Could not load shelf details');
-            } finally {
+            }
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${shelfId}`,
+                token,
+            });
+            if (!isMountedRef.current) return;
+            const fetchedShelf = data.shelf || data;
+            setShelf(fetchedShelf);
+            setName(fetchedShelf?.name || '');
+            setDescription(fetchedShelf?.description || '');
+            setVisibility(fetchedShelf?.visibility || 'private');
+            hasLoadedShelfRef.current = true;
+        } catch (e) {
+            console.warn('Failed to load shelf:', e);
+            Alert.alert('Error', 'Could not load shelf details');
+        } finally {
+            shelfLoadInFlightRef.current = false;
+            if (isMountedRef.current) {
                 setLoading(false);
             }
-        };
-
-        loadShelf();
+        }
     }, [apiBase, shelfId, token]);
 
+    useEffect(() => {
+        hasLoadedShelfRef.current = false;
+        shelfLoadInFlightRef.current = false;
+        if (!shelfId) return;
+
+        if (initialShelf) {
+            setShelf(initialShelf);
+            setName(initialShelf?.name || '');
+            setDescription(initialShelf?.description || '');
+            setVisibility(initialShelf?.visibility || 'private');
+            setLoading(false);
+        } else {
+            setShelf(null);
+            setName('');
+            setDescription('');
+            setVisibility('private');
+            setLoading(true);
+        }
+    }, [shelfId, initialShelf]);
+
+    // Initial load is blocking only when we do not already have shelf data.
+    useEffect(() => {
+        if (!shelfId) return;
+        loadShelf({ showBlockingLoader: !initialShelf });
+    }, [loadShelf, shelfId, initialShelf]);
+
+    // Focus refresh is non-blocking (prevents swipe-back flicker/rebuild flash).
+    useFocusEffect(
+        useCallback(() => {
+            if (!hasLoadedShelfRef.current) return undefined;
+            const refreshTask = InteractionManager.runAfterInteractions(() => {
+                loadShelf({ showBlockingLoader: false });
+            });
+            return () => {
+                if (refreshTask?.cancel) refreshTask.cancel();
+            };
+        }, [loadShelf]),
+    );
+
     const handleSave = useCallback(async () => {
-        if (!name.trim()) {
+        const trimmedName = name.trim();
+        const trimmedDescription = description.trim();
+
+        if (!trimmedName) {
             Alert.alert('Error', 'Shelf name is required');
+            return;
+        }
+        if (isOtherShelf && !trimmedDescription) {
+            Alert.alert('Error', 'Description is required for Other shelves');
             return;
         }
 
@@ -81,7 +144,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                 path: `/api/shelves/${shelfId}`,
                 method: 'PUT',
                 token,
-                body: { name: name.trim(), description: description.trim(), visibility },
+                body: { name: trimmedName, description: trimmedDescription, visibility },
             });
             navigation.goBack();
         } catch (e) {
@@ -89,7 +152,7 @@ export default function ShelfEditScreen({ route, navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, shelfId, name, description, visibility, token, navigation]);
+    }, [apiBase, shelfId, name, description, visibility, token, navigation, isOtherShelf]);
 
     const handleDelete = useCallback(() => {
         Alert.alert(
@@ -159,12 +222,14 @@ export default function ShelfEditScreen({ route, navigation }) {
 
                     {/* Description */}
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Description</Text>
+                        <Text style={styles.label}>
+                            Description {isOtherShelf ? '(required for Other shelves)' : '(optional)'}
+                        </Text>
                         <TextInput
                             style={[styles.input, styles.textArea]}
                             value={description}
                             onChangeText={setDescription}
-                            placeholder="Optional description"
+                            placeholder={isOtherShelf ? 'Describe what this Other shelf contains' : 'Optional description'}
                             placeholderTextColor={colors.textMuted}
                             editable={!saving && !deleting}
                             multiline

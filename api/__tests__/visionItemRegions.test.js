@@ -115,3 +115,37 @@ describe('visionItemRegionsQueries.linkCollectionItem', () => {
     });
   });
 });
+
+describe('visionItemRegionsQueries.clearCollectionItemLink', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('clears collection_item_id for one scan/extraction row', async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 44,
+          scan_photo_id: 30,
+          extraction_index: 2,
+          collection_item_id: null,
+        },
+      ],
+    });
+
+    const result = await visionItemRegionsQueries.clearCollectionItemLink({
+      scanPhotoId: 30,
+      extractionIndex: 2,
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SET collection_item_id = NULL'),
+      [30, 2],
+    );
+    expect(result).toMatchObject({
+      id: 44,
+      extractionIndex: 2,
+      collectionItemId: null,
+    });
+  });
+});

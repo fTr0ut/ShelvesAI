@@ -42,13 +42,21 @@ export default function ShelfCreateScreen({ navigation, route }) {
   const [visibility, setVisibility] = useState('private');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const selectedType = type || 'other';
+  const isOtherShelf = selectedType === 'other';
 
   const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
   const handleCreate = useCallback(async () => {
     const trimmedName = name.trim();
+    const trimmedDescription = description.trim();
+    const resolvedType = type || 'other';
     if (!trimmedName) {
       setError('Please enter a shelf name');
+      return;
+    }
+    if (resolvedType === 'other' && !trimmedDescription) {
+      setError('Description is required for Other shelves');
       return;
     }
 
@@ -57,8 +65,8 @@ export default function ShelfCreateScreen({ navigation, route }) {
       setError('');
       const payload = {
         name: trimmedName,
-        type: type || 'other',
-        description: description.trim(),
+        type: resolvedType,
+        description: trimmedDescription,
         visibility,
       };
       const data = await apiRequest({ apiBase, path: '/api/shelves', method: 'POST', token, body: payload });
@@ -142,10 +150,15 @@ export default function ShelfCreateScreen({ navigation, route }) {
 
           {/* Description */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Description <Text style={styles.optional}>(optional)</Text></Text>
+            <Text style={styles.label}>
+              Description{' '}
+              <Text style={styles.optional}>
+                {isOtherShelf ? '(required for Other shelves)' : '(optional)'}
+              </Text>
+            </Text>
             <TextInput
               style={[styles.input, styles.textArea]}
-              placeholder="What's in this collection?"
+              placeholder={isOtherShelf ? 'Describe what this Other shelf contains' : "What's in this collection?"}
               placeholderTextColor={colors.textMuted}
               value={description}
               onChangeText={setDescription}

@@ -14,6 +14,14 @@
             "confidenceMax": 0.8,
             "confidenceMin": 0.7,
             "nameSearchThreshold": 0.4,
+            "strictNameMatch": {
+                "enabled": true,
+                "candidateLimit": 3,
+                "minSimilarity": 0.65,
+                "minTokenJaccard": 0.55,
+                "minTokenCoverage": 0.8,
+                "minMargin": 0.08
+            },
             "prompt": "You are cataloging a movie/Blu-ray/DVD shelf. Identify all visible movies by reading their spines.\nFor each movie, extract:\n- title: The movie title\n- author: The director name ONLY if explicitly printed on the spine (usually NOT visible on movie spines - set to null if not clearly printed)\n- box_2d: Bounding box [y_min, x_min, y_max, x_max] normalized to 0-1000\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Directors are rarely printed on movie spines. Do NOT guess the director. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy, not whether you found a director.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Inception\", \"author\": null, \"box_2d\": [130, 140, 900, 260], \"confidence\": 0.95}]\nIf no movies are visible, return []."
         },
         "games": {
@@ -25,6 +33,14 @@
             "confidenceMax": 0.8,
             "confidenceMin": 0.7,
             "nameSearchThreshold": 0.4,
+            "strictNameMatch": {
+                "enabled": true,
+                "candidateLimit": 3,
+                "minSimilarity": 0.65,
+                "minTokenJaccard": 0.55,
+                "minTokenCoverage": 0.8,
+                "minMargin": 0.08
+            },
             "prompt": "You are cataloging a TV series/show shelf. Identify all visible TV series by reading their spines.\nFor each TV series, extract:\n- title: The series title\n- author: The creator/showrunner ONLY if explicitly printed on the spine (usually NOT visible - set to null if not clearly printed)\n- box_2d: Bounding box [y_min, x_min, y_max, x_max] normalized to 0-1000\n- confidence: How confident you are in the title reading (0-1)\n\nIMPORTANT: Creators are rarely printed on TV show spines. Do NOT guess. Only include author if you can clearly read it on the spine. Your confidence should reflect title accuracy.\n\nReturn ONLY a valid JSON array. Example: [{\"title\": \"Breaking Bad\", \"author\": null, \"box_2d\": [115, 90, 910, 230], \"confidence\": 0.95}]\nIf no TV series are visible, return []."
         },
         "vinyl": {

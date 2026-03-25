@@ -189,7 +189,7 @@ export default function ListDetailScreen({ route, navigation }) {
         try {
             const data = await apiRequest({
                 apiBase,
-                path: `/api/collectables/search?q=${encodeURIComponent(searchQuery.trim())}`,
+                path: `/api/collectables?q=${encodeURIComponent(searchQuery.trim())}`,
                 token,
             });
             setSearchResults(data.results || []);

@@ -59,6 +59,8 @@ const {
 // }
 
 const VISIBILITY_OPTIONS = ["private", "friends", "public"];
+const OTHER_SHELF_TYPE = "other";
+const OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR = 'Description is required when shelf type is "other".';
 
 const VISION_PROMPT_RULES = [
   {
@@ -98,6 +100,14 @@ function normalizeArray(value) {
 function normalizeIdentifiers(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function isOtherShelfType(value) {
+  return String(value || "").trim().toLowerCase() === OTHER_SHELF_TYPE;
+}
+
+function hasShelfDescription(value) {
+  return !!normalizeString(value);
 }
 
 function normalizeSourceLinks(value) {
@@ -707,14 +717,20 @@ async function createShelf(req, res) {
     const { name, type, description } = req.body ?? {};
     if (!name || !type) return res.status(400).json({ error: "name and type are required" });
 
+    const normalizedType = String(type).trim();
+    const normalizedDescription = String(description ?? "").trim();
+    if (isOtherShelfType(normalizedType) && !hasShelfDescription(normalizedDescription)) {
+      return res.status(400).json({ error: OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR });
+    }
+
     const visibilityRaw = String(req.body.visibility ?? "private").toLowerCase();
     const visibility = VISIBILITY_OPTIONS.includes(visibilityRaw) ? visibilityRaw : "private";
 
     const shelf = await shelvesQueries.create({
       userId: req.user.id,
       name: String(name).trim(),
-      type: String(type).trim(),
-      description: description ?? "",
+      type: normalizedType,
+      description: normalizedDescription,
       visibility,
     });
 
@@ -749,11 +765,29 @@ async function getShelf(req, res) {
 
 async function updateShelf(req, res) {
   try {
-    const shelf = await shelvesQueries.update(
-      parseInt(req.params.shelfId, 10),
-      req.user.id,
-      req.body || {}
-    );
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
+
+    const existingShelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!existingShelf) return res.status(404).json({ error: "Shelf not found" });
+
+    const payload = req.body || {};
+    const updates = { ...payload };
+    if (Object.prototype.hasOwnProperty.call(payload, "name")) {
+      updates.name = String(payload.name ?? "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "description")) {
+      updates.description = String(payload.description ?? "").trim();
+    }
+
+    const resolvedDescription = Object.prototype.hasOwnProperty.call(updates, "description")
+      ? updates.description
+      : existingShelf.description;
+    if (isOtherShelfType(existingShelf.type) && !hasShelfDescription(resolvedDescription)) {
+      return res.status(400).json({ error: OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR });
+    }
+
+    const shelf = await shelvesQueries.update(shelfId, req.user.id, updates);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
     res.json({ shelf });
   } catch (err) {
@@ -1662,6 +1696,36 @@ async function attachCropToCollectionItem({ userId, shelfId, shelfType = null, r
 
   if (!collectionItem?.id) {
     if (!collectableId && !manualId) return null;
+
+    // First-region-wins policy: if any region for the same scan/reference already has a
+    // collection_item_id link, this region is a non-winning duplicate and should not
+    // auto-attach/overwrite the owner photo via collectable/manual fallback.
+    const scanPhotoId = region.scanPhotoId || region.scan_photo_id || null;
+    if (scanPhotoId) {
+      try {
+        const hasLinkedWinner = await visionItemRegionsQueries.hasCollectionItemLinkForReference({
+          scanPhotoId,
+          collectableId,
+          manualId,
+        });
+        if (hasLinkedWinner) {
+          logger.info('[Vision] Skipping fallback crop attach for non-winning duplicate region', {
+            shelfId,
+            scanPhotoId,
+            regionId: region.id,
+            collectableId,
+            manualId,
+          });
+          return null;
+        }
+      } catch (err) {
+        // Keep fallback behavior on older schemas where region link columns/tables are unavailable.
+        if (err?.code !== '42P01' && err?.code !== '42703') {
+          throw err;
+        }
+      }
+    }
+
     collectionItem = await shelvesQueries.findCollectionByReference({
       userId,
       shelfId,
@@ -1910,6 +1974,9 @@ async function processShelfVision(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+    if (isOtherShelfType(shelf.type) && !hasShelfDescription(shelf.description)) {
+      return res.status(400).json({ error: OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR });
+    }
 
     const { imageBase64, rawItems, metadata: requestMetadata = {}, async: asyncMode = true } = req.body ?? {};
     if (!imageBase64 && (!Array.isArray(rawItems) || rawItems.length === 0)) {
@@ -2463,6 +2530,9 @@ async function processCatalogLookup(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
+    if (isOtherShelfType(shelf.type) && !hasShelfDescription(shelf.description)) {
+      return res.status(400).json({ error: OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR });
+    }
 
     const { items: rawItems } = req.body ?? {};
     if (!Array.isArray(rawItems) || !rawItems.length) {

@@ -86,6 +86,15 @@ const VISION_BBOX_PADDING_Y_PX = normalizePixelPadding(
     process.env.VISION_BBOX_PADDING_Y_PX,
     DEFAULT_VISION_BBOX_PADDING_Y_PX,
 );
+const DEFAULT_STRICT_NAME_MATCH_SETTINGS = Object.freeze({
+    enabled: true,
+    candidateLimit: 3,
+    minSimilarity: 0.65,
+    minTokenJaccard: 0.55,
+    minTokenCoverage: 0.8,
+    minMargin: 0.08,
+});
+const MIN_FUZZY_TOKEN_SIMILARITY = 0.84;
 
 function isOtherShelfType(value) {
     return String(value || '').toLowerCase() === OTHER_SHELF_TYPE;
@@ -328,6 +337,92 @@ function dedupeByExtractionIndex(items) {
     return { deduped, droppedCount };
 }
 
+function normalizeToken(value) {
+    return normalizeString(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function tokenizeTitle(value) {
+    const normalized = normalizeToken(value);
+    if (!normalized) return [];
+    return normalized.split(/\s+/).filter(Boolean);
+}
+
+function levenshteinDistance(a, b) {
+    if (a === b) return 0;
+    const aLen = a.length;
+    const bLen = b.length;
+    if (!aLen) return bLen;
+    if (!bLen) return aLen;
+
+    const previous = new Array(bLen + 1);
+    const current = new Array(bLen + 1);
+    for (let j = 0; j <= bLen; j++) previous[j] = j;
+
+    for (let i = 1; i <= aLen; i++) {
+        current[0] = i;
+        for (let j = 1; j <= bLen; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            current[j] = Math.min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + cost,
+            );
+        }
+        for (let j = 0; j <= bLen; j++) previous[j] = current[j];
+    }
+
+    return previous[bLen];
+}
+
+function tokenSimilarity(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const maxLen = Math.max(a.length, b.length);
+    if (!maxLen) return 0;
+    const distance = levenshteinDistance(a, b);
+    return 1 - (distance / maxLen);
+}
+
+function countFuzzyTokenIntersection(extractedTokens, candidateTokens) {
+    if (!extractedTokens.length || !candidateTokens.length) return 0;
+    const usedCandidateIndexes = new Set();
+    let matches = 0;
+
+    for (const extractedToken of extractedTokens) {
+        let bestIndex = -1;
+        let bestScore = 0;
+        for (let index = 0; index < candidateTokens.length; index++) {
+            if (usedCandidateIndexes.has(index)) continue;
+            const score = tokenSimilarity(extractedToken, candidateTokens[index]);
+            if (score > bestScore) {
+                bestScore = score;
+                bestIndex = index;
+            }
+        }
+        if (bestIndex >= 0 && bestScore >= MIN_FUZZY_TOKEN_SIMILARITY) {
+            usedCandidateIndexes.add(bestIndex);
+            matches += 1;
+        }
+    }
+
+    return matches;
+}
+
+function toFiniteNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildSaveSourceKey(item, scanPhotoId = null) {
+    const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+    if (extractionIndex == null) return null;
+    const scanKey = scanPhotoId != null ? scanPhotoId : 'noscan';
+    return `scan:${scanKey}|idx:${extractionIndex}`;
+}
+
 class VisionPipelineService {
     constructor(options = {}) {
         this.ocrEnabled = options.ocrEnabled ?? (process.env.VISION_OCR_ENABLED !== 'false');
@@ -425,6 +520,14 @@ class VisionPipelineService {
 
         const providedRawItems = Array.isArray(resolvedOptions.rawItems) ? resolvedOptions.rawItems : null;
         const ocrProvider = providedRawItems ? (resolvedOptions.ocrProvider || 'mlkit') : 'gemini';
+        const saveTracking = {
+            savedSourceKeys: new Set(),
+            firstLinkedRegionByCollectionItemId: new Map(),
+            attemptedSaves: 0,
+            savedUniqueRegions: 0,
+            duplicateSourceSkipped: 0,
+            duplicateRegionLinkSkipped: 0,
+        };
         const baseHookContext = {
             jobId,
             userId,
@@ -434,6 +537,7 @@ class VisionPipelineService {
             ocrProvider,
             scanPhotoId,
             scanPhotoDimensions,
+            saveTracking,
         };
 
         // Step 1: Extract items from image
@@ -1158,9 +1262,26 @@ class VisionPipelineService {
         );
         const addedCollectables = collectableSaveResult.added || [];
         const saveFailedItems = [...mediumSaveFailures, ...(collectableSaveResult.failed || [])];
-        const addedItems = [...addedCollectables, ...mediumAddedCollectables, ...manualAdded];
+        const addedItemsRaw = [...addedCollectables, ...mediumAddedCollectables, ...manualAdded];
+        const addedItems = [];
+        const seenAddedItemIds = new Set();
+        let duplicateItemRowsCollapsed = 0;
+        for (const item of addedItemsRaw) {
+            const itemId = Number.isInteger(item?.itemId) ? item.itemId : null;
+            if (itemId && seenAddedItemIds.has(itemId)) {
+                duplicateItemRowsCollapsed += 1;
+                continue;
+            }
+            if (itemId) seenAddedItemIds.add(itemId);
+            addedItems.push(item);
+        }
         logger.info('[VisionPipeline] Step 5 Complete: Save summary', {
             added: addedItems.length,
+            attemptedSaves: saveTracking.attemptedSaves,
+            savedUniqueRegions: saveTracking.savedUniqueRegions,
+            duplicateSourceSkipped: saveTracking.duplicateSourceSkipped,
+            duplicateRegionLinkSkipped: saveTracking.duplicateRegionLinkSkipped,
+            duplicateItemRowsCollapsed,
             failedToReview: saveFailedItems.length,
         });
 
@@ -1222,6 +1343,11 @@ class VisionPipelineService {
             added: addedItems.length,
             existing: existingItemsCount,
             needsReview: totalNeedsReview,
+            attemptedSaves: saveTracking.attemptedSaves,
+            savedUniqueRegions: saveTracking.savedUniqueRegions,
+            duplicateSourceSkipped: saveTracking.duplicateSourceSkipped,
+            duplicateRegionLinkSkipped: saveTracking.duplicateRegionLinkSkipped,
+            duplicateItemRowsCollapsed,
             saveFailedToReview: saveFailedItems.length,
         });
 
@@ -1358,6 +1484,53 @@ class VisionPipelineService {
         const scanPhotoId = hookContext?.scanPhotoId;
         const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
         if (!scanPhotoId || extractionIndex == null || !collectionItemId) return;
+        const saveTracking = hookContext?.saveTracking || null;
+        const firstLinkedByCollectionItem = saveTracking?.firstLinkedRegionByCollectionItemId instanceof Map
+            ? saveTracking.firstLinkedRegionByCollectionItemId
+            : null;
+
+        const existingIndex = firstLinkedByCollectionItem?.get(collectionItemId);
+        if (Number.isInteger(existingIndex)) {
+            if (existingIndex <= extractionIndex) {
+                if (saveTracking) saveTracking.duplicateRegionLinkSkipped += 1;
+                logger.info('[VisionPipeline] Skipping duplicate region link for collection item (first region wins)', {
+                    scanPhotoId,
+                    collectionItemId,
+                    keptExtractionIndex: existingIndex,
+                    skippedExtractionIndex: extractionIndex,
+                });
+                return;
+            }
+
+            // A lower extraction index arrived later; replace the prior link so first region truly wins.
+            try {
+                if (typeof visionItemRegionsQueries.clearCollectionItemLink === 'function') {
+                    await visionItemRegionsQueries.clearCollectionItemLink({
+                        scanPhotoId,
+                        extractionIndex: existingIndex,
+                    });
+                }
+            } catch (err) {
+                if (isMissingRelationError(err, 'vision_item_regions')) {
+                    this.collectionItemRegionLinkAvailable = false;
+                    logger.warn('[VisionPipeline] vision_item_regions table missing; skipping collection item region link.');
+                    return;
+                }
+                if (isMissingColumnError(err, 'vision_item_regions', 'collection_item_id')) {
+                    this.collectionItemRegionLinkAvailable = false;
+                    logger.warn('[VisionPipeline] vision_item_regions.collection_item_id missing; skipping collection item region link.');
+                    return;
+                }
+                throw err;
+            }
+
+            logger.info('[VisionPipeline] Replacing collection item region link with earlier extraction index', {
+                scanPhotoId,
+                collectionItemId,
+                previousExtractionIndex: existingIndex,
+                nextExtractionIndex: extractionIndex,
+            });
+        }
 
         try {
             await visionItemRegionsQueries.linkCollectionItem({
@@ -1365,6 +1538,9 @@ class VisionPipelineService {
                 extractionIndex,
                 collectionItemId,
             });
+            if (firstLinkedByCollectionItem) {
+                firstLinkedByCollectionItem.set(collectionItemId, extractionIndex);
+            }
         } catch (err) {
             if (isMissingRelationError(err, 'vision_item_regions')) {
                 this.collectionItemRegionLinkAvailable = false;
@@ -1598,6 +1774,110 @@ class VisionPipelineService {
         return mappings[normalized] || normalized;
     }
 
+    resolveStrictNameMatchSettings(shelfType) {
+        const typeSettings = getVisionSettingsForType(shelfType) || {};
+        const strictCfg = (typeSettings && typeof typeSettings.strictNameMatch === 'object')
+            ? typeSettings.strictNameMatch
+            : {};
+        const settings = {
+            enabled: strictCfg.enabled ?? DEFAULT_STRICT_NAME_MATCH_SETTINGS.enabled,
+            candidateLimit: Math.max(
+                1,
+                Math.min(
+                    10,
+                    Math.floor(toFiniteNumber(strictCfg.candidateLimit, DEFAULT_STRICT_NAME_MATCH_SETTINGS.candidateLimit)),
+                ),
+            ),
+            minSimilarity: toFiniteNumber(strictCfg.minSimilarity, DEFAULT_STRICT_NAME_MATCH_SETTINGS.minSimilarity),
+            minTokenJaccard: toFiniteNumber(strictCfg.minTokenJaccard, DEFAULT_STRICT_NAME_MATCH_SETTINGS.minTokenJaccard),
+            minTokenCoverage: toFiniteNumber(strictCfg.minTokenCoverage, DEFAULT_STRICT_NAME_MATCH_SETTINGS.minTokenCoverage),
+            minMargin: toFiniteNumber(strictCfg.minMargin, DEFAULT_STRICT_NAME_MATCH_SETTINGS.minMargin),
+            fallbackThreshold: toFiniteNumber(typeSettings.nameSearchThreshold, 0.4),
+        };
+        return settings;
+    }
+
+    evaluateTitleTokenOverlap(extractedTitle, candidateTitle) {
+        const extractedTokens = Array.from(new Set(tokenizeTitle(extractedTitle)));
+        const candidateTokens = Array.from(new Set(tokenizeTitle(candidateTitle)));
+        const extractedCount = extractedTokens.length;
+        const candidateCount = candidateTokens.length;
+        if (!extractedCount || !candidateCount) {
+            return {
+                tokenJaccard: 0,
+                tokenCoverage: 0,
+                intersectionCount: 0,
+                extractedCount,
+                candidateCount,
+            };
+        }
+
+        const intersectionCount = countFuzzyTokenIntersection(extractedTokens, candidateTokens);
+        const unionCount = extractedCount + candidateCount - intersectionCount;
+        const tokenJaccard = unionCount > 0 ? intersectionCount / unionCount : 0;
+        const tokenCoverage = extractedCount > 0 ? intersectionCount / extractedCount : 0;
+        return {
+            tokenJaccard,
+            tokenCoverage,
+            intersectionCount,
+            extractedCount,
+            candidateCount,
+        };
+    }
+
+    async findMovieTvByStrictNameMatch(itemTitle, normalizedType, strictSettings) {
+        const candidates = await collectablesQueries.searchByTitle(
+            itemTitle,
+            normalizedType,
+            strictSettings.candidateLimit,
+        );
+        if (!Array.isArray(candidates) || candidates.length === 0) {
+            return null;
+        }
+
+        const scored = candidates.map((candidate) => {
+            const sim = toFiniteNumber(candidate?.sim, 0);
+            const overlap = this.evaluateTitleTokenOverlap(itemTitle, candidate?.title);
+            return {
+                candidate,
+                sim,
+                tokenJaccard: overlap.tokenJaccard,
+                tokenCoverage: overlap.tokenCoverage,
+            };
+        });
+        const best = scored[0];
+        const second = scored[1] || null;
+        const margin = best.sim - (second ? second.sim : 0);
+        const accepted = (
+            best.sim >= strictSettings.minSimilarity
+            && best.tokenJaccard >= strictSettings.minTokenJaccard
+            && best.tokenCoverage >= strictSettings.minTokenCoverage
+            && margin >= strictSettings.minMargin
+        );
+
+        logger.info('[VisionPipeline.matchCollectable] Strict name search evaluation', {
+            title: itemTitle,
+            shelfType: normalizedType,
+            candidateCount: candidates.length,
+            candidateLimit: strictSettings.candidateLimit,
+            bestTitle: best?.candidate?.title || null,
+            bestSimilarity: Number(best.sim.toFixed(6)),
+            bestTokenJaccard: Number(best.tokenJaccard.toFixed(6)),
+            bestTokenCoverage: Number(best.tokenCoverage.toFixed(6)),
+            secondSimilarity: second ? Number(second.sim.toFixed(6)) : null,
+            margin: Number(margin.toFixed(6)),
+            accepted,
+            thresholds: {
+                minSimilarity: strictSettings.minSimilarity,
+                minTokenJaccard: strictSettings.minTokenJaccard,
+                minTokenCoverage: strictSettings.minTokenCoverage,
+                minMargin: strictSettings.minMargin,
+            },
+        });
+
+        return accepted ? best.candidate : null;
+    }
+
     /**
      * Perform shelf-type-specific secondary lookup.
      * Movies/TV use name search (director not visible on spine).
@@ -1614,12 +1894,15 @@ class VisionPipelineService {
         switch (normalizedType) {
             case 'movies':
             case 'tv':
-                // Name search only (director not visible on spine)
-                // Get threshold from visionSettings.json if available
-                const typeSettings = getVisionSettingsForType(shelfType) || {};
-                const threshold = typeSettings.nameSearchThreshold ?? 0.4;
-                logger.info('[VisionPipeline.matchCollectable] Using name search for', normalizedType, '(threshold:', threshold, ')');
-                return collectablesQueries.findByNameSearch(itemTitle, normalizedType, threshold);
+                // Strict title-only search (directors are usually not visible on spines).
+                {
+                    const strictSettings = this.resolveStrictNameMatchSettings(shelfType);
+                    if (strictSettings.enabled !== false) {
+                        return this.findMovieTvByStrictNameMatch(itemTitle, normalizedType, strictSettings);
+                    }
+                    logger.info('[VisionPipeline.matchCollectable] Using legacy name search for', normalizedType, '(threshold:', strictSettings.fallbackThreshold, ')');
+                    return collectablesQueries.findByNameSearch(itemTitle, normalizedType, strictSettings.fallbackThreshold);
+                }
 
             case 'books':
             case 'games':
@@ -1718,9 +2001,30 @@ class VisionPipelineService {
         logger.info('[VisionPipeline.saveToShelf] Processing', items.length, 'items for shelf', shelfId);
         const added = [];
         const failed = [];
+        const saveTracking = hookContext?.saveTracking || null;
+
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             logger.info(`[VisionPipeline.saveToShelf] Item ${i + 1}/${items.length}:`, item.title || item.name);
+
+            const sourceKey = buildSaveSourceKey(item, hookContext?.scanPhotoId ?? null);
+            if (sourceKey && saveTracking?.savedSourceKeys?.has(sourceKey)) {
+                if (saveTracking) saveTracking.duplicateSourceSkipped += 1;
+                logger.info('[VisionPipeline.saveToShelf] Skipping duplicate source item in same scan run', {
+                    shelfId,
+                    sourceKey,
+                    extractionIndex: item?.extractionIndex ?? null,
+                    title: item?.title || item?.name || null,
+                });
+                continue;
+            }
+            if (sourceKey && saveTracking?.savedSourceKeys) {
+                saveTracking.savedSourceKeys.add(sourceKey);
+            }
+            if (saveTracking) {
+                saveTracking.attemptedSaves += 1;
+            }
+
             try {
                 // Check if item already has a collectable from Step 2 (database match)
                 let collectable = item.collectable || null;
@@ -1819,7 +2123,7 @@ class VisionPipelineService {
                         // Include rawOcrFingerprint (from enrichment) in fuzzy fingerprints
                         fuzzyFingerprints: [
                             ...normalizeArray(item.fuzzyFingerprints),
-                            ...(item.rawOcrFingerprint ? [item.rawOcrFingerprint] : [])
+                            ...(item.rawOcrFingerprint ? [item.rawOcrFingerprint] : []),
                         ].filter(Boolean),
                         // Provider-agnostic cover and attribution fields
                         coverImageUrl: item.coverImageUrl || null,
@@ -1872,17 +2176,20 @@ class VisionPipelineService {
                         coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
                         type: collectable.kind || item.type || item.kind || shelfType,
                     });
-                    logger.info('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
+                    if (saveTracking) {
+                        saveTracking.savedUniqueRegions += 1;
+                    }
+                    logger.info('[VisionPipeline.saveToShelf] Successfully added:', item.title || item.name);
                     continue;
-                } else {
-                    logger.info('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
-                    logger.info('[VisionPipeline.saveToShelf] Matched extracted item to existing record', {
-                        extractedTitle: item.title || item.name || null,
-                        sourceTable: 'collectables',
-                        sourceId: collectable.id,
-                        shelfId,
-                    });
                 }
+
+                logger.info('[VisionPipeline.saveToShelf] Using existing collectable:', collectable.id, collectable.title);
+                logger.info('[VisionPipeline.saveToShelf] Matched extracted item to existing record', {
+                    extractedTitle: item.title || item.name || null,
+                    sourceTable: 'collectables',
+                    sourceId: collectable.id,
+                    shelfId,
+                });
 
                 // Add pre-matched collectable to shelf
                 logger.info('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
@@ -1910,7 +2217,10 @@ class VisionPipelineService {
                     coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
                     type: collectable.kind || item.type || item.kind || shelfType,
                 });
-                logger.info('[VisionPipeline.saveToShelf] ✓ Successfully added:', item.title || item.name);
+                if (saveTracking) {
+                    saveTracking.savedUniqueRegions += 1;
+                }
+                logger.info('[VisionPipeline.saveToShelf] Successfully added:', item.title || item.name);
             } catch (err) {
                 logger.error(`Failed to save item ${item.title}:`, err);
                 failed.push({
@@ -2240,3 +2550,5 @@ class VisionPipelineService {
 }
 
 module.exports = { VisionPipelineService };
+
+

@@ -25,6 +25,7 @@ jest.mock('../database/queries/visionItemRegions', () => ({
     countForScan: jest.fn().mockResolvedValue(0),
     listForScan: jest.fn().mockResolvedValue([]),
     getByIdForScan: jest.fn().mockResolvedValue(null),
+    hasCollectionItemLinkForReference: jest.fn().mockResolvedValue(false),
 }));
 jest.mock('../database/queries/visionItemCrops', () => ({
     getByRegionIdForUser: jest.fn().mockResolvedValue(null),
@@ -36,6 +37,9 @@ jest.mock('../database/queries/userCollectionPhotos', () => ({
     getByCollectionItem: jest.fn().mockResolvedValue(null),
     loadOwnerPhotoThumbnailBuffer: jest.fn(),
     upsertOwnerPhotoThumbnailForItem: jest.fn(),
+}));
+jest.mock('../database/queries/feed', () => ({
+    logEvent: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../services/visionCropper', () => ({
     extractRegionCrop: jest.fn(),
@@ -107,6 +111,41 @@ describe('shelvesController', () => {
         userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue(null);
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
+    });
+
+    describe('createShelf', () => {
+        it('requires description when creating an other shelf', async () => {
+            req.body = { name: 'Spirits', type: 'other', description: '   ' };
+
+            await shelvesController.createShelf(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Description is required when shelf type is "other".',
+            });
+            expect(shelvesQueries.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('updateShelf', () => {
+        it('requires description when updating an other shelf', async () => {
+            req.params = { shelfId: '10' };
+            req.body = { description: '' };
+            shelvesQueries.getById.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'other',
+                description: 'Original description',
+            });
+
+            await shelvesController.updateShelf(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Description is required when shelf type is "other".',
+            });
+            expect(shelvesQueries.update).not.toHaveBeenCalled();
+        });
     });
 
     describe('getVisionScanRegionCrop', () => {
@@ -213,6 +252,18 @@ describe('shelvesController', () => {
     });
 
     describe('processShelfVision', () => {
+        it('should return 400 when other shelf has no description', async () => {
+            shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'other', description: '   ' });
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Description is required when shelf type is "other".',
+            });
+            expect(mockPipelineInstance.processImage).not.toHaveBeenCalled();
+        });
+
         it('should return 403 if user is not premium', async () => {
             req.user.isPremium = false;
             await shelvesController.processShelfVision(req, res);
@@ -282,6 +333,18 @@ describe('shelvesController', () => {
                     { name: 'Foundation', author: 'Isaac Asimov', type: 'book' },
                 ],
             };
+        });
+
+        it('should return 400 when other shelf has no description', async () => {
+            shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'other', description: '' });
+
+            await shelvesController.processCatalogLookup(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Description is required when shelf type is "other".',
+            });
+            expect(mockPipelineInstance.processImage).not.toHaveBeenCalled();
         });
 
         it('should return 404 if shelf is not found', async () => {

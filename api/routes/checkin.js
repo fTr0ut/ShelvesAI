@@ -6,10 +6,98 @@ const collectablesQueries = require('../database/queries/collectables');
 const { query } = require('../database/pg');
 const { rowToCamelCase } = require('../database/queries/utils');
 const logger = require('../logger');
+const {
+    normalizeSearchText,
+    normalizeSearchWildcardPattern,
+    buildNormalizedSqlExpression,
+} = require('../utils/searchNormalization');
 
 const router = express.Router();
 
 router.use(auth);
+const normalizedCollectableTitleExpr = buildNormalizedSqlExpression('c.title');
+const normalizedCollectableCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
+const normalizedManualTitleExpr = buildNormalizedSqlExpression('um.name');
+const normalizedManualCreatorExpr = buildNormalizedSqlExpression('COALESCE(um.author, \'\')');
+
+function buildCheckinSearchQuery({ q, userId, limit, useWildcard }) {
+    if (useWildcard && q.includes('*')) {
+        const sqlPattern = q.replace(/\*/g, '%');
+        const normalizedPattern = normalizeSearchWildcardPattern(q);
+        return {
+            sql: `
+        SELECT id, title, primary_creator, kind, cover_url, cover_media_path, source
+        FROM (
+          SELECT c.id, c.title, c.primary_creator, c.kind, c.cover_url,
+                 m.local_path as cover_media_path, 'collectable' as source,
+                 c.title as sort_title
+          FROM collectables c
+          LEFT JOIN media m ON m.id = c.cover_media_id
+          WHERE c.title ILIKE $1
+             OR c.primary_creator ILIKE $1
+             OR ${normalizedCollectableTitleExpr} ILIKE $2
+             OR ${normalizedCollectableCreatorExpr} ILIKE $2
+          UNION ALL
+          SELECT um.id, um.name as title, um.author as primary_creator, COALESCE(um.type, 'manual') as kind,
+                 NULL::text as cover_url, NULL::text as cover_media_path, 'manual' as source,
+                 um.name as sort_title
+          FROM user_manuals um
+          WHERE um.user_id = $3
+            AND (
+              um.name ILIKE $1
+              OR um.author ILIKE $1
+              OR ${normalizedManualTitleExpr} ILIKE $2
+              OR ${normalizedManualCreatorExpr} ILIKE $2
+            )
+        ) results
+        ORDER BY sort_title ASC
+        LIMIT $4`,
+            params: [sqlPattern, normalizedPattern, userId, limit],
+        };
+    }
+
+    const normalizedQuery = normalizeSearchText(q);
+    return {
+        sql: `
+        SELECT id, title, primary_creator, kind, cover_url, cover_media_path, source
+        FROM (
+          SELECT c.id, c.title, c.primary_creator, c.kind, c.cover_url,
+                 m.local_path as cover_media_path, 'collectable' as source,
+                 GREATEST(
+                   similarity(c.title, $1),
+                   similarity(COALESCE(c.primary_creator, ''), $1),
+                   similarity(${normalizedCollectableTitleExpr}, $2),
+                   similarity(${normalizedCollectableCreatorExpr}, $2)
+                 ) AS score
+          FROM collectables c
+          LEFT JOIN media m ON m.id = c.cover_media_id
+          WHERE c.title % $1
+             OR c.primary_creator % $1
+             OR ${normalizedCollectableTitleExpr} % $2
+             OR ${normalizedCollectableCreatorExpr} % $2
+          UNION ALL
+          SELECT um.id, um.name as title, um.author as primary_creator, COALESCE(um.type, 'manual') as kind,
+                 NULL::text as cover_url, NULL::text as cover_media_path, 'manual' as source,
+                 GREATEST(
+                   similarity(um.name, $1),
+                   similarity(COALESCE(um.author, ''), $1),
+                   similarity(${normalizedManualTitleExpr}, $2),
+                   similarity(${normalizedManualCreatorExpr}, $2)
+                 ) AS score
+          FROM user_manuals um
+          WHERE um.user_id = $3
+            AND (
+              um.name % $1
+              OR um.author % $1
+              OR ${normalizedManualTitleExpr} % $2
+              OR ${normalizedManualCreatorExpr} % $2
+            )
+        ) results
+        ORDER BY score DESC NULLS LAST, title ASC
+        LIMIT $4`,
+        params: [q, normalizedQuery, userId, limit],
+    };
+}
 
 /**
  * GET /api/checkin/search
@@ -28,51 +116,7 @@ router.get('/search', validateStringLengths({ q: 500 }, { source: 'query' }), as
             return res.json({ results: [] });
         }
 
-        let sql;
-        let params;
-
-        if (useWildcard && q.includes('*')) {
-            const sqlPattern = q.replace(/\*/g, '%');
-            sql = `
-        SELECT id, title, primary_creator, kind, cover_url, cover_media_path, source
-        FROM (
-          SELECT c.id, c.title, c.primary_creator, c.kind, c.cover_url,
-                 m.local_path as cover_media_path, 'collectable' as source,
-                 c.title as sort_title
-          FROM collectables c
-          LEFT JOIN media m ON m.id = c.cover_media_id
-          WHERE c.title ILIKE $1 OR c.primary_creator ILIKE $1
-          UNION ALL
-          SELECT um.id, um.name as title, um.author as primary_creator, COALESCE(um.type, 'manual') as kind,
-                 NULL::text as cover_url, NULL::text as cover_media_path, 'manual' as source,
-                 um.name as sort_title
-          FROM user_manuals um
-          WHERE um.user_id = $2 AND (um.name ILIKE $1 OR um.author ILIKE $1)
-        ) results
-        ORDER BY sort_title ASC
-        LIMIT $3`;
-            params = [sqlPattern, userId, limit];
-        } else {
-            sql = `
-        SELECT id, title, primary_creator, kind, cover_url, cover_media_path, source
-        FROM (
-          SELECT c.id, c.title, c.primary_creator, c.kind, c.cover_url,
-                 m.local_path as cover_media_path, 'collectable' as source,
-                 GREATEST(similarity(c.title, $1), similarity(COALESCE(c.primary_creator, ''), $1)) AS score
-          FROM collectables c
-          LEFT JOIN media m ON m.id = c.cover_media_id
-          WHERE c.title % $1 OR c.primary_creator % $1
-          UNION ALL
-          SELECT um.id, um.name as title, um.author as primary_creator, COALESCE(um.type, 'manual') as kind,
-                 NULL::text as cover_url, NULL::text as cover_media_path, 'manual' as source,
-                 GREATEST(similarity(um.name, $1), similarity(COALESCE(um.author, ''), $1)) AS score
-          FROM user_manuals um
-          WHERE um.user_id = $2 AND (um.name % $1 OR um.author % $1)
-        ) results
-        ORDER BY score DESC NULLS LAST, title ASC
-        LIMIT $3`;
-            params = [q, userId, limit];
-        }
+        const { sql, params } = buildCheckinSearchQuery({ q, userId, limit, useWildcard });
 
         const result = await query(sql, params);
         res.json({ results: result.rows.map(rowToCamelCase) });
@@ -175,3 +219,4 @@ router.post('/', validateStringLengths({ note: 5000 }), async (req, res) => {
 });
 
 module.exports = router;
+module.exports._buildCheckinSearchQuery = buildCheckinSearchQuery;

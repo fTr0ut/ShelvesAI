@@ -9,8 +9,15 @@ const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../s
 const { normalizeCollectableKind } = require("../services/collectables/kind");
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
 const logger = require('../logger');
+const {
+  normalizeSearchText,
+  normalizeSearchWildcardPattern,
+  buildNormalizedSqlExpression,
+} = require('../utils/searchNormalization');
 
 const router = express.Router();
+const normalizedCollectableTitleExpr = buildNormalizedSqlExpression('title');
+const normalizedCollectableCreatorExpr = buildNormalizedSqlExpression('COALESCE(primary_creator, \'\')');
 
 router.use(auth);
 
@@ -270,17 +277,29 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       // Wildcard mode: use ILIKE pattern matching
       results = await collectablesQueries.searchGlobalWildcard({ pattern: q, kind: type || null, limit, offset });
       const sqlPattern = q.replace(/\*/g, '%');
+      const normalizedPattern = normalizeSearchWildcardPattern(q);
       countSql = `SELECT COUNT(*) as total FROM collectables 
-       WHERE (title ILIKE $1 OR primary_creator ILIKE $1)
-       ${type ? 'AND kind = $2' : ''}`;
-      countParams = type ? [sqlPattern, type] : [sqlPattern];
+       WHERE (
+         title ILIKE $1
+         OR primary_creator ILIKE $1
+         OR ${normalizedCollectableTitleExpr} ILIKE $2
+         OR ${normalizedCollectableCreatorExpr} ILIKE $2
+       )
+       ${type ? 'AND kind = $3' : ''}`;
+      countParams = type ? [sqlPattern, normalizedPattern, type] : [sqlPattern, normalizedPattern];
     } else {
       // Default: trigram similarity search
       results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
+      const normalizedQuery = normalizeSearchText(q);
       countSql = `SELECT COUNT(*) as total FROM collectables 
-       WHERE (title % $1 OR primary_creator % $1)
-       ${type ? 'AND kind = $2' : ''}`;
-      countParams = type ? [q, type] : [q];
+       WHERE (
+         title % $1
+         OR primary_creator % $1
+         OR ${normalizedCollectableTitleExpr} % $2
+         OR ${normalizedCollectableCreatorExpr} % $2
+       )
+       ${type ? 'AND kind = $3' : ''}`;
+      countParams = type ? [q, normalizedQuery, type] : [q, normalizedQuery];
     }
 
     const countResult = await query(countSql, countParams);

@@ -1,5 +1,5 @@
 const { VisionPipelineService } = require('../services/visionPipeline');
-const { GoogleGeminiService } = require('../services/googleGemini');
+const { GoogleGeminiService, getVisionSettingsForType } = require('../services/googleGemini');
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
@@ -15,6 +15,8 @@ jest.mock('../database/queries/visionItemRegions', () => ({
     linkCollectable: jest.fn().mockResolvedValue(null),
     linkManual: jest.fn().mockResolvedValue(null),
     linkCollectionItem: jest.fn().mockResolvedValue(null),
+    clearCollectionItemLink: jest.fn().mockResolvedValue(null),
+    hasCollectionItemLinkForReference: jest.fn().mockResolvedValue(false),
 }));
 jest.mock('../services/collectables/fingerprint', () => ({
     makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title),
@@ -30,6 +32,7 @@ describe('VisionPipelineService', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        getVisionSettingsForType.mockReturnValue({});
         service = new VisionPipelineService();
         mockGemini = GoogleGeminiService.mock.instances[0];
         mockGemini.detectShelfItemsFromImage = jest.fn();
@@ -284,11 +287,13 @@ describe('VisionPipelineService', () => {
 
     describe('medium enrichment dedupe guards', () => {
         it('keeps medium enrichment scoped to unresolved medium items when chat continuation returns extra entries', async () => {
+            let nextItemId = 1;
+            let nextCollectableId = 100;
             const saveToShelfSpy = jest.spyOn(service, 'saveToShelf').mockImplementation(async (items) => ({
                 added: items.map((item, index) => ({
                     ...item,
-                    itemId: index + 1,
-                    collectableId: index + 100,
+                    itemId: nextItemId++,
+                    collectableId: nextCollectableId++,
                 })),
                 failed: [],
             }));
@@ -341,11 +346,168 @@ describe('VisionPipelineService', () => {
         });
     });
 
+    describe('source identity + region link guards', () => {
+        it('skips duplicate source keys across save passes in the same scan run', async () => {
+            const existingCollectable = { id: 99, title: 'Existing Book', kind: 'book' };
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 88 });
+
+            const saveTracking = {
+                savedSourceKeys: new Set(),
+                firstLinkedRegionByCollectionItemId: new Map(),
+                attemptedSaves: 0,
+                savedUniqueRegions: 0,
+                duplicateSourceSkipped: 0,
+                duplicateRegionLinkSkipped: 0,
+            };
+            const hookContext = { scanPhotoId: 42, saveTracking };
+
+            const first = await service.saveToShelf(
+                [{ title: 'Existing Book', extractionIndex: 3, collectable: existingCollectable }],
+                1,
+                10,
+                'book',
+                hookContext,
+            );
+            const second = await service.saveToShelf(
+                [{ title: 'Existing Book Duplicate', extractionIndex: 3, collectable: existingCollectable }],
+                1,
+                10,
+                'book',
+                hookContext,
+            );
+
+            expect(first.added).toHaveLength(1);
+            expect(second.added).toHaveLength(0);
+            expect(saveTracking.attemptedSaves).toBe(1);
+            expect(saveTracking.savedUniqueRegions).toBe(1);
+            expect(saveTracking.duplicateSourceSkipped).toBe(1);
+            expect(shelvesQueries.addCollectable).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps first linked region for a collection item and skips later duplicates', async () => {
+            const saveTracking = {
+                savedSourceKeys: new Set(),
+                firstLinkedRegionByCollectionItemId: new Map(),
+                attemptedSaves: 0,
+                savedUniqueRegions: 0,
+                duplicateSourceSkipped: 0,
+                duplicateRegionLinkSkipped: 0,
+            };
+            const hookContext = { scanPhotoId: 77, saveTracking };
+
+            await service.linkRegionToCollectionItem({ extractionIndex: 3 }, 501, hookContext);
+            await service.linkRegionToCollectionItem({ extractionIndex: 5 }, 501, hookContext);
+
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledTimes(1);
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledWith({
+                scanPhotoId: 77,
+                extractionIndex: 3,
+                collectionItemId: 501,
+            });
+            expect(saveTracking.duplicateRegionLinkSkipped).toBe(1);
+        });
+
+        it('replaces prior region link when a lower extraction index arrives later', async () => {
+            const saveTracking = {
+                savedSourceKeys: new Set(),
+                firstLinkedRegionByCollectionItemId: new Map(),
+                attemptedSaves: 0,
+                savedUniqueRegions: 0,
+                duplicateSourceSkipped: 0,
+                duplicateRegionLinkSkipped: 0,
+            };
+            const hookContext = { scanPhotoId: 88, saveTracking };
+
+            await service.linkRegionToCollectionItem({ extractionIndex: 9 }, 601, hookContext);
+            await service.linkRegionToCollectionItem({ extractionIndex: 2 }, 601, hookContext);
+
+            expect(visionItemRegionsQueries.clearCollectionItemLink).toHaveBeenCalledWith({
+                scanPhotoId: 88,
+                extractionIndex: 9,
+            });
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledTimes(2);
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenLastCalledWith({
+                scanPhotoId: 88,
+                extractionIndex: 2,
+                collectionItemId: 601,
+            });
+            expect(saveTracking.firstLinkedRegionByCollectionItemId.get(601)).toBe(2);
+        });
+    });
+
+    describe('strict movie/tv name matching', () => {
+        beforeEach(() => {
+            getVisionSettingsForType.mockReturnValue({
+                nameSearchThreshold: 0.4,
+                strictNameMatch: {
+                    enabled: true,
+                    candidateLimit: 3,
+                    minSimilarity: 0.65,
+                    minTokenJaccard: 0.55,
+                    minTokenCoverage: 0.8,
+                    minMargin: 0.08,
+                },
+            });
+        });
+
+        it('rejects semantically wrong near matches even with high trigram similarity', async () => {
+            collectablesQueries.searchByTitle.mockResolvedValue([
+                { id: 177, title: 'Jack Ryan 5-Film Collection', sim: 0.72 },
+                { id: 900, title: 'Daniel Craig Bond Collection', sim: 0.66 },
+                { id: 901, title: 'Top Gun: 2-Movie Collection', sim: 0.60 },
+            ]);
+
+            const result = await service.shelfTypeSecondaryLookup(
+                { title: 'THE DANIEL CRAIG 5-FILM COLLECTION' },
+                'movies',
+                'unused',
+            );
+
+            expect(result).toBeNull();
+        });
+
+        it('rejects mismatched extended-edition collisions', async () => {
+            collectablesQueries.searchByTitle.mockResolvedValue([
+                { id: 1044, title: 'The Martian: Extended Edition', sim: 0.88 },
+                { id: 777, title: 'The Revenant', sim: 0.84 },
+                { id: 778, title: 'The Wizard of Oz', sim: 0.50 },
+            ]);
+
+            const result = await service.shelfTypeSecondaryLookup(
+                { title: 'The Revenant Extended Edition' },
+                'movies',
+                'unused',
+            );
+
+            expect(result).toBeNull();
+        });
+
+        it('accepts minor OCR typos when strict score + token checks pass', async () => {
+            collectablesQueries.searchByTitle.mockResolvedValue([
+                { id: 1667, title: 'Mission: Impossible Ultimate Movie Collection', sim: 0.91 },
+                { id: 1666, title: 'Top Gun: 2-Movie Collection', sim: 0.50 },
+                { id: 1665, title: 'The Shawshank Redemption', sim: 0.41 },
+            ]);
+
+            const result = await service.shelfTypeSecondaryLookup(
+                { title: 'Mission Impossible Ultmate Movie Collection' },
+                'movies',
+                'unused',
+            );
+
+            expect(result).toEqual(expect.objectContaining({
+                id: 1667,
+                title: 'Mission: Impossible Ultimate Movie Collection',
+            }));
+        });
+    });
+
     describe('transaction safety', () => {
         beforeEach(() => {
             visionItemRegionsQueries.linkCollectable.mockClear();
             visionItemRegionsQueries.linkManual.mockClear();
             visionItemRegionsQueries.linkCollectionItem.mockClear();
+            visionItemRegionsQueries.clearCollectionItemLink.mockClear();
         });
 
         it('saveToShelf wraps upsert+addCollectable in a transaction for new collectables', async () => {
