@@ -18,11 +18,68 @@ function normalizePayload(payload) {
   return {};
 }
 
+function getAggregateScopeKey({ shelfId, eventType, isItemEvent }) {
+  if (shelfId == null) {
+    return `global:${eventType || 'unknown'}`;
+  }
+  if (isItemEvent) {
+    return `shelf:${shelfId}:item`;
+  }
+  return `shelf:${shelfId}:${eventType || 'unknown'}`;
+}
+
+function getRatedItemIdentity(payload = {}) {
+  const normalized = normalizePayload(payload);
+  const collectableId = normalized.collectableId ?? normalized.collectable_id ?? normalized.collectable?.id ?? null;
+  const manualId = normalized.manualId ?? normalized.manual_id ?? normalized.manual?.id ?? null;
+  const itemId = normalized.itemId ?? normalized.id ?? null;
+  return {
+    collectableId: collectableId == null ? null : String(collectableId),
+    manualId: manualId == null ? null : String(manualId),
+    itemId: itemId == null ? null : String(itemId),
+  };
+}
+
+async function refreshRatedAggregateSummary(client, aggregateId) {
+  await client.query(
+    `WITH counts AS (
+       SELECT COUNT(*)::int AS item_count
+       FROM event_logs
+       WHERE aggregate_id = $1
+         AND event_type = 'item.rated'
+     ),
+     preview AS (
+       SELECT COALESCE(jsonb_agg(p.payload ORDER BY p.created_at DESC), '[]'::jsonb) AS preview_payloads
+       FROM (
+         SELECT payload, created_at
+         FROM event_logs
+         WHERE aggregate_id = $1
+           AND event_type = 'item.rated'
+         ORDER BY created_at DESC
+         LIMIT $2
+       ) p
+     )
+     UPDATE event_aggregates a
+     SET item_count = counts.item_count,
+         last_activity_at = NOW(),
+         preview_payloads = preview.preview_payloads
+     FROM counts, preview
+     WHERE a.id = $1`,
+    [aggregateId, PREVIEW_PAYLOAD_LIMIT],
+  );
+}
+
 async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
   // For item.* events on shelves, aggregate together regardless of specific type
   // For rating events (shelfId = null), aggregate globally
   // For other events (checkin, etc.), keep separate
   const isItemEvent = eventType && eventType.startsWith('item.');
+  const aggregateScopeKey = getAggregateScopeKey({ shelfId, eventType, isItemEvent });
+
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+    [String(userId), aggregateScopeKey],
+  );
 
   let findQuery;
   let findParams;
@@ -374,6 +431,68 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
   return transaction(async (client) => {
     const aggregate = await getOrCreateAggregate(client, { userId, shelfId, eventType });
     const payloadValue = normalizePayload(payload);
+    const isRatedEvent = eventType === 'item.rated';
+    let persistedLogRow = null;
+
+    if (isRatedEvent) {
+      const identity = getRatedItemIdentity(payloadValue);
+      const hasIdentity = identity.collectableId || identity.manualId || identity.itemId;
+      let existingRow = null;
+
+      if (hasIdentity) {
+        const existingResult = await client.query(
+          `SELECT id
+           FROM event_logs
+           WHERE aggregate_id = $1
+             AND event_type = 'item.rated'
+             AND (
+               ($2::text IS NOT NULL AND (payload->>'collectableId' = $2::text OR payload->>'collectable_id' = $2::text))
+               OR ($3::text IS NOT NULL AND (payload->>'manualId' = $3::text OR payload->>'manual_id' = $3::text))
+               OR ($4::text IS NOT NULL AND (payload->>'itemId' = $4::text OR payload->>'id' = $4::text))
+             )
+           ORDER BY created_at DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [aggregate.id, identity.collectableId, identity.manualId, identity.itemId],
+        );
+        existingRow = existingResult.rows[0] || null;
+      }
+
+      if (existingRow) {
+        const updateResult = await client.query(
+          `UPDATE event_logs
+           SET payload = $2::jsonb,
+               created_at = NOW()
+           WHERE id = $1
+           RETURNING *`,
+          [existingRow.id, JSON.stringify(payloadValue)],
+        );
+        persistedLogRow = updateResult.rows[0];
+      } else {
+        const insertResult = await client.query(
+          `INSERT INTO event_logs (user_id, shelf_id, aggregate_id, event_type, payload)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [userId, shelfId, aggregate.id, eventType, JSON.stringify(payloadValue)],
+        );
+        persistedLogRow = insertResult.rows[0];
+      }
+
+      await refreshRatedAggregateSummary(client, aggregate.id);
+
+      if (FEED_AGGREGATE_DEBUG) {
+        logger.info('[feed.event] logged', {
+          eventId: persistedLogRow?.id,
+          aggregateId: aggregate?.id,
+          userId,
+          shelfId,
+          eventType,
+        });
+      }
+
+      return rowToCamelCase(persistedLogRow);
+    }
+
     const payloadCount = Number(payloadValue.itemCount);
     const itemIncrement = Number.isFinite(payloadCount) && payloadCount > 0 ? Math.trunc(payloadCount) : 1;
 

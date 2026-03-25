@@ -481,6 +481,128 @@ async function logAction({
   );
 }
 
+/**
+ * Get social feed for admin dashboard (all events, no visibility filtering)
+ */
+async function getAdminSocialFeed({ limit = 30, offset = 0, eventType = null }) {
+  const conditions = [];
+  const params = [];
+
+  if (eventType) {
+    params.push(eventType);
+    conditions.push(`a.event_type = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total FROM event_aggregates a ${whereClause}`,
+    params
+  );
+  const total = countResult.rows[0]?.total || 0;
+
+  const dataParams = [...params];
+  dataParams.push(limit);
+  const limitIdx = dataParams.length;
+  dataParams.push(offset);
+  const offsetIdx = dataParams.length;
+
+  const result = await query(
+    `SELECT a.*,
+            u.username, u.picture AS user_picture, u.is_suspended AS user_suspended,
+            s.name AS shelf_name, s.type AS shelf_type,
+            c.title AS collectable_title, c.primary_creator AS collectable_creator,
+            c.cover_url AS collectable_cover_url, c.kind AS collectable_kind,
+            um.name AS manual_name, um.author AS manual_author, um.type AS manual_type,
+            COALESCE(lc.like_count, 0) AS like_count,
+            COALESCE(cc.comment_count, 0) AS comment_count
+     FROM event_aggregates a
+     LEFT JOIN users u ON u.id = a.user_id
+     LEFT JOIN shelves s ON s.id = a.shelf_id
+     LEFT JOIN collectables c ON c.id = a.collectable_id
+     LEFT JOIN user_manuals um ON um.id = a.manual_id
+     LEFT JOIN LATERAL (
+       SELECT COUNT(*)::int AS like_count FROM event_likes WHERE event_id = a.id
+     ) lc ON true
+     LEFT JOIN LATERAL (
+       SELECT COUNT(*)::int AS comment_count FROM event_comments WHERE event_id = a.id
+     ) cc ON true
+     ${whereClause}
+     ORDER BY a.last_activity_at DESC
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    dataParams
+  );
+
+  return {
+    events: result.rows.map(rowToCamelCase),
+    total,
+    hasMore: offset + limit < total,
+  };
+}
+
+/**
+ * Get comments for an event aggregate (admin view)
+ */
+async function getAdminEventComments(eventId, { limit = 20, offset = 0 }) {
+  const countResult = await query(
+    'SELECT COUNT(*)::int AS total FROM event_comments WHERE event_id = $1',
+    [eventId]
+  );
+  const commentCount = countResult.rows[0]?.total || 0;
+
+  const result = await query(
+    `SELECT ec.id, ec.content, ec.created_at, ec.user_id,
+            u.username, u.picture
+     FROM event_comments ec
+     LEFT JOIN users u ON u.id = ec.user_id
+     WHERE ec.event_id = $1
+     ORDER BY ec.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [eventId, limit, offset]
+  );
+
+  return {
+    comments: result.rows.map(rowToCamelCase),
+    commentCount,
+  };
+}
+
+/**
+ * Delete an event aggregate (admin moderation).
+ * CASCADE deletes likes/comments; event_logs.aggregate_id set to NULL.
+ */
+async function deleteEventAggregate(eventId, adminId, context = {}) {
+  return transaction(async (client) => {
+    const existing = await client.query(
+      'SELECT id, user_id, event_type, item_count FROM event_aggregates WHERE id = $1 FOR UPDATE',
+      [eventId]
+    );
+
+    if (existing.rows.length === 0) {
+      return { error: 'Event not found' };
+    }
+
+    const row = existing.rows[0];
+
+    await client.query('DELETE FROM event_aggregates WHERE id = $1', [eventId]);
+
+    await logAdminAction(client, {
+      adminId,
+      action: 'EVENT_DELETED',
+      targetUserId: row.user_id,
+      metadata: {
+        eventId,
+        eventType: row.event_type,
+        itemCount: row.item_count,
+      },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { deleted: true };
+  });
+}
+
 module.exports = {
   getSystemStats,
   listUsers,
@@ -493,4 +615,7 @@ module.exports = {
   listAuditLogs,
   getDetailedStats,
   logAction,
+  getAdminSocialFeed,
+  getAdminEventComments,
+  deleteEventAggregate,
 };

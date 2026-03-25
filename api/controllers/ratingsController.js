@@ -45,8 +45,8 @@ async function setRating(req, res) {
             rating
         );
 
-        // Log feed event if rating was set (not cleared)
-        if (result && result.rating) {
+        // Log feed event only when rating actually changed and is set (not cleared)
+        if (result?.changed && result.currentRating !== null) {
             if (isManual) {
                 // Manual item rating
                 const manual = await shelvesQueries.getManualById(itemId);
@@ -62,7 +62,7 @@ async function setRating(req, res) {
                             coverUrl: null,
                             coverMediaPath: manual.coverMediaPath || null,
                             coverMediaUrl: resolveMediaUrl(manual.coverMediaPath),
-                            rating: result.rating,
+                            rating: result.currentRating,
                             type: manual.type || 'item',
                         },
                     });
@@ -84,7 +84,7 @@ async function setRating(req, res) {
                             coverImageSource: collectable.coverImageSource || null,
                             coverMediaPath: collectable.coverMediaPath || null,
                             coverMediaUrl: resolveMediaUrl(collectable.coverMediaPath),
-                            rating: result.rating,
+                            rating: result.currentRating,
                             type: collectable.kind || 'item',
                         },
                     });
@@ -92,7 +92,7 @@ async function setRating(req, res) {
             }
         }
 
-        res.json({ rating: result?.rating || 0 });
+        res.json({ rating: result?.currentRating || 0 });
     } catch (err) {
         logger.error('setRating error:', err);
         res.status(500).json({ error: 'Server error' });

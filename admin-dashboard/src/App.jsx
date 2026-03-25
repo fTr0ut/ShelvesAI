@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Users from './pages/Users';
 import Content from './pages/Content';
 import ActivityFeed from './pages/ActivityFeed';
+import SocialFeed from './pages/SocialFeed';
 import Jobs from './pages/Jobs';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
@@ -46,6 +47,7 @@ function App() {
                 <Route path="/users" element={<Users />} />
                 <Route path="/content" element={<Content />} />
                 <Route path="/activity" element={<ActivityFeed />} />
+                <Route path="/social-feed" element={<SocialFeed />} />
                 <Route path="/jobs" element={<Jobs />} />
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/settings" element={<Settings />} />

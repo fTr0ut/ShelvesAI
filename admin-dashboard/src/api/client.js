@@ -106,6 +106,16 @@ export const setUserVisionQuota = (userId, scansUsed) =>
 export const getRecentFeed = (params = {}) =>
   client.get('/admin/feed/recent', { params });
 
+// Social feed
+export const getAdminSocialFeed = (params = {}) =>
+  client.get('/admin/feed/social', { params });
+
+export const getAdminEventComments = (eventId, params = {}) =>
+  client.get(`/admin/feed/events/${eventId}/comments`, { params });
+
+export const deleteEvent = (eventId) =>
+  client.delete(`/admin/feed/events/${eventId}`);
+
 // Jobs
 export const getJobs = (params = {}) =>
   client.get('/admin/jobs', { params });

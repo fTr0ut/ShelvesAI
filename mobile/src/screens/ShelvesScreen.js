@@ -87,6 +87,10 @@ export default function ShelvesScreen({ navigation }) {
         return shelves.filter(s => s.name?.toLowerCase().includes(q));
     }, [shelves, searchQuery]);
 
+    const showTopCreateShelfButton = useMemo(
+        () => shelves.length > 6 && !searchQuery.trim(),
+        [shelves.length, searchQuery]
+    );
 
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
@@ -185,6 +189,23 @@ export default function ShelvesScreen({ navigation }) {
         </View>
     );
 
+    const renderTopCreateShelf = () => (
+        <TouchableOpacity
+            style={styles.topCreateButton}
+            onPress={() => navigation.navigate('ShelfCreateScreen')}
+            activeOpacity={0.8}
+        >
+            <View style={styles.topCreateIcon}>
+                <Ionicons name="add" size={22} color={colors.primary} />
+            </View>
+            <View style={styles.topCreateContent}>
+                <Text style={styles.topCreateTitle}>New Shelf</Text>
+                <Text style={styles.topCreateMeta}>Create a new collection</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </TouchableOpacity>
+    );
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -267,6 +288,7 @@ export default function ShelvesScreen({ navigation }) {
                     numColumns={viewMode === 'grid' ? 2 : 1}
                     key={viewMode}
                     contentContainerStyle={styles.listContainer}
+                    ListHeaderComponent={showTopCreateShelfButton ? renderTopCreateShelf : null}
                     columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
                     refreshControl={
                         <RefreshControl
@@ -374,6 +396,43 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         padding: spacing.md,
         paddingTop: 0,
         paddingBottom: 100,
+    },
+    topCreateButton: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.md,
+        borderStyle: 'dashed',
+        borderWidth: 1,
+        borderColor: colors.border,
+        ...shadows.sm,
+    },
+    topCreateIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: radius.md,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    topCreateContent: {
+        flex: 1,
+    },
+    topCreateTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.primary,
+    },
+    topCreateMeta: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
     },
     gridRow: {
         justifyContent: 'space-between',

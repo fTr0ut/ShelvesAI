@@ -49,6 +49,10 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-25 | feed-rating-dedup | Hardened duplicate-rating handling in backend event system: `ratingsQueries.setRating` now returns change metadata (`changed`, `previousRating`, `currentRating`) and skips unchanged writes; both `ratingsController.setRating` and legacy `shelvesController.rateShelfItem` now emit `item.rated` only when rating values change; `feed.logEvent` now acquires advisory transaction locks per aggregate scope and treats `item.rated` as per-item upsert within an open aggregate (update existing `event_logs` payload + recompute aggregate `item_count`/`preview_payloads`) so same-item re-rates update in place instead of duplicating; `feedController.mergeCheckinRatingPairs` now consumes each rating item once (most-recent check-in wins) to prevent one rating merging into multiple check-ins. Added regression coverage in `api/__tests__/feedRatingEventDedup.test.js`, `api/__tests__/ratingsController.test.js`, `api/__tests__/feedController.mergeCheckinRatingPairs.test.js`, and `api/__tests__/shelvesController.test.js`.
+- 2026-03-25 | manual-detail-fields | Updated `mobile/src/screens/CollectableDetailScreen.js` to explicitly surface manual-editable metadata fields only when populated, separate `Your Notes` from description rendering, and refresh manual details on focus via `/api/manuals/:manualId`; updated `api/controllers/shelvesController.updateManualEntry` to normalize nullable manual edits (`null`/blank stay null) and validate `year` as 1-4 digits so empty fields remain hidden in detail metadata.
+- 2026-03-25 | shelves-top-create-cta | Updated `mobile/src/screens/ShelvesScreen.js` so My Shelves renders an additional top-of-list `New Shelf` CTA once shelf count exceeds 6 (when not searching), while retaining the existing in-list create card for parity with current creation flow.
+- 2026-03-25 | vision-progress-other-modal | Improved `other` shelf scan progress UX by adding new progress config stages in `api/config/visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`), updating `VisionPipelineService.processImage()` to emit these monotonic statuses during second-pass/duplicate-review flow, and extending `api/__tests__/visionPipeline.test.js` with coverage asserting second-pass progress no longer regresses to the 10% extracting stage.
 - 2026-03-25 | other-shelf-description-validation | Enforced non-empty descriptions for `other` shelves across mobile + API: `ShelfCreateScreen`/`ShelfEditScreen` now require description text for `other`; `shelvesController.createShelf` and `updateShelf` reject blank descriptions when shelf type is `other`; and `processShelfVision` + `processCatalogLookup` now return 400 for legacy `other` shelves without description so Gemini prompts are not run with empty shelf context.
 - 2026-03-25 | add-to-shelf-navigation-workflow | Updated `mobile/src/screens/ShelfSelectScreen.js` to use `navigation.replace()` for both existing-shelf and create-shelf paths in the Add-to-Shelf workflow, removing `ShelfSelect` from the stack once a shelf destination is chosen so back-navigation from `ShelfDetail` no longer returns users to `Choose Shelf` after adding items.
 - 2026-03-25 | shelf-detail-cache-refresh | Updated `mobile/src/screens/ShelfDetailScreen.js` to use cached-first shelf detail reload behavior: initial load remains blocking, focus-triggered reloads now run non-blocking via `useFocusEffect` + `InteractionManager.runAfterInteractions`, concurrent shelf fetches are deduped with an in-flight guard, and shelf state reset is scoped to shelf-id changes to prevent swipe-back flicker/rebuild artifacts when returning from `CollectableDetail`.
@@ -1204,6 +1208,7 @@ src/App.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/Users.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/Content.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/ActivityFeed.jsx
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/SocialFeed.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/Jobs.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/AuditLog.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/pages/Settings.jsx
@@ -1257,6 +1262,12 @@ src/pages/ActivityFeed.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/api/client.js (getRecentFeed)
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/components/UserAvatar.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/components/Pagination.jsx
+
+src/pages/SocialFeed.jsx
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/components/UserAvatar.jsx
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/components/Pagination.jsx
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/utils/errorUtils.js
 
 src/pages/Jobs.jsx
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ src/api/client.js (getJobs)
@@ -1318,7 +1329,7 @@ src/utils/errorUtils.js          (leaf ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no
 
 | File | Imported By |
 |---|---|
-| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal), Content (via ShelfDetailModal), ActivityFeed, Jobs (via JobDetailModal), AuditLog, Settings |
+| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal), Content (via ShelfDetailModal), ActivityFeed, SocialFeed, Jobs (via JobDetailModal), AuditLog, Settings |
 | `context/AuthContext.jsx` | main, App, Login, Settings, Sidebar |
 | `components/Layout.jsx` | App |
 | `components/Sidebar.jsx` | Layout |
@@ -1328,9 +1339,9 @@ src/utils/errorUtils.js          (leaf ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no
 | `components/JobDetailModal.jsx` | Jobs |
 | `components/ShelfDetailModal.jsx` | Content |
 | `components/UserBadge.jsx` | UserTable, UserDetailModal |
-| `components/UserAvatar.jsx` | UserTable, UserDetailModal, Dashboard, ActivityFeed, Content, ShelfDetailModal |
-| `components/Pagination.jsx` | Users, ActivityFeed, Jobs, AuditLog, Content, ShelfDetailModal |
-| `utils/errorUtils.js` | Dashboard, UserDetailModal, JobDetailModal, ShelfDetailModal, Settings |
+| `components/UserAvatar.jsx` | UserTable, UserDetailModal, Dashboard, ActivityFeed, SocialFeed, Content, ShelfDetailModal |
+| `components/Pagination.jsx` | Users, ActivityFeed, SocialFeed, Jobs, AuditLog, Content, ShelfDetailModal |
+| `utils/errorUtils.js` | Dashboard, UserDetailModal, JobDetailModal, ShelfDetailModal, Settings, SocialFeed |
 
 ---
 

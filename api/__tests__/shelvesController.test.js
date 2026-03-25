@@ -9,6 +9,7 @@ const userCollectionPhotosQueries = require('../database/queries/userCollectionP
 const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
+const feedQueries = require('../database/queries/feed');
 
 jest.mock('../services/visionPipeline');
 jest.mock('../database/queries/shelves');
@@ -145,6 +146,43 @@ describe('shelvesController', () => {
                 error: 'Description is required when shelf type is "other".',
             });
             expect(shelvesQueries.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('rateShelfItem', () => {
+        beforeEach(() => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { rating: 4 };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books', visibility: 'public' });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+                collectableCover: null,
+                collectableCoverImageUrl: null,
+                collectableCoverImageSource: null,
+                collectableCoverMediaPath: null,
+            });
+        });
+
+        it('logs once for initial rating and skips unchanged repeats on legacy shelf-rating endpoint', async () => {
+            shelvesQueries.updateItemRating
+                .mockResolvedValueOnce({ id: 55, rating: 4, previousRating: null })
+                .mockResolvedValueOnce({ id: 55, rating: 4, previousRating: 4 });
+
+            await shelvesController.rateShelfItem(req, res);
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(feedQueries.logEvent).toHaveBeenCalledTimes(1);
+            expect(feedQueries.logEvent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 1,
+                    shelfId: null,
+                    eventType: 'item.rated',
+                }),
+            );
         });
     });
 

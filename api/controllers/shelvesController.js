@@ -1182,18 +1182,27 @@ async function updateManualEntry(req, res) {
         const dbField = fieldMap[field] || field;
         if (field === 'genre') {
           updates[dbField] = normalizeStringArray(body[field]);
+        } else if (field === 'year') {
+          const normalizedYear = normalizeString(body[field]);
+          if (!normalizedYear) {
+            updates[dbField] = null;
+          } else if (!/^\d{1,4}$/.test(normalizedYear)) {
+            return res.status(400).json({ error: 'year must be a 1-4 digit number' });
+          } else {
+            updates[dbField] = parseInt(normalizedYear, 10);
+          }
         } else {
-          updates[dbField] = String(body[field]).trim();
+          updates[dbField] = normalizeString(body[field]);
         }
       }
     }
 
     if (body.primaryCreator !== undefined && updates.author === undefined) {
-      updates.author = String(body.primaryCreator).trim();
+      updates.author = normalizeString(body.primaryCreator);
     }
 
     // Handle notes separately (stored on user_collections, not user_manuals)
-    const notesValue = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : undefined;
+    const notesValue = body.notes !== undefined ? normalizeString(body.notes) : undefined;
 
     if (Object.keys(updates).length === 0 && notesValue === undefined) {
       return res.status(400).json({ error: 'No valid fields to update' });
@@ -2876,19 +2885,23 @@ async function rateShelfItem(req, res) {
       }
     }
 
-    const validRating = rating === null ? null : parseFloat(rating);
+    const validRating = rating === null || rating === undefined ? null : parseFloat(rating);
 
     const updated = await shelvesQueries.updateItemRating(itemId, req.user.id, shelfId, validRating);
     if (!updated) {
       return res.status(404).json({ error: "Item not found" });
     }
+    const previousRating = updated.previousRating === null || updated.previousRating === undefined
+      ? null
+      : parseFloat(updated.previousRating);
+    const ratingChanged = previousRating !== validRating;
 
     // Get full item details for response and feed event
     const fullItem = await shelvesQueries.getItemById(itemId, req.user.id, shelfId);
 
-    // Log feed event if rating was set (not cleared)
+    // Log feed event only when rating actually changed and is set (not cleared)
     // Use null shelfId for global rating aggregation
-    if (validRating !== null) {
+    if (ratingChanged && validRating !== null) {
       await logShelfEvent({
         userId: req.user.id,
         shelfId: null, // Global aggregation for ratings

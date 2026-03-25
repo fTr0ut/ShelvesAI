@@ -5,6 +5,7 @@ const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const pg = require('../database/pg');
+const processingStatus = require('../services/processingStatus');
 
 jest.mock('../services/googleGemini');
 jest.mock('../database/queries/collectables');
@@ -893,6 +894,42 @@ describe('VisionPipelineService', () => {
                 expect.any(Object),
             );
             expect(result.results.needsReview).toBe(1);
+        });
+
+        it('uses dedicated second-pass progress stages so other scans do not regress to 10%', async () => {
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: [{ title: 'Weller Twlve', author: 'Buffalo Trace Distillery', confidence: 0.55, extractionIndex: 0 }],
+                })
+                .mockResolvedValueOnce({
+                    items: [{ title: 'Weller Twelve', author: 'Buffalo Trace Distillery', confidence: 0.94, extractionIndex: 0 }],
+                });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100, 'job-progress');
+
+            const updates = updateJobSpy.mock.calls.map((call) => call[1] || {});
+            const steps = updates.map((entry) => entry.step).filter(Boolean);
+            expect(steps).toEqual(expect.arrayContaining([
+                'extracting',
+                'categorizing',
+                'extracting-second-pass',
+                'matching-other',
+                'preparing-other',
+                'saving',
+            ]));
+
+            const secondPassStepIndex = steps.indexOf('extracting-second-pass');
+            const matchingStepIndex = steps.indexOf('matching-other');
+            expect(secondPassStepIndex).toBeGreaterThan(-1);
+            expect(matchingStepIndex).toBeGreaterThan(secondPassStepIndex);
+
+            const secondPassProgress = updates
+                .filter((entry) => entry.step === 'extracting-second-pass')
+                .map((entry) => entry.progress);
+            expect(secondPassProgress).toEqual(expect.arrayContaining([40]));
+
+            updateJobSpy.mockRestore();
         });
     });
 });

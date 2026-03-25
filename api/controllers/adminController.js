@@ -659,6 +659,83 @@ async function getShelfItems(req, res) {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /api/admin/feed/social
+ * Get social feed with like/comment counts for admin monitoring
+ */
+async function getAdminSocialFeed(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 30, maxLimit: 100 });
+    const eventType = req.query.eventType || null;
+
+    const result = await adminQueries.getAdminSocialFeed({ limit, offset, eventType });
+
+    res.json({
+      events: result.events,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin getAdminSocialFeed error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/feed/events/:eventId/comments
+ * Get comments for a specific event aggregate
+ */
+async function getAdminEventComments(req, res) {
+  try {
+    const { eventId } = req.params;
+    if (!UUID_RE.test(eventId)) {
+      return res.status(400).json({ error: 'Invalid event ID' });
+    }
+
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+    const result = await adminQueries.getAdminEventComments(eventId, { limit, offset });
+
+    res.json(result);
+  } catch (err) {
+    logger.error('Admin getAdminEventComments error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * DELETE /api/admin/feed/events/:eventId
+ * Delete an event aggregate (moderation)
+ */
+async function deleteEvent(req, res) {
+  try {
+    const { eventId } = req.params;
+    if (!UUID_RE.test(eventId)) {
+      return res.status(400).json({ error: 'Invalid event ID' });
+    }
+
+    const result = await adminQueries.deleteEventAggregate(
+      eventId,
+      req.user.id,
+      getAdminContext(req)
+    );
+
+    if (result.error) {
+      return res.status(404).json({ error: result.error });
+    }
+
+    res.json({ message: 'Event deleted successfully' });
+  } catch (err) {
+    logger.error('Admin deleteEvent error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   getMe,
   logout,
@@ -674,6 +751,9 @@ module.exports = {
   resetUserVisionQuota,
   setUserVisionQuota,
   getRecentFeed,
+  getAdminSocialFeed,
+  getAdminEventComments,
+  deleteEvent,
   listJobs,
   getJob,
   getSystemInfo,

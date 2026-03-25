@@ -62,6 +62,18 @@ function normalizeRating(rating) {
  */
 async function setRating(userId, { collectableId, manualId }, rating) {
     const validRating = normalizeRating(rating);
+    const existingRating = await getRating(userId, { collectableId, manualId });
+    const previousRating = existingRating ? normalizeRating(existingRating.rating) : null;
+    const unchanged = previousRating === validRating;
+
+    if (unchanged) {
+        return {
+            rating: existingRating,
+            changed: false,
+            previousRating,
+            currentRating: previousRating,
+        };
+    }
 
     // If rating is null/cleared, delete the entry
     if (validRating === null) {
@@ -76,7 +88,12 @@ async function setRating(userId, { collectableId, manualId }, rating) {
                 [userId, manualId]
             );
         }
-        return null;
+        return {
+            rating: null,
+            changed: previousRating !== null,
+            previousRating,
+            currentRating: null,
+        };
     }
 
     if (collectableId) {
@@ -88,17 +105,16 @@ async function setRating(userId, { collectableId, manualId }, rating) {
              RETURNING *`,
             [userId, collectableId, validRating]
         );
-        return rowToCamelCase(result.rows[0]);
+        return {
+            rating: rowToCamelCase(result.rows[0]),
+            changed: true,
+            previousRating,
+            currentRating: validRating,
+        };
     }
 
     if (manualId) {
-        // Check if rating exists for manual
-        const existing = await query(
-            `SELECT id FROM user_ratings WHERE user_id = $1 AND manual_id = $2`,
-            [userId, manualId]
-        );
-
-        if (existing.rows.length > 0) {
+        if (existingRating) {
             // Update existing
             const result = await query(
                 `UPDATE user_ratings 
@@ -107,7 +123,12 @@ async function setRating(userId, { collectableId, manualId }, rating) {
                  RETURNING *`,
                 [validRating, userId, manualId]
             );
-            return rowToCamelCase(result.rows[0]);
+            return {
+                rating: rowToCamelCase(result.rows[0]),
+                changed: true,
+                previousRating,
+                currentRating: validRating,
+            };
         } else {
             // Insert new
             const result = await query(
@@ -116,11 +137,21 @@ async function setRating(userId, { collectableId, manualId }, rating) {
                  RETURNING *`,
                 [userId, manualId, validRating]
             );
-            return rowToCamelCase(result.rows[0]);
+            return {
+                rating: rowToCamelCase(result.rows[0]),
+                changed: true,
+                previousRating,
+                currentRating: validRating,
+            };
         }
     }
 
-    return null;
+    return {
+        rating: null,
+        changed: false,
+        previousRating: null,
+        currentRating: null,
+    };
 }
 
 /**

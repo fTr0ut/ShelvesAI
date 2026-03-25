@@ -445,9 +445,14 @@ function mergeCheckinRatingPairs(entries, options = {}) {
 
   // Track which rating items have been merged
   const mergedRatingItems = new Map(); // Map<ratingEntryId, Set<itemIndex>>
+  const consumedRatingItems = new Set(); // Set<`${ratingEntryId}:${itemIndex}`>
+  const checkinsByRecency = [...checkins].sort((a, b) => (
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  ));
+  const mergedCheckinById = new Map(checkins.map((checkin) => [checkin.id, checkin]));
 
-  // Process each check-in to find matching ratings
-  const mergedCheckins = checkins.map((checkin) => {
+  // Process each check-in to find matching ratings (most recent check-in wins)
+  for (const checkin of checkinsByRecency) {
     const checkinUserId = String(checkin.owner?.id || '');
     const checkinTime = new Date(checkin.createdAt).getTime();
     const checkinCollectableId = checkin.collectable?.id || null;
@@ -466,6 +471,9 @@ function mergeCheckinRatingPairs(entries, options = {}) {
       // Check each item in the rating for a match
       const ratingItems = rating.items || [];
       for (let i = 0; i < ratingItems.length; i++) {
+        const consumedKey = `${rating.id}:${i}`;
+        if (consumedRatingItems.has(consumedKey)) continue;
+
         const ratingItem = ratingItems[i];
         const ratingCollectableId = ratingItem.collectableId || ratingItem.collectable?.id || null;
         const ratingManualId = ratingItem.manualId || ratingItem.manual?.id || null;
@@ -498,15 +506,15 @@ function mergeCheckinRatingPairs(entries, options = {}) {
             mergedRatingItems.set(rating.id, new Set());
           }
           mergedRatingItems.get(rating.id).add(i);
-
-          return mergedEntry;
+          consumedRatingItems.add(consumedKey);
+          mergedCheckinById.set(checkin.id, mergedEntry);
+          break;
         }
       }
+      if (mergedCheckinById.get(checkin.id)?.eventType === 'checkin.rated') break;
     }
-
-    // No match found, return original check-in
-    return checkin;
-  });
+  }
+  const mergedCheckins = checkins.map((checkin) => mergedCheckinById.get(checkin.id) || checkin);
 
   // Process ratings - remove merged items or entire entries
   const processedRatings = [];
@@ -1058,4 +1066,8 @@ async function getFeedEntryDetails(req, res) {
   }
 }
 
-module.exports = { getFeed, getFeedEntryDetails };
+module.exports = {
+  getFeed,
+  getFeedEntryDetails,
+  _mergeCheckinRatingPairs: mergeCheckinRatingPairs,
+};

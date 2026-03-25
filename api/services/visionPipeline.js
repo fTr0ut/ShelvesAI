@@ -611,7 +611,7 @@ class VisionPipelineService {
 
         if (canRunOtherSecondPass) {
             checkAborted();
-            updateProgress('extracting');
+            updateProgress('extractingSecondPass', { count: lowConfidence.length });
             logger.info('[VisionPipeline] Step 1c: Running other-shelf low-confidence second pass...', {
                 firstPassLowConfidence: lowConfidence.length,
             });
@@ -709,16 +709,8 @@ class VisionPipelineService {
         }
 
         if (isOtherShelf) {
-            if (lowConfidence.length > 0) {
-                logger.info('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
-                await this.saveToReviewQueue(lowConfidence, userId, shelf.id, {
-                    ...baseHookContext,
-                    reason: 'low_confidence',
-                });
-            }
-
             checkAborted();
-            updateProgress('matching', { count: highConfidence.length });
+            updateProgress('matchingOther', { count: highConfidence.length + mediumConfidence.length });
             const candidates = [...highConfidence, ...mediumConfidence]
                 .map((item) => ({
                     ...normalizeOtherManualItem(item, shelf.type),
@@ -745,6 +737,15 @@ class VisionPipelineService {
                 });
             }
 
+            if (lowConfidence.length > 0) {
+                updateProgress('reviewingOther', { count: lowConfidence.length });
+                logger.info('[VisionPipeline] Sending', lowConfidence.length, 'low-confidence items (<' + confidenceMin + ') to review queue...');
+                await this.saveToReviewQueue(lowConfidence, userId, shelf.id, {
+                    ...baseHookContext,
+                    reason: 'low_confidence',
+                });
+            }
+
             const itemsToSave = [];
             const itemsToReview = [];
 
@@ -757,6 +758,7 @@ class VisionPipelineService {
             }
 
             if (itemsToReview.length > 0) {
+                updateProgress('reviewingOther', { count: itemsToReview.length });
                 logger.info('[VisionPipeline] Sending', itemsToReview.length, 'incomplete items to review queue...');
                 await this.saveToReviewQueue(itemsToReview, userId, shelf.id, {
                     ...baseHookContext,

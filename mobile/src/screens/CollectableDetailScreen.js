@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
     Image,
     Linking,
@@ -15,6 +15,7 @@ import {
     Modal,
     FlatList,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -1029,10 +1030,45 @@ export default function CollectableDetailScreen({ route, navigation }) {
         return path.split('.').reduce((prev, curr) => prev ? prev[curr] : null, obj);
     };
 
+    const normalizeDisplayText = (value) => {
+        if (value === null || value === undefined) return null;
+        const normalized = String(value).trim();
+        if (!normalized) return null;
+        const lower = normalized.toLowerCase();
+        if (lower === 'null' || lower === 'undefined') return null;
+        return normalized;
+    };
+
     const title = source?.title || source?.name || 'Untitled';
     const subtitle = source?.author || source?.primaryCreator || source?.publisher || '';
     const type = source?.type || 'Item';
-    const description = source?.description || source?.overview || item?.notes || '';
+    const description = normalizeDisplayText(source?.description) || normalizeDisplayText(source?.overview) || '';
+    const personalNotes = normalizeDisplayText(item?.notes) || '';
+
+    useFocusEffect(
+        useCallback(() => {
+            let isActive = true;
+            if (!isManual || !baseManual?.id || !apiBase || !token) {
+                return () => { isActive = false; };
+            }
+
+            (async () => {
+                try {
+                    const data = await apiRequest({
+                        apiBase,
+                        path: `/api/manuals/${baseManual.id}`,
+                        token,
+                    });
+                    if (!isActive || !data?.manual) return;
+                    setResolvedManual(data.manual);
+                } catch (err) {
+                    console.warn('Failed to refresh manual details on focus:', err?.message || err);
+                }
+            })();
+
+            return () => { isActive = false; };
+        }, [isManual, baseManual?.id, apiBase, token]),
+    );
 
     const buildMetadata = () => {
         const excludedKeys = new Set([
@@ -1116,6 +1152,21 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         const usedKeys = new Set();
         const entries = [];
+        const manualEditableFields = [
+            'format',
+            'author',
+            'publisher',
+            'year',
+            'genre',
+            'edition',
+            'limitedEdition',
+            'ageStatement',
+            'labelColor',
+            'specialMarkings',
+            'regionalItem',
+            'barcode',
+            'itemSpecificText',
+        ];
 
         const prettifyLabel = (key) =>
             key
@@ -1131,7 +1182,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 return formatter(value);
             }
             if (Array.isArray(value)) {
-                const flat = value.filter((entry) => entry !== null && entry !== undefined && entry !== '');
+                const flat = value
+                    .map((entry) => (typeof entry === 'string' ? normalizeDisplayText(entry) : entry))
+                    .filter((entry) => entry !== null && entry !== undefined && entry !== '');
                 if (!flat.length) return null;
                 if (flat.every((entry) => ['string', 'number', 'boolean'].includes(typeof entry))) {
                     return flat.join(', ');
@@ -1140,6 +1193,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
             }
             if (typeof value === 'object') return null;
             if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            if (typeof value === 'string') {
+                return normalizeDisplayText(value);
+            }
             return String(value);
         };
 
@@ -1151,12 +1207,40 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return rawValue;
         };
 
+        const resolveManualValue = (key) => {
+            const aliasMap = {
+                ageStatement: ['ageStatement', 'age_statement'],
+                specialMarkings: ['specialMarkings', 'special_markings'],
+                labelColor: ['labelColor', 'label_color'],
+                regionalItem: ['regionalItem', 'regional_item'],
+                limitedEdition: ['limitedEdition', 'limited_edition'],
+                itemSpecificText: ['itemSpecificText', 'item_specific_text'],
+            };
+            const paths = aliasMap[key] || [key];
+            for (const path of paths) {
+                const value = resolveValue(manual, path);
+                if (value !== null && value !== undefined && value !== '') {
+                    return value;
+                }
+            }
+            return null;
+        };
+
         const addEntry = (key, label, rawValue) => {
             const value = normalizeValue(rawValue, key);
             if (value === null) return;
             entries.push({ label, value });
             usedKeys.add(key);
         };
+
+        if (isManual) {
+            manualEditableFields.forEach((key) => {
+                const value = resolveManualValue(key);
+                const label = labelOverrides[key] || prettifyLabel(key);
+                addEntry(key, label, value);
+            });
+            return entries;
+        }
 
         const derivedFormat = () => {
             if (item?.format) return item.format;
@@ -1572,10 +1656,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 ) : null}
 
                 {/* Notes */}
-                {item?.notes && !description && (
+                {personalNotes && (
                     <View style={styles.section}>
                         <Text style={styles.sectionTitle}>Your Notes</Text>
-                        <Text style={styles.notes}>{item.notes}</Text>
+                        <Text style={styles.notes}>{personalNotes}</Text>
                     </View>
                 )}
 

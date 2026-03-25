@@ -5,6 +5,11 @@
             "progress": 10,
             "message": "Analyzing image with AI vision..."
         },
+        "extractingSecondPass": {
+            "step": "extracting-second-pass",
+            "progress": 40,
+            "messageTemplate": "Re-checking {count} uncertain detections..."
+        },
         "categorizing": {
             "step": "categorizing",
             "progress": 20,
@@ -42,8 +47,18 @@
         },
         "preparingOther": {
             "step": "preparing-other",
-            "progress": 50,
-            "messageTemplate": "Gathering details for {count} other items..."
+            "progress": 80,
+            "messageTemplate": "Preparing {count} items for save..."
+        },
+        "matchingOther": {
+            "step": "matching-other",
+            "progress": 55,
+            "messageTemplate": "Checking {count} items for possible duplicates..."
+        },
+        "reviewingOther": {
+            "step": "reviewing-other",
+            "progress": 70,
+            "messageTemplate": "Sending {count} items to review..."
         }
     }
 }

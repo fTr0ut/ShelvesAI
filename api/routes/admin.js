@@ -56,6 +56,8 @@ router.get('/settings/:key', adminController.getSetting);
 
 // Activity monitoring (read)
 router.get('/feed/recent', adminController.getRecentFeed);
+router.get('/feed/social', adminController.getAdminSocialFeed);
+router.get('/feed/events/:eventId/comments', adminController.getAdminEventComments);
 router.get('/jobs', adminController.listJobs);
 router.get('/jobs/:jobId', adminController.getJob);
 
@@ -74,6 +76,9 @@ router.get('/system', adminController.getSystemInfo);
 router.use(requireAdminCsrf);
 
 router.post('/logout', adminController.logout);
+
+// Event moderation
+router.delete('/feed/events/:eventId', adminController.deleteEvent);
 router.post('/users/:userId/suspend', adminController.suspendUser);
 router.post('/users/:userId/unsuspend', adminController.unsuspendUser);
 router.post('/users/:userId/toggle-admin', adminController.toggleAdmin);

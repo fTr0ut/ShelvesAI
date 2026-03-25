@@ -18,7 +18,8 @@
       "Bash(\"C:/Users/johna/.claude/plans/cheeky-doodling-hummingbird.md\":*)",
       "Bash(ls -la /c/Users/johna/Documents/Projects/ShelvesAI/api/*.js)",
       "Bash(npx jest:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(xxd)"
     ]
   }
 }

@@ -652,10 +652,21 @@ async function listVisibleForUser(ownerId, viewerId = null) {
  */
 async function updateItemRating(itemId, userId, shelfId, rating) {
     const result = await query(
-        `UPDATE user_collections 
-         SET rating = $1
-         WHERE id = $2 AND user_id = $3 AND shelf_id = $4
-         RETURNING *`,
+        `WITH existing AS (
+            SELECT id, rating
+            FROM user_collections
+            WHERE id = $2 AND user_id = $3 AND shelf_id = $4
+            FOR UPDATE
+         ),
+         updated AS (
+            UPDATE user_collections
+            SET rating = $1
+            WHERE id = $2 AND user_id = $3 AND shelf_id = $4
+            RETURNING *
+         )
+         SELECT updated.*, existing.rating AS previous_rating
+         FROM updated
+         JOIN existing ON existing.id = updated.id`,
         [rating, itemId, userId, shelfId]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
