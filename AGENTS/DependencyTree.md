@@ -49,6 +49,23 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-25 | reviewed-republish-upsert-and-updated-label | Implemented stable reviewed re-publish workflow: added `user_collections.reviewed_event_log_id/reviewed_event_published_at/reviewed_event_updated_at` (migration `20260325201500_add_reviewed_event_link_to_user_collections` + init schema alter), exposed linkage fields in shelf-item payloads (`reviewedEventId`, `reviewPublishedAt`, `reviewUpdatedAt`), and added `feedQueries.upsertReviewedEvent(...)` to update existing reviewed event logs in place (or create/link fallback), with content-change guard on notes/rating/metadata and aggregate `last_activity_at` bump for changed republishes. Updated `shelvesController` collectable/manual note-share paths to use reviewed upsert + persist linkage on `user_collections`, updated mobile note-save payloads to pass optional `reviewedEventId`, and added reviewed `Updated on <absolute local datetime>` rendering across `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen`. Feed entry merge ordering now sorts by activity (`updatedAt` fallback) to keep re-published reviewed cards at the top.
+- 2026-03-25 | reviewed-card-read-more-and-detail-expand | Updated reviewed-note UI behavior: in `SocialFeedScreen` reviewed cards now detect when note text is line-clamped and show a small `n/ click to read more` hint (with italicized `click to read more`), while `FeedDetailScreen` reviewed item notes no longer clamp to 2 lines so the full note text is shown.
+- 2026-03-25 | reviewed-updated-indicator-and-share-default | Refined reviewed edit/publish UX in mobile: `CollectableDetailScreen` now auto-selects `Share to feed?` when owner opens note editor for an item already linked to a published reviewed event (`reviewedEventId/reviewPublishedAt/reviewUpdatedAt`), and Social feed reviewed cards now show an explicit `Updated` badge in the top-right metadata area plus robust `Updated on <absolute datetime>` fallback resolution from event-level timestamps when item-level review timestamps are absent. Applied the same fallback logic to reviewed timestamp labels in `FeedDetailScreen` and `ProfileScreen`.
+- 2026-03-25 | reviewed-rating-collapse-bidirectional | Refined feed read-time collapse behavior in `api/controllers/feedController.js`: `mergeReviewedRatingPairs` now pairs `reviewed` and `item.rated` events in either order when same user/item occurs within `REVIEW_RATING_MERGE_WINDOW_MINUTES`, always omits paired standalone rating entries, and updates reviewed item rating from the paired rating payload. Matching now prefers strict `itemId` equality when present on both events, with collectable/manual identity fallback only when one side lacks `itemId` (legacy `/api/ratings` payloads). Expanded regression coverage in `api/__tests__/feedController.mergeCheckinRatingPairs.test.js` for before/after ordering, strict mismatched-itemId non-merge, and legacy no-itemId merge fallback.
+- 2026-03-25 | reviewed-event-aggregation-disable-and-ui-fix | Updated feed event behavior to exclude `reviewed` from aggregate-window reuse in `api/database/queries/feed.js` (each reviewed post now gets its own aggregate/event card), tightened `reviewed`+`item.rated` merge logic in `api/controllers/feedController.js` to require exact matching `itemId` within `REVIEW_RATING_MERGE_WINDOW_MINUTES`, added regression coverage in `api/__tests__/feedRatingEventDedup.test.js` and `api/__tests__/feedController.mergeCheckinRatingPairs.test.js`, and adjusted `mobile/src/screens/SocialFeedScreen.js` reviewed card styling so review text is centered/non-italic while staying top-aligned alongside thumbnail with rating directly beneath the thumbnail.
+- 2026-03-25 | reviewed-rating-merge-and-layout | Added feed-level merge behavior to combine `reviewed` + later `item.rated` events into one `reviewed` card when same user/item occurs within configurable window `REVIEW_RATING_MERGE_WINDOW_MINUTES` (default 120), including per-item identity matching (collectable/manual/title), consumed-rating pruning from standalone rating aggregates, and merged timestamp carry-forward. Added reviewed/rating merge coverage in `api/__tests__/feedController.mergeCheckinRatingPairs.test.js` (merge + non-merge cases). Updated `mobile/src/screens/SocialFeedScreen.js` reviewed card layout so review text renders inline in the card body (non-italic, aligned with thumbnail top) and rating (when present) renders directly beneath thumbnail.
+- 2026-03-25 | replace-wrong-ocr-workflow | Implemented end-to-end shelf item replacement workflow for wrong OCR matches: added DB table `item_replacement_traces` (+ indexes/RLS + migrations `20260325010000_create_item_replacement_traces`, `20260325010010_add_item_replacement_traces_rls` + init schema update), new query module `database/queries/itemReplacementTraces.js`, new shelf routes `POST /api/shelves/:shelfId/items/:itemId/replacement-intent` and `POST /api/shelves/:shelfId/items/:itemId/replace`, controller validation/transaction flow for replacement intent+completion/failure, shelf payload hydration field `isVisionLinked`, and mobile replacement UX across `CollectableDetailScreen` (72h vision-linked CTA), `ShelfDetailScreen` (<=24h Replace/Delete/Cancel modal with preserved delete confirmation), and `ItemSearchScreen` (replacement mode prefill + replace submit + goBack success path). Added regression coverage in `api/__tests__/shelvesController.test.js` and query tests in `api/database/queries/itemReplacementTraces.test.js`.
+- 2026-03-25 | reviewed-feed-share-toggle | Added notes-editor `Share to feed?` toggle on `CollectableDetailScreen` (manual + collectable save paths) and wired backend `shareToFeed` handling into `PUT /api/shelves/:shelfId/items/:itemId/rating` and `PUT /api/shelves/:shelfId/manual/:itemId`. Added new shelf-scoped feed event type `reviewed` emitted only when sharing is enabled and saved notes are non-empty, with payload snapshot fields for item identity, notes, metadata, and the user’s current decoupled rating. Updated feed mapping/display hints in `api/controllers/feedController.js` and mobile feed renderers (`SocialFeedScreen`, `FeedDetailScreen`, `ProfileScreen`) to render reviewed activity cards/details with notes + rating context. Added controller regression coverage in `api/__tests__/shelvesController.test.js` for reviewed-event emission and non-emission on cleared notes.
+- 2026-03-25 | detail-rating-owner-label | Updated `CollectableDetailScreen` owner-rating block label to mirror handle-based notes labeling: read-only/friend shelf detail now renders `<ownerUsername>'s rating:` when owner username is available (fallback `Owner rating:`).
+- 2026-03-25 | detail-notes-owner-label | Added owner-handle-aware notes labeling for read-only shelf detail flows: `shelves.getForViewing` now selects `owner_username`, `ShelfDetailScreen` passes `ownerUsername` into `CollectableDetail` navigation, and `CollectableDetailScreen` renders notes header as `<ownerUsername>'s Notes:` when viewer cannot edit notes (fallback remains `Your Notes`).
+- 2026-03-25 | detail-notes-order-adjustment | Updated `CollectableDetailScreen` section ordering so `Your Notes` renders above `Details` metadata (remaining below rating/actions), preserving existing notes view/edit state behavior.
+- 2026-03-25 | detail-notes-ui-modes | Refined `CollectableDetailScreen` note UX: `Your Notes` now renders above description (still below rating/actions), shows inline editor + save button when notes are empty, and switches to read-only text + pencil affordance when notes exist; tapping pencil toggles editor mode. Added edit-mode state sync so saved/cleared notes transition between read and edit modes correctly.
+- 2026-03-25 | detail-notes-false-error-suppression | Updated `CollectableDetailScreen` notes-save error handling for collectables: when API returns `Item not found`, the client now verifies persisted shelf notes via `/api/shelves/:shelfId/items` and suppresses the modal if server state already matches the intended note, preventing false-negative error popups after successful saves.
+- 2026-03-25 | detail-notes-fallback-hardening | Further hardened collectable notes persistence: `rateShelfItem` now auto-falls back by treating `:itemId` as a collectable-id candidate for notes-only updates when body `collectableId` is absent, and `CollectableDetailScreen` now sends `resolvedCollectableId` in notes-save payloads. Added regression coverage in `api/__tests__/shelvesController.test.js` for notes-only fallback without explicit `collectableId`.
+- 2026-03-25 | detail-notes-itemid-fallback | Updated `api/controllers/shelvesController.rateShelfItem` to accept optional `collectableId` and resolve collection row fallback via `shelvesQueries.findCollectionByReference(...)` when `:itemId` is not a `user_collections.id`, then hydrate response/feed payload from the resolved row id; `CollectableDetailScreen` notes save now includes `collectableId` in `PUT /api/shelves/:shelfId/items/:itemId/rating` body for this fallback path. Added regression test in `api/__tests__/shelvesController.test.js` for notes-save fallback.
+- 2026-03-25 | detail-notes-collectable-retry | Hardened `CollectableDetailScreen` notes save flow for collectables by retrying `PUT /api/shelves/:shelfId/items/:itemId/rating` with resolved shelf-item id from `/api/shelves/:shelfId/items` when initial id is a collectable id (404 path), and surfaced API error text in the notes save alert for faster diagnosis.
+- 2026-03-25 | detail-notes-inline-edit | Extended `CollectableDetailScreen` with inline `Your Notes` review/edit UI for any owned shelf item (collectable or manual), including save-state handling and immediate local sync after edits; `ManualEditScreen` now merges updated manual + notes payload back into the originating detail route for instant return-state refresh; and `shelvesController.rateShelfItem` + `database/queries/shelves.updateItemRating` now accept optional `notes` updates on `PUT /api/shelves/:shelfId/items/:itemId/rating` without forcing a rating change (with regression coverage added in `api/__tests__/shelvesController.test.js`).
 - 2026-03-25 | favorites-feed-suppression | Updated `api/controllers/favoritesController.addFavorite` to stop emitting `item.favorited` feed events entirely (removed `feedQueries.logEvent` favorite emission path and related controller-only logging payload wiring). Favoriting/unfavoriting behavior and API responses remain unchanged, but favorites no longer create social feed events.
 - 2026-03-25 | feed-rating-dedup | Hardened duplicate-rating handling in backend event system: `ratingsQueries.setRating` now returns change metadata (`changed`, `previousRating`, `currentRating`) and skips unchanged writes; both `ratingsController.setRating` and legacy `shelvesController.rateShelfItem` now emit `item.rated` only when rating values change; `feed.logEvent` now acquires advisory transaction locks per aggregate scope and treats `item.rated` as per-item upsert within an open aggregate (update existing `event_logs` payload + recompute aggregate `item_count`/`preview_payloads`) so same-item re-rates update in place instead of duplicating; `feedController.mergeCheckinRatingPairs` now consumes each rating item once (most-recent check-in wins) to prevent one rating merging into multiple check-ins. Added regression coverage in `api/__tests__/feedRatingEventDedup.test.js`, `api/__tests__/ratingsController.test.js`, `api/__tests__/feedController.mergeCheckinRatingPairs.test.js`, and `api/__tests__/shelvesController.test.js`.
 - 2026-03-25 | manual-detail-fields | Updated `mobile/src/screens/CollectableDetailScreen.js` to explicitly surface manual-editable metadata fields only when populated, separate `Your Notes` from description rendering, and refresh manual details on focus via `/api/manuals/:manualId`; updated `api/controllers/shelvesController.updateManualEntry` to normalize nullable manual edits (`null`/blank stay null) and validate `year` as 1-4 digits so empty fields remain hidden in detail metadata.
@@ -268,6 +285,7 @@ controllers/authController.js
 #### shelves
 ```
 routes/shelves.js
+  -> includes POST /:shelfId/items/:itemId/replacement-intent and POST /:shelfId/items/:itemId/replace
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ controllers/shelvesController.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ middleware/auth.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ middleware/validate.js
@@ -275,6 +293,7 @@ routes/shelves.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ utils/imageValidation.js
 
 controllers/shelvesController.js
+  -> database/queries/itemReplacementTraces.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/shelves.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/collectables.js
@@ -850,6 +869,7 @@ database/queries/utils.js
 
 database/queries/auth.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js
 database/queries/shelves.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js
+database/queries/itemReplacementTraces.js -> database/pg.js, database/queries/utils.js
 database/queries/collectables.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
 database/queries/feed.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js, config/constants.js
 database/queries/eventSocial.js ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/pg.js, database/queries/utils.js
@@ -1402,6 +1422,17 @@ vision_result_cache (PK: user_id + shelf_id + image_sha256)
   -> result_json (JSONB cached pipeline result)
   -> created_at, expires_at (TTL)
 
+item_replacement_traces (BIGSERIAL PK)
+  -> user_id (FK -> users.id)
+  -> shelf_id (FK -> shelves.id)
+  -> source_item_id (integer source user_collections.id reference)
+  -> source_collectable_id / source_manual_id (exactly one required)
+  -> trigger_source in {collectable_detail, shelf_delete_modal}
+  -> status in {initiated, completed, failed}
+  -> target_item_id (integer target user_collections.id reference, required on completed)
+  -> target_collectable_id / target_manual_id (exactly one required on completed)
+  -> metadata JSONB, initiated_at, completed_at
+
 system_settings (key VARCHAR PK)
   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ value (JSONB, not null)
   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ description (TEXT, nullable)
@@ -1435,14 +1466,14 @@ news_items (SERIAL PK)
 
 ### Row Level Security (RLS)
 
-- **Tier 1** (user isolation): shelves, user_collections, user_manuals, user_ratings, needs_review, push_device_tokens, notification_preferences, user_vision_quota, wishlists, wishlist_items, user_favorites, user_lists, user_list_items
+- **Tier 1** (user isolation): shelves, user_collections, user_manuals, user_ratings, needs_review, item_replacement_traces, push_device_tokens, notification_preferences, user_vision_quota, wishlists, wishlist_items, user_favorites, user_lists, user_list_items
 - **Tier 2** (visibility): shelves (public/friends), profiles
 - **Tier 3** (complex joins): friendships, feed
 - **Tier 4** (cascading): dependent tables
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (52 files, 2026-01-10 -> 2026-03-24)
+### Migration History (54 files, 2026-01-10 -> 2026-03-25)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1499,6 +1530,8 @@ news_items (SERIAL PK)
 | `20260323_add_owner_photo_secondary_media` | + `users.show_personal_photos` and `user_collections.owner_photo_*` secondary media columns + constraints/indexes |
 | `20260323_add_owner_photo_thumbnail_variant` | + `user_collections.owner_photo_thumb_*` metadata columns and normalized `owner_photo_thumb_box_check` constraint |
 | `20260324_add_collection_item_id_to_vision_item_regions` | + `vision_item_regions.collection_item_id` FK -> `user_collections.id` + index `idx_vision_item_regions_collection_item` for exact region-to-item crop attachment |
+| `20260325010000_create_item_replacement_traces` | + `item_replacement_traces` table (source/target item refs, trigger source/status lifecycle, metadata, analytics indexes) |
+| `20260325010010_add_item_replacement_traces_rls` | RLS policies for `item_replacement_traces` (`*_isolation` + `*_admin`) |
 
 ---
 

@@ -68,7 +68,7 @@ async function getById(shelfId, userId) {
  */
 async function getForViewing(shelfId, viewerId) {
     const result = await query(
-        `SELECT s.* FROM shelves s
+        `SELECT s.*, u.username AS owner_username FROM shelves s
      JOIN users u ON u.id = s.owner_id
      WHERE s.id = $1
      AND (u.is_suspended = false OR s.owner_id = $2)
@@ -151,6 +151,12 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.notes, uc.created_at,
+            uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
+            EXISTS (
+                SELECT 1
+                FROM vision_item_regions vir
+                WHERE vir.collection_item_id = uc.id
+            ) AS is_vision_linked,
             uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_content_type,
             uc.owner_photo_size_bytes, uc.owner_photo_width, uc.owner_photo_height,
             uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
@@ -223,6 +229,12 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.notes, uc.created_at,
+            uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
+            EXISTS (
+                SELECT 1
+                FROM vision_item_regions vir
+                WHERE vir.collection_item_id = uc.id
+            ) AS is_vision_linked,
             uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_content_type,
             uc.owner_photo_size_bytes, uc.owner_photo_width, uc.owner_photo_height,
             uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
@@ -581,8 +593,9 @@ async function getCollectionItemByIdForShelf(itemId, shelfId) {
 /**
  * Remove an item from a shelf
  */
-async function removeItem(itemId, userId, shelfId) {
-    const result = await query(
+async function removeItem(itemId, userId, shelfId, client = null) {
+    const q = resolveQuery(client);
+    const result = await q(
         `DELETE FROM user_collections 
      WHERE id = $1 AND user_id = $2 AND shelf_id = $3
      RETURNING *`,
@@ -644,30 +657,88 @@ async function listVisibleForUser(ownerId, viewerId = null) {
 }
 
 /**
- * Update rating for a user collection item
+ * Update rating/notes for a user collection item.
+ * Supports legacy signature where the 4th arg is a rating number/null.
  * @param {number} itemId - The user_collections id
  * @param {string} userId - The user's UUID
  * @param {number} shelfId - The shelf id
- * @param {number|null} rating - Rating from 0 to 5 (supports half-points like 4.5)
+ * @param {{rating?: number|null, notes?: string|null}|number|null} updatesOrRating
  */
-async function updateItemRating(itemId, userId, shelfId, rating) {
+async function updateItemRating(itemId, userId, shelfId, updatesOrRating) {
+    const isObjectPayload = updatesOrRating && typeof updatesOrRating === 'object' && !Array.isArray(updatesOrRating);
+    const payload = isObjectPayload ? updatesOrRating : { rating: updatesOrRating };
+    const hasRating = Object.prototype.hasOwnProperty.call(payload, 'rating');
+    const hasNotes = Object.prototype.hasOwnProperty.call(payload, 'notes');
+
+    if (!hasRating && !hasNotes) {
+        return null;
+    }
+
+    const existingResult = await query(
+        `SELECT id, rating
+         FROM user_collections
+         WHERE id = $1 AND user_id = $2 AND shelf_id = $3
+         LIMIT 1`,
+        [itemId, userId, shelfId],
+    );
+    const existing = existingResult.rows[0] || null;
+    if (!existing) {
+        return null;
+    }
+
+    const setClauses = [];
+    const values = [];
+
+    if (hasRating) {
+        values.push(payload.rating);
+        setClauses.push(`rating = $${values.length}`);
+    }
+    if (hasNotes) {
+        values.push(payload.notes);
+        setClauses.push(`notes = $${values.length}`);
+    }
+
+    values.push(itemId, userId, shelfId);
+    const itemIdParam = values.length - 2;
+    const userIdParam = values.length - 1;
+    const shelfIdParam = values.length;
     const result = await query(
-        `WITH existing AS (
-            SELECT id, rating
-            FROM user_collections
-            WHERE id = $2 AND user_id = $3 AND shelf_id = $4
-            FOR UPDATE
-         ),
-         updated AS (
-            UPDATE user_collections
-            SET rating = $1
-            WHERE id = $2 AND user_id = $3 AND shelf_id = $4
-            RETURNING *
-         )
-         SELECT updated.*, existing.rating AS previous_rating
-         FROM updated
-         JOIN existing ON existing.id = updated.id`,
-        [rating, itemId, userId, shelfId]
+        `UPDATE user_collections
+         SET ${setClauses.join(', ')}
+         WHERE id = $${itemIdParam} AND user_id = $${userIdParam} AND shelf_id = $${shelfIdParam}
+         RETURNING *`,
+        values
+    );
+    if (!result.rows[0]) {
+        return null;
+    }
+    const updated = rowToCamelCase(result.rows[0]);
+    updated.previousRating = existing.rating;
+    return updated;
+}
+
+async function updateReviewedEventLink(itemId, userId, shelfId, {
+    reviewedEventLogId = null,
+    reviewedEventPublishedAt = null,
+    reviewedEventUpdatedAt = null,
+} = {}) {
+    const result = await query(
+        `UPDATE user_collections
+         SET reviewed_event_log_id = $1,
+             reviewed_event_published_at = $2,
+             reviewed_event_updated_at = $3
+         WHERE id = $4
+           AND user_id = $5
+           AND shelf_id = $6
+         RETURNING reviewed_event_log_id, reviewed_event_published_at, reviewed_event_updated_at`,
+        [
+            reviewedEventLogId,
+            reviewedEventPublishedAt,
+            reviewedEventUpdatedAt,
+            itemId,
+            userId,
+            shelfId,
+        ],
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
@@ -678,6 +749,11 @@ async function updateItemRating(itemId, userId, shelfId, rating) {
 async function getItemById(itemId, userId, shelfId) {
     const result = await query(
         `SELECT uc.*, 
+            EXISTS (
+                SELECT 1
+                FROM vision_item_regions vir
+                WHERE vir.collection_item_id = uc.id
+            ) AS is_vision_linked,
             c.id as collectable_id,
             c.title as collectable_title,
             c.subtitle as collectable_subtitle,
@@ -731,6 +807,7 @@ module.exports = {
     removeItem,
     listVisibleForUser,
     updateItemRating,
+    updateReviewedEventLink,
     getItemById,
     getManualById,
 };

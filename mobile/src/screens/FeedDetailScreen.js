@@ -144,12 +144,17 @@ export default function FeedDetailScreen({ route, navigation }) {
   const { shelf, owner, items, eventType, collectable, checkinStatus, note, displayHints, rating } = resolvedEntry;
   const isCheckIn = eventType === 'checkin.activity';
   const isCheckinRated = eventType === 'checkin.rated';
+  const isReviewed = eventType === 'reviewed';
 
   // Use displayHints with fallback defaults
   const hints = displayHints || {
-    showShelfCard: eventType !== 'item.rated',
-    sectionTitle: eventType === 'item.rated' ? 'New ratings' : 'Newly added collectibles',
-    itemDisplayMode: eventType === 'item.rated' ? 'rated' : 'numbered',
+    showShelfCard: !(eventType === 'item.rated' || isReviewed),
+    sectionTitle: eventType === 'item.rated'
+      ? 'New ratings'
+      : (isReviewed ? 'Reviewed' : 'Newly added collectibles'),
+    itemDisplayMode: eventType === 'item.rated'
+      ? 'rated'
+      : (isReviewed ? 'reviewed' : 'numbered'),
   };
   const displayName = owner?.name || owner?.username || 'Someone';
   const isOwner = !!(user?.id && owner?.id && user.id === owner.id);
@@ -196,6 +201,48 @@ export default function FeedDetailScreen({ route, navigation }) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
+  const formatAbsoluteDateTime = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const getReviewedUpdatedLabel = (item) => {
+    const payload = item?.payload || null;
+    const entryPayload = resolvedEntry?.payload || null;
+    const published = item?.reviewPublishedAt
+      || payload?.reviewPublishedAt
+      || payload?.review_published_at
+      || resolvedEntry?.reviewPublishedAt
+      || entryPayload?.reviewPublishedAt
+      || entryPayload?.review_published_at
+      || resolvedEntry?.createdAt
+      || resolvedEntry?.shelf?.createdAt
+      || null;
+    const updated = item?.reviewUpdatedAt
+      || payload?.reviewUpdatedAt
+      || payload?.review_updated_at
+      || resolvedEntry?.reviewUpdatedAt
+      || entryPayload?.reviewUpdatedAt
+      || entryPayload?.review_updated_at
+      || resolvedEntry?.updatedAt
+      || resolvedEntry?.shelf?.updatedAt
+      || null;
+    if (!published || !updated) return null;
+    const publishedTs = new Date(published).getTime();
+    const updatedTs = new Date(updated).getTime();
+    if (!Number.isFinite(publishedTs) || !Number.isFinite(updatedTs) || updatedTs <= publishedTs) return null;
+    const formatted = formatAbsoluteDateTime(updated);
+    return formatted ? `Updated on ${formatted}` : null;
+  };
+
   const getItemInfo = (item) => {
     const c = item?.collectable || item?.collectableSnapshot;
     const m = item?.manual || item?.manualSnapshot;
@@ -206,9 +253,14 @@ export default function FeedDetailScreen({ route, navigation }) {
     const coverUrl = resolveCollectableCoverUrl(c, apiBase) || resolveManualCoverUrl(m, apiBase);
 
     // Extract rating for rating events
-    const rating = item?.rating || payload?.rating || null;
+    const rating = item?.rating ?? payload?.rating ?? null;
+    const notes = item?.notes || payload?.notes || null;
+    const metadata = item?.metadata || payload?.metadata || null;
 
-    return { title, coverUrl, rating };
+    const reviewPublishedAt = item?.reviewPublishedAt || payload?.reviewPublishedAt || payload?.review_published_at || null;
+    const reviewUpdatedAt = item?.reviewUpdatedAt || payload?.reviewUpdatedAt || payload?.review_updated_at || null;
+
+    return { title, coverUrl, rating, notes, metadata, reviewPublishedAt, reviewUpdatedAt };
   };
 
   const renderStars = (rating) => {
@@ -273,6 +325,80 @@ export default function FeedDetailScreen({ route, navigation }) {
         )}
         <View style={styles.ratingItemContent}>
           <Text style={styles.ratingItemTitle} numberOfLines={1}>{info.title}</Text>
+        </View>
+        {renderStars(info.rating)}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderReviewedItem = ({ item, index }) => {
+    const info = getItemInfo(item);
+    const payloadCollectableId = item?.payload?.collectableId ?? item?.payload?.collectable_id ?? null;
+    const directCollectableId = item?.collectableId ?? null;
+    const itemCollectableId = item?.collectable?.id ?? item?.collectableSnapshot?.id ?? null;
+    const hasDetailTarget = !!(
+      payloadCollectableId ||
+      directCollectableId ||
+      itemCollectableId ||
+      item?.collectable ||
+      item?.collectableSnapshot ||
+      item?.manual ||
+      item?.manualSnapshot
+    );
+    const targetCollectableId = payloadCollectableId ?? directCollectableId ?? itemCollectableId;
+    const resolvedCollectableId = targetCollectableId != null ? String(targetCollectableId) : null;
+    const metadataEntries = info.metadata && typeof info.metadata === 'object'
+      ? Object.entries(info.metadata).filter(([, value]) => (
+        value !== null && value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0)
+      ))
+      : [];
+    const metadataPreview = metadataEntries
+      .slice(0, 2)
+      .map(([key, value]) => {
+        const prettyKey = String(key).replace(/([A-Z])/g, ' $1').replace(/_/g, ' ');
+        const prettyValue = Array.isArray(value) ? value.join(', ') : String(value);
+        return `${prettyKey}: ${prettyValue}`;
+      })
+      .join(' • ');
+    const reviewedUpdatedLabel = getReviewedUpdatedLabel(item);
+
+    return (
+      <TouchableOpacity
+        style={styles.ratingItemRow}
+        activeOpacity={hasDetailTarget ? 0.7 : 1}
+        disabled={!hasDetailTarget}
+        onPress={() => {
+          if (hasDetailTarget) {
+            if (resolvedCollectableId) {
+              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
+            } else {
+              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
+            }
+          }
+        }}
+      >
+        {info.coverUrl ? (
+          <Image
+            source={{ uri: info.coverUrl }}
+            style={styles.ratingItemCover}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={styles.ratingItemCoverPlaceholder}>
+            <Ionicons name="book" size={14} color={colors.textMuted} />
+          </View>
+        )}
+        <View style={styles.ratingItemContent}>
+          <Text style={styles.ratingItemTitle} numberOfLines={1}>{info.title}</Text>
+          {info.notes ? (
+            <Text style={styles.reviewedNote}>{info.notes}</Text>
+          ) : null}
+          {metadataPreview ? (
+            <Text style={styles.reviewedMeta} numberOfLines={1}>{metadataPreview}</Text>
+          ) : null}
+          {reviewedUpdatedLabel ? (
+            <Text style={styles.reviewedUpdatedOn}>{reviewedUpdatedLabel}</Text>
+          ) : null}
         </View>
         {renderStars(info.rating)}
       </TouchableOpacity>
@@ -536,7 +662,9 @@ export default function FeedDetailScreen({ route, navigation }) {
                       <View key={item._id || `item-${idx}`}>
                         {hints.itemDisplayMode === 'rated'
                           ? renderRatingItem({ item, index: idx })
-                          : renderItem({ item, index: idx })
+                          : (hints.itemDisplayMode === 'reviewed'
+                            ? renderReviewedItem({ item, index: idx })
+                            : renderItem({ item, index: idx }))
                         }
                       </View>
                     ))
@@ -1012,5 +1140,22 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   ratingItemTitle: {
     fontSize: 14,
     color: colors.text,
+  },
+  reviewedNote: {
+    marginTop: 2,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  },
+  reviewedMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  reviewedUpdatedOn: {
+    marginTop: 4,
+    fontSize: 11,
+    color: colors.textMuted,
+    textAlign: 'right',
   },
 });

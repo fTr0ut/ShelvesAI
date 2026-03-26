@@ -17,7 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function ManualEditScreen({ route, navigation }) {
-    const { item, shelfId } = route.params || {};
+    const { item, shelfId, detailRouteKey } = route.params || {};
     const { token, apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius } = useTheme();
 
@@ -69,7 +69,7 @@ export default function ManualEditScreen({ route, navigation }) {
 
         try {
             setSaving(true);
-            await apiRequest({
+            const response = await apiRequest({
                 apiBase,
                 path: `/api/shelves/${shelfId}/manual/${item?.id}`,
                 method: 'PUT',
@@ -97,6 +97,16 @@ export default function ManualEditScreen({ route, navigation }) {
                     notes: notes.trim() || null,
                 },
             });
+            if (detailRouteKey && response?.item) {
+                navigation.navigate({
+                    key: detailRouteKey,
+                    params: {
+                        updatedManualEntry: response.item,
+                        updatedManualEntryAt: Date.now(),
+                    },
+                    merge: true,
+                });
+            }
             navigation.goBack();
         } catch (e) {
             Alert.alert('Error', e.message);
@@ -106,7 +116,7 @@ export default function ManualEditScreen({ route, navigation }) {
     }, [
         apiBase, shelfId, item, title, author, publisher, year, format,
         edition, limitedEdition, ageStatement, specialMarkings, labelColor,
-        regionalItem, barcode, description, itemSpecificText, genre, notes, token, navigation
+        regionalItem, barcode, description, itemSpecificText, genre, notes, token, navigation, detailRouteKey
     ]);
 
     return (

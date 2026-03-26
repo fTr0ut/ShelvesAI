@@ -7,6 +7,7 @@ import {
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
     StatusBar,
@@ -32,12 +33,19 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId, readOnly, id, collectableId, ownerId } = route.params || {}; // ownerId added for Scenario B/C
+    const { item, shelfId, readOnly, id, collectableId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
     const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const insets = useSafeAreaInsets();
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
+
+    const isWithinHoursWindow = (value, hours) => {
+        if (!value || !Number.isFinite(hours) || hours <= 0) return false;
+        const timestamp = Date.parse(String(value));
+        if (!Number.isFinite(timestamp)) return false;
+        return (Date.now() - timestamp) <= (hours * 60 * 60 * 1000);
+    };
 
     // Determine ownership to initialize ratings correctly from passed params
     // If ownerId is missing or matches current user, we assume 'item.rating' is OUR rating.
@@ -66,8 +74,23 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [ownerPhotoViewerUri, setOwnerPhotoViewerUri] = useState(null);
     const [ownerPhotoViewerOriginalUri, setOwnerPhotoViewerOriginalUri] = useState(null);
     const [ownerPhotoViewerEditing, setOwnerPhotoViewerEditing] = useState(false);
+    const [collectionNotes, setCollectionNotes] = useState(item?.notes ?? null);
+    const [notesDraft, setNotesDraft] = useState(item?.notes || '');
+    const [notesSaving, setNotesSaving] = useState(false);
+    const [isEditingNotes, setIsEditingNotes] = useState(false);
+    const [shareToFeed, setShareToFeed] = useState(false);
+    const [reviewedEventId, setReviewedEventId] = useState(item?.reviewedEventId || item?.reviewedEventLogId || null);
+    const [reviewPublishedAt, setReviewPublishedAt] = useState(item?.reviewPublishedAt || item?.reviewedEventPublishedAt || null);
+    const [reviewUpdatedAt, setReviewUpdatedAt] = useState(item?.reviewUpdatedAt || item?.reviewedEventUpdatedAt || null);
 
-    const resolvedCollectableId = collectableId || id || item?.collectable?.id || item?.collectableSnapshot?.id || null;
+    const notesShelfId = item?.shelfId || shelfId || null;
+    const resolvedCollectableId = collectableId
+        || item?.collectable?.id
+        || item?.collectableId
+        || item?.collectable_id
+        || item?.collectableSnapshot?.id
+        || id
+        || null;
     const baseCollectable = item?.collectable
         || item?.collectableSnapshot
         || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
@@ -79,8 +102,15 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const hasCollectableContent = !!(collectable?.id && collectable?.title);
     const isManual = hasManualContent && !hasCollectableContent;
     const source = isManual ? manual : collectable;
-    const hasShelfItemContext = !!(shelfId && item?.id);
-    const canEditOwnerPhoto = hasShelfItemContext && !readOnly && !(ownerId && user?.id && ownerId !== user.id);
+    const hasShelfItemContext = !!(notesShelfId && item?.id);
+    const isOwnedShelfItem = hasShelfItemContext && !readOnly && !(ownerId && user?.id && ownerId !== user.id);
+    const canEditOwnerPhoto = isOwnedShelfItem;
+    const canEditNotes = hasShelfItemContext && !readOnly;
+    const canShowReplaceCTA = isOwnedShelfItem
+        && item?.isVisionLinked === true
+        && isWithinHoursWindow(item?.createdAt, 72);
+    const hasNoteChanges = (notesDraft || '').trim() !== (collectionNotes || '').trim();
+    const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
 
     // Fetch wishlists
     const fetchWishlists = async () => {
@@ -134,6 +164,70 @@ export default function CollectableDetailScreen({ route, navigation }) {
             Alert.alert('Error', 'Failed to add to wishlist');
         }
     };
+
+    const handleStartReplacementFlow = useCallback(async () => {
+        if (!hasShelfItemContext || !isOwnedShelfItem) return;
+
+        try {
+            const response = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${shelfId}/items/${item.id}/replacement-intent`,
+                method: 'POST',
+                token,
+                body: { triggerSource: 'collectable_detail' },
+            });
+
+            const traceId = response?.traceId || response?.trace?.id;
+            if (!traceId) {
+                throw new Error('Replacement intent was not created.');
+            }
+
+            const prefillTitle = collectable?.title || manual?.title || manual?.name || '';
+            const prefillAuthor = collectable?.primaryCreator || manual?.author || '';
+            const prefillType = manual?.type || collectable?.kind || '';
+            const prefillPlatform = item?.format || manual?.format || '';
+            const prefillDescription = collectable?.description || manual?.description || '';
+
+            navigation.replace('ItemSearch', {
+                shelfId,
+                shelfType: prefillType,
+                replaceContext: {
+                    traceId,
+                    sourceItemId: item.id,
+                    triggerSource: 'collectable_detail',
+                    sourceCollectableId: collectable?.id || item?.collectableId || null,
+                    sourceManualId: manual?.id || item?.manualId || null,
+                    prefillTitle,
+                    prefillAuthor,
+                    prefillType,
+                    prefillPlatform,
+                    prefillDescription,
+                },
+            });
+        } catch (err) {
+            Alert.alert('Error', err?.message || 'Failed to start replacement');
+        }
+    }, [
+        apiBase,
+        collectable?.description,
+        collectable?.id,
+        collectable?.kind,
+        collectable?.primaryCreator,
+        collectable?.title,
+        hasShelfItemContext,
+        isOwnedShelfItem,
+        item,
+        manual?.author,
+        manual?.description,
+        manual?.format,
+        manual?.id,
+        manual?.name,
+        manual?.title,
+        manual?.type,
+        navigation,
+        shelfId,
+        token,
+    ]);
 
     // Fetch collectable details
     useEffect(() => {
@@ -584,6 +678,118 @@ export default function CollectableDetailScreen({ route, navigation }) {
             setOwnerPhotoBusy(false);
         }
     };
+
+    const handleSaveNotes = useCallback(async () => {
+        if (!canEditNotes || !notesShelfId || !item?.id) return;
+
+        const normalizedNotes = notesDraft.trim() || null;
+        setNotesSaving(true);
+        try {
+            if (isManual) {
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${notesShelfId}/manual/${item.id}`,
+                    method: 'PUT',
+                    token,
+                    body: {
+                        notes: normalizedNotes,
+                        reviewedEventId: reviewedEventId || undefined,
+                        shareToFeed,
+                    },
+                });
+                const nextNotes = data?.item?.notes ?? normalizedNotes;
+                setCollectionNotes(nextNotes);
+                setReviewedEventId(data?.item?.reviewedEventId ?? reviewedEventId ?? null);
+                setReviewPublishedAt(data?.item?.reviewPublishedAt ?? reviewPublishedAt ?? null);
+                setReviewUpdatedAt(data?.item?.reviewUpdatedAt ?? reviewUpdatedAt ?? null);
+                const normalizedNext = String(nextNotes ?? '').trim();
+                const normalizedNextLower = normalizedNext.toLowerCase();
+                setIsEditingNotes(!(normalizedNext && normalizedNextLower !== 'null' && normalizedNextLower !== 'undefined'));
+                setShareToFeed(false);
+                if (data?.item?.manual) {
+                    setResolvedManual((prev) => ({ ...(prev || {}), ...data.item.manual }));
+                }
+            } else {
+                const saveCollectableNotes = async (targetItemId) => apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${notesShelfId}/items/${targetItemId}/rating`,
+                    method: 'PUT',
+                    token,
+                    body: {
+                        notes: normalizedNotes,
+                        collectableId: item?.collectable?.id || item?.collectableId || collectable?.id || resolvedCollectableId || undefined,
+                        reviewedEventId: reviewedEventId || undefined,
+                        shareToFeed,
+                    },
+                });
+
+                let data;
+                try {
+                    data = await saveCollectableNotes(item.id);
+                } catch (err) {
+                    if (err?.status !== 404 || !collectable?.id) {
+                        throw err;
+                    }
+
+                    // Some navigation paths pass collectable.id instead of shelf item id.
+                    // Resolve the matching collection row id and retry once.
+                    const shelfData = await apiRequest({
+                        apiBase,
+                        path: `/api/shelves/${notesShelfId}/items`,
+                        token,
+                    });
+                    const matchedItem = (Array.isArray(shelfData?.items) ? shelfData.items : [])
+                        .find((entry) => String(entry?.collectable?.id) === String(collectable.id));
+                    if (!matchedItem?.id) {
+                        throw err;
+                    }
+                    data = await saveCollectableNotes(matchedItem.id);
+                }
+
+                const nextNotes = data?.item?.notes ?? normalizedNotes;
+                setCollectionNotes(nextNotes);
+                setReviewedEventId(data?.item?.reviewedEventId ?? reviewedEventId ?? null);
+                setReviewPublishedAt(data?.item?.reviewPublishedAt ?? reviewPublishedAt ?? null);
+                setReviewUpdatedAt(data?.item?.reviewUpdatedAt ?? reviewUpdatedAt ?? null);
+                const normalizedNext = String(nextNotes ?? '').trim();
+                const normalizedNextLower = normalizedNext.toLowerCase();
+                setIsEditingNotes(!(normalizedNext && normalizedNextLower !== 'null' && normalizedNextLower !== 'undefined'));
+                setShareToFeed(false);
+            }
+        } catch (err) {
+            console.warn('Failed to save notes:', err);
+            const isCollectableNotFound = !isManual && /item not found/i.test(String(err?.message || ''));
+            if (isCollectableNotFound) {
+                try {
+                    const shelfData = await apiRequest({
+                        apiBase,
+                        path: `/api/shelves/${notesShelfId}/items?limit=200&skip=0`,
+                        token,
+                    });
+                    const targetCollectableId = resolvedCollectableId || collectable?.id || null;
+                    const matchedItem = (Array.isArray(shelfData?.items) ? shelfData.items : []).find((entry) => (
+                        (targetCollectableId && String(entry?.collectable?.id) === String(targetCollectableId))
+                        || String(entry?.id) === String(item?.id)
+                    ));
+                    if (matchedItem) {
+                        const serverNotes = (matchedItem.notes || '').trim();
+                        const intendedNotes = (normalizedNotes || '').trim();
+                        if (serverNotes === intendedNotes) {
+                            setCollectionNotes(matchedItem.notes ?? null);
+                            setIsEditingNotes(!serverNotes);
+                            setShareToFeed(false);
+                            return;
+                        }
+                    }
+                } catch (_verifyErr) {
+                    // fall through to user-visible error
+                }
+            }
+            Alert.alert('Error', err?.message || 'Failed to save notes');
+        } finally {
+            setNotesSaving(false);
+        }
+    }, [apiBase, canEditNotes, collectable?.id, isManual, item?.collectable?.id, item?.collectableId, item?.id, notesDraft, notesShelfId, resolvedCollectableId, reviewPublishedAt, reviewUpdatedAt, reviewedEventId, shareToFeed, token]);
 
     const handleUploadOwnerPhoto = async () => {
         if (!canEditOwnerPhoto) return;
@@ -1043,7 +1249,16 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const subtitle = source?.author || source?.primaryCreator || source?.publisher || '';
     const type = source?.type || 'Item';
     const description = normalizeDisplayText(source?.description) || normalizeDisplayText(source?.overview) || '';
-    const personalNotes = normalizeDisplayText(item?.notes) || '';
+    const personalNotes = normalizeDisplayText(collectionNotes) || '';
+    const hasSavedNotes = !!personalNotes;
+    const showNotesEditor = canEditNotes && (isEditingNotes || !hasSavedNotes);
+    const normalizedOwnerUsername = String(ownerUsername || '').trim().replace(/^@+/, '');
+    const notesSectionLabel = (!canEditNotes && normalizedOwnerUsername)
+        ? `${normalizedOwnerUsername}'s Notes:`
+        : 'Your Notes';
+    const ownerRatingLabel = normalizedOwnerUsername
+        ? `${normalizedOwnerUsername}'s rating:`
+        : 'Owner rating:';
 
     useFocusEffect(
         useCallback(() => {
@@ -1382,6 +1597,42 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const showOwnerPhotoInRatingColumn = showOwnerPhotoSection && !shouldReplaceManualHeroWithOwnerPhoto;
     const showOwnerPhotoInHeroForCollectable = showOwnerPhotoInRatingColumn && !isManual;
 
+    useEffect(() => {
+        setCollectionNotes(item?.notes ?? null);
+    }, [item?.id, item?.notes]);
+
+    useEffect(() => {
+        setNotesDraft(collectionNotes || '');
+    }, [collectionNotes, item?.id]);
+
+    useEffect(() => {
+        if (!canEditNotes) {
+            setIsEditingNotes(false);
+            return;
+        }
+        const normalized = String(collectionNotes ?? '').trim();
+        const normalizedLower = normalized.toLowerCase();
+        const hasExistingNotes = normalized && normalizedLower !== 'null' && normalizedLower !== 'undefined';
+        setIsEditingNotes(!hasExistingNotes);
+    }, [canEditNotes, collectionNotes, item?.id]);
+
+    useEffect(() => {
+        if (showNotesEditor) {
+            setShareToFeed(hasPublishedReview);
+        }
+    }, [hasPublishedReview, showNotesEditor, item?.id]);
+
+    useEffect(() => {
+        const updatedManualEntry = route.params?.updatedManualEntry;
+        if (!updatedManualEntry) return;
+        if (String(updatedManualEntry.id) !== String(item?.id)) return;
+
+        setCollectionNotes(updatedManualEntry.notes ?? null);
+        if (updatedManualEntry.manual) {
+            setResolvedManual((prev) => ({ ...(prev || {}), ...updatedManualEntry.manual }));
+        }
+    }, [route.params?.updatedManualEntryAt, route.params?.updatedManualEntry, item?.id]);
+
     const renderAttribution = () => {
         const attr = collectable?.attribution;
         if (!attr) return null;
@@ -1503,15 +1754,28 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Details</Text>
-                {isManual && !readOnly && (
+                {canShowReplaceCTA ? (
                     <TouchableOpacity
-                        onPress={() => navigation.navigate('ManualEdit', { item, shelfId })}
+                        onPress={handleStartReplacementFlow}
+                        style={styles.replaceButton}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.replaceButtonText}>Not the item you intended to add?</Text>
+                    </TouchableOpacity>
+                ) : isManual && !readOnly ? (
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('ManualEdit', {
+                            item: { ...(item || {}), notes: collectionNotes },
+                            shelfId,
+                            detailRouteKey: route.key,
+                        })}
                         style={styles.editButton}
                     >
                         <Ionicons name="pencil" size={18} color={colors.text} />
                     </TouchableOpacity>
+                ) : (
+                    <View style={{ width: 40 }} />
                 )}
-                {!isManual && <View style={{ width: 40 }} />}
             </View>
 
             <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -1577,7 +1841,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             {/* Owner Rating (if visible) */}
                             {ownerId && user?.id && ownerId !== user.id && (
                                 <View style={styles.ratingBlock}>
-                                    <Text style={styles.ratingLabel}>Owner</Text>
+                                    <Text style={styles.ratingLabel}>{ownerRatingLabel}</Text>
                                     <View style={styles.ratingRow}>
                                         <Ionicons name="star" size={16} color={colors.primary} />
                                         <Text style={styles.ratingValue}>
@@ -1632,6 +1896,75 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     </View>
                 </View>
 
+                {/* Notes */}
+                {(canEditNotes || personalNotes) && (
+                    <View style={styles.section}>
+                        <View style={styles.notesHeaderRow}>
+                            <Text style={styles.sectionTitle}>{notesSectionLabel}</Text>
+                            {canEditNotes && showNotesEditor && (
+                                <TouchableOpacity
+                                    style={[
+                                        styles.notesSaveButton,
+                                        (!hasNoteChanges || notesSaving) && styles.notesSaveButtonDisabled,
+                                    ]}
+                                    onPress={handleSaveNotes}
+                                    disabled={!hasNoteChanges || notesSaving}
+                                    activeOpacity={0.85}
+                                >
+                                    <Text style={styles.notesSaveButtonText}>{notesSaving ? 'Saving...' : 'Save'}</Text>
+                                </TouchableOpacity>
+                            )}
+                            {canEditNotes && !showNotesEditor && (
+                                <TouchableOpacity
+                                    style={styles.notesEditButton}
+                                    onPress={() => {
+                                        setNotesDraft(collectionNotes || '');
+                                        setShareToFeed(hasPublishedReview);
+                                        setIsEditingNotes(true);
+                                    }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="pencil" size={14} color={colors.text} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        {showNotesEditor ? (
+                            <>
+                                <TextInput
+                                    style={styles.notesInput}
+                                    value={notesDraft}
+                                    onChangeText={setNotesDraft}
+                                    placeholder="Add notes for this item"
+                                    placeholderTextColor={colors.textMuted}
+                                    editable={!notesSaving}
+                                    multiline
+                                    numberOfLines={4}
+                                    textAlignVertical="top"
+                                />
+                                <View style={styles.notesShareRow}>
+                                    <View style={{ flex: 1, paddingRight: spacing.sm }}>
+                                        <Text style={styles.notesShareLabel}>Share to feed?</Text>
+                                        <Text style={styles.notesShareHint}>Post this review to your feed when saving.</Text>
+                                    </View>
+                                    <Switch
+                                        value={shareToFeed}
+                                        onValueChange={setShareToFeed}
+                                        disabled={notesSaving}
+                                        trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                                        thumbColor={shareToFeed ? colors.primary : colors.surfaceElevated}
+                                    />
+                                </View>
+                                {hasNoteChanges && (
+                                    <Text style={styles.notesUnsavedText}>Unsaved changes</Text>
+                                )}
+                            </>
+                        ) : (
+                            <Text style={styles.notes}>{personalNotes}</Text>
+                        )}
+                    </View>
+                )}
+
                 {/* Metadata */}
                 {metadata.length > 0 && (
                     <View style={styles.section}>
@@ -1654,14 +1987,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
                         <Text style={styles.description}>{description}</Text>
                     </View>
                 ) : null}
-
-                {/* Notes */}
-                {personalNotes && (
-                    <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Your Notes</Text>
-                        <Text style={styles.notes}>{personalNotes}</Text>
-                    </View>
-                )}
 
                 {/* Source badge */}
                 <View style={styles.sourceBadge}>
@@ -1821,6 +2146,19 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.sm,
+    },
+    replaceButton: {
+        minHeight: 40,
+        maxWidth: 190,
+        justifyContent: 'center',
+        alignItems: 'flex-end',
+    },
+    replaceButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '600',
+        color: colors.primary,
+        textAlign: 'right',
     },
     container: {
         flex: 1,
@@ -2151,6 +2489,66 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.text,
         maxWidth: '60%',
         textAlign: 'right',
+    },
+    notesHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: spacing.sm,
+    },
+    notesEditButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.surface,
+        ...shadows.sm,
+    },
+    notesInput: {
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        minHeight: 100,
+        fontSize: 14,
+        color: colors.text,
+        ...shadows.sm,
+    },
+    notesSaveButton: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.md,
+        backgroundColor: colors.primary,
+    },
+    notesSaveButtonDisabled: {
+        opacity: 0.5,
+    },
+    notesSaveButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.textInverted,
+    },
+    notesUnsavedText: {
+        marginTop: spacing.xs,
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    notesShareRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: spacing.sm,
+        paddingHorizontal: spacing.xs,
+    },
+    notesShareLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    notesShareHint: {
+        marginTop: 2,
+        fontSize: 12,
+        color: colors.textMuted,
     },
     notes: {
         fontSize: 14,

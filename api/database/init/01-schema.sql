@@ -341,6 +341,51 @@ CREATE UNIQUE INDEX idx_user_collections_unique_manual ON user_collections(user_
 CREATE INDEX idx_user_collections_owner_photo_crop ON user_collections(owner_photo_crop_id) WHERE owner_photo_crop_id IS NOT NULL;
 
 -- ============================================
+-- ITEM REPLACEMENT TRACES (Wrong-match corrections)
+-- ============================================
+CREATE TABLE item_replacement_traces (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    source_item_id INTEGER NOT NULL,
+    source_collectable_id INTEGER REFERENCES collectables(id) ON DELETE SET NULL,
+    source_manual_id INTEGER REFERENCES user_manuals(id) ON DELETE SET NULL,
+    trigger_source TEXT NOT NULL
+        CHECK (trigger_source IN ('collectable_detail', 'shelf_delete_modal')),
+    status TEXT NOT NULL DEFAULT 'initiated'
+        CHECK (status IN ('initiated', 'completed', 'failed')),
+    target_item_id INTEGER,
+    target_collectable_id INTEGER REFERENCES collectables(id) ON DELETE SET NULL,
+    target_manual_id INTEGER REFERENCES user_manuals(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    initiated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    CONSTRAINT item_replacement_traces_source_reference_check CHECK (
+        (source_collectable_id IS NOT NULL AND source_manual_id IS NULL)
+        OR (source_collectable_id IS NULL AND source_manual_id IS NOT NULL)
+    ),
+    CONSTRAINT item_replacement_traces_completed_target_check CHECK (
+        status <> 'completed'
+        OR (
+            completed_at IS NOT NULL
+            AND target_item_id IS NOT NULL
+            AND (
+                (target_collectable_id IS NOT NULL AND target_manual_id IS NULL)
+                OR (target_collectable_id IS NULL AND target_manual_id IS NOT NULL)
+            )
+        )
+    )
+);
+
+CREATE INDEX idx_item_replacement_traces_user ON item_replacement_traces(user_id);
+CREATE INDEX idx_item_replacement_traces_shelf ON item_replacement_traces(shelf_id);
+CREATE INDEX idx_item_replacement_traces_source_item ON item_replacement_traces(source_item_id);
+CREATE INDEX idx_item_replacement_traces_source_collectable ON item_replacement_traces(source_collectable_id);
+CREATE INDEX idx_item_replacement_traces_target_collectable ON item_replacement_traces(target_collectable_id);
+CREATE INDEX idx_item_replacement_traces_status ON item_replacement_traces(status);
+CREATE INDEX idx_item_replacement_traces_initiated_at ON item_replacement_traces(initiated_at);
+
+-- ============================================
 -- VISION SCAN PHOTOS (Private uploaded shelf photos)
 -- ============================================
 CREATE TABLE vision_scan_photos (
@@ -551,6 +596,11 @@ CREATE INDEX idx_event_logs_shelf ON event_logs(shelf_id);
 CREATE INDEX idx_event_logs_type ON event_logs(event_type);
 CREATE INDEX idx_event_logs_aggregate ON event_logs(aggregate_id);
 CREATE INDEX idx_event_logs_created ON event_logs(created_at DESC);
+
+ALTER TABLE user_collections
+    ADD COLUMN reviewed_event_log_id INTEGER REFERENCES event_logs(id) ON DELETE SET NULL,
+    ADD COLUMN reviewed_event_published_at TIMESTAMPTZ,
+    ADD COLUMN reviewed_event_updated_at TIMESTAMPTZ;
 
 -- ============================================
 -- EVENT SOCIAL (Likes + Comments)

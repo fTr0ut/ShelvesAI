@@ -326,24 +326,98 @@ export default function ShelfDetailScreen({ route, navigation }) {
         loadShelf({ showBlockingLoader: false });
     };
 
-    const handleDeleteItem = useCallback(async (itemId) => {
-        if (isReadOnly) return;
+    const isWithinHoursWindow = useCallback((value, hours) => {
+        if (!value || !Number.isFinite(hours) || hours <= 0) return false;
+        const timestamp = Date.parse(String(value));
+        if (!Number.isFinite(timestamp)) return false;
+        return (Date.now() - timestamp) <= (hours * 60 * 60 * 1000);
+    }, []);
+
+    const performDeleteItem = useCallback(async (itemId) => {
+        try {
+            await apiRequest({ apiBase, path: `/api/shelves/${id}/items/${itemId}`, method: 'DELETE', token });
+            setItems(prev => prev.filter(i => i.id !== itemId));
+        } catch (e) {
+            Alert.alert('Error', e.message);
+        }
+    }, [apiBase, id, token]);
+
+    const confirmDeleteItem = useCallback((shelfItem) => {
+        if (!shelfItem?.id) return;
         Alert.alert('Remove Item', 'Remove this item from the shelf?', [
             { text: 'Cancel', style: 'cancel' },
             {
                 text: 'Remove',
                 style: 'destructive',
-                onPress: async () => {
-                    try {
-                        await apiRequest({ apiBase, path: `/api/shelves/${id}/items/${itemId}`, method: 'DELETE', token });
-                        setItems(prev => prev.filter(i => i.id !== itemId));
-                    } catch (e) {
-                        Alert.alert('Error', e.message);
-                    }
-                },
+                onPress: () => performDeleteItem(shelfItem.id),
             },
         ]);
-    }, [apiBase, id, token, isReadOnly]);
+    }, [performDeleteItem]);
+
+    const openReplacementSearch = useCallback(async (shelfItem, triggerSource) => {
+        try {
+            const response = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${id}/items/${shelfItem.id}/replacement-intent`,
+                method: 'POST',
+                token,
+                body: { triggerSource },
+            });
+
+            const traceId = response?.traceId || response?.trace?.id;
+            if (!traceId) {
+                throw new Error('Replacement intent was not created.');
+            }
+
+            const collectable = shelfItem?.collectable || {};
+            const manual = shelfItem?.manual || {};
+            const prefillTitle = collectable?.title || manual?.title || manual?.name || '';
+            const prefillAuthor = collectable?.primaryCreator || manual?.author || '';
+            const prefillType = manual?.type || collectable?.kind || shelfType || '';
+            const prefillPlatform = shelfItem?.format || manual?.format || '';
+            const prefillDescription = collectable?.description || manual?.description || '';
+
+            navigation.navigate('ItemSearch', {
+                shelfId: id,
+                shelfType,
+                replaceContext: {
+                    traceId,
+                    sourceItemId: shelfItem.id,
+                    triggerSource,
+                    sourceCollectableId: collectable?.id || shelfItem?.collectableId || null,
+                    sourceManualId: manual?.id || shelfItem?.manualId || null,
+                    prefillTitle,
+                    prefillAuthor,
+                    prefillType,
+                    prefillPlatform,
+                    prefillDescription,
+                },
+            });
+        } catch (e) {
+            Alert.alert('Error', e.message || 'Failed to start replacement');
+        }
+    }, [apiBase, id, navigation, shelfType, token]);
+
+    const handleDeleteItem = useCallback((shelfItem) => {
+        if (isReadOnly) return;
+        if (!shelfItem?.id) return;
+
+        const showReplacePrompt = isWithinHoursWindow(shelfItem.createdAt, 24);
+        if (showReplacePrompt) {
+            Alert.alert(
+                'Replace or Delete',
+                'Do you want to replace this item with the correct match, or delete it?',
+                [
+                    { text: 'Replace', onPress: () => openReplacementSearch(shelfItem, 'shelf_delete_modal') },
+                    { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteItem(shelfItem) },
+                    { text: 'Cancel', style: 'cancel' },
+                ],
+            );
+            return;
+        }
+
+        confirmDeleteItem(shelfItem);
+    }, [confirmDeleteItem, isReadOnly, isWithinHoursWindow, openReplacementSearch]);
 
     const handleRateItem = useCallback(async (itemId, collectableId, manualId, rating) => {
         if (isReadOnly) return;
@@ -596,7 +670,13 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return (
             <TouchableOpacity
                 style={styles.itemCard}
-                onPress={() => navigation.navigate('CollectableDetail', { item, shelfId: id, readOnly: isReadOnly, ownerId: shelf?.ownerId })}
+                onPress={() => navigation.navigate('CollectableDetail', {
+                    item,
+                    shelfId: id,
+                    readOnly: isReadOnly,
+                    ownerId: shelf?.ownerId,
+                    ownerUsername: shelf?.ownerUsername || null,
+                })}
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>
@@ -648,7 +728,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         </TouchableOpacity>
                     ) : null}
                     {!isReadOnly ? (
-                        <TouchableOpacity onPress={() => handleDeleteItem(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <TouchableOpacity onPress={() => handleDeleteItem(item)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                             <Ionicons name="close" size={18} color={colors.textMuted} />
                         </TouchableOpacity>
                     ) : null}

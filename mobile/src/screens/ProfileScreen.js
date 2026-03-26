@@ -442,6 +442,50 @@ export default function ProfileScreen({ navigation, route }) {
         return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     };
 
+    const formatAbsoluteDateTime = (dateString) => {
+        if (!dateString) return '';
+        const date = new Date(dateString);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+    };
+
+    const getReviewedUpdatedLabel = (post) => {
+        if (post?.eventType !== 'reviewed') return null;
+        const firstItem = Array.isArray(post?.items) ? post.items[0] : null;
+        const payload = firstItem?.payload || null;
+        const postPayload = post?.payload || null;
+        const published = firstItem?.reviewPublishedAt
+            || payload?.reviewPublishedAt
+            || payload?.review_published_at
+            || post?.reviewPublishedAt
+            || postPayload?.reviewPublishedAt
+            || postPayload?.review_published_at
+            || post?.createdAt
+            || post?.shelf?.createdAt
+            || null;
+        const updated = firstItem?.reviewUpdatedAt
+            || payload?.reviewUpdatedAt
+            || payload?.review_updated_at
+            || post?.reviewUpdatedAt
+            || postPayload?.reviewUpdatedAt
+            || postPayload?.review_updated_at
+            || post?.updatedAt
+            || post?.shelf?.updatedAt
+            || null;
+        if (!published || !updated) return null;
+        const publishedTs = new Date(published).getTime();
+        const updatedTs = new Date(updated).getTime();
+        if (!Number.isFinite(publishedTs) || !Number.isFinite(updatedTs) || updatedTs <= publishedTs) return null;
+        const formatted = formatAbsoluteDateTime(updated);
+        return formatted ? `Updated on ${formatted}` : null;
+    };
+
     const getItemPreview = (entry) => {
         const collectable = entry.collectable || entry.item || null;
         const manual = entry.manual || entry.manualItem || null;
@@ -453,13 +497,15 @@ export default function ProfileScreen({ navigation, route }) {
         const timeAgo = formatRelativeTime(shelf?.updatedAt || item.createdAt);
         const previewItems = items.slice(0, 3);
         const totalItems = item?.eventItemCount || items.length || 0;
+        const reviewedUpdatedLabel = getReviewedUpdatedLabel(item);
 
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
         else if (eventType && eventType.includes('added')) actionText = 'added';
+        else if (eventType === 'reviewed') actionText = 'reviewed';
 
         const handlePostPress = () => {
-            if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
+            if (eventType && (eventType.includes('added') || eventType.includes('removed') || eventType === 'reviewed' || eventType === 'item.rated')) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
                 navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
@@ -514,6 +560,9 @@ export default function ProfileScreen({ navigation, route }) {
                         </View>
                     )}
                 </View>
+                {reviewedUpdatedLabel ? (
+                    <Text style={styles.postUpdatedOn}>{reviewedUpdatedLabel}</Text>
+                ) : null}
             </TouchableOpacity>
         );
     };
@@ -1518,5 +1567,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             flexDirection: 'row',
             alignItems: 'center',
             gap: spacing.sm,
+        },
+        postUpdatedOn: {
+            marginTop: spacing.xs,
+            alignSelf: 'flex-end',
+            fontSize: 11,
+            color: colors.textMuted,
         },
     });

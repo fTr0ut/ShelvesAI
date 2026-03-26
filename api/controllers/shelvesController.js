@@ -18,6 +18,7 @@ const processingStatus = require('../services/processingStatus');
 const { query, transaction } = require('../database/pg');
 const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
+const ratingsQueries = require('../database/queries/ratings');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
@@ -28,6 +29,7 @@ const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
+const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const { extractRegionCrop } = require('../services/visionCropper');
 const { validateImageBuffer } = require('../utils/imageValidation');
@@ -61,6 +63,11 @@ const {
 const VISIBILITY_OPTIONS = ["private", "friends", "public"];
 const OTHER_SHELF_TYPE = "other";
 const OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR = 'Description is required when shelf type is "other".';
+const REPLACEMENT_TRIGGER_SOURCES = new Set(['collectable_detail', 'shelf_delete_modal']);
+const REPLACEMENT_WINDOW_HOURS = {
+  collectable_detail: 72,
+  shelf_delete_modal: 24,
+};
 
 const VISION_PROMPT_RULES = [
   {
@@ -180,10 +187,25 @@ function parseBooleanFlag(value, defaultValue = false) {
   return defaultValue;
 }
 
+function buildHttpError(status, message, code = null) {
+  const err = new Error(message);
+  err.status = status;
+  if (code) err.code = code;
+  return err;
+}
+
+function isWithinHoursWindow(value, hours) {
+  if (!value || !Number.isFinite(hours) || hours <= 0) return false;
+  const timestamp = Date.parse(String(value));
+  if (!Number.isFinite(timestamp)) return false;
+  return (Date.now() - timestamp) <= (hours * 60 * 60 * 1000);
+}
+
 const VISION_CROP_WARMUP_ENABLED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_ENABLED, true);
 const VISION_CROP_WARMUP_MAX_REGIONS = parsePositiveInt(process.env.VISION_CROP_WARMUP_MAX_REGIONS, 50);
 const OWNER_PHOTO_DEBUG_ENABLED = parseBooleanFlag(process.env.OWNER_PHOTO_DEBUG_ENABLED, false);
 const OWNER_PHOTO_DEBUG_ITEM_ID = parsePositiveInt(process.env.OWNER_PHOTO_DEBUG_ITEM_ID, null);
+const FEED_MICRO_DEBUG_ENABLED = parseBooleanFlag(process.env.FEED_MICRO_DEBUG_ENABLED, false);
 
 function shouldLogOwnerPhotoDebug(itemId = null) {
   if (!OWNER_PHOTO_DEBUG_ENABLED) return false;
@@ -209,6 +231,11 @@ function sanitizeThumbnailBoxForLog(box) {
 function logOwnerPhotoDebug(stage, payload = {}) {
   if (!OWNER_PHOTO_DEBUG_ENABLED) return;
   logger.info(`[OwnerPhotoDebug] ${stage}`, payload);
+}
+
+function logFeedMicro(stage, payload = {}) {
+  if (!FEED_MICRO_DEBUG_ENABLED) return;
+  logger.info(`[FeedMicro] ${stage}`, payload);
 }
 
 function buildVisionCounts(result = {}, options = {}) {
@@ -508,10 +535,14 @@ function formatShelfItem(row) {
     id: row.id,
     collectable,
     manual,
+    isVisionLinked: !!row.isVisionLinked,
     position: row.position ?? null,
     format: row.format ?? null,
     notes: row.notes ?? null,
     rating: row.rating ?? null,
+    reviewedEventId: row.reviewedEventLogId ?? null,
+    reviewPublishedAt: row.reviewedEventPublishedAt || null,
+    reviewUpdatedAt: row.reviewedEventUpdatedAt || null,
     ownerPhoto: row.ownerPhotoSource ? {
       source: row.ownerPhotoSource,
       visible: !!row.ownerPhotoVisible,
@@ -594,14 +625,75 @@ async function logShelfEvent({ userId, shelfId, type, payload }) {
   // Allow null shelfId for global events (like ratings)
   if (!userId || !type) return;
   try {
-    await feedQueries.logEvent({
+    const normalizedShelfId = shelfId != null ? parseInt(shelfId, 10) : null;
+    const result = await feedQueries.logEvent({
       userId,
-      shelfId: shelfId != null ? parseInt(shelfId, 10) : null,
+      shelfId: normalizedShelfId,
       eventType: type,
       payload: payload || {},
     });
+    logFeedMicro('logShelfEvent.success', {
+      userId,
+      shelfId: normalizedShelfId,
+      eventType: type,
+      logged: !!result,
+      eventId: result?.id || null,
+      payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+    });
+    return result;
   } catch (err) {
+    logFeedMicro('logShelfEvent.error', {
+      userId,
+      shelfId: shelfId != null ? parseInt(shelfId, 10) : null,
+      eventType: type,
+      message: err?.message || String(err),
+    });
     logger.warn("Event log failed", err.message || err);
+  }
+}
+
+async function upsertReviewedShelfEvent({
+  userId,
+  shelfId,
+  itemId,
+  payload,
+  reviewedEventIdHint = null,
+}) {
+  if (!userId || !itemId || !payload || typeof payload !== 'object') return null;
+  try {
+    const upsertResult = await feedQueries.upsertReviewedEvent({
+      userId,
+      payload,
+      reviewedEventLogId: reviewedEventIdHint,
+    });
+    if (!upsertResult?.id) return null;
+
+    const linkUpdate = await shelvesQueries.updateReviewedEventLink(
+      itemId,
+      userId,
+      shelfId,
+      {
+        reviewedEventLogId: upsertResult.id,
+        reviewedEventPublishedAt: upsertResult.reviewPublishedAt,
+        reviewedEventUpdatedAt: upsertResult.reviewUpdatedAt,
+      },
+    );
+    return {
+      ...upsertResult,
+      reviewedEventId: upsertResult.id,
+      reviewPublishedAt: upsertResult.reviewPublishedAt,
+      reviewUpdatedAt: upsertResult.reviewUpdatedAt,
+      linkPersisted: !!linkUpdate,
+    };
+  } catch (err) {
+    logFeedMicro('upsertReviewedShelfEvent.error', {
+      userId,
+      shelfId,
+      itemId,
+      message: err?.message || String(err),
+    });
+    logger.warn("Reviewed upsert failed", err.message || err);
+    return null;
   }
 }
 
@@ -825,7 +917,13 @@ async function listShelfItems(req, res) {
       ? await hydrateShelfItems(req.user.id, shelf.id, { limit, skip })
       : (await shelvesQueries.getItemsForViewing(shelf.id, { limit, offset: skip })).map(formatShelfItem).filter(Boolean);
     if (!isOwner) {
-      items = items.map((item) => ({ ...item, ownerPhoto: null }));
+      items = items.map((item) => ({
+        ...item,
+        ownerPhoto: null,
+        reviewedEventId: null,
+        reviewPublishedAt: null,
+        reviewUpdatedAt: null,
+      }));
     }
 
     if (OWNER_PHOTO_DEBUG_ENABLED) {
@@ -1123,6 +1221,272 @@ async function removeShelfItem(req, res) {
   }
 }
 
+async function createReplacementIntent(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const triggerSource = normalizeString(req.body?.triggerSource);
+    if (!REPLACEMENT_TRIGGER_SOURCES.has(triggerSource)) {
+      return res.status(400).json({ error: 'Invalid triggerSource' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const sourceItem = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!sourceItem) return res.status(404).json({ error: 'Item not found' });
+
+    const maxAgeHours = REPLACEMENT_WINDOW_HOURS[triggerSource];
+    if (!isWithinHoursWindow(sourceItem.createdAt, maxAgeHours)) {
+      return res.status(400).json({
+        error: `Replacement is only available within ${maxAgeHours} hours for this action.`,
+      });
+    }
+
+    if (triggerSource === 'collectable_detail' && !sourceItem.isVisionLinked) {
+      return res.status(400).json({
+        error: 'Replacement from detail is only available for vision-linked items.',
+      });
+    }
+
+    if (!sourceItem.collectableId && !sourceItem.manualId) {
+      return res.status(400).json({ error: 'Item reference is missing' });
+    }
+
+    const trace = await itemReplacementTracesQueries.createIntent({
+      userId: req.user.id,
+      shelfId: shelf.id,
+      sourceItemId: sourceItem.id,
+      sourceCollectableId: sourceItem.collectableId || null,
+      sourceManualId: sourceItem.manualId || null,
+      triggerSource,
+      metadata: {
+        sourceCreatedAt: sourceItem.createdAt || null,
+        sourceIsVisionLinked: !!sourceItem.isVisionLinked,
+      },
+    });
+
+    return res.status(201).json({
+      traceId: trace?.id || null,
+      trace,
+    });
+  } catch (err) {
+    logger.error('createReplacementIntent error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function replaceShelfItem(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(shelfId) || isNaN(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const sourceItem = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!sourceItem) return res.status(404).json({ error: 'Item not found' });
+
+    const body = req.body ?? {};
+    const traceId = parseInt(body.traceId, 10);
+    if (isNaN(traceId)) {
+      return res.status(400).json({ error: 'traceId is required' });
+    }
+
+    const hasCollectableId = body.collectableId !== undefined && body.collectableId !== null && body.collectableId !== '';
+    const hasCollectablePayload = !!(body.collectable && typeof body.collectable === 'object' && !Array.isArray(body.collectable));
+    const hasManualPayload = !!(body.manual && typeof body.manual === 'object' && !Array.isArray(body.manual));
+    const replacementModeCount = [hasCollectableId, hasCollectablePayload, hasManualPayload].filter(Boolean).length;
+
+    if (replacementModeCount !== 1) {
+      return res.status(400).json({
+        error: 'Provide exactly one replacement payload: collectableId, collectable, or manual.',
+      });
+    }
+
+    const existingCollectableId = hasCollectableId ? parseInt(body.collectableId, 10) : null;
+    if (hasCollectableId && isNaN(existingCollectableId)) {
+      return res.status(400).json({ error: 'collectableId must be an integer' });
+    }
+
+    if (existingCollectableId) {
+      const existingCollectable = await collectablesQueries.findById(existingCollectableId);
+      if (!existingCollectable) {
+        throw buildHttpError(404, 'Collectable not found', 'replacement_collectable_not_found');
+      }
+    }
+
+    const replacementResult = await transaction(async (client) => {
+      const trace = await itemReplacementTracesQueries.getByIdForUser({
+        traceId,
+        userId: req.user.id,
+        shelfId: shelf.id,
+        sourceItemId: sourceItem.id,
+        status: 'initiated',
+        forUpdate: true,
+      }, client);
+
+      if (!trace) {
+        throw buildHttpError(404, 'Replacement intent not found or already used', 'replacement_trace_missing');
+      }
+
+      let targetItemId = null;
+      let targetCollectableId = null;
+      let targetManualId = null;
+      let replacementKind = null;
+
+      if (existingCollectableId) {
+        replacementKind = 'collectable_id';
+        const replacedItem = await shelvesQueries.addCollectable({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          collectableId: existingCollectableId,
+          format: null,
+        }, client);
+        targetItemId = replacedItem?.id || null;
+        targetCollectableId = existingCollectableId;
+      } else if (hasCollectablePayload) {
+        replacementKind = 'collectable_payload';
+        const payload = buildCollectableUpsertPayload(body.collectable, shelf.type);
+        if (!payload) {
+          throw buildHttpError(400, 'Replacement collectable payload is missing title', 'replacement_collectable_title_missing');
+        }
+
+        const collectable = await collectablesQueries.upsert(payload, client);
+        const userFormat = normalizeString(body.collectable?.format || body.collectable?.physical?.format);
+        const replacedItem = await shelvesQueries.addCollectable({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          collectableId: collectable.id,
+          format: userFormat || null,
+        }, client);
+
+        targetItemId = replacedItem?.id || null;
+        targetCollectableId = collectable.id;
+      } else if (hasManualPayload) {
+        replacementKind = 'manual_payload';
+        const manualInput = body.manual ?? {};
+        const manualName = normalizeString(manualInput.name || manualInput.title);
+        if (!manualName) {
+          throw buildHttpError(400, 'Replacement manual payload is missing name/title', 'replacement_manual_name_missing');
+        }
+
+        const rawYear = normalizeString(manualInput.year);
+        if (rawYear && !/^\d{1,4}$/.test(rawYear)) {
+          throw buildHttpError(400, 'Replacement manual year must be a 1-4 digit number', 'replacement_manual_year_invalid');
+        }
+
+        const manualResult = await shelvesQueries.addManual({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          name: manualName,
+          type: normalizeString(manualInput.type) || shelf.type,
+          description: normalizeString(manualInput.description),
+          author: normalizeString(manualInput.author || manualInput.primaryCreator),
+          publisher: normalizeString(manualInput.publisher),
+          format: normalizeString(manualInput.format || manualInput.platform),
+          year: rawYear ? parseInt(rawYear, 10) : null,
+          marketValue: normalizeString(manualInput.marketValue),
+          marketValueSources: normalizeSourceLinks(manualInput.marketValueSources),
+          ageStatement: normalizeString(manualInput.ageStatement),
+          specialMarkings: normalizeString(manualInput.specialMarkings),
+          labelColor: normalizeString(manualInput.labelColor),
+          regionalItem: normalizeString(manualInput.regionalItem),
+          edition: normalizeString(manualInput.edition),
+          barcode: normalizeString(manualInput.barcode),
+          genre: normalizeStringArray(manualInput.genre, manualInput.genres),
+          tags: normalizeStringArray(manualInput.tags),
+          limitedEdition: normalizeString(manualInput.limitedEdition),
+          itemSpecificText: normalizeString(manualInput.itemSpecificText),
+        }, client);
+
+        targetItemId = manualResult?.collection?.id || null;
+        targetManualId = manualResult?.manual?.id || null;
+      }
+
+      if (!targetItemId) {
+        throw buildHttpError(500, 'Replacement target could not be persisted', 'replacement_target_missing');
+      }
+
+      const replaced = targetItemId !== sourceItem.id;
+      if (replaced) {
+        const removed = await shelvesQueries.removeItem(sourceItem.id, req.user.id, shelf.id, client);
+        if (!removed) {
+          throw buildHttpError(409, 'Source item could not be removed', 'replacement_source_remove_failed');
+        }
+      }
+
+      const completedTrace = await itemReplacementTracesQueries.markCompleted({
+        traceId,
+        userId: req.user.id,
+        targetItemId,
+        targetCollectableId,
+        targetManualId,
+        metadata: {
+          replacementKind,
+          sourceItemId: sourceItem.id,
+          replaced,
+        },
+      }, client);
+
+      if (!completedTrace) {
+        throw buildHttpError(409, 'Replacement intent is no longer active', 'replacement_trace_not_initiated');
+      }
+
+      return {
+        replaced,
+        targetItemId,
+      };
+    });
+
+    const replacedItem = await shelvesQueries.getItemById(replacementResult.targetItemId, req.user.id, shelf.id);
+
+    return res.json({
+      success: true,
+      replaced: replacementResult.replaced,
+      sourceItemId: sourceItem.id,
+      targetItemId: replacementResult.targetItemId,
+      item: replacedItem,
+    });
+  } catch (err) {
+    const traceId = parseInt(req.body?.traceId, 10);
+    const status = err?.status || 500;
+    if (!isNaN(traceId) && status < 500) {
+      try {
+        await itemReplacementTracesQueries.markFailed({
+          traceId,
+          userId: req.user.id,
+          reason: err.code || 'replacement_failed',
+          metadata: { message: err.message || null },
+        });
+      } catch (markErr) {
+        logger.warn('replaceShelfItem markFailed warning:', markErr?.message || markErr);
+      }
+    }
+
+    if (status >= 500) {
+      logger.error('replaceShelfItem error:', err);
+      return res.status(500).json({ error: 'Server error' });
+    }
+
+    if (!err?.code || !String(err.code).startsWith('replacement_')) {
+      logger.warn('replaceShelfItem validation error:', {
+        code: err?.code || null,
+        message: err?.message || String(err),
+      });
+    }
+
+    return res.status(status).json({ error: err.message || 'Replace failed' });
+  }
+}
+
 async function searchCollectablesForShelf(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
@@ -1203,6 +1567,22 @@ async function updateManualEntry(req, res) {
 
     // Handle notes separately (stored on user_collections, not user_manuals)
     const notesValue = body.notes !== undefined ? normalizeString(body.notes) : undefined;
+    const reviewedEventIdHint = body.reviewedEventId ?? null;
+    const shareToFeedRequested = (
+      body.shareToFeed === true
+      || body.shareToFeed === 1
+      || String(body.shareToFeed || '').toLowerCase() === 'true'
+    );
+    logFeedMicro('updateManualEntry.notes.request', {
+      userId: req.user.id,
+      shelfId: shelf.id,
+      itemId: req.params.itemId,
+      notesProvided: body.notes !== undefined,
+      notesLength: notesValue ? String(notesValue).length : 0,
+      reviewedEventIdHint: reviewedEventIdHint ?? null,
+      shareToFeedRaw: body.shareToFeed,
+      shareToFeedRequested,
+    });
 
     if (Object.keys(updates).length === 0 && notesValue === undefined) {
       return res.status(400).json({ error: 'No valid fields to update' });
@@ -1210,7 +1590,9 @@ async function updateManualEntry(req, res) {
 
     // Get the collection entry with manual
     const entryResult = await query(
-      `SELECT uc.id, uc.manual_id, uc.notes, um.*
+      `SELECT uc.id, uc.manual_id, uc.notes,
+              uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
+              um.*
        FROM user_collections uc
        JOIN user_manuals um ON um.id = uc.manual_id
        WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
@@ -1247,7 +1629,83 @@ async function updateManualEntry(req, res) {
       updatedNotes = notesValue;
     }
 
-    res.json({ item: { id: entry.id, notes: updatedNotes, manual: omitMarketValueSources(manualData) } });
+    let reviewLinkState = {
+      reviewedEventId: entry.reviewed_event_log_id ?? null,
+      reviewPublishedAt: entry.reviewed_event_published_at || null,
+      reviewUpdatedAt: entry.reviewed_event_updated_at || null,
+    };
+    const shouldShareReviewedEvent = shareToFeedRequested && notesValue !== undefined && !!notesValue;
+    logFeedMicro('updateManualEntry.notes.shareDecision', {
+      userId: req.user.id,
+      shelfId: shelf.id,
+      shouldShareReviewedEvent,
+      notesProvided: notesValue !== undefined,
+      hasNotesValue: !!notesValue,
+      reviewedEventIdHint: reviewedEventIdHint ?? null,
+      storedReviewedEventId: reviewLinkState.reviewedEventId ?? null,
+      shareToFeedRequested,
+    });
+    if (shouldShareReviewedEvent) {
+      const ratingRecord = await ratingsQueries.getRating(req.user.id, { manualId: entry.manual_id });
+      const currentUserRating = ratingRecord?.rating ?? null;
+      const manualTitle = manualData?.name || manualData?.title || 'Unknown';
+      const upsertedReview = await upsertReviewedShelfEvent({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        itemId: entry.id,
+        reviewedEventIdHint: reviewedEventIdHint || reviewLinkState.reviewedEventId || null,
+        payload: {
+          itemId: entry.id,
+          sourceShelfId: shelf.id,
+          sourceShelfType: shelf.type || null,
+          manualId: entry.manual_id || manualData?.id || null,
+          title: manualTitle,
+          primaryCreator: manualData?.author || null,
+          coverUrl: null,
+          coverMediaPath: manualData?.coverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(manualData?.coverMediaPath),
+          rating: currentUserRating,
+          notes: notesValue,
+          type: manualData?.type || shelf.type || 'item',
+          metadata: {
+            format: manualData?.format || null,
+            publisher: manualData?.publisher || null,
+            year: manualData?.year || null,
+            genre: Array.isArray(manualData?.genre) ? manualData.genre : null,
+            edition: manualData?.edition || null,
+            regionalItem: manualData?.regionalItem || null,
+            barcode: manualData?.barcode || null,
+            itemSpecificText: manualData?.itemSpecificText || null,
+          },
+        },
+      });
+      if (upsertedReview) {
+        reviewLinkState = {
+          reviewedEventId: upsertedReview.reviewedEventId ?? null,
+          reviewPublishedAt: upsertedReview.reviewPublishedAt || null,
+          reviewUpdatedAt: upsertedReview.reviewUpdatedAt || null,
+        };
+      }
+      logFeedMicro('updateManualEntry.notes.reviewedLogged', {
+        userId: req.user.id,
+        shelfId: shelf.id,
+        eventLogged: !!upsertedReview,
+        eventId: upsertedReview?.reviewedEventId || null,
+        changed: upsertedReview?.changed ?? null,
+        createdNew: upsertedReview?.createdNew ?? null,
+      });
+    }
+
+    res.json({
+      item: {
+        id: entry.id,
+        notes: updatedNotes,
+        reviewedEventId: reviewLinkState.reviewedEventId,
+        reviewPublishedAt: reviewLinkState.reviewPublishedAt,
+        reviewUpdatedAt: reviewLinkState.reviewUpdatedAt,
+        manual: omitMarketValueSources(manualData),
+      },
+    });
   } catch (err) {
     logger.error('updateManualEntry error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -2871,7 +3329,29 @@ async function rateShelfItem(req, res) {
     const shelf = await loadShelfForUser(req.user.id, shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { rating } = req.body ?? {};
+    const { rating, notes, collectableId, shareToFeed, reviewedEventId } = req.body ?? {};
+    const notesValue = notes !== undefined ? normalizeString(notes) : undefined;
+    const shareToFeedRequested = (
+      shareToFeed === true
+      || shareToFeed === 1
+      || String(shareToFeed || '').toLowerCase() === 'true'
+    );
+    logFeedMicro('rateShelfItem.request', {
+      userId: req.user.id,
+      shelfId,
+      itemId,
+      ratingProvided: rating !== undefined,
+      notesProvided: notes !== undefined,
+      notesLength: notesValue ? String(notesValue).length : 0,
+      collectableId: collectableId ?? null,
+      reviewedEventIdHint: reviewedEventId ?? null,
+      shareToFeedRaw: shareToFeed,
+      shareToFeedRequested,
+    });
+
+    if (rating === undefined && notes === undefined) {
+      return res.status(400).json({ error: "rating or notes is required" });
+    }
 
     // Validate rating: must be null or number between 0-5 in 0.5 increments
     if (rating !== null && rating !== undefined) {
@@ -2885,29 +3365,96 @@ async function rateShelfItem(req, res) {
       }
     }
 
-    const validRating = rating === null || rating === undefined ? null : parseFloat(rating);
+    const validRating = rating === undefined
+      ? undefined
+      : (rating === null ? null : parseFloat(rating));
 
-    const updated = await shelvesQueries.updateItemRating(itemId, req.user.id, shelfId, validRating);
+    const updatePayload = {
+      ...(validRating !== undefined ? { rating: validRating } : {}),
+      ...(notes !== undefined ? { notes: notesValue } : {}),
+    };
+
+    let updated = await shelvesQueries.updateItemRating(itemId, req.user.id, shelfId, updatePayload);
+    const fallbackCollectableCandidates = [];
+    if (collectableId !== undefined && collectableId !== null && collectableId !== '') {
+      const parsedCollectableId = parseInt(collectableId, 10);
+      if (!Number.isNaN(parsedCollectableId)) {
+        fallbackCollectableCandidates.push(parsedCollectableId);
+      }
+    }
+    if (notes !== undefined && rating === undefined) {
+      // Legacy/mobile mismatch path: some clients pass collectable id in :itemId.
+      fallbackCollectableCandidates.push(itemId);
+    }
+    const uniqueFallbackCollectableCandidates = [...new Set(
+      fallbackCollectableCandidates.filter((candidate) => Number.isFinite(candidate) && candidate > 0),
+    )];
+
+    if (!updated && uniqueFallbackCollectableCandidates.length) {
+      for (const fallbackCollectableId of uniqueFallbackCollectableCandidates) {
+        const collectionEntry = await shelvesQueries.findCollectionByReference({
+          userId: req.user.id,
+          shelfId: shelf.id,
+          collectableId: fallbackCollectableId,
+        });
+        logFeedMicro('rateShelfItem.fallback.lookup', {
+          userId: req.user.id,
+          shelfId,
+          itemId,
+          fallbackCollectableId,
+          foundCollectionItemId: collectionEntry?.id || null,
+        });
+        if (collectionEntry?.id) {
+          updated = await shelvesQueries.updateItemRating(collectionEntry.id, req.user.id, shelfId, updatePayload);
+          if (updated) break;
+        }
+      }
+    }
     if (!updated) {
+      let collectionItem = null;
+      if (typeof shelvesQueries.getCollectionItemByIdForShelf === 'function') {
+        try {
+          collectionItem = await shelvesQueries.getCollectionItemByIdForShelf(itemId, shelf.id);
+        } catch (_diagErr) {
+          collectionItem = null;
+        }
+      }
+      logFeedMicro('rateShelfItem.update.failed', {
+        userId: req.user.id,
+        shelfId,
+        itemId,
+        fallbackCollectableCandidates: uniqueFallbackCollectableCandidates,
+        itemExistsOnShelf: !!collectionItem,
+        itemOwnerUserId: collectionItem?.userId || null,
+      });
       return res.status(404).json({ error: "Item not found" });
     }
     const previousRating = updated.previousRating === null || updated.previousRating === undefined
       ? null
       : parseFloat(updated.previousRating);
-    const ratingChanged = previousRating !== validRating;
+    const currentRating = updated.rating === null || updated.rating === undefined
+      ? null
+      : parseFloat(updated.rating);
+    const ratingChanged = validRating !== undefined && previousRating !== currentRating;
+    const effectiveItemId = updated.id || itemId;
 
     // Get full item details for response and feed event
-    const fullItem = await shelvesQueries.getItemById(itemId, req.user.id, shelfId);
+    const fullItem = await shelvesQueries.getItemById(effectiveItemId, req.user.id, shelfId);
+    if (fullItem) {
+      fullItem.reviewedEventId = fullItem.reviewedEventLogId ?? null;
+      fullItem.reviewPublishedAt = fullItem.reviewedEventPublishedAt || null;
+      fullItem.reviewUpdatedAt = fullItem.reviewedEventUpdatedAt || null;
+    }
 
     // Log feed event only when rating actually changed and is set (not cleared)
     // Use null shelfId for global rating aggregation
-    if (ratingChanged && validRating !== null) {
-      await logShelfEvent({
+    if (ratingChanged && currentRating !== null) {
+      const ratedLog = await logShelfEvent({
         userId: req.user.id,
         shelfId: null, // Global aggregation for ratings
         type: "item.rated",
         payload: {
-          itemId,
+          itemId: effectiveItemId,
           collectableId: fullItem?.collectableId || null,
           title: fullItem?.collectableTitle || 'Unknown',
           primaryCreator: fullItem?.collectableCreator || null,
@@ -2916,15 +3463,86 @@ async function rateShelfItem(req, res) {
           coverImageSource: fullItem?.collectableCoverImageSource || null,
           coverMediaPath: fullItem?.collectableCoverMediaPath || null,
           coverMediaUrl: resolveMediaUrl(fullItem?.collectableCoverMediaPath),
-          rating: validRating,
+          rating: currentRating,
           type: fullItem?.collectableKind || shelf.type,
         },
+      });
+      logFeedMicro('rateShelfItem.ratedLogged', {
+        userId: req.user.id,
+        shelfId,
+        eventLogged: !!ratedLog,
+        eventId: ratedLog?.id || null,
+        effectiveItemId,
+      });
+    }
+
+    const shouldShareReviewedEvent = shareToFeedRequested && notesValue !== undefined && !!notesValue;
+    logFeedMicro('rateShelfItem.reviewedDecision', {
+      userId: req.user.id,
+      shelfId,
+      effectiveItemId,
+      shouldShareReviewedEvent,
+      shareToFeedRequested,
+      notesProvided: notesValue !== undefined,
+      hasNotesValue: !!notesValue,
+      reviewedEventIdHint: reviewedEventId ?? null,
+      storedReviewedEventId: fullItem?.reviewedEventLogId ?? null,
+    });
+    if (shouldShareReviewedEvent) {
+      const resolvedCollectableId = fullItem?.collectableId || uniqueFallbackCollectableCandidates[0] || null;
+      const ratingRecord = resolvedCollectableId
+        ? await ratingsQueries.getRating(req.user.id, { collectableId: resolvedCollectableId })
+        : null;
+      const currentUserRating = ratingRecord?.rating ?? null;
+      const reviewedLog = await upsertReviewedShelfEvent({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        itemId: effectiveItemId,
+        reviewedEventIdHint: reviewedEventId || fullItem?.reviewedEventLogId || null,
+        payload: {
+          itemId: effectiveItemId,
+          sourceShelfId: shelf.id,
+          sourceShelfType: shelf.type || null,
+          collectableId: resolvedCollectableId,
+          title: fullItem?.collectableTitle || 'Unknown',
+          primaryCreator: fullItem?.collectableCreator || null,
+          coverUrl: fullItem?.collectableCover || null,
+          coverImageUrl: fullItem?.collectableCoverImageUrl || null,
+          coverImageSource: fullItem?.collectableCoverImageSource || null,
+          coverMediaPath: fullItem?.collectableCoverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(fullItem?.collectableCoverMediaPath),
+          rating: currentUserRating,
+          notes: notesValue,
+          type: fullItem?.collectableKind || shelf.type || 'item',
+          metadata: {
+            formats: Array.isArray(fullItem?.collectableFormats) ? fullItem.collectableFormats : null,
+            systemName: fullItem?.collectableSystemName || null,
+          },
+        },
+      });
+      if (reviewedLog) {
+        fullItem.reviewedEventLogId = reviewedLog.reviewedEventId ?? null;
+        fullItem.reviewedEventPublishedAt = reviewedLog.reviewPublishedAt || null;
+        fullItem.reviewedEventUpdatedAt = reviewedLog.reviewUpdatedAt || null;
+        fullItem.reviewedEventId = reviewedLog.reviewedEventId ?? null;
+        fullItem.reviewPublishedAt = reviewedLog.reviewPublishedAt || null;
+        fullItem.reviewUpdatedAt = reviewedLog.reviewUpdatedAt || null;
+      }
+      logFeedMicro('rateShelfItem.reviewedLogged', {
+        userId: req.user.id,
+        shelfId,
+        effectiveItemId,
+        eventLogged: !!reviewedLog,
+        eventId: reviewedLog?.reviewedEventId || null,
+        changed: reviewedLog?.changed ?? null,
+        createdNew: reviewedLog?.createdNew ?? null,
+        resolvedCollectableId,
       });
     }
 
     res.json({
       success: true,
-      rating: validRating,
+      rating: currentRating,
       item: fullItem
     });
   } catch (err) {
@@ -2975,6 +3593,8 @@ module.exports = {
   addCollectable,
   searchCollectablesForShelf,
   removeShelfItem,
+  createReplacementIntent,
+  replaceShelfItem,
   processShelfVision,
   processCatalogLookup,
   getVisionScanPhoto,

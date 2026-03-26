@@ -56,6 +56,49 @@ function formatRelativeTime(dateString) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function formatAbsoluteDateTime(dateString) {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
+function getReviewedUpdatedLabel(item = {}, eventEntry = null) {
+    const payload = item?.payload || null;
+    const eventPayload = eventEntry?.payload || null;
+    const published = item?.reviewPublishedAt
+        || payload?.reviewPublishedAt
+        || payload?.review_published_at
+        || eventEntry?.reviewPublishedAt
+        || eventPayload?.reviewPublishedAt
+        || eventPayload?.review_published_at
+        || eventEntry?.createdAt
+        || eventEntry?.shelf?.createdAt
+        || null;
+    const updated = item?.reviewUpdatedAt
+        || payload?.reviewUpdatedAt
+        || payload?.review_updated_at
+        || eventEntry?.reviewUpdatedAt
+        || eventPayload?.reviewUpdatedAt
+        || eventPayload?.review_updated_at
+        || eventEntry?.updatedAt
+        || eventEntry?.shelf?.updatedAt
+        || null;
+    if (!published || !updated) return null;
+    const publishedTs = new Date(published).getTime();
+    const updatedTs = new Date(updated).getTime();
+    if (!Number.isFinite(publishedTs) || !Number.isFinite(updatedTs)) return null;
+    if (updatedTs <= publishedTs) return null;
+    const formatted = formatAbsoluteDateTime(updated);
+    return formatted ? `Updated on ${formatted}` : null;
+}
+
 function getItemPreview(entry, apiBase = '') {
     const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
     const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
@@ -119,6 +162,7 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [commentTexts, setCommentTexts] = useState({});
     const [pendingComments, setPendingComments] = useState({});
     const [pendingNewsDismissals, setPendingNewsDismissals] = useState({});
+    const [truncatedReviewNotes, setTruncatedReviewNotes] = useState({});
 
     // Check-in modal state for news recommendations
     const [checkInModalVisible, setCheckInModalVisible] = useState(false);
@@ -605,6 +649,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         const isCheckIn = eventType === 'checkin.activity';
         const isCheckinRated = eventType === 'checkin.rated';
         const isNewsRecommendation = eventType === 'news.recommendation';
+        const isReviewedEvent = eventType === 'reviewed';
         const timeAgo = formatRelativeTime((isCheckIn || isCheckinRated) ? item.createdAt : shelf?.updatedAt);
         const displayName = isNewsRecommendation ? 'Discover' : (owner?.name || owner?.username || 'Someone');
         const initial = displayName.charAt(0).toUpperCase();
@@ -630,6 +675,8 @@ export default function SocialFeedScreen({ navigation, route }) {
             } else if (eventType === 'item.rated') {
                 // Rating events navigate to FeedDetail to show all rated items
                 navigation.navigate('FeedDetail', { entry: item });
+            } else if (isReviewedEvent) {
+                navigation.navigate('FeedDetail', { entry: item });
             } else if (eventType && (eventType.includes('added') || eventType.includes('removed'))) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
@@ -638,6 +685,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         };
 
         const isRatingEvent = eventType === 'item.rated';
+        const isRatingLikeEvent = isRatingEvent || isReviewedEvent;
 
         if (isNewsRecommendation) {
             // Extract category and itemType from metadata or first item
@@ -703,7 +751,7 @@ export default function SocialFeedScreen({ navigation, route }) {
 
             const handleCheckinCollectablePress = () => {
                 if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
                 }
             };
 
@@ -781,7 +829,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
 
         // Rating event rendering
-        if (isRatingEvent) {
+        if (isRatingLikeEvent) {
             const ratingItems = items || [];
             const totalRated = item?.eventItemCount || ratingItems.length || 0;
 
@@ -819,12 +867,151 @@ export default function SocialFeedScreen({ navigation, route }) {
                 // Determine title with multiple fallbacks
                 const title = e.collectable?.title || e.title || e.manual?.title || 'Untitled';
 
+                const collectableId = e.collectable?.id || e.collectableId || e.collectable_id || null;
+
                 return {
                     title,
                     coverUrl,
-                    rating: e.rating || 0
+                    collectableId,
+                    rating: e.rating || 0,
+                    notes: e.notes || null,
+                    reviewPublishedAt: e.reviewPublishedAt || e?.payload?.reviewPublishedAt || e?.payload?.review_published_at || null,
+                    reviewUpdatedAt: e.reviewUpdatedAt || e?.payload?.reviewUpdatedAt || e?.payload?.review_updated_at || null,
                 };
             });
+            const featuredReviewNote = isReviewedEvent
+                ? String(ratingPreviews[0]?.notes || '').trim()
+                : '';
+            const featuredReview = ratingPreviews[0] || null;
+            const featuredReviewRating = Number(featuredReview?.rating);
+            const hasFeaturedReviewRating = Number.isFinite(featuredReviewRating) && featuredReviewRating > 0;
+            const featuredReviewUpdatedLabel = getReviewedUpdatedLabel(featuredReview || {}, item);
+            const hasFeaturedReviewUpdate = !!featuredReviewUpdatedLabel;
+            const reviewedCardKey = String(
+                item?.eventId
+                || item?.id
+                || item?.aggregateId
+                || `${item?.createdAt || ''}:${featuredReview?.title || ''}`,
+            );
+            const reviewNoteIsTruncated = !!truncatedReviewNotes[reviewedCardKey];
+
+            if (isReviewedEvent) {
+                return (
+                    <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={handlePress}
+                        style={styles.feedCard}
+                    >
+                        {/* Header */}
+                        <View style={styles.cardHeader}>
+                            <View style={styles.avatar}>
+                                {avatarSource ? (
+                                    <Image source={avatarSource} style={styles.avatarImage} />
+                                ) : (
+                                    <Text style={styles.avatarText}>{initial}</Text>
+                                )}
+                            </View>
+                            <View style={styles.headerContent}>
+                                <View style={styles.headerTop}>
+                                    <Text style={styles.username}>{displayName}</Text>
+                                    <View style={styles.reviewedHeaderMeta}>
+                                        <Text style={styles.timestamp}>{timeAgo}</Text>
+                                        {hasFeaturedReviewUpdate ? (
+                                            <View style={styles.reviewedUpdatedBadge}>
+                                                <Text style={styles.reviewedUpdatedBadgeText}>Updated</Text>
+                                            </View>
+                                        ) : null}
+                                    </View>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Ionicons
+                                        name="create-outline"
+                                        size={14}
+                                        color={colors.primary}
+                                        style={{ marginRight: 4 }}
+                                    />
+                                    <Text style={styles.shelfAction}>
+                                        reviewed{' '}
+                                        <Text style={styles.shelfName}>
+                                            {totalRated === 1
+                                                ? featuredReview?.title
+                                                : `${totalRated} item${totalRated === 1 ? '' : 's'}`}
+                                        </Text>
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+
+                        <View style={styles.reviewedBodyRow}>
+                            <TouchableOpacity
+                                style={styles.reviewedThumbColumn}
+                                activeOpacity={featuredReview?.collectableId ? 0.7 : 1}
+                                disabled={!featuredReview?.collectableId}
+                                onPress={() => {
+                                    if (featuredReview?.collectableId) {
+                                        navigation.navigate('CollectableDetail', { collectableId: String(featuredReview.collectableId), ownerId: owner?.id });
+                                    }
+                                }}
+                            >
+                                {featuredReview?.coverUrl ? (
+                                    <Image
+                                        source={{ uri: featuredReview.coverUrl }}
+                                        style={styles.coverThumb}
+                                        resizeMode="cover"
+                                    />
+                                ) : (
+                                    <View style={[styles.coverThumb, { backgroundColor: colors.surface, justifyContent: 'center', alignItems: 'center' }]}>
+                                        <Ionicons name="book" size={20} color={colors.primary} />
+                                    </View>
+                                )}
+                                {hasFeaturedReviewRating ? (
+                                    <View style={styles.reviewedThumbRating}>
+                                        {renderStars(featuredReviewRating)}
+                                    </View>
+                                ) : null}
+                            </TouchableOpacity>
+                            <View style={styles.reviewedTextColumn}>
+                                {featuredReviewNote ? (
+                                    <Text
+                                        style={styles.reviewedNoteInline}
+                                        numberOfLines={5}
+                                        onTextLayout={(event) => {
+                                            const lineCount = Array.isArray(event?.nativeEvent?.lines) ? event.nativeEvent.lines.length : 0;
+                                            const nextIsTruncated = lineCount > 5;
+                                            setTruncatedReviewNotes((prev) => (
+                                                prev[reviewedCardKey] === nextIsTruncated
+                                                    ? prev
+                                                    : { ...prev, [reviewedCardKey]: nextIsTruncated }
+                                            ));
+                                        }}
+                                    >
+                                        {featuredReviewNote}
+                                    </Text>
+                                ) : (
+                                    <Text style={styles.reviewedNoteInlineMuted}>
+                                        No written review provided.
+                                    </Text>
+                                )}
+                                {featuredReviewNote && reviewNoteIsTruncated ? (
+                                    <Text style={styles.reviewedReadMoreHint}>
+                                        n/ <Text style={styles.reviewedReadMoreHintItalic}>click to read more</Text>
+                                    </Text>
+                                ) : null}
+                                {totalRated > 1 ? (
+                                    <Text style={styles.reviewedMoreItemsText}>
+                                        +{totalRated - 1} more reviewed item{totalRated - 1 === 1 ? '' : 's'}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        </View>
+                        {featuredReviewUpdatedLabel ? (
+                            <Text style={styles.reviewedUpdatedOn}>{featuredReviewUpdatedLabel}</Text>
+                        ) : null}
+
+                        {renderSocialActions(item)}
+                    </TouchableOpacity>
+                );
+            }
 
             return (
                 <TouchableOpacity
@@ -847,9 +1034,14 @@ export default function SocialFeedScreen({ navigation, route }) {
                                 <Text style={styles.timestamp}>{timeAgo}</Text>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <Ionicons name="star" size={14} color="#FFD700" style={{ marginRight: 4 }} />
+                                <Ionicons
+                                    name={isReviewedEvent ? 'create-outline' : 'star'}
+                                    size={14}
+                                    color={isReviewedEvent ? colors.primary : '#FFD700'}
+                                    style={{ marginRight: 4 }}
+                                />
                                 <Text style={styles.shelfAction}>
-                                    rated{' '}
+                                    {isReviewedEvent ? 'reviewed ' : 'rated '}
                                     <Text style={styles.shelfName}>
                                         {totalRated === 1
                                             ? ratingPreviews[0]?.title
@@ -864,7 +1056,17 @@ export default function SocialFeedScreen({ navigation, route }) {
                     {ratingPreviews.length > 0 && (
                         <View style={styles.coverRow}>
                             {ratingPreviews.map((ratingItem, idx) => (
-                                <View key={idx} style={{ alignItems: 'center', marginRight: 8 }}>
+                                <TouchableOpacity
+                                    key={idx}
+                                    style={{ alignItems: 'center', marginRight: 8 }}
+                                    activeOpacity={ratingItem.collectableId ? 0.7 : 1}
+                                    disabled={!ratingItem.collectableId}
+                                    onPress={() => {
+                                        if (ratingItem.collectableId) {
+                                            navigation.navigate('CollectableDetail', { collectableId: String(ratingItem.collectableId), ownerId: owner?.id });
+                                        }
+                                    }}
+                                >
                                     {ratingItem.coverUrl ? (
                                         <Image
                                             source={{ uri: ratingItem.coverUrl }}
@@ -877,7 +1079,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                                         </View>
                                     )}
                                     {renderStars(ratingItem.rating)}
-                                </View>
+                                </TouchableOpacity>
                             ))}
                             {totalRated > ratingPreviews.length && (
                                 <View style={styles.moreCoversChip}>
@@ -934,7 +1136,7 @@ export default function SocialFeedScreen({ navigation, route }) {
 
             const handleCheckinRatedCollectablePress = () => {
                 if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable } });
+                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
                 }
             };
 
@@ -1069,16 +1271,26 @@ export default function SocialFeedScreen({ navigation, route }) {
                 {/* Cover art thumbnails */}
                 {coverItems.length > 0 && (
                     <View style={styles.coverRow}>
-                        {coverItems.map((item, idx) => (
-                            <Image
+                        {coverItems.map((coverItem, idx) => (
+                            <TouchableOpacity
                                 key={idx}
-                                source={{ uri: item.coverUrl }}
-                                style={[
-                                    styles.coverThumb,
-                                    idx > 0 && { marginLeft: -8 },
-                                ]}
-                                resizeMode="cover"
-                            />
+                                activeOpacity={coverItem.collectableId ? 0.7 : 1}
+                                disabled={!coverItem.collectableId}
+                                onPress={() => {
+                                    if (coverItem.collectableId) {
+                                        navigation.navigate('CollectableDetail', { collectableId: String(coverItem.collectableId), ownerId: owner?.id });
+                                    }
+                                }}
+                            >
+                                <Image
+                                    source={{ uri: coverItem.coverUrl }}
+                                    style={[
+                                        styles.coverThumb,
+                                        idx > 0 && { marginLeft: -8 },
+                                    ]}
+                                    resizeMode="cover"
+                                />
+                            </TouchableOpacity>
                         ))}
                         {totalItems > coverItems.length && (
                             <View style={styles.moreCoversChip}>
@@ -1092,10 +1304,21 @@ export default function SocialFeedScreen({ navigation, route }) {
                 {coverItems.length === 0 && previewItems.length > 0 && (
                     <View style={styles.itemsPreview}>
                         {previewItems.map((entry, idx) => (
-                            <View key={idx} style={styles.itemChip}>
+                            <TouchableOpacity
+                                key={idx}
+                                style={styles.itemChip}
+                                activeOpacity={itemPreviews[idx]?.collectableId ? 0.7 : 1}
+                                disabled={!itemPreviews[idx]?.collectableId}
+                                onPress={() => {
+                                    const cId = itemPreviews[idx]?.collectableId;
+                                    if (cId) {
+                                        navigation.navigate('CollectableDetail', { collectableId: String(cId), ownerId: owner?.id });
+                                    }
+                                }}
+                            >
                                 <Ionicons name="book" size={12} color={colors.primary} />
                                 <Text style={styles.itemTitle} numberOfLines={1}>{itemPreviews[idx]?.title || 'Untitled'}</Text>
-                            </View>
+                            </TouchableOpacity>
                         ))}
                         {totalItems > previewItems.length && (
                             <Text style={styles.moreItems}>+{totalItems - previewItems.length} more</Text>
@@ -1497,6 +1720,25 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         fontSize: 13,
         color: colors.textMuted,
     },
+    reviewedHeaderMeta: {
+        alignItems: 'flex-end',
+    },
+    reviewedUpdatedBadge: {
+        marginTop: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 999,
+        backgroundColor: colors.primary + '1F',
+        borderWidth: 1,
+        borderColor: colors.primary + '55',
+    },
+    reviewedUpdatedBadgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: colors.primary,
+        textTransform: 'uppercase',
+        letterSpacing: 0.3,
+    },
     shelfAction: {
         fontSize: 15, // Increased from 14
         color: colors.textSecondary,
@@ -1569,6 +1811,58 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     moreCoversText: {
         fontSize: 13, // Increased from 11
         fontWeight: '600',
+        color: colors.textMuted,
+    },
+    reviewedBodyRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: spacing.md,
+    },
+    reviewedThumbColumn: {
+        alignItems: 'center',
+        marginRight: spacing.md,
+    },
+    reviewedThumbRating: {
+        marginTop: spacing.xs,
+    },
+    reviewedTextColumn: {
+        flex: 1,
+        minHeight: 112,
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+        paddingTop: 0,
+    },
+    reviewedNoteInline: {
+        fontSize: 14,
+        color: colors.textSecondary,
+        lineHeight: 20,
+        textAlign: 'center',
+    },
+    reviewedNoteInlineMuted: {
+        fontSize: 13,
+        color: colors.textMuted,
+        textAlign: 'center',
+    },
+    reviewedMoreItemsText: {
+        marginTop: spacing.sm,
+        fontSize: 12,
+        color: colors.textMuted,
+        textAlign: 'center',
+    },
+    reviewedReadMoreHint: {
+        marginTop: spacing.xs,
+        fontSize: 11,
+        color: colors.textMuted,
+        textAlign: 'center',
+    },
+    reviewedReadMoreHintItalic: {
+        fontStyle: 'italic',
+    },
+    reviewedUpdatedOn: {
+        alignSelf: 'flex-end',
+        marginTop: spacing.xs,
+        marginBottom: spacing.xs,
+        fontSize: 11,
         color: colors.textMuted,
     },
     socialRow: {
@@ -1930,7 +2224,6 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.textSecondary,
         lineHeight: 22, // Increased from 20
         marginBottom: spacing.md, // Increased from sm
-        fontStyle: 'italic',
     },
     // Combined check-in + rating styles
     checkinRatedAction: {

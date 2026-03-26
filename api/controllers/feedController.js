@@ -31,6 +31,11 @@ function getDisplayHints(eventType) {
       sectionTitle: 'New ratings',
       itemDisplayMode: 'rated',
     },
+    reviewed: {
+      showShelfCard: false,
+      sectionTitle: 'Reviewed',
+      itemDisplayMode: 'reviewed',
+    },
     'checkin.activity': {
       showShelfCard: false,
       sectionTitle: null,
@@ -209,6 +214,16 @@ function flattenPayloadItems(payloads) {
   return out;
 }
 
+function getPayloadField(payload, fields, fallback = null) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(fields)) return fallback;
+  for (const field of fields) {
+    if (payload[field] !== undefined && payload[field] !== null) {
+      return payload[field];
+    }
+  }
+  return fallback;
+}
+
 function buildFeedItemsFromPayloads(payloads, eventType, limit) {
   if (!Array.isArray(payloads) || !eventType) return [];
   const maxItems = Number.isFinite(limit) ? limit : Number.MAX_SAFE_INTEGER;
@@ -221,6 +236,8 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
     if (eventType === 'item.collectable_added' || eventType === 'item.added') {
       // Check if this payload is a collectable (has collectableId or no manualId)
       const collectableId = payload.collectableId || payload.collectable_id || payload.collectable?.id || null;
+      const coverUrl = getPayloadField(payload, ['coverUrl', 'cover_url']);
+      const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
       const isManual = payload.manualId || payload.manual_id || (!collectableId && (payload.name || payload.title));
 
       if (isManual) {
@@ -242,8 +259,8 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
             id: collectableId,
             title: payload.title || payload.name || null,
             primaryCreator: payload.primaryCreator || payload.author || null,
-            coverUrl: payload.coverUrl || null,
-            coverMediaPath: payload.coverMediaPath || null,
+            coverUrl,
+            coverMediaPath,
             kind: payload.type || payload.kind || null,
           },
         });
@@ -272,19 +289,24 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       // Rating events - include the rating value
       const collectableId = payload.collectableId || payload.collectable_id || null;
       const manualId = payload.manualId || payload.manual_id || null;
+      const coverUrl = getPayloadField(payload, ['coverUrl', 'cover_url']);
+      const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
+      const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
+      const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
+      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
       const item = {
         id: payload.itemId || payload.id || null,
         collectableId,
-        rating: payload.rating || null,
+        rating: payload.rating ?? null,
         collectable: {
           id: collectableId,
           title: payload.title || payload.name || null,
           primaryCreator: payload.primaryCreator || payload.author || null,
-          coverUrl: payload.coverUrl || null,
-          coverImageUrl: payload.coverImageUrl || null,
-          coverImageSource: payload.coverImageSource || null,
-          coverMediaPath: payload.coverMediaPath || null,
-          coverMediaUrl: payload.coverMediaUrl || null,
+          coverUrl,
+          coverImageUrl,
+          coverImageSource,
+          coverMediaPath,
+          coverMediaUrl,
           kind: payload.type || payload.kind || null,
         },
       };
@@ -296,11 +318,53 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
           title: payload.title || payload.name || null,
           name: payload.title || payload.name || null,
           author: payload.primaryCreator || payload.author || null,
-          coverMediaPath: payload.coverMediaPath || null,
-          coverMediaUrl: payload.coverMediaUrl || null,
+          coverMediaPath,
+          coverMediaUrl,
         };
       }
       items.push(item);
+    } else if (eventType === 'reviewed') {
+      const collectableId = payload.collectableId || payload.collectable_id || null;
+      const manualId = payload.manualId || payload.manual_id || null;
+      const title = payload.title || payload.name || null;
+      const coverUrl = getPayloadField(payload, ['coverUrl', 'cover_url']);
+      const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
+      const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
+      const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
+      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const reviewItem = {
+        id: payload.itemId || payload.id || null,
+        collectableId,
+        manualId,
+        rating: payload.rating ?? null,
+        notes: payload.notes || null,
+        metadata: payload.metadata || null,
+        reviewPublishedAt: payload.reviewPublishedAt || payload.review_published_at || null,
+        reviewUpdatedAt: payload.reviewUpdatedAt || payload.review_updated_at || null,
+        collectable: collectableId ? {
+          id: collectableId,
+          title,
+          primaryCreator: payload.primaryCreator || payload.author || null,
+          coverUrl,
+          coverImageUrl,
+          coverImageSource,
+          coverMediaPath,
+          coverMediaUrl,
+          kind: payload.type || payload.kind || null,
+        } : null,
+      };
+      if (manualId) {
+        reviewItem.manual = {
+          id: manualId,
+          title,
+          name: title,
+          author: payload.primaryCreator || payload.author || null,
+          coverMediaPath,
+          coverMediaUrl,
+          type: payload.type || payload.kind || 'manual',
+        };
+      }
+      items.push(reviewItem);
     }
     if (items.length >= maxItems) break;
   }
@@ -419,6 +483,52 @@ const CHECKIN_RATING_MERGE_WINDOW_MINUTES = parseInt(
   process.env.CHECKIN_RATING_MERGE_WINDOW_MINUTES || '30',
   10
 );
+const REVIEW_RATING_MERGE_WINDOW_MINUTES = parseInt(
+  process.env.REVIEW_RATING_MERGE_WINDOW_MINUTES || '120',
+  10,
+);
+
+function getFeedItemIdentity(item = {}) {
+  const collectableId = item.collectableId || item.collectable?.id || null;
+  const manualId = item.manualId || item.manual?.id || null;
+  const title = String(
+    item.collectable?.title || item.manual?.title || item.title || ''
+  ).toLowerCase().trim();
+
+  return {
+    collectableId: collectableId ? String(collectableId) : null,
+    manualId: manualId ? String(manualId) : null,
+    title,
+  };
+}
+
+function feedItemsMatch(a, b) {
+  const left = getFeedItemIdentity(a);
+  const right = getFeedItemIdentity(b);
+
+  if (left.collectableId && right.collectableId && left.collectableId === right.collectableId) {
+    return true;
+  }
+  if (left.manualId && right.manualId && left.manualId === right.manualId) {
+    return true;
+  }
+  if (left.title && right.title && left.title === right.title) {
+    return true;
+  }
+  return false;
+}
+
+function getFeedItemId(item = {}) {
+  const itemId = item.itemId ?? item.id ?? null;
+  if (itemId === null || itemId === undefined || itemId === '') return null;
+  return String(itemId);
+}
+
+function getEntryActivityTime(entry = {}) {
+  const candidate = entry.updatedAt || entry.createdAt;
+  const timestamp = new Date(candidate).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
 
 /**
  * Merges check-in events with matching rating events into combined 'checkin.rated' entries.
@@ -542,15 +652,158 @@ function mergeCheckinRatingPairs(entries, options = {}) {
     });
   }
 
-  // Combine all entries back together and sort by createdAt
+  // Combine all entries back together and sort by latest activity time
   const allEntries = [...mergedCheckins, ...processedRatings, ...others];
   allEntries.sort((a, b) => {
-    const timeA = new Date(a.createdAt).getTime();
-    const timeB = new Date(b.createdAt).getTime();
+    const timeA = getEntryActivityTime(a);
+    const timeB = getEntryActivityTime(b);
     return timeB - timeA; // Descending (newest first)
   });
 
   return allEntries;
+}
+
+/**
+ * Merges reviewed + rating events into a single reviewed event when:
+ * - same user
+ * - same item (prefer exact itemId; fallback to collectable/manual identity)
+ * - events occur within time window (either ordering)
+ *
+ * Result:
+ * - standalone rating entries are omitted when paired to a reviewed entry
+ * - reviewed entry rating is updated from the paired rating when available
+ */
+function mergeReviewedRatingPairs(entries, options = {}) {
+  const { windowMinutes = REVIEW_RATING_MERGE_WINDOW_MINUTES } = options;
+  const windowMs = windowMinutes * 60 * 1000;
+
+  const reviewedEntries = [];
+  const ratingEntries = [];
+  const others = [];
+
+  for (const entry of entries) {
+    if (entry.eventType === 'reviewed') {
+      reviewedEntries.push(entry);
+    } else if (entry.eventType === 'item.rated') {
+      ratingEntries.push(entry);
+    } else {
+      others.push(entry);
+    }
+  }
+
+  if (!reviewedEntries.length || !ratingEntries.length) {
+    return entries;
+  }
+
+  const ratingsByTime = [...ratingEntries].sort((a, b) => (
+    new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  ));
+
+  const consumedRatingItems = new Set(); // `${ratingEntryId}:${itemIndex}`
+  const mergedReviewed = reviewedEntries.map((entry) => ({
+    ...entry,
+    items: Array.isArray(entry.items) ? entry.items.map((item) => ({ ...item })) : [],
+  }));
+
+  for (const reviewed of mergedReviewed) {
+    const reviewedUserId = String(reviewed.owner?.id || '');
+    const reviewedTime = new Date(reviewed.createdAt).getTime();
+    if (!Number.isFinite(reviewedTime)) continue;
+
+    let mergedTimestamp = reviewedTime;
+
+    const reviewedItems = Array.isArray(reviewed.items) ? reviewed.items : [];
+    for (let i = 0; i < reviewedItems.length; i++) {
+      const reviewedItem = reviewedItems[i];
+      const reviewedItemId = getFeedItemId(reviewedItem);
+      let found = null;
+
+      for (const ratingEntry of ratingsByTime) {
+        const ratingUserId = String(ratingEntry.owner?.id || '');
+        if (ratingUserId !== reviewedUserId) continue;
+
+        const ratingTime = new Date(ratingEntry.createdAt).getTime();
+        if (!Number.isFinite(ratingTime)) continue;
+        const absDiff = Math.abs(ratingTime - reviewedTime);
+        if (absDiff > windowMs) continue;
+
+        const ratingItems = Array.isArray(ratingEntry.items) ? ratingEntry.items : [];
+        for (let rIdx = 0; rIdx < ratingItems.length; rIdx++) {
+          const consumedKey = `${ratingEntry.id}:${rIdx}`;
+          if (consumedRatingItems.has(consumedKey)) continue;
+
+          const ratingItem = ratingItems[rIdx];
+          const ratingItemId = getFeedItemId(ratingItem);
+          const bothHaveItemId = !!(reviewedItemId && ratingItemId);
+          const matchesByItemId = bothHaveItemId && ratingItemId === reviewedItemId;
+          const matchesByIdentity = !bothHaveItemId && feedItemsMatch(reviewedItem, ratingItem);
+          if (!matchesByItemId && !matchesByIdentity) continue;
+
+          const candidate = {
+            ratingEntry,
+            ratingItem,
+            ratingItemIndex: rIdx,
+            ratingTime,
+            isAfterReview: ratingTime >= reviewedTime,
+          };
+
+          if (!found) {
+            found = candidate;
+            continue;
+          }
+
+          // Prefer ratings after the review. Within the same direction, prefer the latest rating.
+          if (candidate.isAfterReview && !found.isAfterReview) {
+            found = candidate;
+            continue;
+          }
+          if (candidate.isAfterReview === found.isAfterReview && candidate.ratingTime > found.ratingTime) {
+            found = candidate;
+          }
+        }
+      }
+
+      if (!found) continue;
+
+      const resolvedRating = found.ratingItem?.rating;
+      if (resolvedRating !== undefined && resolvedRating !== null) {
+        reviewedItems[i] = {
+          ...reviewedItem,
+          rating: resolvedRating,
+        };
+      }
+
+      consumedRatingItems.add(`${found.ratingEntry.id}:${found.ratingItemIndex}`);
+      if (found.ratingTime > mergedTimestamp) {
+        mergedTimestamp = found.ratingTime;
+      }
+    }
+
+    if (mergedTimestamp > reviewedTime) {
+      const mergedIso = new Date(mergedTimestamp).toISOString();
+      reviewed.createdAt = mergedIso;
+      reviewed.updatedAt = mergedIso;
+    }
+  }
+
+  const remainingRatings = [];
+  for (const rating of ratingEntries) {
+    const ratingItems = Array.isArray(rating.items) ? rating.items : [];
+    const nextItems = ratingItems.filter((_, idx) => !consumedRatingItems.has(`${rating.id}:${idx}`));
+    if (!nextItems.length) continue;
+
+    remainingRatings.push({
+      ...rating,
+      items: nextItems,
+      eventItemCount: nextItems.length,
+    });
+  }
+
+  const combined = [...mergedReviewed, ...remainingRatings, ...others];
+  combined.sort((a, b) => (
+    getEntryActivityTime(b) - getEntryActivityTime(a)
+  ));
+  return combined;
 }
 
 async function getFeed(req, res) {
@@ -618,6 +871,7 @@ async function getFeed(req, res) {
         aggregateId: e.id,
         eventType: e.eventType,
         createdAt: e.createdAt,
+        updatedAt: e.lastActivityAt || e.createdAt,
         likeCount: social.likeCount || 0,
         commentCount: social.commentCount || 0,
         hasLiked: !!social.hasLiked,
@@ -692,6 +946,8 @@ async function getFeed(req, res) {
 
     // Merge check-in + rating pairs into combined entries
     entries = mergeCheckinRatingPairs(entries);
+    // Merge reviewed + rating pairs into a single reviewed entry
+    entries = mergeReviewedRatingPairs(entries);
 
     if (scope === 'all' && offset === 0 && (!typeFilter || typeFilter === 'news.recommendation')) {
       try {
@@ -793,6 +1049,14 @@ async function getFeedEntryDetails(req, res) {
         const payloads = logsResult.rows.map((row) => row.payload || {});
         payloadItemCount = getPayloadItemCount(payloads);
         const itemIds = extractItemIdsFromPayloads(payloads);
+        const payloadByItemId = new Map();
+        const flattenedPayloadItems = flattenPayloadItems(payloads);
+        flattenedPayloadItems.forEach((payloadItem) => {
+          if (!payloadItem || typeof payloadItem !== 'object') return;
+          const payloadItemId = payloadItem.itemId || payloadItem.id;
+          if (payloadItemId == null) return;
+          payloadByItemId.set(String(payloadItemId), payloadItem);
+        });
 
         if (itemIds.length) {
           const itemsResult = await query(
@@ -826,10 +1090,15 @@ async function getFeedEntryDetails(req, res) {
 
           items = itemsResult.rows.map((row) => {
             const resolvedTitle = row.collectable_title || row.manual_name || 'Unknown item';
+            const payload = payloadByItemId.get(String(row.id)) || null;
             return {
               id: row.id,
               collectableId: row.collectable_id || null,
               manualId: row.manual_id || null,
+              rating: payload?.rating ?? null,
+              notes: payload?.notes || null,
+              metadata: payload?.metadata || null,
+              payload,
               collectable: row.collectable_id ? {
                 id: row.collectable_id,
                 title: resolvedTitle,
@@ -1070,4 +1339,5 @@ module.exports = {
   getFeed,
   getFeedEntryDetails,
   _mergeCheckinRatingPairs: mergeCheckinRatingPairs,
+  _mergeReviewedRatingPairs: mergeReviewedRatingPairs,
 };

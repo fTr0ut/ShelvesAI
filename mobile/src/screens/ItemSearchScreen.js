@@ -20,17 +20,18 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function ItemSearchScreen({ route, navigation }) {
-  const { shelfId, shelfType } = route.params || {};
+  const { shelfId, shelfType, replaceContext } = route.params || {};
   const { token, apiBase } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
+  const isReplacementMode = !!(replaceContext?.traceId && replaceContext?.sourceItemId);
 
 
 
-  const [manualTitle, setManualTitle] = useState('');
-  const [manualType, setManualType] = useState(shelfType || '');
-  const [manualAuthor, setManualAuthor] = useState('');
-  const [manualPlatform, setManualPlatform] = useState('');
-  const [manualDescription, setManualDescription] = useState('');
+  const [manualTitle, setManualTitle] = useState(replaceContext?.prefillTitle || '');
+  const [manualType, setManualType] = useState(replaceContext?.prefillType || shelfType || '');
+  const [manualAuthor, setManualAuthor] = useState(replaceContext?.prefillAuthor || '');
+  const [manualPlatform, setManualPlatform] = useState(replaceContext?.prefillPlatform || '');
+  const [manualDescription, setManualDescription] = useState(replaceContext?.prefillDescription || '');
   const [manualSaving, setManualSaving] = useState(false);
 
   // State for suggestion modal
@@ -45,40 +46,99 @@ export default function ItemSearchScreen({ route, navigation }) {
 
 
   // Actually perform the manual add (called after user decides to add anyway)
+  const performReplacement = useCallback(async (payload) => {
+    if (!isReplacementMode) return;
+
+    const sourceItemId = replaceContext?.sourceItemId;
+    const traceId = replaceContext?.traceId;
+    if (!sourceItemId || !traceId) {
+      throw new Error('Replacement context is missing.');
+    }
+
+    await apiRequest({
+      apiBase,
+      path: `/api/shelves/${shelfId}/items/${sourceItemId}/replace`,
+      method: 'POST',
+      token,
+      body: {
+        traceId,
+        ...payload,
+      },
+    });
+  }, [apiBase, isReplacementMode, replaceContext?.sourceItemId, replaceContext?.traceId, shelfId, token]);
+
   const performManualAdd = useCallback(async () => {
     const title = manualTitle.trim();
     const type = (manualType || shelfType || 'Item').trim();
     try {
       setManualSaving(true);
-      await apiRequest({
-        apiBase,
-        path: `/api/shelves/${shelfId}/manual`,
-        method: 'POST',
-        token,
-        body: {
-          name: title,
-          type,
-          author: manualAuthor.trim() || undefined,
-          format: manualPlatform.trim() || undefined,
-          description: manualDescription.trim() || undefined,
-        },
-      });
-      Alert.alert('Added', 'Manual item added to your shelf.');
-      navigation.goBack();
+      if (isReplacementMode) {
+        await performReplacement({
+          manual: {
+            name: title,
+            type,
+            author: manualAuthor.trim() || undefined,
+            format: manualPlatform.trim() || undefined,
+            description: manualDescription.trim() || undefined,
+          },
+        });
+        Alert.alert('Replaced', 'Item replaced.', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        await apiRequest({
+          apiBase,
+          path: `/api/shelves/${shelfId}/manual`,
+          method: 'POST',
+          token,
+          body: {
+            name: title,
+            type,
+            author: manualAuthor.trim() || undefined,
+            format: manualPlatform.trim() || undefined,
+            description: manualDescription.trim() || undefined,
+          },
+        });
+        Alert.alert('Added', 'Manual item added to your shelf.');
+        navigation.goBack();
+      }
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally {
       setManualSaving(false);
     }
-  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualPlatform, manualDescription, shelfType, navigation]);
+  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualPlatform, manualDescription, shelfType, navigation, isReplacementMode, performReplacement]);
 
   // Add a collectable from suggestions
   const addSuggestion = useCallback(async (suggestion) => {
     setShowSuggestionModal(false);
     try {
       setManualSaving(true);
-      if (suggestion.id) {
-        // Existing collectable in database
+      const fallbackTitle = suggestion.title || suggestion.name || manualTitle.trim();
+      const fallbackType = suggestion.kind || suggestion.type || manualType || shelfType || 'Item';
+      const collectablePayload = {
+        ...suggestion,
+        title: fallbackTitle,
+        name: fallbackTitle,
+        kind: fallbackType,
+        type: fallbackType,
+        primaryCreator: suggestion.primaryCreator || manualAuthor.trim() || undefined,
+        description: suggestion.description || manualDescription.trim() || undefined,
+        format: manualPlatform.trim() || undefined,
+      };
+
+      if (isReplacementMode) {
+        if (suggestion.id) {
+          await performReplacement({ collectableId: suggestion.id });
+        } else if (suggestion.fromApi) {
+          await performReplacement({ collectable: collectablePayload });
+        } else {
+          throw new Error('Unsupported replacement suggestion payload.');
+        }
+        Alert.alert('Replaced', 'Item replaced.', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else if (suggestion.id) {
         await apiRequest({
           apiBase,
           path: `/api/shelves/${shelfId}/items`,
@@ -89,37 +149,40 @@ export default function ItemSearchScreen({ route, navigation }) {
             format: manualPlatform.trim() || undefined,
           },
         });
+        Alert.alert('Added', 'Item added to your shelf.');
+        navigation.goBack();
       } else if (suggestion.fromApi) {
-        // API result - create collectable with full metadata
-        const fallbackTitle = suggestion.title || suggestion.name || manualTitle.trim();
-        const fallbackType = suggestion.kind || suggestion.type || manualType || shelfType || 'Item';
         await apiRequest({
           apiBase,
           path: `/api/shelves/${shelfId}/items/from-api`,
           method: 'POST',
           token,
           body: {
-            collectable: {
-              ...suggestion,
-              title: fallbackTitle,
-              name: fallbackTitle,
-              kind: fallbackType,
-              type: fallbackType,
-              primaryCreator: suggestion.primaryCreator || manualAuthor.trim() || undefined,
-              description: suggestion.description || manualDescription.trim() || undefined,
-              format: manualPlatform.trim() || undefined,
-            },
+            collectable: collectablePayload,
           },
         });
+        Alert.alert('Added', 'Item added to your shelf.');
+        navigation.goBack();
       }
-      Alert.alert('Added', 'Item added to your shelf.');
-      navigation.goBack();
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally {
       setManualSaving(false);
     }
-  }, [apiBase, shelfId, token, manualTitle, manualType, manualAuthor, manualPlatform, manualDescription, shelfType, navigation]);
+  }, [
+    apiBase,
+    isReplacementMode,
+    manualAuthor,
+    manualDescription,
+    manualPlatform,
+    manualTitle,
+    manualType,
+    navigation,
+    performReplacement,
+    shelfId,
+    shelfType,
+    token,
+  ]);
 
   // Main handler - search first, show suggestions if found
   const handleAddManual = useCallback(async () => {
@@ -170,14 +233,14 @@ export default function ItemSearchScreen({ route, navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Add to Shelf</Text>
+          <Text style={styles.headerTitle}>{isReplacementMode ? 'Replace Item' : 'Add to Shelf'}</Text>
           <View style={{ width: 40 }} />
         </View>
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Search & Add</Text>
+            <Text style={styles.cardTitle}>{isReplacementMode ? 'Search & Replace' : 'Search & Add'}</Text>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title</Text>
@@ -187,6 +250,7 @@ export default function ItemSearchScreen({ route, navigation }) {
                 placeholderTextColor={colors.textMuted}
                 value={manualTitle}
                 onChangeText={setManualTitle}
+                autoFocus={isReplacementMode}
               />
             </View>
 
@@ -242,7 +306,11 @@ export default function ItemSearchScreen({ route, navigation }) {
               onPress={handleAddManual}
               disabled={manualSaving}
             >
-              <Text style={styles.saveButtonText}>{manualSaving ? 'Searching...' : 'Search & Add'}</Text>
+              <Text style={styles.saveButtonText}>
+                {manualSaving
+                  ? (isReplacementMode ? 'Replacing...' : 'Searching...')
+                  : (isReplacementMode ? 'Search & Replace' : 'Search & Add')}
+              </Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -264,7 +332,9 @@ export default function ItemSearchScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.modalSubtitle}>
-              Select one below or add as a new item
+              {isReplacementMode
+                ? 'Select one below or replace with a new manual item'
+                : 'Select one below or add as a new item'}
             </Text>
 
             <ScrollView style={styles.suggestionList}>
@@ -294,7 +364,9 @@ export default function ItemSearchScreen({ route, navigation }) {
                 performManualAdd();
               }}
             >
-              <Text style={styles.addAnywayText}>Add as new item anyway</Text>
+              <Text style={styles.addAnywayText}>
+                {isReplacementMode ? 'Replace as new manual item' : 'Add as new item anyway'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

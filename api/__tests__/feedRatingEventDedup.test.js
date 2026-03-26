@@ -97,6 +97,61 @@ function createFeedHarness() {
       };
     }
 
+    if (
+      sql.includes('FROM event_logs')
+      && sql.includes("event_type = 'reviewed'")
+      && sql.includes('WHERE id = $1')
+      && sql.includes('FOR UPDATE')
+    ) {
+      const [eventLogId, userId] = params;
+      const target = eventLogs.find((row) => (
+        row.id === Number(eventLogId)
+        && String(row.user_id) === String(userId)
+        && row.event_type === 'reviewed'
+      ));
+      return { rows: target ? [deepClone(target)] : [], rowCount: target ? 1 : 0 };
+    }
+
+    if (
+      sql.includes('FROM event_logs')
+      && sql.includes("event_type = 'reviewed'")
+      && sql.includes("payload->>'itemId' = $3::text")
+      && sql.includes('FOR UPDATE')
+    ) {
+      const [userId, sourceShelfId, itemId] = params.map((v) => (v == null ? null : String(v)));
+      const filtered = eventLogs
+        .filter((log) => String(log.user_id) === String(userId) && log.event_type === 'reviewed')
+        .filter((log) => {
+          const payload = log.payload || {};
+          if (sourceShelfId && String(payload.sourceShelfId ?? payload.source_shelf_id ?? '') !== sourceShelfId) return false;
+          return String(payload.itemId ?? payload.id ?? '') === itemId;
+        })
+        .sort((a, b) => toDate(b.created_at) - toDate(a.created_at));
+      return { rows: filtered[0] ? [deepClone(filtered[0])] : [], rowCount: filtered[0] ? 1 : 0 };
+    }
+
+    if (
+      sql.includes('FROM event_logs')
+      && sql.includes("event_type = 'reviewed'")
+      && sql.includes("payload->>'collectableId' = $3::text")
+      && sql.includes('FOR UPDATE')
+    ) {
+      const [userId, sourceShelfId, collectableId, manualId] = params.map((v) => (v == null ? null : String(v)));
+      const filtered = eventLogs
+        .filter((log) => String(log.user_id) === String(userId) && log.event_type === 'reviewed')
+        .filter((log) => {
+          const payload = log.payload || {};
+          if (sourceShelfId && String(payload.sourceShelfId ?? payload.source_shelf_id ?? '') !== sourceShelfId) return false;
+          const byCollectable = collectableId
+            && String(payload.collectableId ?? payload.collectable_id ?? '') === collectableId;
+          const byManual = manualId
+            && String(payload.manualId ?? payload.manual_id ?? '') === manualId;
+          return !!(byCollectable || byManual);
+        })
+        .sort((a, b) => toDate(b.created_at) - toDate(a.created_at));
+      return { rows: filtered[0] ? [deepClone(filtered[0])] : [], rowCount: filtered[0] ? 1 : 0 };
+    }
+
     if (sql.includes('UPDATE event_logs') && sql.includes('SET payload = $2::jsonb')) {
       const [eventLogId, payloadJson] = params;
       const target = eventLogs.find((row) => row.id === eventLogId);
@@ -109,7 +164,7 @@ function createFeedHarness() {
     if (sql.includes('INSERT INTO event_logs')) {
       const payload = JSON.parse(params[4]);
       const row = {
-        id: `log-${logSeq++}`,
+        id: logSeq++,
         user_id: params[0],
         shelf_id: params[1],
         aggregate_id: params[2],
@@ -143,6 +198,20 @@ function createFeedHarness() {
       if ((aggregate.preview_payloads || []).length < Number(previewLimit)) {
         aggregate.preview_payloads = [...(aggregate.preview_payloads || []), JSON.parse(payloadJson)];
       }
+      return { rows: [deepClone(aggregate)], rowCount: 1 };
+    }
+
+    if (
+      sql.includes('UPDATE event_aggregates')
+      && sql.includes('SET item_count = 1')
+      && sql.includes('preview_payloads = jsonb_build_array($2::jsonb)')
+    ) {
+      const [aggregateId, payloadJson] = params;
+      const aggregate = eventAggregates.find((row) => row.id === aggregateId);
+      if (!aggregate) return { rows: [], rowCount: 0 };
+      aggregate.item_count = 1;
+      aggregate.last_activity_at = new Date();
+      aggregate.preview_payloads = [JSON.parse(payloadJson)];
       return { rows: [deepClone(aggregate)], rowCount: 1 };
     }
 
@@ -273,5 +342,107 @@ describe('feedQueries item.rated deduplication', () => {
 
     expect(harness.eventAggregates).toHaveLength(1);
     expect(harness.eventAggregates[0].item_count).toBe(2);
+  });
+
+  it('does not aggregate reviewed events into the same window aggregate', async () => {
+    const { feedQueries, harness } = loadFeedQueriesWithHarness();
+
+    await feedQueries.logEvent({
+      userId: 'u1',
+      shelfId: null,
+      eventType: 'reviewed',
+      payload: { itemId: 101, title: 'A', notes: 'Great read', rating: 4.5 },
+    });
+    await feedQueries.logEvent({
+      userId: 'u1',
+      shelfId: null,
+      eventType: 'reviewed',
+      payload: { itemId: 101, title: 'A', notes: 'Updated note', rating: 4.5 },
+    });
+
+    expect(harness.eventAggregates).toHaveLength(2);
+    expect(harness.eventLogs).toHaveLength(2);
+    expect(new Set(harness.eventLogs.map((row) => row.aggregate_id)).size).toBe(2);
+  });
+
+  it('upserts reviewed republish onto the same event log id and bumps aggregate activity', async () => {
+    const { feedQueries, harness } = loadFeedQueriesWithHarness();
+
+    const first = await feedQueries.upsertReviewedEvent({
+      userId: 'u1',
+      payload: {
+        itemId: 101,
+        sourceShelfId: 10,
+        title: 'A',
+        notes: 'Initial note',
+        rating: 4,
+        metadata: { format: 'hardcover' },
+      },
+    });
+    const firstAggregate = harness.eventAggregates.find((row) => row.id === first.aggregateId);
+    const firstActivity = new Date(firstAggregate.last_activity_at).getTime();
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const second = await feedQueries.upsertReviewedEvent({
+      userId: 'u1',
+      reviewedEventLogId: first.id,
+      payload: {
+        itemId: 101,
+        sourceShelfId: 10,
+        title: 'A',
+        notes: 'Edited note',
+        rating: 4,
+        metadata: { format: 'hardcover' },
+      },
+    });
+
+    expect(second.createdNew).toBe(false);
+    expect(second.changed).toBe(true);
+    expect(second.id).toBe(first.id);
+    expect(harness.eventLogs).toHaveLength(1);
+    expect(harness.eventLogs[0].payload.notes).toBe('Edited note');
+    const secondAggregate = harness.eventAggregates.find((row) => row.id === first.aggregateId);
+    expect(new Date(secondAggregate.last_activity_at).getTime()).toBeGreaterThan(firstActivity);
+  });
+
+  it('does not bump reviewed event activity when republish content is unchanged', async () => {
+    const { feedQueries, harness } = loadFeedQueriesWithHarness();
+
+    const first = await feedQueries.upsertReviewedEvent({
+      userId: 'u1',
+      payload: {
+        itemId: 101,
+        sourceShelfId: 10,
+        title: 'A',
+        notes: 'Same note',
+        rating: 4.5,
+        metadata: { format: 'paperback' },
+      },
+    });
+    const aggregate = harness.eventAggregates.find((row) => row.id === first.aggregateId);
+    const firstActivity = new Date(aggregate.last_activity_at).getTime();
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const second = await feedQueries.upsertReviewedEvent({
+      userId: 'u1',
+      reviewedEventLogId: first.id,
+      payload: {
+        itemId: 101,
+        sourceShelfId: 10,
+        title: 'A',
+        notes: 'Same note',
+        rating: 4.5,
+        metadata: { format: 'paperback' },
+      },
+    });
+
+    expect(second.createdNew).toBe(false);
+    expect(second.changed).toBe(false);
+    expect(second.id).toBe(first.id);
+    expect(harness.eventLogs).toHaveLength(1);
+    const secondAggregate = harness.eventAggregates.find((row) => row.id === first.aggregateId);
+    expect(new Date(secondAggregate.last_activity_at).getTime()).toBe(firstActivity);
   });
 });

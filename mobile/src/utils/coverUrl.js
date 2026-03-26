@@ -47,11 +47,14 @@ export function resolveCollectableCoverUrl(collectable, apiBase = '') {
 
     const coverImageUrl = collectable.coverImageUrl;
     const coverImageSource = collectable.coverImageSource;
-
     if (coverImageUrl) {
-        if (coverImageSource === 'external' || /^https?:/i.test(coverImageUrl)) {
+        if (/^https?:/i.test(coverImageUrl) || coverImageSource === 'external') {
             return coverImageUrl;
         }
+        if (coverImageSource === 'local') {
+            return buildMediaUri(coverImageUrl, apiBase);
+        }
+        // Backward compatibility: many older rows store local paths without source.
         return buildMediaUri(coverImageUrl, apiBase);
     }
 

@@ -4,6 +4,12 @@ const { AGGREGATE_WINDOW_MINUTES, PREVIEW_PAYLOAD_LIMIT } = require('../../confi
 const logger = require('../../logger');
 
 const FEED_AGGREGATE_DEBUG = String(process.env.FEED_AGGREGATE_DEBUG || '').toLowerCase() === 'true';
+const FEED_MICRO_DEBUG = String(process.env.FEED_MICRO_DEBUG_ENABLED || '').toLowerCase() === 'true';
+
+function logFeedMicro(stage, payload = {}) {
+  if (!FEED_MICRO_DEBUG) return;
+  logger.info(`[feed.micro] ${stage}`, payload);
+}
 
 function normalizePayload(payload) {
   if (payload && typeof payload === 'object') return payload;
@@ -40,6 +46,113 @@ function getRatedItemIdentity(payload = {}) {
   };
 }
 
+function toIsoString(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function sortJsonForCompare(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonForCompare);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const sorted = {};
+  Object.keys(value).sort().forEach((key) => {
+    sorted[key] = sortJsonForCompare(value[key]);
+  });
+  return sorted;
+}
+
+function normalizeReviewedRating(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const rating = Number(value);
+  return Number.isFinite(rating) ? rating : null;
+}
+
+function getReviewedContentSignature(payload = {}) {
+  const normalized = normalizePayload(payload);
+  return JSON.stringify({
+    notes: normalized.notes ?? null,
+    rating: normalizeReviewedRating(normalized.rating),
+    metadata: sortJsonForCompare(normalized.metadata ?? null),
+  });
+}
+
+function getReviewedIdentity(payload = {}) {
+  const normalized = normalizePayload(payload);
+  const itemId = normalized.itemId ?? normalized.id ?? null;
+  const sourceShelfId = normalized.sourceShelfId ?? normalized.source_shelf_id ?? null;
+  const collectableId = normalized.collectableId ?? normalized.collectable_id ?? normalized.collectable?.id ?? null;
+  const manualId = normalized.manualId ?? normalized.manual_id ?? normalized.manual?.id ?? null;
+  return {
+    itemId: itemId == null ? null : String(itemId),
+    sourceShelfId: sourceShelfId == null ? null : String(sourceShelfId),
+    collectableId: collectableId == null ? null : String(collectableId),
+    manualId: manualId == null ? null : String(manualId),
+  };
+}
+
+async function getReviewedEventLogById(client, { userId, reviewedEventLogId }) {
+  if (!reviewedEventLogId || !userId) return null;
+  const eventLogId = Number(reviewedEventLogId);
+  if (!Number.isFinite(eventLogId) || eventLogId <= 0) return null;
+  const result = await client.query(
+    `SELECT id, aggregate_id, payload, created_at
+     FROM event_logs
+     WHERE id = $1
+       AND user_id = $2
+       AND event_type = 'reviewed'
+     LIMIT 1
+     FOR UPDATE`,
+    [eventLogId, userId],
+  );
+  return result.rows[0] || null;
+}
+
+async function findLatestReviewedEventLogByIdentity(client, { userId, payload }) {
+  if (!userId) return null;
+  const identity = getReviewedIdentity(payload);
+  if (identity.itemId) {
+    const result = await client.query(
+      `SELECT id, aggregate_id, payload, created_at
+       FROM event_logs
+       WHERE user_id = $1
+         AND event_type = 'reviewed'
+         AND ($2::text IS NULL OR payload->>'sourceShelfId' = $2::text)
+         AND (
+           payload->>'itemId' = $3::text
+           OR payload->>'id' = $3::text
+         )
+       ORDER BY created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [userId, identity.sourceShelfId, identity.itemId],
+    );
+    return result.rows[0] || null;
+  }
+
+  if (!identity.collectableId && !identity.manualId) return null;
+  const result = await client.query(
+    `SELECT id, aggregate_id, payload, created_at
+     FROM event_logs
+     WHERE user_id = $1
+       AND event_type = 'reviewed'
+       AND ($2::text IS NULL OR payload->>'sourceShelfId' = $2::text)
+       AND (
+         ($3::text IS NOT NULL AND (payload->>'collectableId' = $3::text OR payload->>'collectable_id' = $3::text))
+         OR ($4::text IS NOT NULL AND (payload->>'manualId' = $4::text OR payload->>'manual_id' = $4::text))
+       )
+     ORDER BY created_at DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [userId, identity.sourceShelfId, identity.collectableId, identity.manualId],
+  );
+  return result.rows[0] || null;
+}
+
 async function refreshRatedAggregateSummary(client, aggregateId) {
   await client.query(
     `WITH counts AS (
@@ -72,8 +185,10 @@ async function refreshRatedAggregateSummary(client, aggregateId) {
 async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
   // For item.* events on shelves, aggregate together regardless of specific type
   // For rating events (shelfId = null), aggregate globally
+  // For reviewed events, always create a fresh aggregate (no aggregation window reuse)
   // For other events (checkin, etc.), keep separate
   const isItemEvent = eventType && eventType.startsWith('item.');
+  const shouldAggregateByWindow = eventType !== 'reviewed';
   const aggregateScopeKey = getAggregateScopeKey({ shelfId, eventType, isItemEvent });
 
   await client.query(
@@ -81,50 +196,51 @@ async function getOrCreateAggregate(client, { userId, shelfId, eventType }) {
     [String(userId), aggregateScopeKey],
   );
 
-  let findQuery;
-  let findParams;
+  if (shouldAggregateByWindow) {
+    let findQuery;
+    let findParams;
 
-  if (shelfId == null) {
-    // Global aggregation (ratings) - match by eventType with null shelfId
-    findQuery = `SELECT *
-     FROM event_aggregates
-     WHERE user_id = $1
-       AND shelf_id IS NULL
-       AND event_type = $2
-       AND window_end_utc >= NOW()
-     ORDER BY window_end_utc DESC
-     LIMIT 1
-     FOR UPDATE`;
-    findParams = [userId, eventType];
-  } else if (isItemEvent) {
-    // Shelf-based item events - aggregate ALL item.* types together
-    findQuery = `SELECT *
-     FROM event_aggregates
-     WHERE user_id = $1
-       AND shelf_id = $2
-       AND event_type LIKE 'item.%'
-       AND window_end_utc >= NOW()
-     ORDER BY window_end_utc DESC
-     LIMIT 1
-     FOR UPDATE`;
-    findParams = [userId, shelfId];
-  } else {
-    // Other events (checkin, etc.) - keep by specific type
-    findQuery = `SELECT *
-     FROM event_aggregates
-     WHERE user_id = $1
-       AND shelf_id = $2
-       AND event_type = $3
-       AND window_end_utc >= NOW()
-     ORDER BY window_end_utc DESC
-     LIMIT 1
-     FOR UPDATE`;
-    findParams = [userId, shelfId, eventType];
+    if (shelfId == null) {
+      // Global aggregation (ratings) - match by eventType with null shelfId
+      findQuery = `SELECT *
+       FROM event_aggregates
+       WHERE user_id = $1
+         AND shelf_id IS NULL
+         AND event_type = $2
+         AND window_end_utc >= NOW()
+       ORDER BY window_end_utc DESC
+       LIMIT 1
+       FOR UPDATE`;
+      findParams = [userId, eventType];
+    } else if (isItemEvent) {
+      // Shelf-based item events - aggregate ALL item.* types together
+      findQuery = `SELECT *
+       FROM event_aggregates
+       WHERE user_id = $1
+         AND shelf_id = $2
+         AND event_type LIKE 'item.%'
+         AND window_end_utc >= NOW()
+       ORDER BY window_end_utc DESC
+       LIMIT 1
+       FOR UPDATE`;
+      findParams = [userId, shelfId];
+    } else {
+      // Other events (checkin, etc.) - keep by specific type
+      findQuery = `SELECT *
+       FROM event_aggregates
+       WHERE user_id = $1
+         AND shelf_id = $2
+         AND event_type = $3
+         AND window_end_utc >= NOW()
+       ORDER BY window_end_utc DESC
+       LIMIT 1
+       FOR UPDATE`;
+      findParams = [userId, shelfId, eventType];
+    }
+
+    const findResult = await client.query(findQuery, findParams);
+    if (findResult.rows.length) return findResult.rows[0];
   }
-
-  const findResult = await client.query(findQuery, findParams);
-
-  if (findResult.rows.length) return findResult.rows[0];
 
   // Use generic type for aggregated item events
   const aggregateEventType = isItemEvent && shelfId != null ? 'item.added' : eventType;
@@ -200,8 +316,8 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
         OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
       ))
       OR
-      -- Global events (ratings): visible to friends
-      (a.shelf_id IS NULL AND a.event_type = 'item.rated' AND a.user_id IN (SELECT friend_id FROM friend_ids))
+      -- Global events (ratings/reviews): visible to friends
+      (a.shelf_id IS NULL AND a.event_type IN ('item.rated', 'reviewed') AND a.user_id IN (SELECT friend_id FROM friend_ids))
     )
   `;
 
@@ -271,8 +387,8 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
         OR (a.user_id IN (SELECT friend_id FROM friend_ids) AND a.visibility = 'friends')
       ))
       OR
-      -- Global rating events from friends
-      (a.shelf_id IS NULL AND a.event_type = 'item.rated' AND a.user_id != $1 AND a.user_id IN (SELECT friend_id FROM friend_ids))
+      -- Global rating/review events from friends
+      (a.shelf_id IS NULL AND a.event_type IN ('item.rated', 'reviewed') AND a.user_id != $1 AND a.user_id IN (SELECT friend_id FROM friend_ids))
     )
   `;
   const params = [userId];
@@ -333,8 +449,8 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
       -- Check-in events
       (a.event_type = 'checkin.activity' AND a.visibility IN ('public', 'friends'))
       OR
-      -- Global rating events (always visible from friends)
-      (a.shelf_id IS NULL AND a.event_type = 'item.rated')
+      -- Global rating/review events (always visible from friends)
+      (a.shelf_id IS NULL AND a.event_type IN ('item.rated', 'reviewed'))
     )
   `;
 
@@ -397,6 +513,13 @@ async function getMyFeed(userId, { limit = 20, offset = 0, type = null }) {
  * Log an event
  */
 async function logEvent({ userId, shelfId, eventType, payload = {} }) {
+  logFeedMicro('logEvent.request', {
+    userId: userId || null,
+    shelfId: shelfId == null ? null : shelfId,
+    eventType: eventType || null,
+    payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+  });
+
   // Only check shelf visibility if shelfId is provided
   if (shelfId != null) {
     const visibilityResult = await query(
@@ -412,6 +535,11 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
           userId,
         });
       }
+      logFeedMicro('logEvent.skipped.privateShelf', {
+        shelfId,
+        eventType,
+        userId,
+      });
       return null;
     }
   }
@@ -424,12 +552,23 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
        RETURNING *`,
       [userId || null, shelfId || null, eventType || null, JSON.stringify(normalizePayload(payload))]
     );
+    logFeedMicro('logEvent.inserted.nonAggregated', {
+      eventId: result.rows[0]?.id || null,
+      eventType: eventType || null,
+      shelfId: shelfId || null,
+    });
     return rowToCamelCase(result.rows[0]);
   }
 
 
   return transaction(async (client) => {
     const aggregate = await getOrCreateAggregate(client, { userId, shelfId, eventType });
+    logFeedMicro('logEvent.aggregate.selected', {
+      aggregateId: aggregate?.id || null,
+      aggregateEventType: aggregate?.event_type || null,
+      requestedEventType: eventType,
+      shelfId: shelfId == null ? null : shelfId,
+    });
     const payloadValue = normalizePayload(payload);
     const isRatedEvent = eventType === 'item.rated';
     let persistedLogRow = null;
@@ -489,6 +628,13 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
           eventType,
         });
       }
+      logFeedMicro('logEvent.logged.rated', {
+        eventId: persistedLogRow?.id || null,
+        aggregateId: aggregate?.id || null,
+        userId,
+        shelfId: shelfId == null ? null : shelfId,
+        eventType,
+      });
 
       return rowToCamelCase(persistedLogRow);
     }
@@ -525,8 +671,151 @@ async function logEvent({ userId, shelfId, eventType, payload = {} }) {
         eventType,
       });
     }
+    logFeedMicro('logEvent.logged.generic', {
+      eventId: insertResult.rows[0]?.id || null,
+      aggregateId: aggregate?.id || null,
+      userId,
+      shelfId: shelfId == null ? null : shelfId,
+      eventType,
+      itemIncrement,
+    });
 
     return rowToCamelCase(insertResult.rows[0]);
+  });
+}
+
+async function upsertReviewedEvent({ userId, payload = {}, reviewedEventLogId = null }) {
+  if (!userId) return null;
+  const normalizedPayload = normalizePayload(payload);
+
+  return transaction(async (client) => {
+    const nowIso = new Date().toISOString();
+    let existing = await getReviewedEventLogById(client, { userId, reviewedEventLogId });
+    if (!existing) {
+      existing = await findLatestReviewedEventLogByIdentity(client, {
+        userId,
+        payload: normalizedPayload,
+      });
+    }
+
+    if (existing) {
+      const existingPayload = normalizePayload(existing.payload);
+      const mergedPayload = { ...existingPayload, ...normalizedPayload };
+      const publishedAt = (
+        existingPayload.reviewPublishedAt
+        || existingPayload.review_published_at
+        || toIsoString(existing.created_at)
+        || nowIso
+      );
+      const previousUpdatedAt = (
+        existingPayload.reviewUpdatedAt
+        || existingPayload.review_updated_at
+        || publishedAt
+      );
+      const contentChanged = (
+        getReviewedContentSignature(existingPayload) !== getReviewedContentSignature(mergedPayload)
+      );
+
+      if (!contentChanged) {
+        return {
+          id: existing.id,
+          aggregateId: existing.aggregate_id,
+          createdAt: toIsoString(existing.created_at),
+          reviewPublishedAt: publishedAt,
+          reviewUpdatedAt: previousUpdatedAt,
+          changed: false,
+          createdNew: false,
+          linkedExisting: true,
+        };
+      }
+
+      const nextPayload = {
+        ...mergedPayload,
+        reviewPublishedAt: publishedAt,
+        reviewUpdatedAt: nowIso,
+      };
+      const updateResult = await client.query(
+        `UPDATE event_logs
+         SET payload = $2::jsonb,
+             created_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [existing.id, JSON.stringify(nextPayload)],
+      );
+      const updatedLog = updateResult.rows[0];
+
+      await client.query(
+        `UPDATE event_aggregates
+         SET item_count = 1,
+             last_activity_at = NOW(),
+             preview_payloads = jsonb_build_array($2::jsonb)
+         WHERE id = $1`,
+        [existing.aggregate_id, JSON.stringify(nextPayload)],
+      );
+
+      logFeedMicro('upsertReviewedEvent.updated', {
+        userId,
+        eventLogId: updatedLog?.id || existing.id,
+        aggregateId: existing.aggregate_id,
+      });
+      return {
+        id: updatedLog?.id || existing.id,
+        aggregateId: existing.aggregate_id,
+        createdAt: toIsoString(updatedLog?.created_at) || nowIso,
+        reviewPublishedAt: publishedAt,
+        reviewUpdatedAt: nowIso,
+        changed: true,
+        createdNew: false,
+        linkedExisting: true,
+      };
+    }
+
+    const reviewPublishedAt = nowIso;
+    const reviewUpdatedAt = nowIso;
+    const createPayload = {
+      ...normalizedPayload,
+      reviewPublishedAt,
+      reviewUpdatedAt,
+    };
+
+    const aggregate = await getOrCreateAggregate(client, {
+      userId,
+      shelfId: null,
+      eventType: 'reviewed',
+    });
+
+    const insertResult = await client.query(
+      `INSERT INTO event_logs (user_id, shelf_id, aggregate_id, event_type, payload)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [userId, null, aggregate.id, 'reviewed', JSON.stringify(createPayload)],
+    );
+    const createdLog = insertResult.rows[0];
+
+    await client.query(
+      `UPDATE event_aggregates
+       SET item_count = 1,
+           last_activity_at = NOW(),
+           preview_payloads = jsonb_build_array($2::jsonb)
+       WHERE id = $1`,
+      [aggregate.id, JSON.stringify(createPayload)],
+    );
+
+    logFeedMicro('upsertReviewedEvent.created', {
+      userId,
+      eventLogId: createdLog?.id || null,
+      aggregateId: aggregate.id,
+    });
+    return {
+      id: createdLog?.id || null,
+      aggregateId: aggregate.id,
+      createdAt: toIsoString(createdLog?.created_at) || nowIso,
+      reviewPublishedAt,
+      reviewUpdatedAt,
+      changed: true,
+      createdNew: true,
+      linkedExisting: false,
+    };
   });
 }
 
@@ -581,5 +870,6 @@ module.exports = {
   getFriendsFeed,
   getMyFeed,
   logEvent,
+  upsertReviewedEvent,
   logCheckIn,
 };

@@ -19,7 +19,8 @@
       "Bash(ls -la /c/Users/johna/Documents/Projects/ShelvesAI/api/*.js)",
       "Bash(npx jest:*)",
       "Bash(npm run:*)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(grep -n \"navigation.navigate.*CollectableDetail\\\\|navigation.navigate.*FeedDetail\\\\|navigation.navigate.*ShelfDetail\" /c/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/*.js)"
     ]
   }
 }

@@ -10,6 +10,8 @@ const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
+const ratingsQueries = require('../database/queries/ratings');
+const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
 
 jest.mock('../services/visionPipeline');
 jest.mock('../database/queries/shelves');
@@ -41,12 +43,22 @@ jest.mock('../database/queries/userCollectionPhotos', () => ({
 }));
 jest.mock('../database/queries/feed', () => ({
     logEvent: jest.fn().mockResolvedValue(null),
+    upsertReviewedEvent: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/itemReplacementTraces', () => ({
+    createIntent: jest.fn().mockResolvedValue(null),
+    getByIdForUser: jest.fn().mockResolvedValue(null),
+    markCompleted: jest.fn().mockResolvedValue(null),
+    markFailed: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../services/visionCropper', () => ({
     extractRegionCrop: jest.fn(),
 }));
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/collectables');
+jest.mock('../database/queries/ratings', () => ({
+    getRating: jest.fn().mockResolvedValue({ rating: null }),
+}));
 jest.mock('../services/processingStatus', () => ({
     generateJobId: jest.fn(() => 'test-job-id'),
     createJob: jest.fn(),
@@ -73,6 +85,7 @@ describe('shelvesController', () => {
     let mockPipelineInstance;
 
     beforeEach(() => {
+        jest.clearAllMocks();
         req = {
             user: { id: 1, isPremium: true },
             params: { shelfId: '10' },
@@ -98,6 +111,38 @@ describe('shelvesController', () => {
         };
         VisionPipelineService.mockImplementation(() => mockPipelineInstance);
 
+        shelvesQueries.getById.mockReset();
+        shelvesQueries.getItems.mockReset();
+        shelvesQueries.getForViewing.mockReset();
+        shelvesQueries.getItemById.mockReset();
+        shelvesQueries.removeItem.mockReset();
+        shelvesQueries.addCollectable.mockReset();
+        shelvesQueries.addManual.mockReset();
+        shelvesQueries.updateItemRating.mockReset();
+        if (shelvesQueries.updateReviewedEventLink) {
+            shelvesQueries.updateReviewedEventLink.mockReset();
+        }
+        shelvesQueries.findCollectionByReference.mockReset();
+        collectablesQueries.findByLightweightFingerprint.mockReset();
+        collectablesQueries.findById.mockReset();
+        collectablesQueries.upsert.mockReset();
+        itemReplacementTracesQueries.createIntent.mockReset();
+        itemReplacementTracesQueries.getByIdForUser.mockReset();
+        itemReplacementTracesQueries.markCompleted.mockReset();
+        itemReplacementTracesQueries.markFailed.mockReset();
+        visionResultCacheQueries.getValid.mockReset();
+        visionResultCacheQueries.set.mockReset();
+        visionScanPhotosQueries.upsertFromBuffer.mockReset();
+        visionScanPhotosQueries.getByIdForUser.mockReset();
+        visionScanPhotosQueries.loadImageBuffer.mockReset();
+        userCollectionPhotosQueries.getByCollectionItem.mockReset();
+        userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
+        userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
+        needsReviewQueries.getById.mockReset();
+        needsReviewQueries.markCompleted.mockReset();
+        ratingsQueries.getRating.mockReset();
+        feedQueries.upsertReviewedEvent.mockReset();
+
         // Mock loadShelfForUser via the query it calls? 
         // Controller calls loadShelfForUser which calls shelvesQueries.getById
         shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'book' });
@@ -106,9 +151,25 @@ describe('shelvesController', () => {
         visionScanPhotosQueries.upsertFromBuffer.mockResolvedValue({ id: 77 });
         needsReviewQueries.getById.mockResolvedValue(null);
         needsReviewQueries.markCompleted.mockResolvedValue(true);
+        ratingsQueries.getRating.mockResolvedValue({ rating: null });
+        feedQueries.upsertReviewedEvent.mockResolvedValue({
+            id: 901,
+            reviewPublishedAt: '2026-03-25T20:00:00.000Z',
+            reviewUpdatedAt: '2026-03-25T20:00:00.000Z',
+            changed: true,
+            createdNew: true,
+        });
         collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
         shelvesQueries.getForViewing.mockResolvedValue({ id: 10, ownerId: 1, visibility: 'private' });
         shelvesQueries.getItemById.mockResolvedValue({ id: 55, userId: 1, shelfId: 10 });
+        if (shelvesQueries.updateReviewedEventLink) {
+            shelvesQueries.updateReviewedEventLink.mockResolvedValue(null);
+        }
+        shelvesQueries.removeItem.mockResolvedValue(true);
+        itemReplacementTracesQueries.createIntent.mockResolvedValue(null);
+        itemReplacementTracesQueries.getByIdForUser.mockResolvedValue(null);
+        itemReplacementTracesQueries.markCompleted.mockResolvedValue(null);
+        itemReplacementTracesQueries.markFailed.mockResolvedValue(null);
         userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue(null);
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
@@ -183,6 +244,428 @@ describe('shelvesController', () => {
                     eventType: 'item.rated',
                 }),
             );
+        });
+
+        it('updates notes without changing rating or logging rating feed events', async () => {
+            req.body = { notes: '  shelf note  ' };
+            feedQueries.logEvent.mockClear();
+            shelvesQueries.updateItemRating.mockResolvedValue({
+                id: 55,
+                rating: 4,
+                previousRating: 4,
+                notes: 'shelf note',
+            });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                notes: 'shelf note',
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+            });
+
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(shelvesQueries.updateItemRating).toHaveBeenCalledWith(55, 1, 10, {
+                notes: 'shelf note',
+            });
+            expect(feedQueries.logEvent).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                item: expect.objectContaining({
+                    notes: 'shelf note',
+                }),
+            }));
+        });
+
+        it('logs reviewed event when shareToFeed is true and non-empty notes are saved', async () => {
+            req.body = { notes: 'shared note', shareToFeed: true };
+            feedQueries.logEvent.mockClear();
+            feedQueries.upsertReviewedEvent.mockClear();
+            shelvesQueries.updateItemRating.mockResolvedValue({
+                id: 55,
+                rating: 4,
+                previousRating: 4,
+                notes: 'shared note',
+            });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                notes: 'shared note',
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+                collectableCover: null,
+                collectableCoverImageUrl: null,
+                collectableCoverImageSource: null,
+                collectableCoverMediaPath: null,
+            });
+            ratingsQueries.getRating.mockResolvedValue({ rating: 4.5 });
+            shelvesQueries.updateReviewedEventLink.mockResolvedValue({
+                reviewedEventLogId: 901,
+                reviewedEventPublishedAt: '2026-03-25T20:00:00.000Z',
+                reviewedEventUpdatedAt: '2026-03-25T20:00:00.000Z',
+            });
+
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(feedQueries.logEvent).not.toHaveBeenCalled();
+            expect(feedQueries.upsertReviewedEvent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 1,
+                    payload: expect.objectContaining({
+                        itemId: 55,
+                        sourceShelfId: 10,
+                        collectableId: 101,
+                        notes: 'shared note',
+                        rating: 4.5,
+                    }),
+                }),
+            );
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    reviewedEventId: 901,
+                    reviewPublishedAt: '2026-03-25T20:00:00.000Z',
+                    reviewUpdatedAt: '2026-03-25T20:00:00.000Z',
+                }),
+            }));
+        });
+
+        it('does not log reviewed event when shared save clears notes', async () => {
+            req.body = { notes: '   ', shareToFeed: true };
+            feedQueries.logEvent.mockClear();
+            feedQueries.upsertReviewedEvent.mockClear();
+            shelvesQueries.updateItemRating.mockResolvedValue({
+                id: 55,
+                rating: 4,
+                previousRating: 4,
+                notes: null,
+            });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                notes: null,
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+            });
+
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(feedQueries.logEvent).not.toHaveBeenCalled();
+            expect(feedQueries.upsertReviewedEvent).not.toHaveBeenCalled();
+        });
+
+        it('falls back to collectable reference when itemId is not the shelf-collection row id', async () => {
+            req.params = { shelfId: '10', itemId: '999' };
+            req.body = { notes: 'abc', collectableId: 101 };
+            shelvesQueries.updateItemRating.mockReset();
+            shelvesQueries.findCollectionByReference.mockReset();
+            shelvesQueries.getItemById.mockReset();
+            feedQueries.logEvent.mockClear();
+            shelvesQueries.updateItemRating
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ id: 55, rating: 4, previousRating: 4, notes: 'abc' });
+            shelvesQueries.findCollectionByReference.mockResolvedValue({ id: 55 });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                notes: 'abc',
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+            });
+
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(shelvesQueries.findCollectionByReference).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                collectableId: 101,
+            });
+            expect(shelvesQueries.updateItemRating).toHaveBeenCalledWith(55, 1, 10, {
+                notes: 'abc',
+            });
+            expect(shelvesQueries.getItemById).toHaveBeenCalledWith(55, 1, 10);
+            expect(feedQueries.logEvent).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                item: expect.objectContaining({ id: 55, notes: 'abc' }),
+            }));
+        });
+
+        it('falls back using itemId as collectable candidate for notes-only payloads without collectableId', async () => {
+            req.params = { shelfId: '10', itemId: '101' };
+            req.body = { notes: 'fallback-note' };
+            shelvesQueries.updateItemRating.mockReset();
+            shelvesQueries.findCollectionByReference.mockReset();
+            shelvesQueries.getItemById.mockReset();
+            feedQueries.logEvent.mockClear();
+            shelvesQueries.updateItemRating
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce({ id: 55, rating: 4, previousRating: 4, notes: 'fallback-note' });
+            shelvesQueries.findCollectionByReference.mockResolvedValue({ id: 55 });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                notes: 'fallback-note',
+                collectableId: 101,
+                collectableTitle: 'The Item',
+                collectableCreator: 'The Creator',
+                collectableKind: 'book',
+            });
+
+            await shelvesController.rateShelfItem(req, res);
+
+            expect(shelvesQueries.findCollectionByReference).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                collectableId: 101,
+            });
+            expect(shelvesQueries.updateItemRating).toHaveBeenCalledWith(55, 1, 10, {
+                notes: 'fallback-note',
+            });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                item: expect.objectContaining({ id: 55, notes: 'fallback-note' }),
+            }));
+        });
+    });
+
+    describe('createReplacementIntent', () => {
+        beforeEach(() => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { triggerSource: 'collectable_detail' };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books' });
+        });
+
+        it('creates an initiated trace for eligible vision-linked detail items', async () => {
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 101,
+                manualId: null,
+                isVisionLinked: true,
+                createdAt: new Date(Date.now() - (2 * 60 * 60 * 1000)).toISOString(),
+            });
+            itemReplacementTracesQueries.createIntent.mockResolvedValue({
+                id: 123,
+                status: 'initiated',
+            });
+
+            await shelvesController.createReplacementIntent(req, res);
+
+            expect(itemReplacementTracesQueries.createIntent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 1,
+                    shelfId: 10,
+                    sourceItemId: 55,
+                    triggerSource: 'collectable_detail',
+                }),
+            );
+            expect(res.status).toHaveBeenCalledWith(201);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                traceId: 123,
+            }));
+        });
+
+        it('rejects detail-trigger intents for non vision-linked items', async () => {
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 101,
+                manualId: null,
+                isVisionLinked: false,
+                createdAt: new Date().toISOString(),
+            });
+
+            await shelvesController.createReplacementIntent(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Replacement from detail is only available for vision-linked items.',
+            });
+            expect(itemReplacementTracesQueries.createIntent).not.toHaveBeenCalled();
+        });
+
+        it('rejects shelf-delete intents when source item is older than 24h window', async () => {
+            req.body = { triggerSource: 'shelf_delete_modal' };
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 101,
+                manualId: null,
+                isVisionLinked: true,
+                createdAt: new Date(Date.now() - (30 * 60 * 60 * 1000)).toISOString(),
+            });
+
+            await shelvesController.createReplacementIntent(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Replacement is only available within 24 hours for this action.',
+            });
+        });
+    });
+
+    describe('replaceShelfItem', () => {
+        beforeEach(() => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { traceId: 500, collectableId: 202 };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books' });
+            shelvesQueries.getItemById
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 101,
+                    manualId: null,
+                    createdAt: new Date().toISOString(),
+                    isVisionLinked: true,
+                })
+                .mockResolvedValueOnce({
+                    id: 88,
+                    collectableId: 202,
+                    manualId: null,
+                });
+            collectablesQueries.findById.mockResolvedValue({ id: 202, title: 'Replacement' });
+            itemReplacementTracesQueries.getByIdForUser.mockResolvedValue({
+                id: 500,
+                status: 'initiated',
+                sourceItemId: 55,
+            });
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 88 });
+            shelvesQueries.removeItem.mockResolvedValue(true);
+            itemReplacementTracesQueries.markCompleted.mockResolvedValue({
+                id: 500,
+                status: 'completed',
+            });
+        });
+
+        it('replaces source item with existing collectable and completes trace', async () => {
+            await shelvesController.replaceShelfItem(req, res);
+
+            expect(shelvesQueries.addCollectable).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 1,
+                    shelfId: 10,
+                    collectableId: 202,
+                }),
+                expect.any(Object),
+            );
+            expect(shelvesQueries.removeItem).toHaveBeenCalledWith(55, 1, 10, expect.any(Object));
+            expect(itemReplacementTracesQueries.markCompleted).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    traceId: 500,
+                    userId: 1,
+                    targetItemId: 88,
+                    targetCollectableId: 202,
+                    targetManualId: null,
+                }),
+                expect.any(Object),
+            );
+            expect(feedQueries.logEvent).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                replaced: true,
+                sourceItemId: 55,
+                targetItemId: 88,
+            }));
+        });
+
+        it('does not remove source item when replacement resolves to same collection row', async () => {
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 55 });
+            shelvesQueries.getItemById
+                .mockReset()
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 101,
+                    manualId: null,
+                    createdAt: new Date().toISOString(),
+                    isVisionLinked: true,
+                })
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 202,
+                    manualId: null,
+                });
+
+            await shelvesController.replaceShelfItem(req, res);
+
+            expect(shelvesQueries.removeItem).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                replaced: false,
+                targetItemId: 55,
+            }));
+        });
+
+        it('supports manual replacement payloads', async () => {
+            req.body = {
+                traceId: 500,
+                manual: {
+                    name: 'Manual replacement',
+                    type: 'other',
+                    author: 'Creator',
+                },
+            };
+            collectablesQueries.findById.mockReset();
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: { id: 99 },
+                manual: { id: 808 },
+            });
+            shelvesQueries.getItemById
+                .mockReset()
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 101,
+                    manualId: null,
+                    createdAt: new Date().toISOString(),
+                    isVisionLinked: true,
+                })
+                .mockResolvedValueOnce({
+                    id: 99,
+                    collectableId: null,
+                    manualId: 808,
+                });
+            itemReplacementTracesQueries.markCompleted.mockResolvedValue({
+                id: 500,
+                status: 'completed',
+            });
+
+            await shelvesController.replaceShelfItem(req, res);
+
+            expect(shelvesQueries.addManual).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 1,
+                    shelfId: 10,
+                    name: 'Manual replacement',
+                    type: 'other',
+                }),
+                expect.any(Object),
+            );
+            expect(itemReplacementTracesQueries.markCompleted).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    targetItemId: 99,
+                    targetCollectableId: null,
+                    targetManualId: 808,
+                }),
+                expect.any(Object),
+            );
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                targetItemId: 99,
+            }));
+        });
+
+        it('marks trace failed when replacement intent lookup fails', async () => {
+            itemReplacementTracesQueries.getByIdForUser.mockResolvedValue(null);
+
+            await shelvesController.replaceShelfItem(req, res);
+
+            expect(itemReplacementTracesQueries.markFailed).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    traceId: 500,
+                    userId: 1,
+                    reason: 'replacement_trace_missing',
+                }),
+            );
+            expect(res.status).toHaveBeenCalledWith(404);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Replacement intent not found or already used' });
         });
     });
 
