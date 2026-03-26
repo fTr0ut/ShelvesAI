@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-25
+Last updated: 2026-03-26
 
 ---
 
@@ -49,6 +49,8 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-26 | market-value-ui-enhancements | Added market value estimate feature: new `user_market_value_estimates` DB table (migration `20260326000000`), new query module `database/queries/marketValueEstimates.js`, three new API endpoints on `/api/collectables/:id` (`market-value-sources` GET, `user-estimate` GET/PUT), new `MarketValueSourcesScreen` (registered in App.js root stack + BottomTabNavigator ShelvesTabStack). Updated `CollectableDetailScreen` to show "Est. Market Value" label for API-sourced values with clickable navigation to sources screen, and appends user estimate as "Your Estimate" metadata row when present.
+- 2026-03-26 | mobile-navigation-persistent-shelves-footer | Added rollback-gated persistent footer flow for shelf details by introducing a nested Shelves stack inside `BottomTabNavigator` (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) behind `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER`. Add-FAB now routes to nested `Shelves -> ShelfSelect` when enabled (legacy root `ShelfSelect` path retained when disabled). Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so list/scroll content and local floating actions clear the persistent tab bar only when rendered under tab navigation.
 - 2026-03-25 | reviewed-republish-upsert-and-updated-label | Implemented stable reviewed re-publish workflow: added `user_collections.reviewed_event_log_id/reviewed_event_published_at/reviewed_event_updated_at` (migration `20260325201500_add_reviewed_event_link_to_user_collections` + init schema alter), exposed linkage fields in shelf-item payloads (`reviewedEventId`, `reviewPublishedAt`, `reviewUpdatedAt`), and added `feedQueries.upsertReviewedEvent(...)` to update existing reviewed event logs in place (or create/link fallback), with content-change guard on notes/rating/metadata and aggregate `last_activity_at` bump for changed republishes. Updated `shelvesController` collectable/manual note-share paths to use reviewed upsert + persist linkage on `user_collections`, updated mobile note-save payloads to pass optional `reviewedEventId`, and added reviewed `Updated on <absolute local datetime>` rendering across `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen`. Feed entry merge ordering now sorts by activity (`updatedAt` fallback) to keep re-published reviewed cards at the top.
 - 2026-03-25 | reviewed-card-read-more-and-detail-expand | Updated reviewed-note UI behavior: in `SocialFeedScreen` reviewed cards now detect when note text is line-clamped and show a small `n/ click to read more` hint (with italicized `click to read more`), while `FeedDetailScreen` reviewed item notes no longer clamp to 2 lines so the full note text is shown.
 - 2026-03-25 | reviewed-updated-indicator-and-share-default | Refined reviewed edit/publish UX in mobile: `CollectableDetailScreen` now auto-selects `Share to feed?` when owner opens note editor for an item already linked to a published reviewed event (`reviewedEventId/reviewPublishedAt/reviewUpdatedAt`), and Social feed reviewed cards now show an explicit `Updated` badge in the top-right metadata area plus robust `Updated on <absolute datetime>` fallback resolution from event-level timestamps when item-level review timestamps are absent. Applied the same fallback logic to reviewed timestamp labels in `FeedDetailScreen` and `ProfileScreen`.
@@ -56,6 +58,7 @@ ShelvesAI/
 - 2026-03-25 | reviewed-event-aggregation-disable-and-ui-fix | Updated feed event behavior to exclude `reviewed` from aggregate-window reuse in `api/database/queries/feed.js` (each reviewed post now gets its own aggregate/event card), tightened `reviewed`+`item.rated` merge logic in `api/controllers/feedController.js` to require exact matching `itemId` within `REVIEW_RATING_MERGE_WINDOW_MINUTES`, added regression coverage in `api/__tests__/feedRatingEventDedup.test.js` and `api/__tests__/feedController.mergeCheckinRatingPairs.test.js`, and adjusted `mobile/src/screens/SocialFeedScreen.js` reviewed card styling so review text is centered/non-italic while staying top-aligned alongside thumbnail with rating directly beneath the thumbnail.
 - 2026-03-25 | reviewed-rating-merge-and-layout | Added feed-level merge behavior to combine `reviewed` + later `item.rated` events into one `reviewed` card when same user/item occurs within configurable window `REVIEW_RATING_MERGE_WINDOW_MINUTES` (default 120), including per-item identity matching (collectable/manual/title), consumed-rating pruning from standalone rating aggregates, and merged timestamp carry-forward. Added reviewed/rating merge coverage in `api/__tests__/feedController.mergeCheckinRatingPairs.test.js` (merge + non-merge cases). Updated `mobile/src/screens/SocialFeedScreen.js` reviewed card layout so review text renders inline in the card body (non-italic, aligned with thumbnail top) and rating (when present) renders directly beneath thumbnail.
 - 2026-03-25 | replace-wrong-ocr-workflow | Implemented end-to-end shelf item replacement workflow for wrong OCR matches: added DB table `item_replacement_traces` (+ indexes/RLS + migrations `20260325010000_create_item_replacement_traces`, `20260325010010_add_item_replacement_traces_rls` + init schema update), new query module `database/queries/itemReplacementTraces.js`, new shelf routes `POST /api/shelves/:shelfId/items/:itemId/replacement-intent` and `POST /api/shelves/:shelfId/items/:itemId/replace`, controller validation/transaction flow for replacement intent+completion/failure, shelf payload hydration field `isVisionLinked`, and mobile replacement UX across `CollectableDetailScreen` (72h vision-linked CTA), `ShelfDetailScreen` (<=24h Replace/Delete/Cancel modal with preserved delete confirmation), and `ItemSearchScreen` (replacement mode prefill + replace submit + goBack success path). Added regression coverage in `api/__tests__/shelvesController.test.js` and query tests in `api/database/queries/itemReplacementTraces.test.js`.
+| `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table (user estimates for collectable/manual market values, partial unique indexes, CHECK constraint) |
 - 2026-03-25 | reviewed-feed-share-toggle | Added notes-editor `Share to feed?` toggle on `CollectableDetailScreen` (manual + collectable save paths) and wired backend `shareToFeed` handling into `PUT /api/shelves/:shelfId/items/:itemId/rating` and `PUT /api/shelves/:shelfId/manual/:itemId`. Added new shelf-scoped feed event type `reviewed` emitted only when sharing is enabled and saved notes are non-empty, with payload snapshot fields for item identity, notes, metadata, and the user’s current decoupled rating. Updated feed mapping/display hints in `api/controllers/feedController.js` and mobile feed renderers (`SocialFeedScreen`, `FeedDetailScreen`, `ProfileScreen`) to render reviewed activity cards/details with notes + rating context. Added controller regression coverage in `api/__tests__/shelvesController.test.js` for reviewed-event emission and non-emission on cleared notes.
 - 2026-03-25 | detail-rating-owner-label | Updated `CollectableDetailScreen` owner-rating block label to mirror handle-based notes labeling: read-only/friend shelf detail now renders `<ownerUsername>'s rating:` when owner username is available (fallback `Owner rating:`).
 - 2026-03-25 | detail-notes-owner-label | Added owner-handle-aware notes labeling for read-only shelf detail flows: `shelves.getForViewing` now selects `owner_username`, `ShelfDetailScreen` passes `ownerUsername` into `CollectableDetail` navigation, and `CollectableDetailScreen` renders notes header as `<ownerUsername>'s Notes:` when viewer cannot edit notes (fallback remains `Your Notes`).
@@ -408,6 +411,8 @@ routes/collectables.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/collectables/fingerprint.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/collectables/kind.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ utils/normalize.js
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢database/queries/marketValueEstimates.js
+  Endpoints: GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
 ```
 
 #### wishlists
@@ -461,6 +466,7 @@ routes/ratings.js
 
 controllers/ratingsController.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/ratings.js
+  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/marketValueEstimates.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/collectables.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/shelves.js
   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ database/queries/feed.js
@@ -953,42 +959,50 @@ mobile/index.js
 
 ```
 mobile/src/App.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/AuthContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/ThemeContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/PushContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/ToastContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ navigation/BottomTabNavigator.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ navigation/linkingConfig.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/api.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ components/Toast.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ screens/* (all 33 screens listed below)
+  -> context/AuthContext.js
+  -> context/ThemeContext.js
+  -> context/PushContext.js
+  -> context/ToastContext.js
+  -> navigation/BottomTabNavigator.js
+  -> navigation/linkingConfig.js
+  -> services/api.js
+  -> components/Toast.js
+  -> screens/* (all 33 screens listed below)
 ```
 
 ### Context Providers
 
 ```
 context/AuthContext.js
-  (no internal imports ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pure createContext)
+  (no internal imports - pure createContext)
 
 context/ThemeContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ theme/index.js (dark theme)
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ theme/theme_light.js
+  -> theme/index.js (dark theme)
+  -> theme/theme_light.js
 
 context/ToastContext.js
   (no internal imports)
 
 context/PushContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ services/pushNotifications.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/AuthContext.js
+  -> services/pushNotifications.js
+  -> context/AuthContext.js
 ```
 
 ### Navigation
 
 ```
 navigation/BottomTabNavigator.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ context/ThemeContext.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ screens/SocialFeedScreen.js
-  ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ screens/ShelvesScreen.js
+  -> context/ThemeContext.js
+  -> screens/SocialFeedScreen.js
+  -> screens/ShelvesScreen.js
+  -> screens/ShelfCreateScreen.js
+  -> screens/ShelfSelectScreen.js
+  -> screens/ShelfDetailScreen.js
+  -> screens/ShelfEditScreen.js
+  -> screens/ItemSearchScreen.js
+  -> screens/CollectableDetailScreen.js
+  -> screens/MarketValueSourcesScreen.js
+  -> internal ShelvesStack routes: ShelvesHome, ShelfCreateScreen, ShelfSelect, ShelfDetail, ShelfEdit, ItemSearch, CollectableDetail
 
 navigation/linkingConfig.js
   (no internal imports)
@@ -1433,6 +1447,15 @@ item_replacement_traces (BIGSERIAL PK)
   -> target_collectable_id / target_manual_id (exactly one required on completed)
   -> metadata JSONB, initiated_at, completed_at
 
+user_market_value_estimates (SERIAL PK)
+  -> user_id (FK -> users.id)
+  -> collectable_id (FK -> collectables.id, nullable)
+  -> manual_id (FK -> user_manuals.id, nullable)
+  -> estimate_value (TEXT NOT NULL)
+  -> created_at, updated_at
+  CHECK: exactly one of collectable_id/manual_id set
+  UNIQUE(user_id, collectable_id) partial, UNIQUE(user_id, manual_id) partial
+
 system_settings (key VARCHAR PK)
   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ value (JSONB, not null)
   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ description (TEXT, nullable)
@@ -1595,7 +1618,4 @@ These files have the most dependents or are critical infrastructure:
 | `shared/theme/tokens.js` | 5 mobile UI components import it directly |
 | `admin-dashboard/src/api/client.js` | All admin API calls flow through it |
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
-
-
-
 

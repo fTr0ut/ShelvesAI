@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { View, Pressable, StyleSheet, Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
@@ -21,12 +22,21 @@ import { useTheme } from '../context/ThemeContext';
 // Screens
 import SocialFeedScreen from '../screens/SocialFeedScreen';
 import ShelvesScreen from '../screens/ShelvesScreen';
+import ShelfCreateScreen from '../screens/ShelfCreateScreen';
+import ShelfSelectScreen from '../screens/ShelfSelectScreen';
+import ShelfDetailScreen from '../screens/ShelfDetailScreen';
+import ShelfEditScreen from '../screens/ShelfEditScreen';
+import ItemSearchScreen from '../screens/ItemSearchScreen';
+import CollectableDetailScreen from '../screens/CollectableDetailScreen';
+import MarketValueSourcesScreen from '../screens/MarketValueSourcesScreen';
 
 const Tab = createBottomTabNavigator();
+const ShelvesStack = createNativeStackNavigator();
 
 const TAB_BAR_HEIGHT = 60;
 const FAB_SIZE = 64;
 const FAB_OFFSET = 20;
+const ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER = true;
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -75,6 +85,21 @@ function CustomTabBarButton({ children, onPress, onPressIn, menuProgress, style,
 
 // Null component for Add tab (it's just a button)
 const NullComponent = () => null;
+
+function ShelvesTabStack() {
+    return (
+        <ShelvesStack.Navigator screenOptions={{ headerShown: false }}>
+            <ShelvesStack.Screen name="ShelvesHome" component={ShelvesScreen} />
+            <ShelvesStack.Screen name="ShelfCreateScreen" component={ShelfCreateScreen} />
+            <ShelvesStack.Screen name="ShelfSelect" component={ShelfSelectScreen} />
+            <ShelvesStack.Screen name="ShelfDetail" component={ShelfDetailScreen} />
+            <ShelvesStack.Screen name="ShelfEdit" component={ShelfEditScreen} />
+            <ShelvesStack.Screen name="ItemSearch" component={ItemSearchScreen} />
+            <ShelvesStack.Screen name="CollectableDetail" component={CollectableDetailScreen} />
+            <ShelvesStack.Screen name="MarketValueSources" component={MarketValueSourcesScreen} />
+        </ShelvesStack.Navigator>
+    );
+}
 
 export default function BottomTabNavigator() {
     const navigation = useNavigation();
@@ -170,6 +195,10 @@ export default function BottomTabNavigator() {
 
     const handleAddItem = useCallback(() => {
         closeMenu();
+        if (ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER) {
+            navigation.navigate('Shelves', { screen: 'ShelfSelect' });
+            return;
+        }
         navigation.navigate('ShelfSelect');
     }, [closeMenu, navigation]);
 
@@ -253,7 +282,7 @@ export default function BottomTabNavigator() {
 
                 <Tab.Screen
                     name="Shelves"
-                    component={ShelvesScreen}
+                    component={ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER ? ShelvesTabStack : ShelvesScreen}
                     options={{
                         tabBarIcon: ({ color, size }) => (
                             <Ionicons name="library" size={size} color={color} />

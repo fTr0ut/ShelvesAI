@@ -47,6 +47,7 @@ const SORT_OPTIONS = [
     { key: 'year_desc', label: 'Year' },
     { key: 'date_desc', label: 'Date Added to Collection' },
 ];
+const PERSISTENT_TAB_FOOTER_SPACER = 88;
 
 function normalizeImageMime(mimeType) {
     if (!mimeType) return null;
@@ -180,6 +181,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
     const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
+    const isInsideBottomTab = useMemo(() => {
+        let parent = navigation?.getParent?.();
+        while (parent) {
+            const parentState = parent.getState?.();
+            if (parentState?.type === 'tab') return true;
+            parent = parent.getParent?.();
+        }
+        return false;
+    }, [navigation]);
+    const bottomFooterSpacer = isInsideBottomTab ? PERSISTENT_TAB_FOOTER_SPACER : 0;
 
     useEffect(() => {
         return () => {
@@ -1174,7 +1185,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 data={visibleItems}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderItem}
-                contentContainerStyle={styles.listContent}
+                contentContainerStyle={[
+                    styles.listContent,
+                    bottomFooterSpacer > 0 ? { paddingBottom: 100 + bottomFooterSpacer } : null,
+                ]}
                 refreshControl={
                     <RefreshControl
                         refreshing={refreshing}
@@ -1200,7 +1214,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
             {/* FAB for adding items */}
             {!isReadOnly ? (
                 <TouchableOpacity
-                    style={[styles.fab, visionLoading && styles.fabDisabled]}
+                    style={[
+                        styles.fab,
+                        bottomFooterSpacer > 0 ? { bottom: spacing.xl + bottomFooterSpacer } : null,
+                        visionLoading && styles.fabDisabled,
+                    ]}
                     onPress={handleAddItem}
                     disabled={visionLoading}
                 >

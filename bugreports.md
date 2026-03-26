@@ -19,6 +19,8 @@
 
 -~~When shelf = 'other', the AI progress modal window only stays at 10% the entire process. Flesh out the progress status updates further to make the process seem less stale.~~ **DONE 3/25/26** - Added dedicated `other`-workflow progress stages in `visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`) and updated `VisionPipelineService` to use monotonic, `other`-specific status updates (including second-pass extraction), preventing long-running `other` scans from appearing stuck at 10%.
 
+-Implemented rollback-friendly persistent footer navigation for Shelves detail flows. **DONE 3/26/26** - `BottomTabNavigator` now supports `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER` (single-line kill switch) and, when enabled, mounts a nested Shelves stack (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) so the tab footer stays visible through shelf/detail routes opened from the Shelves tab. Add-FAB now routes to nested `Shelves -> ShelfSelect` in this mode, while legacy root routing remains when disabled. Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so content/FABs clear the persistent footer.
+
 
 
 ### Bugs/issues reported by users

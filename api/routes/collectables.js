@@ -3,6 +3,7 @@ const { auth } = require("../middleware/auth");
 const { requireAdmin } = require("../middleware/admin");
 const { validateIntParam, validateStringLengths } = require("../middleware/validate");
 const collectablesQueries = require("../database/queries/collectables");
+const marketValueEstimates = require("../database/queries/marketValueEstimates");
 const { query } = require("../database/pg");
 const { rowToCamelCase, parsePagination } = require("../database/queries/utils");
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../services/collectables/fingerprint");
@@ -330,6 +331,59 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
     res.json({ collectable: omitMarketValueSources(collectable) });
   } catch (err) {
     logger.error('GET /collectables/:id error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get market value sources for a collectable
+router.get("/:collectableId/market-value-sources", validateIntParam(['collectableId']), async (req, res) => {
+  try {
+    const collectableId = parseInt(req.params.collectableId, 10);
+    const result = await query(
+      'SELECT market_value_sources FROM collectables WHERE id = $1',
+      [collectableId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Collectable not found' });
+    const sources = result.rows[0].market_value_sources || [];
+    res.json({ sources });
+  } catch (err) {
+    logger.error('GET /collectables/:id/market-value-sources error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get the current user's market value estimate for a collectable
+router.get("/:collectableId/user-estimate", validateIntParam(['collectableId']), async (req, res) => {
+  try {
+    const collectableId = parseInt(req.params.collectableId, 10);
+    const estimate = await marketValueEstimates.getEstimate(req.user.id, { collectableId });
+    res.json({ estimate: estimate ? { value: estimate.estimateValue, updatedAt: estimate.updatedAt } : null });
+  } catch (err) {
+    logger.error('GET /collectables/:id/user-estimate error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create or update the current user's market value estimate for a collectable
+router.put("/:collectableId/user-estimate", validateIntParam(['collectableId']), async (req, res) => {
+  try {
+    const collectableId = parseInt(req.params.collectableId, 10);
+    const { estimateValue } = req.body || {};
+
+    // Null or empty means delete
+    if (estimateValue === null || estimateValue === undefined || (typeof estimateValue === 'string' && !estimateValue.trim())) {
+      await marketValueEstimates.deleteEstimate(req.user.id, { collectableId });
+      return res.json({ estimate: null });
+    }
+
+    if (typeof estimateValue !== 'string') {
+      return res.status(400).json({ error: 'estimateValue must be a string' });
+    }
+
+    const saved = await marketValueEstimates.setEstimate(req.user.id, { collectableId }, estimateValue);
+    res.json({ estimate: saved ? { value: saved.estimateValue, updatedAt: saved.updatedAt } : null });
+  } catch (err) {
+    logger.error('PUT /collectables/:id/user-estimate error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

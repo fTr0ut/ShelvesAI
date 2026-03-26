@@ -259,6 +259,15 @@ function isMissingColumnError(err, tableName, columnName) {
     return hasTable && hasColumn;
 }
 
+function buildSourceKey(item) {
+    const idx = normalizeExtractionIndex(item?.extractionIndex);
+    if (idx != null) return `idx:${idx}`;
+    const title = normalizeString(item?.title || item?.name || '').toLowerCase();
+    return `title:${title}`;
+}
+
+const MIN_FUZZY_ENRICHMENT_MATCH = 0.6;
+
 function mapEnrichedItemsToUnresolved(enrichedItems, unresolvedItems, unresolvedByIndex, unresolvedByTitle, rawOcrFingerprints) {
     const mapped = [];
     const seenSources = new Set();
@@ -272,18 +281,54 @@ function mapEnrichedItemsToUnresolved(enrichedItems, unresolvedItems, unresolved
         const titleKey = normalizeString(originalTitle).toLowerCase();
 
         let sourceItem = null;
+
+        // Tier 1: Match by extractionIndex (strongest signal)
         if (enrichedIndex != null) {
             sourceItem = unresolvedByIndex.get(enrichedIndex) || null;
         }
+
+        // Tier 2: Match by exact normalized title
         if (!sourceItem && titleKey) {
             sourceItem = unresolvedByTitle.get(titleKey) || null;
         }
+
+        // Tier 3: Fuzzy token-based title match (handles OCR corrections)
+        if (!sourceItem && titleKey) {
+            const enrichedTokens = tokenizeTitle(titleKey);
+            if (enrichedTokens.length > 0) {
+                let bestScore = 0;
+                let bestCandidate = null;
+                for (const candidate of unresolvedItems) {
+                    const candidateKey = buildSourceKey(candidate);
+                    if (seenSources.has(candidateKey)) continue;
+                    const candidateTitle = normalizeString(candidate?.title || candidate?.name || '').toLowerCase();
+                    if (!candidateTitle) continue;
+                    const candidateTokens = tokenizeTitle(candidateTitle);
+                    if (!candidateTokens.length) continue;
+                    const matchedCount = countFuzzyTokenIntersection(enrichedTokens, candidateTokens);
+                    const shorter = Math.min(enrichedTokens.length, candidateTokens.length);
+                    const ratio = matchedCount / shorter;
+                    if (ratio > bestScore) {
+                        bestScore = ratio;
+                        bestCandidate = candidate;
+                    }
+                }
+                if (bestCandidate && bestScore >= MIN_FUZZY_ENRICHMENT_MATCH) {
+                    sourceItem = bestCandidate;
+                }
+            }
+        }
+
+        // Tier 4: Positional fallback (last resort when counts match)
         if (!sourceItem && allowPositionalFallback) {
             sourceItem = unresolvedItems[index] || null;
         }
+
+        // Tier 5: Single-item special case
         if (!sourceItem && unresolvedItems.length === 1 && mapped.length === 0 && enrichedIndex == null) {
             sourceItem = unresolvedItems[0];
         }
+
         if (!sourceItem) {
             droppedCount += 1;
             continue;

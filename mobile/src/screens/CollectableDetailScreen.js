@@ -32,6 +32,8 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
+const PERSISTENT_TAB_FOOTER_SPACER = 88;
+
 export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId, readOnly, id, collectableId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
     const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
@@ -82,6 +84,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [reviewedEventId, setReviewedEventId] = useState(item?.reviewedEventId || item?.reviewedEventLogId || null);
     const [reviewPublishedAt, setReviewPublishedAt] = useState(item?.reviewPublishedAt || item?.reviewedEventPublishedAt || null);
     const [reviewUpdatedAt, setReviewUpdatedAt] = useState(item?.reviewUpdatedAt || item?.reviewedEventUpdatedAt || null);
+    const [userEstimate, setUserEstimate] = useState(null);
 
     const notesShelfId = item?.shelfId || shelfId || null;
     const resolvedCollectableId = collectableId
@@ -111,6 +114,16 @@ export default function CollectableDetailScreen({ route, navigation }) {
         && isWithinHoursWindow(item?.createdAt, 72);
     const hasNoteChanges = (notesDraft || '').trim() !== (collectionNotes || '').trim();
     const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
+    const isInsideBottomTab = useMemo(() => {
+        let parent = navigation?.getParent?.();
+        while (parent) {
+            const parentState = parent.getState?.();
+            if (parentState?.type === 'tab') return true;
+            parent = parent.getParent?.();
+        }
+        return false;
+    }, [navigation]);
+    const bottomFooterSpacer = isInsideBottomTab ? PERSISTENT_TAB_FOOTER_SPACER : 0;
 
     // Fetch wishlists
     const fetchWishlists = async () => {
@@ -278,6 +291,35 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         return () => { isActive = false; };
     }, [apiBase, token, baseManual?.id]);
+
+    // Fetch user's market value estimate
+    useEffect(() => {
+        if (!resolvedCollectableId || !apiBase || !token) return;
+        let isActive = true;
+        (async () => {
+            try {
+                const data = await apiRequest({
+                    apiBase,
+                    path: `/api/collectables/${resolvedCollectableId}/user-estimate`,
+                    token,
+                });
+                if (isActive && data?.estimate) {
+                    setUserEstimate(data.estimate);
+                }
+            } catch (err) {
+                console.warn('Failed to fetch user estimate:', err?.message || err);
+            }
+        })();
+        return () => { isActive = false; };
+    }, [resolvedCollectableId, apiBase, token]);
+
+    // Listen for user estimate returned from MarketValueSourcesScreen
+    useEffect(() => {
+        const newEstimate = route.params?.userEstimate;
+        if (newEstimate !== undefined) {
+            setUserEstimate(newEstimate);
+        }
+    }, [route.params?.userEstimate]);
 
     // Fetch all rating data
     useEffect(() => {
@@ -1358,6 +1400,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             numberOfEpisodes: 'Episodes',
             limitedEdition: 'Limited Edition',
             itemSpecificText: 'Item Details',
+            marketValue: 'Market Value',
         };
 
         const valueFormatters = {
@@ -1381,6 +1424,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'regionalItem',
             'barcode',
             'itemSpecificText',
+            'marketValue',
         ];
 
         const prettifyLabel = (key) =>
@@ -1441,10 +1485,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return null;
         };
 
-        const addEntry = (key, label, rawValue) => {
+        const addEntry = (key, label, rawValue, extra = {}) => {
             const value = normalizeValue(rawValue, key);
             if (value === null) return;
-            entries.push({ label, value });
+            entries.push({ label, value, ...extra });
             usedKeys.add(key);
         };
 
@@ -1482,6 +1526,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'developer',
             'author',
             'year',
+            'marketValue',
             'region',
             'genre',
             'tags',
@@ -1506,6 +1551,23 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 const value = resolveBaseValue('region') || resolveBaseValue('regionalItem');
                 addEntry('region', labelOverrides.region, value);
                 usedKeys.add('regionalItem');
+                return;
+            }
+            if (key === 'marketValue') {
+                const apiValue = collectable?.marketValue;
+                const value = resolveBaseValue(key);
+                const isApiSourced = !!apiValue;
+                const label = isApiSourced ? 'Est. Market Value' : (labelOverrides[key] || prettifyLabel(key));
+                addEntry(key, label, value, {
+                    isLinkable: isApiSourced && !!resolvedCollectableId,
+                    onPress: isApiSourced && resolvedCollectableId
+                        ? () => navigation.navigate('MarketValueSources', {
+                            collectableId: resolvedCollectableId,
+                            manualId: manual?.id || null,
+                            itemTitle: title,
+                        })
+                        : undefined,
+                });
                 return;
             }
             const value = resolveBaseValue(key);
@@ -1543,6 +1605,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     const metadata = buildMetadata();
+    if (userEstimate?.value) {
+        metadata.push({ label: 'Your Estimate', value: userEstimate.value });
+    }
 
 
 
@@ -1778,7 +1843,13 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 )}
             </View>
 
-            <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+            <ScrollView
+                style={styles.container}
+                contentContainerStyle={[
+                    styles.content,
+                    bottomFooterSpacer > 0 ? { paddingBottom: 40 + bottomFooterSpacer } : null,
+                ]}
+            >
                 {/* Hero */}
                 <View style={styles.hero}>
                     {shouldReplaceManualHeroWithOwnerPhoto ? (
@@ -1973,7 +2044,14 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             {metadata.map((m, i) => (
                                 <View key={m.label} style={[styles.metadataRow, i < metadata.length - 1 && styles.metadataRowBorder]}>
                                     <Text style={styles.metadataLabel}>{m.label}</Text>
-                                    <Text style={styles.metadataValue}>{m.value}</Text>
+                                    {m.onPress ? (
+                                        <TouchableOpacity onPress={m.onPress} style={styles.metadataValueLink}>
+                                            <Text style={[styles.metadataValue, { color: colors.primary }]}>{m.value}</Text>
+                                            <Ionicons name="chevron-forward" size={14} color={colors.primary} style={{ marginLeft: 4 }} />
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <Text style={styles.metadataValue}>{m.value}</Text>
+                                    )}
                                 </View>
                             ))}
                         </View>
@@ -2489,6 +2567,12 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.text,
         maxWidth: '60%',
         textAlign: 'right',
+    },
+    metadataValueLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        maxWidth: '60%',
+        justifyContent: 'flex-end',
     },
     notesHeaderRow: {
         flexDirection: 'row',

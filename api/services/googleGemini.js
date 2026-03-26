@@ -255,6 +255,8 @@ function buildEnrichmentSchemaBlock(normalizedKind, categoryKey) {
 
     const hints = schemaHintsByCategory[categoryKey] || schemaHintsByCategory.book;
     return `{
+  "extractionIndex": number - echo back the extractionIndex from the input,
+  "_originalTitle": "string - echo back the exact input title text for matching",
   "title": "string - corrected full title",
   "subtitle": "string or null",
   "primaryCreator": "string - author/developer/director/artist",
@@ -629,8 +631,9 @@ Do not include explanations or markdown.`;
         // Use config enrichmentPrompt if available, otherwise fall back to category defaults
         const specificInstruction = visionTypeSettings.enrichmentPrompt || categoryPrompts[categoryKey] || categoryPrompts['book'];
 
-        const itemText = items.map(i => {
-            return `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
+        const itemText = items.map((i, idx) => {
+            const extractionIndex = Number.isInteger(i?.extractionIndex) ? i.extractionIndex : idx;
+            return `[extractionIndex=${extractionIndex}] "${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
         }).join('\n');
 
         // Schema definition shared by both prompt variants
@@ -649,6 +652,8 @@ ${itemText}
 
 ${specificInstruction}
 
+IMPORTANT: Return items in the SAME ORDER as the input. Each item's extractionIndex must match the [extractionIndex=N] value from the input.
+
 Output a JSON array with this schema for each item:
 ${schemaBlock}
 
@@ -664,6 +669,8 @@ Task:
 3. Provide comprehensive metadata equivalent to OpenLibrary, Hardcover, or similar databases.
 
 ${specificInstruction}
+
+IMPORTANT: Return items in the SAME ORDER as the input. Each item's extractionIndex must match the [extractionIndex=N] value from the input.
 
 Output a JSON array with this schema for each item:
 ${schemaBlock}
@@ -774,12 +781,13 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
         // Use config enrichmentPrompt if available, otherwise fall back to category defaults
         const specificInstruction = visionTypeSettings.enrichmentPrompt || categoryPrompts[categoryKey] || categoryPrompts['book'];
-        const itemText = items.map(i => `"${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`).join('\n');
+        const itemText = items.map((i, idx) => {
+            const extractionIndex = Number.isInteger(i?.extractionIndex) ? i.extractionIndex : idx;
+            return `[extractionIndex=${extractionIndex}] "${i.name || i.title}"${i.author ? ` by ${i.author}` : ''}`;
+        }).join('\n');
 
-        // Schema definition shared by both prompt variants
-        const schemaBlock = `${buildEnrichmentSchemaBlock(normalizedKind, categoryKey).slice(0, -1)},
-  "_originalTitle": "string - keep the exact original OCR text for matching"
-}`;
+        // Schema definition shared by both prompt variants (now includes extractionIndex + _originalTitle)
+        const schemaBlock = buildEnrichmentSchemaBlock(normalizedKind, categoryKey);
 
         // Determine if chat mode is available for prompt selection
         const canUseChatMode = Array.isArray(conversationHistory)
@@ -793,6 +801,8 @@ Items with uncertain OCR:
 ${itemText}
 
 ${specificInstruction}
+
+IMPORTANT: Return items in the SAME ORDER as the input. Each item's extractionIndex must match the [extractionIndex=N] value from the input.
 
 Output a JSON array with this schema for each item:
 ${schemaBlock}
@@ -812,6 +822,8 @@ Instructions:
 4. Provide as much metadata as you can confidently identify.
 
 ${specificInstruction}
+
+IMPORTANT: Return items in the SAME ORDER as the input. Each item's extractionIndex must match the [extractionIndex=N] value from the input.
 
 Output a JSON array with this schema for each item:
 ${schemaBlock}
