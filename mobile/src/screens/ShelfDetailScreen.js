@@ -1216,7 +1216,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                     style={[
                         styles.fab,
-                        bottomFooterSpacer > 0 ? { bottom: spacing.xl + bottomFooterSpacer } : null,
+                        bottomFooterSpacer > 0 ? { bottom: spacing.sm + bottomFooterSpacer } : null,
                         visionLoading && styles.fabDisabled,
                     ]}
                     onPress={handleAddItem}
@@ -1225,7 +1225,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     {visionLoading ? (
                         <ActivityIndicator size="small" color={colors.textInverted} />
                     ) : (
-                        <Ionicons name="add" size={28} color={colors.textInverted} />
+                        <Text style={styles.fabText}>Add</Text>
                     )}
                 </TouchableOpacity>
             ) : null}
@@ -1461,13 +1461,19 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         position: 'absolute',
         right: spacing.md,
         bottom: spacing.xl,
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: colors.primary,
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: radius.full,
+        backgroundColor: colors.success,
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.lg,
+    },
+    fabText: {
+        color: colors.textInverted,
+        fontSize: 16,
+        fontWeight: '600',
+        fontFamily: typography.semibold,
     },
     fabDisabled: {
         opacity: 0.6,

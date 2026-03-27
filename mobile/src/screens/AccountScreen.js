@@ -24,6 +24,10 @@ export default function AccountScreen({ navigation }) {
   const { unregisterPush } = usePush();
 
   const [premiumSaving, setPremiumSaving] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [privateSaving, setPrivateSaving] = useState(false);
+  const [showPersonalPhotos, setShowPersonalPhotos] = useState(true);
+  const [photosSaving, setPhotosSaving] = useState(false);
 
   const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -36,11 +40,17 @@ export default function AccountScreen({ navigation }) {
 
   const user = accountData?.user ?? null;
 
-  // Sync premium and quota state from fetched account data.
+  // Sync premium, quota, and settings state from fetched account data.
   useEffect(() => {
     if (!accountData) return;
     if (typeof accountData.user?.isPremium === 'boolean') {
       setPremiumEnabled(accountData.user.isPremium);
+    }
+    if (typeof accountData.user?.isPrivate === 'boolean') {
+      setIsPrivate(accountData.user.isPrivate);
+    }
+    if (typeof accountData.user?.showPersonalPhotos === 'boolean') {
+      setShowPersonalPhotos(accountData.user.showPersonalPhotos);
     }
     if (accountData.visionQuota) {
       setVisionQuota(accountData.visionQuota);
@@ -66,6 +76,46 @@ export default function AccountScreen({ navigation }) {
       setPremiumSaving(false);
     }
   }, [apiBase, token, premiumEnabled, setPremiumEnabled]);
+
+  const handlePrivateToggle = useCallback(async (value) => {
+    const previous = isPrivate;
+    setIsPrivate(value);
+    try {
+      setPrivateSaving(true);
+      await apiRequest({
+        apiBase,
+        path: '/api/account',
+        method: 'PUT',
+        token,
+        body: { isPrivate: value },
+      });
+    } catch (e) {
+      setIsPrivate(previous);
+      Alert.alert('Error', e.message);
+    } finally {
+      setPrivateSaving(false);
+    }
+  }, [apiBase, token, isPrivate]);
+
+  const handleShowPersonalPhotosToggle = useCallback(async (value) => {
+    const previous = showPersonalPhotos;
+    setShowPersonalPhotos(value);
+    try {
+      setPhotosSaving(true);
+      await apiRequest({
+        apiBase,
+        path: '/api/account',
+        method: 'PUT',
+        token,
+        body: { showPersonalPhotos: value },
+      });
+    } catch (e) {
+      setShowPersonalPhotos(previous);
+      Alert.alert('Error', e.message);
+    } finally {
+      setPhotosSaving(false);
+    }
+  }, [apiBase, token, showPersonalPhotos]);
 
   const handleLogout = useCallback(() => {
     Alert.alert('Log Out', 'Are you sure?', [
@@ -180,6 +230,40 @@ export default function AccountScreen({ navigation }) {
               thumbColor={isDark ? colors.primary : colors.surfaceElevated}
             />
           </TouchableOpacity>
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name="lock-closed" size={20} color={colors.text} />
+              <View>
+                <Text style={styles.settingsLabel}>Private Account</Text>
+                <Text style={styles.settingsHint}>Hide shelves from non-friends</Text>
+              </View>
+            </View>
+            <Switch
+              value={isPrivate}
+              onValueChange={handlePrivateToggle}
+              disabled={privateSaving}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={isPrivate ? colors.primary : colors.surfaceElevated}
+            />
+          </View>
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name="camera" size={20} color={colors.text} />
+              <View>
+                <Text style={styles.settingsLabel}>Share Personal Photos</Text>
+                <Text style={styles.settingsHint}>Show your photos of items to friends/public</Text>
+              </View>
+            </View>
+            <Switch
+              value={showPersonalPhotos}
+              onValueChange={handleShowPersonalPhotosToggle}
+              disabled={photosSaving}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={showPersonalPhotos ? colors.primary : colors.surfaceElevated}
+            />
+          </View>
 
           <TouchableOpacity
             style={styles.settingsRow}

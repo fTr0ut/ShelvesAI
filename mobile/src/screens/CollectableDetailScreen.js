@@ -294,13 +294,15 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     // Fetch user's market value estimate
     useEffect(() => {
-        if (!resolvedCollectableId || !apiBase || !token) return;
+        const targetId = resolvedCollectableId || manual?.id;
+        const typeParam = !resolvedCollectableId && manual?.id ? '?type=manual' : '';
+        if (!targetId || !apiBase || !token) return;
         let isActive = true;
         (async () => {
             try {
                 const data = await apiRequest({
                     apiBase,
-                    path: `/api/collectables/${resolvedCollectableId}/user-estimate`,
+                    path: `/api/collectables/${targetId}/user-estimate${typeParam}`,
                     token,
                 });
                 if (isActive && data?.estimate) {
@@ -311,15 +313,14 @@ export default function CollectableDetailScreen({ route, navigation }) {
             }
         })();
         return () => { isActive = false; };
-    }, [resolvedCollectableId, apiBase, token]);
+    }, [resolvedCollectableId, manual?.id, apiBase, token]);
 
     // Listen for user estimate returned from MarketValueSourcesScreen
     useEffect(() => {
-        const newEstimate = route.params?.userEstimate;
-        if (newEstimate !== undefined) {
-            setUserEstimate(newEstimate);
+        if (route.params?.userEstimateAt) {
+            setUserEstimate(route.params.userEstimate ?? null);
         }
-    }, [route.params?.userEstimate]);
+    }, [route.params?.userEstimateAt]);
 
     // Fetch all rating data
     useEffect(() => {
@@ -1301,6 +1302,12 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const ownerRatingLabel = normalizedOwnerUsername
         ? `${normalizedOwnerUsername}'s rating:`
         : 'Owner rating:';
+    const ownerPhotoSectionLabel = (isOwnerContext && normalizedOwnerUsername)
+        ? `${normalizedOwnerUsername}'s Photo`
+        : 'Your photos';
+    const ownerPhotoViewerTitle = (isOwnerContext && normalizedOwnerUsername)
+        ? `${normalizedOwnerUsername}'s photo`
+        : 'Your photo';
 
     useFocusEffect(
         useCallback(() => {
@@ -1495,6 +1502,22 @@ export default function CollectableDetailScreen({ route, navigation }) {
         if (isManual) {
             manualEditableFields.forEach((key) => {
                 const value = resolveManualValue(key);
+                if (key === 'marketValue' && value) {
+                    const manualId = manual?.id;
+                    addEntry(key, 'Est. Market Value', value, {
+                        isLinkable: !!manualId,
+                        onPress: manualId
+                            ? () => navigation.navigate('MarketValueSources', {
+                                collectableId: resolvedCollectableId || null,
+                                manualId,
+                                itemTitle: title,
+                                detailRouteKey: route.key,
+                                detailNavigatorKey: navigation.getState?.()?.key || null,
+                            })
+                            : undefined,
+                    });
+                    return;
+                }
                 const label = labelOverrides[key] || prettifyLabel(key);
                 addEntry(key, label, value);
             });
@@ -1565,6 +1588,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             collectableId: resolvedCollectableId,
                             manualId: manual?.id || null,
                             itemTitle: title,
+                            detailRouteKey: route.key,
+                            detailNavigatorKey: navigation.getState?.()?.key || null,
                         })
                         : undefined,
                 });
@@ -1727,8 +1752,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const renderOwnerPhotoCard = (extraStyle = null) => (
         <View style={[styles.ownerPhotoCard, extraStyle]}>
-            <Text style={[styles.sectionTitle, styles.ownerPhotoSectionTitle]}>Your photos</Text>
-            {showAutoScanSubtext && (
+            <Text style={[styles.sectionTitle, styles.ownerPhotoSectionTitle]}>{ownerPhotoSectionLabel}</Text>
+            {showAutoScanSubtext && !isOwnerContext && (
                 <Text style={styles.ownerPhotoSubtext}>added automatically from your scan</Text>
             )}
 
@@ -1819,20 +1844,13 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <Ionicons name="arrow-back" size={22} color={colors.text} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Details</Text>
-                {canShowReplaceCTA ? (
-                    <TouchableOpacity
-                        onPress={handleStartReplacementFlow}
-                        style={styles.replaceButton}
-                        activeOpacity={0.7}
-                    >
-                        <Text style={styles.replaceButtonText}>Not the item you intended to add?</Text>
-                    </TouchableOpacity>
-                ) : isManual && !readOnly ? (
+                {isManual && !readOnly ? (
                     <TouchableOpacity
                         onPress={() => navigation.navigate('ManualEdit', {
                             item: { ...(item || {}), notes: collectionNotes },
                             shelfId,
                             detailRouteKey: route.key,
+                            detailNavigatorKey: navigation.getState?.()?.key || null,
                         })}
                         style={styles.editButton}
                     >
@@ -1842,6 +1860,18 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     <View style={{ width: 40 }} />
                 )}
             </View>
+
+            {canShowReplaceCTA && (
+                <View style={styles.replaceCtaRow}>
+                    <TouchableOpacity
+                        onPress={handleStartReplacementFlow}
+                        style={styles.replaceButton}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.replaceButtonText}>Not the item you intended to add?</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
 
             <ScrollView
                 style={styles.container}
@@ -2110,7 +2140,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             >
                                 <Text style={styles.viewerToolText}>Close</Text>
                             </TouchableOpacity>
-                            <Text style={styles.viewerHeaderTitle}>Your photo</Text>
+                            <Text style={styles.viewerHeaderTitle}>{ownerPhotoViewerTitle}</Text>
                             {canEditOwnerPhoto ? (
                                 <TouchableOpacity
                                     style={[styles.viewerHeaderBtn, ownerPhotoViewerBusy && styles.viewerHeaderBtnDisabled]}
@@ -2200,7 +2230,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'space-between',
         paddingHorizontal: spacing.md,
         paddingTop: spacing.lg,
-        paddingBottom: spacing.md,
+        paddingBottom: spacing.sm,
     },
     backButton: {
         width: 40,
@@ -2226,10 +2256,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         ...shadows.sm,
     },
     replaceButton: {
-        minHeight: 40,
-        maxWidth: 190,
+        minHeight: 32,
+        maxWidth: 240,
         justifyContent: 'center',
+    },
+    replaceCtaRow: {
         alignItems: 'flex-end',
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.md,
     },
     replaceButtonText: {
         fontSize: 12,

@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useContext, useState, useEffect } from 'react';
 import { View, Pressable, StyleSheet, Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -18,6 +18,9 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../context/ThemeContext';
+import { AuthContext } from '../context/AuthContext';
+import { AccountSlideMenu } from '../components/ui';
+import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 
 // Screens
 import SocialFeedScreen from '../screens/SocialFeedScreen';
@@ -34,7 +37,7 @@ const Tab = createBottomTabNavigator();
 const ShelvesStack = createNativeStackNavigator();
 
 const TAB_BAR_HEIGHT = 60;
-const FAB_SIZE = 64;
+const FAB_SIZE = 80;
 const FAB_OFFSET = 20;
 const ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER = true;
 
@@ -106,6 +109,8 @@ export default function BottomTabNavigator() {
     const { colors, spacing, shadows, radius, typography, isDark } = useTheme();
     const insets = useSafeAreaInsets();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+    const { user } = useContext(AuthContext);
     const menuProgress = useSharedValue(0);
     const addItemPulse = useSharedValue(1);
 
@@ -168,6 +173,7 @@ export default function BottomTabNavigator() {
     }, [triggerHaptic]);
 
     const toggleMenu = useCallback(() => {
+        if (ENABLE_PROFILE_IN_TAB_BAR) setIsProfileMenuOpen(false);
         setIsMenuOpen((prev) => {
             const next = !prev;
             menuProgress.value = next
@@ -196,7 +202,10 @@ export default function BottomTabNavigator() {
     const handleAddItem = useCallback(() => {
         closeMenu();
         if (ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER) {
-            navigation.navigate('Shelves', { screen: 'ShelfSelect' });
+            navigation.navigate('Main', {
+                screen: 'Shelves',
+                params: { screen: 'ShelfSelect' },
+            });
             return;
         }
         navigation.navigate('ShelfSelect');
@@ -212,9 +221,18 @@ export default function BottomTabNavigator() {
         navigation.navigate('FriendSearch');
     }, [closeMenu, navigation]);
 
+    const handleProfilePress = useCallback(() => {
+        setIsProfileMenuOpen(true);
+    }, []);
+
+    const closeProfileMenu = useCallback(() => {
+        setIsProfileMenuOpen(false);
+    }, []);
+
     return (
         <View style={styles.screen}>
             <Tab.Navigator
+                initialRouteName="Home"
                 screenOptions={{
                     headerShown: false,
                     tabBarStyle: {
@@ -235,6 +253,26 @@ export default function BottomTabNavigator() {
                     },
                 }}
             >
+                {ENABLE_PROFILE_IN_TAB_BAR && (
+                    <Tab.Screen
+                        name="ProfileTab"
+                        component={NullComponent}
+                        listeners={() => ({
+                            tabPress: (e) => {
+                                e.preventDefault();
+                                handleProfilePress();
+                            },
+                        })}
+                        options={{
+                            tabBarLabel: 'Profile',
+                            tabBarItemStyle: { flex: 1 },
+                            tabBarIcon: ({ color, size }) => (
+                                <Ionicons name="person-circle-outline" size={size} color={color} />
+                            ),
+                        }}
+                    />
+                )}
+
                 <Tab.Screen
                     name="Home"
                     component={SocialFeedScreen}
@@ -246,6 +284,9 @@ export default function BottomTabNavigator() {
                         },
                     })}
                     options={{
+                        ...(ENABLE_PROFILE_IN_TAB_BAR && {
+                            tabBarItemStyle: { flex: 1 },
+                        }),
                         tabBarIcon: ({ color, size }) => (
                             <Ionicons name="home" size={size} color={color} />
                         ),
@@ -261,6 +302,9 @@ export default function BottomTabNavigator() {
                         },
                     })}
                     options={{
+                        ...(ENABLE_PROFILE_IN_TAB_BAR && {
+                            tabBarItemStyle: { flex: 2 },
+                        }),
                         tabBarIcon: () => (
                             <Ionicons
                                 name="add"
@@ -284,6 +328,9 @@ export default function BottomTabNavigator() {
                     name="Shelves"
                     component={ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER ? ShelvesTabStack : ShelvesScreen}
                     options={{
+                        ...(ENABLE_PROFILE_IN_TAB_BAR && {
+                            tabBarItemStyle: { flex: 2, alignItems: 'flex-start', paddingLeft: 24 },
+                        }),
                         tabBarIcon: ({ color, size }) => (
                             <Ionicons name="library" size={size} color={color} />
                         ),
@@ -395,6 +442,16 @@ export default function BottomTabNavigator() {
                     </Pressable>
                 </Animated.View>
             </View>
+
+            {ENABLE_PROFILE_IN_TAB_BAR && (
+                <AccountSlideMenu
+                    isVisible={isProfileMenuOpen}
+                    onClose={closeProfileMenu}
+                    navigation={navigation}
+                    user={user}
+                    direction="left"
+                />
+            )}
         </View>
     );
 }

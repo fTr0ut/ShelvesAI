@@ -34,7 +34,7 @@ CREATE TABLE users (
     is_private BOOLEAN DEFAULT FALSE,
     is_premium BOOLEAN DEFAULT TRUE,
     onboarding_completed BOOLEAN DEFAULT FALSE,
-    show_personal_photos BOOLEAN DEFAULT FALSE,
+    show_personal_photos BOOLEAN DEFAULT TRUE,
 
     -- Admin & Suspension
     is_admin BOOLEAN DEFAULT FALSE NOT NULL,
@@ -281,7 +281,7 @@ CREATE TABLE user_collections (
     owner_photo_thumb_height INTEGER,
     owner_photo_thumb_box JSONB,
     owner_photo_thumb_updated_at TIMESTAMPTZ,
-    owner_photo_visible BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_photo_visible BOOLEAN NOT NULL DEFAULT TRUE,
     owner_photo_updated_at TIMESTAMPTZ,
 
     created_at TIMESTAMPTZ DEFAULT NOW(),

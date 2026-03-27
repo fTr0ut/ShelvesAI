@@ -10,6 +10,7 @@ const { resolveMediaUrl } = require('../services/mediaUrl');
 const { PREVIEW_PAYLOAD_LIMIT } = require('../config/constants');
 const logger = require('../logger');
 
+const OTHER_SHELF_TYPE = 'other';
 const NEWS_FEED_GROUP_LIMIT = parseInt(process.env.NEWS_FEED_GROUP_LIMIT || '3', 10);
 const NEWS_FEED_ITEMS_PER_GROUP = parseInt(process.env.NEWS_FEED_ITEMS_PER_GROUP || '3', 10);
 const NEWS_FEED_INSERT_INTERVAL = parseInt(process.env.NEWS_FEED_INSERT_INTERVAL || '3', 10);
@@ -224,6 +225,237 @@ function getPayloadField(payload, fields, fallback = null) {
   return fallback;
 }
 
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function collectManualCoverCandidates(entries = []) {
+  const itemIds = new Set();
+  const manualIds = new Set();
+  const ownerIds = new Set();
+
+  const collectCandidate = (item, ownerId) => {
+    if (!item || typeof item !== 'object' || !ownerId) return;
+    const manualId = parsePositiveInt(item.manual?.id ?? item.manualId);
+    if (!manualId) return;
+
+    const itemId = parsePositiveInt(item.itemId ?? item.id);
+    if (itemId) itemIds.add(itemId);
+    manualIds.add(manualId);
+    ownerIds.add(String(ownerId));
+  };
+
+  entries.forEach((entry) => {
+    const ownerId = entry?.owner?.id;
+    if (!ownerId) return;
+
+    if (Array.isArray(entry.items)) {
+      entry.items.forEach((item) => collectCandidate(item, ownerId));
+    }
+
+    if (entry.manual || entry.manualId) {
+      collectCandidate({
+        itemId: entry.itemId ?? null,
+        manualId: entry.manual?.id ?? entry.manualId ?? null,
+        manual: entry.manual || null,
+      }, ownerId);
+    }
+  });
+
+  return {
+    itemIds: Array.from(itemIds),
+    manualIds: Array.from(manualIds),
+    ownerIds: Array.from(ownerIds),
+  };
+}
+
+async function loadManualCoverPrivacyLookup({ itemIds = [], manualIds = [], ownerIds = [] }) {
+  if (!itemIds.length && !manualIds.length) {
+    return {
+      byItemId: new Map(),
+      byManualOwnerKey: new Map(),
+      byManualId: new Map(),
+    };
+  }
+
+  const conditions = [];
+  const params = [];
+
+  if (itemIds.length) {
+    params.push(itemIds);
+    conditions.push(`uc.id = ANY($${params.length}::int[])`);
+  }
+  if (manualIds.length) {
+    params.push(manualIds);
+    conditions.push(`uc.manual_id = ANY($${params.length}::int[])`);
+  }
+
+  let ownerFilter = '';
+  if (ownerIds.length) {
+    params.push(ownerIds.map((id) => String(id)));
+    ownerFilter = ` AND uc.user_id::text = ANY($${params.length}::text[])`;
+  }
+
+  const result = await query(
+    `SELECT uc.id AS collection_item_id,
+            uc.manual_id,
+            uc.user_id::text AS owner_id,
+            s.type AS shelf_type,
+            uc.owner_photo_source,
+            uc.owner_photo_visible,
+            u.show_personal_photos
+     FROM user_collections uc
+     JOIN shelves s ON s.id = uc.shelf_id
+     JOIN users u ON u.id = uc.user_id
+     WHERE (${conditions.join(' OR ')})${ownerFilter}`,
+    params,
+  );
+
+  const byItemId = new Map();
+  const byManualOwnerKey = new Map();
+  const byManualId = new Map();
+
+  result.rows.forEach((row) => {
+    const itemId = parsePositiveInt(row.collection_item_id);
+    const manualId = parsePositiveInt(row.manual_id);
+    const ownerId = row.owner_id ? String(row.owner_id) : null;
+    const normalized = {
+      itemId,
+      manualId,
+      ownerId,
+      shelfType: row.shelf_type || null,
+      ownerPhotoSource: row.owner_photo_source || null,
+      ownerPhotoVisible: row.owner_photo_visible === true,
+      showPersonalPhotos: row.show_personal_photos === true,
+    };
+
+    if (itemId && !byItemId.has(String(itemId))) {
+      byItemId.set(String(itemId), normalized);
+    }
+    if (manualId) {
+      if (!byManualId.has(String(manualId))) {
+        byManualId.set(String(manualId), normalized);
+      }
+      if (ownerId) {
+        const ownerKey = `${ownerId}:${manualId}`;
+        if (!byManualOwnerKey.has(ownerKey)) {
+          byManualOwnerKey.set(ownerKey, normalized);
+        }
+      }
+    }
+  });
+
+  return { byItemId, byManualOwnerKey, byManualId };
+}
+
+function resolveManualCoverContext(lookup, { itemId = null, manualId = null, ownerId = null } = {}) {
+  if (!lookup) return null;
+  if (itemId) {
+    const byItem = lookup.byItemId.get(String(itemId));
+    if (byItem && (!ownerId || String(byItem.ownerId) === String(ownerId))) {
+      return byItem;
+    }
+  }
+  if (manualId && ownerId) {
+    const byOwner = lookup.byManualOwnerKey.get(`${String(ownerId)}:${manualId}`);
+    if (byOwner) return byOwner;
+  }
+  if (manualId) {
+    return lookup.byManualId.get(String(manualId)) || null;
+  }
+  return null;
+}
+
+function shouldRedactOtherManualCover({ context, viewerId }) {
+  if (!context) return false;
+  if (String(context.shelfType || '').toLowerCase() !== OTHER_SHELF_TYPE) return false;
+  if (context.ownerId && viewerId && String(context.ownerId) === String(viewerId)) return false;
+  if (!context.ownerPhotoSource) return false;
+  return !(context.ownerPhotoVisible && context.showPersonalPhotos);
+}
+
+function redactCoverMediaFields(target) {
+  if (!target || typeof target !== 'object') return;
+  if (Object.prototype.hasOwnProperty.call(target, 'coverMediaPath')) target.coverMediaPath = null;
+  if (Object.prototype.hasOwnProperty.call(target, 'coverMediaUrl')) target.coverMediaUrl = null;
+  if (Object.prototype.hasOwnProperty.call(target, 'cover_media_path')) target.cover_media_path = null;
+  if (Object.prototype.hasOwnProperty.call(target, 'cover_media_url')) target.cover_media_url = null;
+}
+
+function redactFeedItemOwnerPhotoPointers(item) {
+  if (!item || typeof item !== 'object') return;
+  if (Object.prototype.hasOwnProperty.call(item, 'itemId')) item.itemId = null;
+  if (item.payload && typeof item.payload === 'object') {
+    if (Object.prototype.hasOwnProperty.call(item.payload, 'itemId')) item.payload.itemId = null;
+    if (Object.prototype.hasOwnProperty.call(item.payload, 'item_id')) item.payload.item_id = null;
+  }
+}
+
+function redactManualCoverInFeedItem(item) {
+  if (!item || typeof item !== 'object') return;
+  redactFeedItemOwnerPhotoPointers(item);
+  redactCoverMediaFields(item);
+  if (item.manual && typeof item.manual === 'object') {
+    redactCoverMediaFields(item.manual);
+  }
+  if (item.collectable && typeof item.collectable === 'object') {
+    const collectableIsManualFallback = !!(item.manualId || item.manual?.id || !item.collectable.id);
+    if (collectableIsManualFallback) {
+      redactCoverMediaFields(item.collectable);
+    }
+  }
+}
+
+function redactManualCoverInEntry(entry) {
+  if (!entry || typeof entry !== 'object') return;
+  redactCoverMediaFields(entry);
+  if (entry.manual && typeof entry.manual === 'object') {
+    redactCoverMediaFields(entry.manual);
+  }
+  if (entry.collectable && typeof entry.collectable === 'object') {
+    const collectableIsManualFallback = !!(entry.manualId || entry.manual?.id || !entry.collectable.id);
+    if (collectableIsManualFallback) {
+      redactCoverMediaFields(entry.collectable);
+    }
+  }
+}
+
+async function applyManualCoverPrivacy(entries, viewerId) {
+  if (!Array.isArray(entries) || !entries.length) return;
+
+  const candidates = collectManualCoverCandidates(entries);
+  if (!candidates.itemIds.length && !candidates.manualIds.length) return;
+
+  const lookup = await loadManualCoverPrivacyLookup(candidates);
+
+  entries.forEach((entry) => {
+    const ownerId = entry?.owner?.id ? String(entry.owner.id) : null;
+    if (!ownerId) return;
+
+    if (Array.isArray(entry.items)) {
+      entry.items.forEach((item) => {
+        const manualId = parsePositiveInt(item?.manual?.id ?? item?.manualId);
+        if (!manualId) return;
+        const itemId = parsePositiveInt(item?.itemId ?? item?.id);
+        const context = resolveManualCoverContext(lookup, { itemId, manualId, ownerId });
+        if (!shouldRedactOtherManualCover({ context, viewerId })) return;
+        redactManualCoverInFeedItem(item);
+      });
+    }
+
+    const entryManualId = parsePositiveInt(entry?.manual?.id ?? entry?.manualId);
+    if (!entryManualId) return;
+    const entryContext = resolveManualCoverContext(lookup, {
+      itemId: parsePositiveInt(entry?.itemId ?? null),
+      manualId: entryManualId,
+      ownerId,
+    });
+    if (!shouldRedactOtherManualCover({ context: entryContext, viewerId })) return;
+    redactManualCoverInEntry(entry);
+  });
+}
+
 function buildFeedItemsFromPayloads(payloads, eventType, limit) {
   if (!Array.isArray(payloads) || !eventType) return [];
   const maxItems = Number.isFinite(limit) ? limit : Number.MAX_SAFE_INTEGER;
@@ -237,7 +469,12 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       // Check if this payload is a collectable (has collectableId or no manualId)
       const collectableId = payload.collectableId || payload.collectable_id || payload.collectable?.id || null;
       const coverUrl = getPayloadField(payload, ['coverUrl', 'cover_url']);
+      const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
+      const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
       const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
+      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const creator = payload.primaryCreator || payload.creator || payload.author || null;
+      const year = payload.year ?? null;
       const isManual = payload.manualId || payload.manual_id || (!collectableId && (payload.name || payload.title));
 
       if (isManual) {
@@ -245,36 +482,62 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
         const name = payload.name || payload.title || null;
         items.push({
           id: payload.itemId || payload.id || null,
+          itemId: payload.itemId || payload.id || null,
+          title: name,
+          creator,
+          year,
           manual: {
+            id: payload.manualId || payload.manual_id || null,
             name,
             title: name,
-            author: payload.author || payload.primaryCreator || null,
+            author: creator,
+            year,
+            coverMediaPath,
+            coverMediaUrl,
+            type: payload.type || payload.kind || null,
           },
         });
       } else {
         items.push({
           id: payload.itemId || payload.id || null,
+          itemId: payload.itemId || payload.id || null,
           collectableId,
+          title: payload.title || payload.name || null,
+          creator,
+          year,
           collectable: {
             id: collectableId,
             title: payload.title || payload.name || null,
-            primaryCreator: payload.primaryCreator || payload.author || null,
+            primaryCreator: creator,
             coverUrl,
+            coverImageUrl,
+            coverImageSource,
             coverMediaPath,
+            coverMediaUrl,
             kind: payload.type || payload.kind || null,
+            year,
           },
         });
       }
     } else if (eventType === 'item.manual_added') {
       const name = payload.name || payload.title || null;
+      const creator = payload.author || payload.primaryCreator || payload.creator || null;
+      const year = payload.year ?? null;
+      const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
+      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
       items.push({
         id: payload.itemId || payload.id || null,
+        itemId: payload.itemId || payload.id || null,
+        title: name,
+        creator,
+        year,
         manual: {
+          id: payload.manualId || payload.manual_id || null,
           name,
           title: name,
-          author: payload.author || null,
+          author: creator,
           ageStatement: payload.ageStatement || null,
-          year: payload.year || null,
+          year,
           specialMarkings: payload.specialMarkings || null,
           labelColor: payload.labelColor || null,
           regionalItem: payload.regionalItem || null,
@@ -283,6 +546,9 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
           barcode: payload.barcode || null,
           limitedEdition: payload.limitedEdition || null,
           itemSpecificText: payload.itemSpecificText || null,
+          coverMediaPath,
+          coverMediaUrl,
+          type: payload.type || payload.kind || null,
         },
       });
     } else if (eventType === 'item.rated') {
@@ -369,6 +635,53 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
     if (items.length >= maxItems) break;
   }
   return items;
+}
+
+function mapFeedDetailItemRow(row, payload = null) {
+  if (!row || typeof row !== 'object') return null;
+  const resolvedTitle = row.collectable_title || row.manual_name || 'Unknown item';
+  const resolvedCreator = row.collectable_primary_creator || row.primary_creator || row.manual_author || null;
+  const resolvedYear = row.collectable_year ?? row.year ?? row.manual_year ?? null;
+
+  return {
+    id: row.id,
+    itemId: row.id,
+    collectableId: row.collectable_id || null,
+    manualId: row.manual_id || null,
+    title: resolvedTitle,
+    creator: resolvedCreator,
+    year: resolvedYear,
+    rating: payload?.rating ?? null,
+    notes: payload?.notes || null,
+    metadata: payload?.metadata || null,
+    payload,
+    collectable: row.collectable_id ? {
+      id: row.collectable_id,
+      title: resolvedTitle,
+      primaryCreator: row.collectable_primary_creator || row.primary_creator || null,
+      coverUrl: row.collectable_cover_url || row.cover_url || null,
+      kind: row.collectable_kind || row.kind || null,
+      year: row.collectable_year ?? row.year ?? null,
+    } : null,
+    manual: row.manual_id ? {
+      id: row.manual_id,
+      name: resolvedTitle,
+      title: resolvedTitle,
+      author: row.manual_author || null,
+      description: row.manual_description || null,
+      year: row.manual_year ?? null,
+      ageStatement: row.manual_age_statement || null,
+      specialMarkings: row.manual_special_markings || null,
+      labelColor: row.manual_label_color || null,
+      regionalItem: row.manual_regional_item || null,
+      edition: row.manual_edition || null,
+      barcode: row.manual_barcode || null,
+      limitedEdition: row.limited_edition || null,
+      itemSpecificText: row.item_specific_text || null,
+      coverMediaPath: row.manual_cover_media_path || null,
+      coverMediaUrl: resolveMediaUrl(row.manual_cover_media_path),
+    } : null,
+  };
 }
 
 
@@ -966,6 +1279,7 @@ async function getFeed(req, res) {
       }
     }
 
+    await applyManualCoverPrivacy(entries, viewerId);
     res.json({ scope, filters: { type: typeFilter }, paging: { limit, offset }, entries });
   } catch (err) {
     logger.error('getFeed error:', err);
@@ -1065,6 +1379,7 @@ async function getFeedEntryDetails(req, res) {
                     c.primary_creator as collectable_primary_creator,
                     c.cover_url as collectable_cover_url,
                     c.kind as collectable_kind,
+                    c.year as collectable_year,
                     um.name as manual_name,
                     um.author as manual_author,
                     um.description as manual_description,
@@ -1088,44 +1403,9 @@ async function getFeedEntryDetails(req, res) {
             [itemIds]
           );
 
-          items = itemsResult.rows.map((row) => {
-            const resolvedTitle = row.collectable_title || row.manual_name || 'Unknown item';
-            const payload = payloadByItemId.get(String(row.id)) || null;
-            return {
-              id: row.id,
-              collectableId: row.collectable_id || null,
-              manualId: row.manual_id || null,
-              rating: payload?.rating ?? null,
-              notes: payload?.notes || null,
-              metadata: payload?.metadata || null,
-              payload,
-              collectable: row.collectable_id ? {
-                id: row.collectable_id,
-                title: resolvedTitle,
-                primaryCreator: row.collectable_primary_creator || null,
-                coverUrl: row.collectable_cover_url || null,
-                kind: row.collectable_kind || null,
-              } : null,
-              manual: row.manual_id ? {
-                id: row.manual_id,
-                name: resolvedTitle,
-                title: resolvedTitle,
-                author: row.manual_author || null,
-                description: row.manual_description || null,
-                year: row.manual_year || null,
-                ageStatement: row.manual_age_statement || null,
-                specialMarkings: row.manual_special_markings || null,
-                labelColor: row.manual_label_color || null,
-                regionalItem: row.manual_regional_item || null,
-                edition: row.manual_edition || null,
-                barcode: row.manual_barcode || null,
-                limitedEdition: row.limited_edition || null,
-                itemSpecificText: row.item_specific_text || null,
-                coverMediaPath: row.manual_cover_media_path || null,
-                coverMediaUrl: resolveMediaUrl(row.manual_cover_media_path),
-              } : null,
-            };
-          });
+          items = itemsResult.rows
+            .map((row) => mapFeedDetailItemRow(row, payloadByItemId.get(String(row.id)) || null))
+            .filter(Boolean);
 
           if (!items.length) {
             items = buildFeedItemsFromPayloads(payloads, aggregate.eventType);
@@ -1221,6 +1501,7 @@ async function getFeedEntryDetails(req, res) {
       entry.topComment = social.topComment || null;
 
       entry.displayHints = getDisplayHints(aggregate.eventType);
+      await applyManualCoverPrivacy([entry], viewerId);
       return res.json({ entry });
     }
 
@@ -1290,6 +1571,10 @@ async function getFeedEntryDetails(req, res) {
       },
       items: itemsResult.rows.map(row => ({
         id: row.id,
+        itemId: row.id,
+        title: row.collectable_title || row.manual_name || null,
+        creator: row.primary_creator || row.manual_author || null,
+        year: row.year || row.manual_year || null,
         collectable: row.collectable_id ? {
           id: row.collectable_id,
           title: row.collectable_title,
@@ -1328,6 +1613,7 @@ async function getFeedEntryDetails(req, res) {
       displayHints: getDisplayHints(null),
     };
 
+    await applyManualCoverPrivacy([entry], viewerId);
     res.json({ entry });
   } catch (err) {
     logger.error('getFeedEntryDetails error:', err);
@@ -1338,6 +1624,8 @@ async function getFeedEntryDetails(req, res) {
 module.exports = {
   getFeed,
   getFeedEntryDetails,
+  _buildFeedItemsFromPayloads: buildFeedItemsFromPayloads,
+  _mapFeedDetailItemRow: mapFeedDetailItemRow,
   _mergeCheckinRatingPairs: mergeCheckinRatingPairs,
   _mergeReviewedRatingPairs: mergeReviewedRatingPairs,
 };

@@ -847,8 +847,11 @@ class VisionPipelineService {
                 const summaryItems = addedItems.map((item) => ({
                     itemId: item.itemId,
                     manualId: item.manualId,
+                    title: item.title || item.name || null,
                     name: item.title || item.name || null,
                     author: item.primaryCreator || item.author || null,
+                    primaryCreator: item.primaryCreator || item.author || null,
+                    creator: item.primaryCreator || item.author || null,
                     ageStatement: item.ageStatement || null,
                     year: item.year || null,
                     specialMarkings: item.specialMarkings || null,
@@ -860,7 +863,11 @@ class VisionPipelineService {
                     marketValue: item.marketValue || item.market_value || null,
                     limitedEdition: item.limitedEdition || null,
                     itemSpecificText: item.itemSpecificText || null,
+                    coverUrl: item.coverUrl || null,
+                    coverMediaPath: item.coverMediaPath || item.manual?.coverMediaPath || null,
+                    coverMediaUrl: item.coverMediaUrl || item.manual?.coverMediaUrl || null,
                     type: item.type || item.kind || shelf.type,
+                    source: 'vision',
                 }));
                 const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
                 const cappedItemIds = Number.isFinite(FEED_EVENT_ITEM_ID_CAP) && FEED_EVENT_ITEM_ID_CAP > 0
@@ -1238,10 +1245,17 @@ class VisionPipelineService {
                 const summaryItems = manualAdded.map((item) => ({
                     itemId: item.itemId,
                     manualId: item.manualId,
+                    title: item.title || item.name || null,
                     name: item.title || item.name || null,
                     author: item.primaryCreator || item.author || null,
-                    year: item.year || null,
+                    primaryCreator: item.primaryCreator || item.author || null,
+                    creator: item.primaryCreator || item.author || null,
+                    year: item.year || item.manual?.year || null,
+                    coverUrl: item.coverUrl || null,
+                    coverMediaPath: item.coverMediaPath || item.manual?.coverMediaPath || null,
+                    coverMediaUrl: item.coverMediaUrl || item.manual?.coverMediaUrl || null,
                     type: item.type || shelf.type,
+                    source: 'vision',
                 }));
                 const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
                 const cappedItemIds = Number.isFinite(FEED_EVENT_ITEM_ID_CAP) && FEED_EVENT_ITEM_ID_CAP > 0
@@ -1338,9 +1352,17 @@ class VisionPipelineService {
                 itemId: item.itemId,
                 collectableId: item.collectableId,
                 title: item.title || item.name || null,
+                name: item.title || item.name || null,
                 primaryCreator: item.primaryCreator || item.author || null,
+                creator: item.primaryCreator || item.author || null,
+                year: item.year || null,
                 coverUrl: item.coverUrl || null,
+                coverImageUrl: item.coverImageUrl || null,
+                coverImageSource: item.coverImageSource || null,
+                coverMediaPath: item.coverMediaPath || null,
+                coverMediaUrl: item.coverMediaUrl || null,
                 type: item.type || item.kind || shelf.type,
+                source: 'vision',
             }));
             const itemIds = summaryItems.map((item) => item.itemId).filter(Boolean);
             const cappedItemIds = Number.isFinite(FEED_EVENT_ITEM_ID_CAP) && FEED_EVENT_ITEM_ID_CAP > 0
@@ -2221,6 +2243,11 @@ class VisionPipelineService {
                         title: collectable.title || item.title || item.name || null,
                         primaryCreator: collectable.primaryCreator || item.primaryCreator || item.author || null,
                         coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
+                        coverImageUrl: collectable.coverImageUrl || collectable.cover_image_url || item.coverImage || null,
+                        coverImageSource: collectable.coverImageSource || collectable.cover_image_source || null,
+                        coverMediaPath: collectable.coverMediaPath || collectable.cover_media_path || null,
+                        coverMediaUrl: collectable.coverMediaUrl || null,
+                        year: collectable.year ?? item.year ?? null,
                         type: collectable.kind || item.type || item.kind || shelfType,
                     });
                     if (saveTracking) {
@@ -2262,6 +2289,11 @@ class VisionPipelineService {
                     title: collectable.title || item.title || item.name || null,
                     primaryCreator: collectable.primaryCreator || item.primaryCreator || item.author || null,
                     coverUrl: collectable.coverUrl || item.coverUrl || item.coverImage || item.image || null,
+                    coverImageUrl: collectable.coverImageUrl || collectable.cover_image_url || item.coverImage || null,
+                    coverImageSource: collectable.coverImageSource || collectable.cover_image_source || null,
+                    coverMediaPath: collectable.coverMediaPath || collectable.cover_media_path || null,
+                    coverMediaUrl: collectable.coverMediaUrl || null,
+                    year: collectable.year ?? item.year ?? null,
                     type: collectable.kind || item.type || item.kind || shelfType,
                 });
                 if (saveTracking) {
@@ -2466,6 +2498,9 @@ class VisionPipelineService {
                         manual: matchedManual,
                         title: matchedManual.name || title,
                         primaryCreator: matchedManual.author || primaryCreator,
+                        coverMediaPath: matchedManual.coverMediaPath || matchedManual.cover_media_path || null,
+                        coverMediaUrl: matchedManual.coverMediaUrl || null,
+                        year: matchedManual.year ?? item.year ?? null,
                         type: shelfType,
                     });
                     continue;
@@ -2502,6 +2537,9 @@ class VisionPipelineService {
                     manual: matchedManual,
                     title: matchedManual.name || title,
                     primaryCreator: matchedManual.author || primaryCreator,
+                    coverMediaPath: matchedManual.coverMediaPath || matchedManual.cover_media_path || null,
+                    coverMediaUrl: matchedManual.coverMediaUrl || null,
+                    year: matchedManual.year ?? item.year ?? null,
                     type: shelfType,
                 });
                 continue;
@@ -2542,6 +2580,9 @@ class VisionPipelineService {
                 manual: result.manual,
                 title: result.manual.name || title,
                 primaryCreator: result.manual.author || primaryCreator,
+                coverMediaPath: result.manual.coverMediaPath || result.manual.cover_media_path || null,
+                coverMediaUrl: result.manual.coverMediaUrl || null,
+                year: result.manual.year ?? item.year ?? null,
                 type: shelfType,
             });
         }

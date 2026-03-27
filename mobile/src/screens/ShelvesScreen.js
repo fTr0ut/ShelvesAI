@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { CategoryIcon, AccountSlideMenu } from '../components/ui';
+import { CategoryIcon, AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
+import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -28,6 +29,7 @@ export default function ShelvesScreen({ navigation }) {
     const [unmatchedCount, setUnmatchedCount] = useState(0);
     const [unreadCount, setUnreadCount] = useState(0);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const search = useGlobalSearch(navigation);
 
     const loadShelves = useCallback(async () => {
         try {
@@ -210,19 +212,10 @@ export default function ShelvesScreen({ navigation }) {
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            {/* Header */}
+            {/* Header with global search */}
             <View style={styles.header}>
-                <View>
-                    <Text style={styles.headerTitle}>My Shelves</Text>
-                    <Text style={styles.headerSubtitle}>{shelves.length} collection{shelves.length !== 1 ? 's' : ''}</Text>
-                </View>
+                <GlobalSearchInput search={search} />
                 <View style={styles.headerRight}>
-                    <TouchableOpacity
-                        style={styles.viewToggle}
-                        onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
-                    >
-                        <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
-                    </TouchableOpacity>
                     <TouchableOpacity
                         style={styles.headerIconButton}
                         onPress={() => navigation.navigate('Notifications')}
@@ -236,80 +229,104 @@ export default function ShelvesScreen({ navigation }) {
                             </View>
                         )}
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setIsMenuOpen(true)}>
-                        <Ionicons name="person-circle-outline" size={28} color={colors.text} />
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            {/* Search */}
-            <View style={styles.searchContainer}>
-                <View style={styles.searchBox}>
-                    <Ionicons name="search" size={18} color={colors.textMuted} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search shelves..."
-                        placeholderTextColor={colors.textMuted}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                    />
-                    {searchQuery.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchQuery('')}>
-                            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                    {!ENABLE_PROFILE_IN_TAB_BAR && (
+                        <TouchableOpacity onPress={() => setIsMenuOpen(true)}>
+                            <Ionicons name="person-circle-outline" size={28} color={colors.text} />
                         </TouchableOpacity>
                     )}
                 </View>
             </View>
 
-            {/* Unmatched Entry (shown when count > 0) */}
-            {unmatchedCount > 0 && (
-                <TouchableOpacity
-                    style={styles.unmatchedEntry}
-                    onPress={() => navigation.navigate('Unmatched')}
-                    activeOpacity={0.8}
-                >
-                    <View style={styles.unmatchedIcon}>
-                        <Ionicons name="alert-circle" size={24} color="#fff" />
+            {/* Body: sub-header, shelf search, content — wrapped so overlay covers this area */}
+            <View style={styles.body}>
+                {/* Sub-header: title + view toggle */}
+                <View style={styles.subHeader}>
+                    <View>
+                        <Text style={styles.headerTitle}>My Shelves</Text>
+                        <Text style={styles.headerSubtitle}>{shelves.length} collection{shelves.length !== 1 ? 's' : ''}</Text>
                     </View>
-                    <View style={styles.unmatchedContent}>
-                        <Text style={styles.unmatchedTitle}>Unmatched Items</Text>
-                        <Text style={styles.unmatchedMeta}>{unmatchedCount} item{unmatchedCount !== 1 ? 's' : ''} need review</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color="#fff" />
-                </TouchableOpacity>
-            )}
+                    <TouchableOpacity
+                        style={styles.viewToggle}
+                        onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
+                    >
+                        <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
 
-            {/* Content */}
-            {loading && !refreshing ? renderLoading() : (
-                <FlatList
-                    data={filteredShelves}
-                    keyExtractor={(item) => String(item.id)}
-                    renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
-                    numColumns={viewMode === 'grid' ? 2 : 1}
-                    key={viewMode}
-                    contentContainerStyle={styles.listContainer}
-                    ListHeaderComponent={showTopCreateShelfButton ? renderTopCreateShelf : null}
-                    columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={refreshing}
-                            onRefresh={onRefresh}
-                            tintColor={colors.primary}
-                            colors={[colors.primary]}
+                {/* Shelf filter search */}
+                <View style={styles.shelfSearchContainer}>
+                    <View style={styles.searchBox}>
+                        <Ionicons name="search" size={18} color={colors.textMuted} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Search shelves..."
+                            placeholderTextColor={colors.textMuted}
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
                         />
-                    }
-                    showsVerticalScrollIndicator={false}
-                    ListEmptyComponent={renderEmpty}
-                />
-            )}
+                        {searchQuery.length > 0 && (
+                            <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+
+                {/* Unmatched Entry (shown when count > 0) */}
+                {unmatchedCount > 0 && (
+                    <TouchableOpacity
+                        style={styles.unmatchedEntry}
+                        onPress={() => navigation.navigate('Unmatched')}
+                        activeOpacity={0.8}
+                    >
+                        <View style={styles.unmatchedIcon}>
+                            <Ionicons name="alert-circle" size={24} color="#fff" />
+                        </View>
+                        <View style={styles.unmatchedContent}>
+                            <Text style={styles.unmatchedTitle}>Unmatched Items</Text>
+                            <Text style={styles.unmatchedMeta}>{unmatchedCount} item{unmatchedCount !== 1 ? 's' : ''} need review</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color="#fff" />
+                    </TouchableOpacity>
+                )}
+
+                {/* Content */}
+                {loading && !refreshing ? renderLoading() : (
+                    <FlatList
+                        data={filteredShelves}
+                        keyExtractor={(item) => String(item.id)}
+                        renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
+                        numColumns={viewMode === 'grid' ? 2 : 1}
+                        key={viewMode}
+                        contentContainerStyle={styles.listContainer}
+                        ListHeaderComponent={showTopCreateShelfButton ? renderTopCreateShelf : null}
+                        columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshing}
+                                onRefresh={onRefresh}
+                                tintColor={colors.primary}
+                                colors={[colors.primary]}
+                            />
+                        }
+                        showsVerticalScrollIndicator={false}
+                        ListEmptyComponent={renderEmpty}
+                    />
+                )}
+
+                {/* Search overlay — absolutely positioned over body */}
+                <GlobalSearchOverlay search={search} />
+            </View>
 
             {/* Account Slide Menu */}
-            <AccountSlideMenu
-                isVisible={isMenuOpen}
-                onClose={() => setIsMenuOpen(false)}
-                navigation={navigation}
-                user={user}
-            />
+            {!ENABLE_PROFILE_IN_TAB_BAR && (
+                <AccountSlideMenu
+                    isVisible={isMenuOpen}
+                    onClose={() => setIsMenuOpen(false)}
+                    navigation={navigation}
+                    user={user}
+                />
+            )}
         </SafeAreaView>
     );
 }
@@ -318,6 +335,9 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     screen: {
         flex: 1,
         backgroundColor: colors.background,
+    },
+    body: {
+        flex: 1,
     },
     header: {
         flexDirection: 'row',
@@ -346,6 +366,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         padding: spacing.xs,
         position: 'relative',
     },
+    subHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.sm,
+        paddingBottom: spacing.md,
+    },
     viewToggle: {
         width: 40,
         height: 40,
@@ -372,7 +400,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 10,
         fontWeight: '700',
     },
-    searchContainer: {
+    shelfSearchContainer: {
         paddingHorizontal: spacing.md,
         paddingBottom: spacing.md,
     },

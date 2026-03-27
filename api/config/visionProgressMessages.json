@@ -3,7 +3,7 @@
         "extracting": {
             "step": "extracting",
             "progress": 10,
-            "message": "Analyzing image with AI vision..."
+            "message": "Taking a look..."
         },
         "extractingSecondPass": {
             "step": "extracting-second-pass",
@@ -39,6 +39,11 @@
             "step": "saving",
             "progress": 90,
             "messageTemplate": "Saving {count} items to your shelf..."
+        },
+        "generatingPhotos": {
+            "step": "generating-photos",
+            "progress": 95,
+            "message": "Generating item photos..."
         },
         "complete": {
             "step": "complete",

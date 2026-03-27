@@ -335,15 +335,17 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
   }
 });
 
-// Get market value sources for a collectable
+// Get market value sources for a collectable (or manual via ?type=manual)
 router.get("/:collectableId/market-value-sources", validateIntParam(['collectableId']), async (req, res) => {
   try {
-    const collectableId = parseInt(req.params.collectableId, 10);
+    const itemId = parseInt(req.params.collectableId, 10);
+    const isManual = req.query.type === 'manual';
+    const table = isManual ? 'user_manuals' : 'collectables';
     const result = await query(
-      'SELECT market_value_sources FROM collectables WHERE id = $1',
-      [collectableId]
+      `SELECT market_value_sources FROM ${table} WHERE id = $1`,
+      [itemId]
     );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Collectable not found' });
+    if (!result.rows[0]) return res.status(404).json({ error: 'Item not found' });
     const sources = result.rows[0].market_value_sources || [];
     res.json({ sources });
   } catch (err) {
@@ -352,11 +354,13 @@ router.get("/:collectableId/market-value-sources", validateIntParam(['collectabl
   }
 });
 
-// Get the current user's market value estimate for a collectable
+// Get the current user's market value estimate for a collectable (or manual via ?type=manual)
 router.get("/:collectableId/user-estimate", validateIntParam(['collectableId']), async (req, res) => {
   try {
-    const collectableId = parseInt(req.params.collectableId, 10);
-    const estimate = await marketValueEstimates.getEstimate(req.user.id, { collectableId });
+    const itemId = parseInt(req.params.collectableId, 10);
+    const isManual = req.query.type === 'manual';
+    const key = isManual ? { manualId: itemId } : { collectableId: itemId };
+    const estimate = await marketValueEstimates.getEstimate(req.user.id, key);
     res.json({ estimate: estimate ? { value: estimate.estimateValue, updatedAt: estimate.updatedAt } : null });
   } catch (err) {
     logger.error('GET /collectables/:id/user-estimate error:', err);
@@ -364,15 +368,17 @@ router.get("/:collectableId/user-estimate", validateIntParam(['collectableId']),
   }
 });
 
-// Create or update the current user's market value estimate for a collectable
+// Create or update the current user's market value estimate (or manual via ?type=manual)
 router.put("/:collectableId/user-estimate", validateIntParam(['collectableId']), async (req, res) => {
   try {
-    const collectableId = parseInt(req.params.collectableId, 10);
+    const itemId = parseInt(req.params.collectableId, 10);
+    const isManual = req.query.type === 'manual';
+    const key = isManual ? { manualId: itemId } : { collectableId: itemId };
     const { estimateValue } = req.body || {};
 
     // Null or empty means delete
     if (estimateValue === null || estimateValue === undefined || (typeof estimateValue === 'string' && !estimateValue.trim())) {
-      await marketValueEstimates.deleteEstimate(req.user.id, { collectableId });
+      await marketValueEstimates.deleteEstimate(req.user.id, key);
       return res.json({ estimate: null });
     }
 
@@ -380,7 +386,7 @@ router.put("/:collectableId/user-estimate", validateIntParam(['collectableId']),
       return res.status(400).json({ error: 'estimateValue must be a string' });
     }
 
-    const saved = await marketValueEstimates.setEstimate(req.user.id, { collectableId }, estimateValue);
+    const saved = await marketValueEstimates.setEstimate(req.user.id, key, estimateValue);
     res.json({ estimate: saved ? { value: saved.estimateValue, updatedAt: saved.updatedAt } : null });
   } catch (err) {
     logger.error('PUT /collectables/:id/user-estimate error:', err);

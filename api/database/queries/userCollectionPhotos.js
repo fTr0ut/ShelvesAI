@@ -244,6 +244,7 @@ async function attachVisionCropToItem({
          owner_photo_thumb_height = NULL,
          owner_photo_thumb_box = NULL,
          owner_photo_thumb_updated_at = NULL,
+         owner_photo_visible = COALESCE((SELECT show_personal_photos FROM users WHERE id = $7), TRUE),
          owner_photo_updated_at = NOW()
      WHERE id = $6
        AND user_id = $7
@@ -334,6 +335,7 @@ async function uploadOwnerPhotoForItem({
          owner_photo_thumb_height = NULL,
          owner_photo_thumb_box = NULL,
          owner_photo_thumb_updated_at = NULL,
+         owner_photo_visible = COALESCE((SELECT show_personal_photos FROM users WHERE id = $8), TRUE),
          owner_photo_updated_at = NOW()
      WHERE id = $7
        AND user_id = $8

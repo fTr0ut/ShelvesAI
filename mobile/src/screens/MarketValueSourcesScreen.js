@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { CommonActions } from '@react-navigation/native';
 import {
     ActivityIndicator,
     Alert,
@@ -26,7 +27,7 @@ function extractHostname(url) {
 }
 
 export default function MarketValueSourcesScreen({ navigation, route }) {
-    const { collectableId, manualId, itemTitle } = route.params || {};
+    const { collectableId, manualId, itemTitle, detailRouteKey, detailNavigatorKey } = route.params || {};
     const { apiBase, token } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
@@ -38,8 +39,13 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
     const [estimateText, setEstimateText] = useState('');
     const [saving, setSaving] = useState(false);
 
+    // Determine which ID and type to use for API calls
+    const isManualItem = !collectableId && !!manualId;
+    const targetId = collectableId || manualId;
+    const typeParam = isManualItem ? '?type=manual' : '';
+
     useEffect(() => {
-        if (!collectableId || !apiBase || !token) {
+        if (!targetId || !apiBase || !token) {
             setLoading(false);
             return;
         }
@@ -47,8 +53,8 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
         (async () => {
             try {
                 const [sourcesData, estimateData] = await Promise.all([
-                    apiRequest({ apiBase, path: `/api/collectables/${collectableId}/market-value-sources`, token }),
-                    apiRequest({ apiBase, path: `/api/collectables/${collectableId}/user-estimate`, token }),
+                    apiRequest({ apiBase, path: `/api/collectables/${targetId}/market-value-sources${typeParam}`, token }),
+                    apiRequest({ apiBase, path: `/api/collectables/${targetId}/user-estimate${typeParam}`, token }),
                 ]);
                 if (!active) return;
                 setSources(sourcesData?.sources || []);
@@ -63,7 +69,7 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
             }
         })();
         return () => { active = false; };
-    }, [collectableId, apiBase, token]);
+    }, [targetId, typeParam, apiBase, token]);
 
     const handleSaveEstimate = async () => {
         const trimmed = estimateText.trim();
@@ -75,7 +81,7 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
         try {
             const data = await apiRequest({
                 apiBase,
-                path: `/api/collectables/${collectableId}/user-estimate`,
+                path: `/api/collectables/${targetId}/user-estimate${typeParam}`,
                 token,
                 method: 'PUT',
                 body: { estimateValue: trimmed },
@@ -83,7 +89,17 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
             const saved = data?.estimate || null;
             setEstimate(saved);
             setShowEstimateInput(false);
-            navigation.setParams({ userEstimate: saved });
+            if (detailRouteKey && detailNavigatorKey) {
+                navigation.dispatch({
+                    ...CommonActions.setParams({
+                        userEstimate: saved,
+                        userEstimateAt: Date.now(),
+                    }),
+                    source: detailRouteKey,
+                    target: detailNavigatorKey,
+                });
+            }
+            navigation.goBack();
         } catch (err) {
             Alert.alert('Error', 'Could not save your estimate. Please try again.');
             console.warn('Save estimate error:', err?.message || err);

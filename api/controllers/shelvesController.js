@@ -616,6 +616,95 @@ function formatOwnerPhotoResponse(itemRow, shelfId) {
   };
 }
 
+function shouldRedactOtherManualCover({ viewerUserId, ownerId, shelfType, ownerPhotoSource, ownerPhotoVisible, showPersonalPhotos }) {
+  if (String(shelfType || '').toLowerCase() !== OTHER_SHELF_TYPE) return false;
+  if (ownerId && viewerUserId && String(ownerId) === String(viewerUserId)) return false;
+  if (!ownerPhotoSource) return false;
+  return !(ownerPhotoVisible && showPersonalPhotos);
+}
+
+function redactManualCoverMedia(manual) {
+  if (!manual || typeof manual !== 'object') return manual;
+  if (Object.prototype.hasOwnProperty.call(manual, 'coverMediaPath')) {
+    manual.coverMediaPath = null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manual, 'coverMediaUrl')) {
+    manual.coverMediaUrl = null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manual, 'cover_media_path')) {
+    manual.cover_media_path = null;
+  }
+  if (Object.prototype.hasOwnProperty.call(manual, 'cover_media_url')) {
+    manual.cover_media_url = null;
+  }
+  return manual;
+}
+
+function buildCollectableAddedEventPayload({
+  itemId = null,
+  collectable = null,
+  shelfType = null,
+  source = 'user',
+  reviewItemId = null,
+}) {
+  const creator = collectable?.primaryCreator || collectable?.author || null;
+  const coverMediaPath = collectable?.coverMediaPath || collectable?.cover_media_path || null;
+  return {
+    itemId: itemId ?? null,
+    collectableId: collectable?.id || null,
+    title: collectable?.title || collectable?.name || null,
+    name: collectable?.title || collectable?.name || null,
+    primaryCreator: creator,
+    creator,
+    year: collectable?.year ?? null,
+    coverUrl: collectable?.coverUrl || collectable?.cover_url || null,
+    coverImageUrl: collectable?.coverImageUrl || collectable?.cover_image_url || null,
+    coverImageSource: collectable?.coverImageSource || collectable?.cover_image_source || null,
+    coverMediaPath,
+    coverMediaUrl: resolveMediaUrl(coverMediaPath),
+    type: collectable?.kind || collectable?.type || shelfType || null,
+    source: source || 'user',
+    ...(reviewItemId ? { reviewItemId } : {}),
+  };
+}
+
+function buildManualAddedEventPayload({
+  itemId = null,
+  manual = null,
+  shelfType = null,
+  source = 'manual',
+  reviewItemId = null,
+}) {
+  const title = manual?.name || manual?.title || null;
+  const creator = manual?.author || manual?.primaryCreator || manual?.creator || null;
+  const coverMediaPath = manual?.coverMediaPath || manual?.cover_media_path || null;
+  return {
+    itemId: itemId ?? null,
+    manualId: manual?.id || null,
+    title,
+    name: title,
+    author: creator,
+    primaryCreator: creator,
+    creator,
+    year: manual?.year ?? null,
+    coverUrl: null,
+    coverMediaPath,
+    coverMediaUrl: resolveMediaUrl(coverMediaPath),
+    type: manual?.type || shelfType || null,
+    description: manual?.description || null,
+    ageStatement: manual?.ageStatement || null,
+    specialMarkings: manual?.specialMarkings || null,
+    labelColor: manual?.labelColor || null,
+    regionalItem: manual?.regionalItem || null,
+    edition: manual?.edition || null,
+    barcode: manual?.barcode || null,
+    limitedEdition: manual?.limitedEdition || null,
+    itemSpecificText: manual?.itemSpecificText || null,
+    source: source || 'manual',
+    ...(reviewItemId ? { reviewItemId } : {}),
+  };
+}
+
 async function hydrateShelfItems(userId, shelfId, { limit, skip = 0 } = {}) {
   const rows = await shelvesQueries.getItems(shelfId, userId, { limit: limit || 100, offset: skip });
   return rows.map(formatShelfItem).filter(Boolean);
@@ -1067,7 +1156,12 @@ async function addManualEntry(req, res) {
       userId: req.user.id,
       shelfId: shelf.id,
       type: "item.manual_added",
-      payload: { itemId: result.collection.id, manualId: result.manual.id, name: result.manual.name, source: "manual" },
+      payload: buildManualAddedEventPayload({
+        itemId: result.collection.id,
+        manual: result.manual,
+        shelfType: shelf.type,
+        source: 'manual',
+      }),
     });
 
     res.status(201).json({
@@ -1104,15 +1198,12 @@ async function addCollectable(req, res) {
       userId: req.user.id,
       shelfId: shelf.id,
       type: "item.collectable_added",
-      payload: {
+      payload: buildCollectableAddedEventPayload({
         itemId: item.id,
-        collectableId: collectable.id,
-        title: collectable.title,
-        primaryCreator: collectable.primaryCreator,
-        coverUrl: collectable.coverUrl || "",
-        type: collectable.kind,
-        source: "user",
-      },
+        collectable,
+        shelfType: shelf.type,
+        source: 'user',
+      }),
     });
 
     res.status(201).json({
@@ -1166,15 +1257,12 @@ async function addCollectableFromApi(req, res) {
       userId: req.user.id,
       shelfId: shelf.id,
       type: "item.collectable_added",
-      payload: {
+      payload: buildCollectableAddedEventPayload({
         itemId: item.id,
-        collectableId: collectable.id,
-        title: collectable.title,
-        primaryCreator: collectable.primaryCreator,
-        coverUrl: collectable.coverUrl || "",
-        type: collectable.kind,
-        source: "user",
-      },
+        collectable,
+        shelfType: shelf.type,
+        source: 'user',
+      }),
     });
 
     res.status(201).json({
@@ -2225,7 +2313,15 @@ async function attachCropToCollectionItem({ userId, shelfId, shelfType = null, r
     attached = null;
   }
 
-  if (manualId && normalizedShelfType === 'other') {
+  const shouldPromoteManualCoverFromCrop = (
+    manualId
+    && normalizedShelfType === 'other'
+    && attached
+    && attached.ownerPhotoSource === 'vision_crop'
+    && attached.ownerPhotoVisible === true
+  );
+
+  if (shouldPromoteManualCoverFromCrop) {
     try {
       const manualCoverResult = await query(
         `SELECT cover_media_path
@@ -2627,6 +2723,24 @@ async function processShelfVision(req, res) {
             }
           }
 
+          // Generate crop photos before marking job complete so the mobile
+          // client doesn't refresh until owner-photo attachments are ready.
+          if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
+            processingStatus.updateJob(jobId, {
+              step: 'generating-photos',
+              progress: 95,
+              message: 'Generating item photos...',
+              status: 'processing',
+            });
+            await warmVisionScanCrops({
+              userId,
+              shelfId: shelf.id,
+              shelfType: shelf.type,
+              scanPhotoId,
+              jobId,
+            });
+          }
+
           // Mark job complete with result
           processingStatus.completeJob(jobId, {
             analysis: result.analysis,
@@ -2634,13 +2748,6 @@ async function processShelfVision(req, res) {
             ...counts,
             warnings: result.warnings,
             scanPhotoId,
-          });
-          queueVisionCropWarmup({
-            userId,
-            shelfId: shelf.id,
-            shelfType: shelf.type,
-            scanPhotoId,
-            jobId,
           });
         } catch (err) {
           if (err.message === 'Processing cancelled by user') {
@@ -2697,14 +2804,26 @@ async function processShelfVision(req, res) {
     }
 
     const counts = buildVisionCounts(result);
+
+    // Generate crop photos before marking job complete so the response
+    // includes shelf items with owner-photo attachments already ready.
+    if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
+      processingStatus.updateJob(jobId, {
+        step: 'generating-photos',
+        progress: 95,
+        message: 'Generating item photos...',
+        status: 'processing',
+      });
+      await warmVisionScanCrops({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        shelfType: shelf.type,
+        scanPhotoId,
+        jobId,
+      });
+    }
+
     processingStatus.completeJob(jobId, { ...result, ...counts, scanPhotoId });
-    queueVisionCropWarmup({
-      userId: req.user.id,
-      shelfId: shelf.id,
-      shelfType: shelf.type,
-      scanPhotoId,
-      jobId,
-    });
 
     // Get updated shelf items
     const items = await hydrateShelfItems(req.user.id, shelf.id);
@@ -3102,7 +3221,13 @@ async function completeReviewItem(req, res) {
           userId: req.user.id,
           shelfId: shelf.id,
           type: "item.collectable_added",
-          payload: { source: "review", reviewItemId: reviewItem.id },
+          payload: buildCollectableAddedEventPayload({
+            itemId: item.id,
+            collectable,
+            shelfType: shelf.type,
+            source: 'review',
+            reviewItemId: reviewItem.id,
+          }),
         });
 
         return res.json({
@@ -3222,14 +3347,13 @@ async function completeReviewItem(req, res) {
           userId: req.user.id,
           shelfId: shelf.id,
           type: "item.manual_added",
-          payload: {
-            source: "review",
-            reviewItemId: reviewItem.id,
+          payload: buildManualAddedEventPayload({
             itemId: manualResult.collection.id,
-            manualId: manualResult.manual.id,
-            name: manualResult.manual.name,
-            author: manualResult.manual.author,
-          },
+            manual: manualResult.manual,
+            shelfType: shelf.type,
+            source: 'review',
+            reviewItemId: reviewItem.id,
+          }),
         });
       }
 
@@ -3285,7 +3409,13 @@ async function completeReviewItem(req, res) {
       userId: req.user.id,
       shelfId: shelf.id,
       type: "item.collectable_added",
-      payload: { source: "review", reviewItemId: reviewItem.id },
+      payload: buildCollectableAddedEventPayload({
+        itemId: item.id,
+        collectable,
+        shelfType: shelf.type,
+        source: 'review',
+        reviewItemId: reviewItem.id,
+      }),
     });
 
     res.json({
@@ -3569,9 +3699,41 @@ async function getManualItem(req, res) {
       return res.status(404).json({ error: 'Manual item not found' });
     }
 
+    const viewerUserId = req.user?.id || null;
+    const visibleShelf = await shelvesQueries.getForViewing(manual.shelfId, viewerUserId);
+    if (!visibleShelf) {
+      return res.status(403).json({ error: 'Viewer does not have access' });
+    }
+
     // Resolve cover media URL
     if (manual.coverMediaPath) {
       manual.coverMediaUrl = resolveMediaUrl(manual.coverMediaPath);
+    }
+
+    const privacyContextResult = await query(
+      `SELECT uc.user_id::text AS owner_id,
+              s.type AS shelf_type,
+              uc.owner_photo_source,
+              uc.owner_photo_visible,
+              u.show_personal_photos
+       FROM user_collections uc
+       JOIN shelves s ON s.id = uc.shelf_id
+       JOIN users u ON u.id = uc.user_id
+       WHERE uc.manual_id = $1
+       ORDER BY uc.created_at ASC, uc.id ASC
+       LIMIT 1`,
+      [manualId],
+    );
+    const privacyContext = privacyContextResult.rows[0] ? rowToCamelCase(privacyContextResult.rows[0]) : null;
+    if (privacyContext && shouldRedactOtherManualCover({
+      viewerUserId,
+      ownerId: privacyContext.ownerId,
+      shelfType: privacyContext.shelfType,
+      ownerPhotoSource: privacyContext.ownerPhotoSource,
+      ownerPhotoVisible: privacyContext.ownerPhotoVisible === true,
+      showPersonalPhotos: privacyContext.showPersonalPhotos === true,
+    })) {
+      redactManualCoverMedia(manual);
     }
 
     res.json({ manual: omitMarketValueSources(manual) });

@@ -1,7 +1,6 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Dimensions,
     FlatList,
     Image,
     RefreshControl,
@@ -9,22 +8,30 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
-    TouchableWithoutFeedback,
     View,
     StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { AccountSlideMenu } from '../components/ui';
+import { AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
+import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 import NewsFeed from '../components/news/NewsFeed';
 import NewsSection from '../components/news/NewsSection';
 import QuickCheckInModal from '../components/news/QuickCheckInModal';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
-import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import {
+    buildOwnerPhotoThumbnailUri,
+    formatAddedEventHeader,
+    getAddedItemDetails,
+    getAddedPreviewItems,
+    isAddedEventType,
+    resolveAddedEventCount,
+} from '../utils/feedAddedEvent';
 
 const checkInBadge = require('../../assets/checkin_badge.png');
 
@@ -99,41 +106,6 @@ function getReviewedUpdatedLabel(item = {}, eventEntry = null) {
     return formatted ? `Updated on ${formatted}` : null;
 }
 
-function getItemPreview(entry, apiBase = '') {
-    const collectable = entry.collectable || entry.item || entry.collectableSnapshot || null;
-    const manual = entry.manual || entry.manualItem || entry.manualSnapshot || null;
-    const title = collectable?.title || collectable?.name || manual?.title || manual?.name || entry?.title || 'Untitled';
-    const collectableId = collectable?.id || entry?.collectableId || entry?.collectable_id || null;
-
-    // Extract cover URL with priority: collectable cover > manual cover > legacy fields
-    let coverUrl = resolveCollectableCoverUrl(collectable, apiBase);
-
-    // Fallback to manual cover if no collectable cover
-    if (!coverUrl && manual) {
-        coverUrl = resolveManualCoverUrl(manual, apiBase);
-    }
-
-    if (!coverUrl && entry?.coverImageUrl) {
-        coverUrl = buildMediaUri(entry.coverImageUrl, apiBase);
-    }
-
-    return { title, coverUrl, collectableId };
-}
-
-function buildSummaryText(items, totalCount) {
-    const titles = Array.isArray(items) ? items.map(i => i?.title).filter(Boolean) : [];
-    if (!totalCount || totalCount <= 0) return '';
-    if (titles.length === 0) return `${totalCount} item${totalCount === 1 ? '' : 's'}`;
-    if (totalCount === 1) return titles[0];
-    if (totalCount === 2 && titles.length >= 2) return `${titles[0]} and ${titles[1]}`;
-    const remaining = Math.max(0, totalCount - titles.length);
-    const shown = titles.slice(0, 2);
-    if (remaining > 0) {
-        return `${shown.join(', ')}, and ${remaining} others`;
-    }
-    return shown.join(', ');
-}
-
 // --- Component ---
 export default function SocialFeedScreen({ navigation, route }) {
     const { token, apiBase, user } = useContext(AuthContext);
@@ -147,13 +119,8 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [pendingLikes, setPendingLikes] = useState({});
     const [unreadCount, setUnreadCount] = useState(0);
 
-    // Inline search state
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState({ friends: [], collectables: [] });
-    const [searchLoading, setSearchLoading] = useState(false);
-    const [showResults, setShowResults] = useState(false);
-    const searchTimeoutRef = useRef(null);
     const isMountedRef = useRef(true);
+    const search = useGlobalSearch(navigation);
 
     // Account menu state
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -163,6 +130,8 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [pendingComments, setPendingComments] = useState({});
     const [pendingNewsDismissals, setPendingNewsDismissals] = useState({});
     const [truncatedReviewNotes, setTruncatedReviewNotes] = useState({});
+    const [imageAuthToken, setImageAuthToken] = useState(null);
+    const [addedThumbFailures, setAddedThumbFailures] = useState({});
 
     // Check-in modal state for news recommendations
     const [checkInModalVisible, setCheckInModalVisible] = useState(false);
@@ -200,17 +169,22 @@ export default function SocialFeedScreen({ navigation, route }) {
         return () => { isMountedRef.current = false; };
     }, []);
 
-    // BUG-19: clear pending search timeout on navigation blur to prevent
-    // setState calls during/after screen transition
     useEffect(() => {
-        const unsubscribe = navigation.addListener('blur', () => {
-            if (searchTimeoutRef.current) {
-                clearTimeout(searchTimeoutRef.current);
-                searchTimeoutRef.current = null;
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        (async () => {
+            try {
+                const resolved = await getValidToken(token, apiBase);
+                if (isActive) setImageAuthToken(resolved || token);
+            } catch (_err) {
+                if (isActive) setImageAuthToken(token);
             }
-        });
-        return unsubscribe;
-    }, [navigation]);
+        })();
+        return () => { isActive = false; };
+    }, [apiBase, token]);
 
     const load = useCallback(async (opts = {}) => {
         const { silent, forceRefreshPersonalizations } = opts;
@@ -339,68 +313,6 @@ export default function SocialFeedScreen({ navigation, route }) {
     }, [activeFilter, lastPersonalizationRefresh, load, loadUnreadCount]);
 
     // Debounced search handler
-    const handleSearchChange = useCallback((text) => {
-        setSearchQuery(text);
-
-        if (searchTimeoutRef.current) {
-            clearTimeout(searchTimeoutRef.current);
-        }
-
-        if (!text.trim()) {
-            setSearchResults({ friends: [], collectables: [] });
-            setShowResults(false);
-            return;
-        }
-
-        searchTimeoutRef.current = setTimeout(async () => {
-            if (!isMountedRef.current) return;
-            setSearchLoading(true);
-            setShowResults(true);
-
-            try {
-                // Parallel API calls for friends and collectables
-                const [friendsRes, collectablesRes] = await Promise.all([
-                    apiRequest({ apiBase, path: `/api/friends/search?q=${encodeURIComponent(text)}&limit=3&wildcard=true`, token }),
-                    apiRequest({ apiBase, path: `/api/collectables?q=${encodeURIComponent(text)}&limit=3&wildcard=true`, token }),
-                ]);
-
-                if (!isMountedRef.current) return;
-                setSearchResults({
-                    friends: friendsRes?.users || [],
-                    collectables: collectablesRes?.results || [],
-                });
-            } catch (err) {
-                console.error('Search error:', err);
-            } finally {
-                if (isMountedRef.current) {
-                    setSearchLoading(false);
-                }
-            }
-        }, 300);
-    }, [apiBase, token]);
-
-    const handleFriendPress = (friend) => {
-        setShowResults(false);
-        setSearchQuery('');
-        navigation.navigate('Profile', { username: friend.username });
-    };
-
-    const handleCollectablePress = (collectable) => {
-        setShowResults(false);
-        setSearchQuery('');
-        navigation.navigate('CollectableDetail', { item: { collectable } });
-    };
-
-    const handleSeeMore = () => {
-        setShowResults(false);
-        navigation.navigate('FriendSearch', { initialQuery: searchQuery });
-        setSearchQuery('');
-    };
-
-    const dismissSearch = () => {
-        setShowResults(false);
-    };
-
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
 
     const updateEntrySocial = useCallback((targetId, updates) => {
@@ -1220,11 +1132,37 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
 
         // Regular shelf-based event rendering
-        const previewItems = (items || []).slice(0, 3);
-        const totalItems = item?.eventItemCount || items?.length || 0;
-        const itemPreviews = previewItems.map(e => getItemPreview(e, apiBase));
-        const summaryText = buildSummaryText(itemPreviews, totalItems);
-        const coverItems = itemPreviews.filter(i => i.coverUrl).slice(0, 3);
+        const isAddedEvent = isAddedEventType(eventType);
+        const totalItems = isAddedEvent ? resolveAddedEventCount(item) : (item?.eventItemCount || items?.length || 0);
+        const previewItems = getAddedPreviewItems(items || [], apiBase, 3);
+        const isOtherShelfAdded = isAddedEvent && String(shelf?.type || '').toLowerCase() === 'other';
+        const addedHeaderText = isAddedEvent
+            ? formatAddedEventHeader({
+                shelf,
+                eventItemCount: totalItems,
+                items: items || [],
+            })
+            : null;
+        const addedImageHeaders = imageAuthToken
+            ? { Authorization: `Bearer ${imageAuthToken}`, 'ngrok-skip-browser-warning': 'true' }
+            : null;
+        const coverItems = previewItems.filter((preview) => !!preview.coverUrl).slice(0, 3);
+        const singleAddedItem = isAddedEvent && totalItems === 1
+            ? getAddedItemDetails((items || [])[0] || {}, apiBase)
+            : null;
+        const getThumbFailureKey = (entryKey, detail, idx) => `${entryKey}:${detail?.itemId || detail?.name || idx}`;
+        const getOtherOwnerThumbSource = (entryKey, detail, idx) => {
+            if (!isOtherShelfAdded || !addedImageHeaders) return null;
+            const thumbUri = buildOwnerPhotoThumbnailUri({
+                apiBase,
+                shelfId: shelf?.id,
+                itemId: detail?.itemId,
+            });
+            if (!thumbUri) return null;
+            const failureKey = getThumbFailureKey(entryKey, detail, idx);
+            if (addedThumbFailures[failureKey]) return null;
+            return { uri: thumbUri, headers: addedImageHeaders };
+        };
 
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
@@ -1252,24 +1190,93 @@ export default function SocialFeedScreen({ navigation, route }) {
                             <Text style={styles.timestamp}>{timeAgo}</Text>
                         </View>
                         <Text style={styles.shelfAction}>
-                            {actionText}{' '}
-                            {actionText === 'added' && summaryText
-                                ? <Text style={styles.shelfName}>{summaryText}</Text>
-                                : <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text>}
-                            {actionText === 'added' && (
-                                <Text> to <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text></Text>
+                            {isAddedEvent ? (
+                                addedHeaderText
+                            ) : (
+                                <>
+                                    {actionText}{' '}
+                                    <Text style={styles.shelfName}>{shelf?.name || 'a shelf'}</Text>
+                                </>
                             )}
                         </Text>
                     </View>
                 </View>
 
-                {/* Content preview */}
-                {shelf?.description ? (
-                    <Text style={styles.description} numberOfLines={2}>{shelf.description}</Text>
+                {singleAddedItem ? (
+                    <View style={styles.singleAddedRow}>
+                        {(() => {
+                            const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const ownerSource = getOtherOwnerThumbSource(entryKey, singleAddedItem, 0);
+                            const imageSource = isOtherShelfAdded
+                                ? ownerSource
+                                : (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null);
+                            if (!imageSource) {
+                                return (
+                                    <View style={[styles.coverThumb, styles.singleAddedThumb]}>
+                                        <Ionicons name="book-outline" size={20} color={colors.textMuted} />
+                                    </View>
+                                );
+                            }
+                            return (
+                                <Image
+                                    source={imageSource}
+                                    style={[styles.coverThumb, styles.singleAddedThumb]}
+                                    resizeMode="cover"
+                                    onError={() => {
+                                        if (!isOtherShelfAdded) return;
+                                        const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
+                                        setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                    }}
+                                />
+                            );
+                        })()}
+                        <View style={styles.singleAddedMeta}>
+                            <Text style={styles.singleAddedTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                            <Text style={styles.singleAddedSubtext} numberOfLines={1}>
+                                {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
+                            </Text>
+                        </View>
+                    </View>
                 ) : null}
 
-                {/* Cover art thumbnails */}
-                {coverItems.length > 0 && (
+                {(isAddedEvent && totalItems > 1 && isOtherShelfAdded) ? (
+                    <View style={styles.coverRow}>
+                        {previewItems.map((preview, idx) => {
+                            const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const ownerSource = getOtherOwnerThumbSource(entryKey, preview, idx);
+                            const failureKey = getThumbFailureKey(entryKey, preview, idx);
+                            const previewKey = `${entryKey}-${preview.itemId || preview.manualId || preview.name || 'preview'}-${idx}-other-thumb`;
+                            if (ownerSource) {
+                                return (
+                                    <Image
+                                        key={previewKey}
+                                        source={ownerSource}
+                                        style={[styles.coverThumb, idx > 0 && { marginLeft: -8 }]}
+                                        resizeMode="cover"
+                                        onError={() => {
+                                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                        }}
+                                    />
+                                );
+                            }
+                            return (
+                                <View
+                                    key={previewKey}
+                                    style={[styles.coverThumb, idx > 0 && { marginLeft: -8 }, styles.otherThumbPlaceholder]}
+                                >
+                                    <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                </View>
+                            );
+                        })}
+                        {totalItems > previewItems.length && (
+                            <View style={styles.moreCoversChip}>
+                                <Text style={styles.moreCoversText}>+{totalItems - previewItems.length}</Text>
+                            </View>
+                        )}
+                    </View>
+                ) : null}
+
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length > 0) && (
                     <View style={styles.coverRow}>
                         {coverItems.map((coverItem, idx) => (
                             <TouchableOpacity
@@ -1301,23 +1308,23 @@ export default function SocialFeedScreen({ navigation, route }) {
                 )}
 
                 {/* Items preview - text fallback when no covers */}
-                {coverItems.length === 0 && previewItems.length > 0 && (
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length === 0 && previewItems.length > 0) && (
                     <View style={styles.itemsPreview}>
                         {previewItems.map((entry, idx) => (
                             <TouchableOpacity
                                 key={idx}
                                 style={styles.itemChip}
-                                activeOpacity={itemPreviews[idx]?.collectableId ? 0.7 : 1}
-                                disabled={!itemPreviews[idx]?.collectableId}
+                                activeOpacity={entry?.collectableId ? 0.7 : 1}
+                                disabled={!entry?.collectableId}
                                 onPress={() => {
-                                    const cId = itemPreviews[idx]?.collectableId;
+                                    const cId = entry?.collectableId;
                                     if (cId) {
                                         navigation.navigate('CollectableDetail', { collectableId: String(cId), ownerId: owner?.id });
                                     }
                                 }}
                             >
                                 <Ionicons name="book" size={12} color={colors.primary} />
-                                <Text style={styles.itemTitle} numberOfLines={1}>{itemPreviews[idx]?.title || 'Untitled'}</Text>
+                                <Text style={styles.itemTitle} numberOfLines={1}>{entry?.name || 'Untitled'}</Text>
                             </TouchableOpacity>
                         ))}
                         {totalItems > previewItems.length && (
@@ -1410,25 +1417,9 @@ export default function SocialFeedScreen({ navigation, route }) {
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            {/* Header with inline search */}
+            {/* Header with global search */}
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Feed</Text>
-                <View style={styles.searchInputContainer}>
-                    <Ionicons name="search" size={16} color={colors.textMuted} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search Titles, Creators, or Friends"
-                        placeholderTextColor={colors.textMuted}
-                        value={searchQuery}
-                        onChangeText={handleSearchChange}
-                        onFocus={() => searchQuery.trim() && setShowResults(true)}
-                    />
-                    {searchQuery.length > 0 && (
-                        <TouchableOpacity onPress={() => { setSearchQuery(''); setShowResults(false); }}>
-                            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
-                        </TouchableOpacity>
-                    )}
-                </View>
+                <GlobalSearchInput search={search} />
                 <View style={styles.headerRight}>
                     <TouchableOpacity
                         onPress={() => navigation.navigate('Notifications')}
@@ -1443,146 +1434,62 @@ export default function SocialFeedScreen({ navigation, route }) {
                             </View>
                         )}
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setIsMenuOpen(true)} style={styles.headerButton}>
-                        <Ionicons name="person-circle-outline" size={26} color={colors.text} />
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            {/* Floating search results dropdown */}
-            {showResults && (
-                <TouchableWithoutFeedback onPress={dismissSearch}>
-                    <View style={styles.searchOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.searchDropdown}>
-                                {searchLoading ? (
-                                    <View style={styles.searchLoadingContainer}>
-                                        <ActivityIndicator size="small" color={colors.primary} />
-                                    </View>
-                                ) : (
-                                    <>
-                                        {/* Friends section */}
-                                        {searchResults.friends.length > 0 && (
-                                            <View style={styles.searchSection}>
-                                                <Text style={styles.searchSectionTitle}>Friends</Text>
-                                                {searchResults.friends.map((friend) => {
-                                                    const displayName = friend.firstName && friend.lastName
-                                                        ? `${friend.firstName} ${friend.lastName}`
-                                                        : friend.name || friend.username;
-                                                    return (
-                                                        <TouchableOpacity
-                                                            key={friend.id}
-                                                            style={styles.searchResultItem}
-                                                            onPress={() => handleFriendPress(friend)}
-                                                        >
-                                                            <View style={styles.searchResultAvatar}>
-                                                                <Text style={styles.searchResultAvatarText}>
-                                                                    {(displayName || '?').charAt(0).toUpperCase()}
-                                                                </Text>
-                                                            </View>
-                                                            <View style={styles.searchResultInfo}>
-                                                                <Text style={styles.searchResultTitle} numberOfLines={1}>{displayName}</Text>
-                                                                <Text style={styles.searchResultSubtitle} numberOfLines={1}>@{friend.username}</Text>
-                                                            </View>
-                                                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-                                                        </TouchableOpacity>
-                                                    );
-                                                })}
-                                            </View>
-                                        )}
-
-                                        {/* Collectables section */}
-                                        {searchResults.collectables.length > 0 && (
-                                            <View style={styles.searchSection}>
-                                                <Text style={styles.searchSectionTitle}>Items</Text>
-                                                {searchResults.collectables.map((item) => {
-                                                    const coverUrl = item.coverMediaPath
-                                                        ? `${apiBase}/media/${item.coverMediaPath}`
-                                                        : item.coverUrl;
-                                                    return (
-                                                        <TouchableOpacity
-                                                            key={item.id}
-                                                            style={styles.searchResultItem}
-                                                            onPress={() => handleCollectablePress(item)}
-                                                        >
-                                                            {coverUrl ? (
-                                                                <Image source={{ uri: coverUrl }} style={styles.searchResultCover} />
-                                                            ) : (
-                                                                <View style={[styles.searchResultCover, styles.searchResultCoverFallback]}>
-                                                                    <Ionicons name="book" size={16} color={colors.primary} />
-                                                                </View>
-                                                            )}
-                                                            <View style={styles.searchResultInfo}>
-                                                                <Text style={styles.searchResultTitle} numberOfLines={1}>{item.title || 'Untitled'}</Text>
-                                                                {item.primaryCreator && (
-                                                                    <Text style={styles.searchResultSubtitle} numberOfLines={1}>{item.primaryCreator}</Text>
-                                                                )}
-                                                            </View>
-                                                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-                                                        </TouchableOpacity>
-                                                    );
-                                                })}
-                                            </View>
-                                        )}
-
-                                        {/* Empty state */}
-                                        {searchResults.friends.length === 0 && searchResults.collectables.length === 0 && (
-                                            <View style={styles.searchEmptyState}>
-                                                <Ionicons name="search-outline" size={24} color={colors.textMuted} />
-                                                <Text style={styles.searchEmptyText}>No results found</Text>
-                                            </View>
-                                        )}
-
-                                        {/* See more button */}
-                                        {(searchResults.friends.length > 0 || searchResults.collectables.length > 0) && (
-                                            <TouchableOpacity style={styles.seeMoreButton} onPress={handleSeeMore}>
-                                                <Text style={styles.seeMoreText}>See more results</Text>
-                                                <Ionicons name="arrow-forward" size={14} color={colors.primary} />
-                                            </TouchableOpacity>
-                                        )}
-                                    </>
-                                )}
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
-            )}
-
-            {/* Filter Tabs - Threads style */}
-            <View style={styles.filterBar}>
-                {FILTERS.map(filter => {
-                    const active = activeFilter === filter.key;
-                    return (
-                        <TouchableOpacity
-                            key={filter.key}
-                            onPress={() => setActiveFilter(filter.key)}
-                            style={[styles.filterTab, active && styles.filterTabActive]}
-                        >
-                            <Text style={[styles.filterText, active && styles.filterTextActive]}>
-                                {filter.label}
-                            </Text>
+                    {!ENABLE_PROFILE_IN_TAB_BAR && (
+                        <TouchableOpacity onPress={() => setIsMenuOpen(true)} style={styles.headerButton}>
+                            <Ionicons name="person-circle-outline" size={26} color={colors.text} />
                         </TouchableOpacity>
-                    );
-                })}
+                    )}
+                </View>
             </View>
 
-            {/* Error */}
-            {error ? (
-                <View style={styles.errorBanner}>
-                    <Text style={styles.errorText}>{error}</Text>
+            {/* Body: sub-header, filters, content — wrapped so overlay covers this area */}
+            <View style={styles.body}>
+                {/* Sub-header: Feed title */}
+                <View style={styles.subHeader}>
+                    <Text style={styles.headerTitle}>Feed</Text>
                 </View>
-            ) : null}
 
-            {/* Content Body */}
-            {renderContent()}
+                {/* Filter Tabs - Threads style */}
+                <View style={styles.filterBar}>
+                    {FILTERS.map(filter => {
+                        const active = activeFilter === filter.key;
+                        return (
+                            <TouchableOpacity
+                                key={filter.key}
+                                onPress={() => setActiveFilter(filter.key)}
+                                style={[styles.filterTab, active && styles.filterTabActive]}
+                            >
+                                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                                    {filter.label}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+
+                {/* Error */}
+                {error ? (
+                    <View style={styles.errorBanner}>
+                        <Text style={styles.errorText}>{error}</Text>
+                    </View>
+                ) : null}
+
+                {/* Content Body */}
+                {renderContent()}
+
+                {/* Search overlay — absolutely positioned over body */}
+                <GlobalSearchOverlay search={search} />
+            </View>
 
             {/* Account Slide Menu */}
-            <AccountSlideMenu
-                isVisible={isMenuOpen}
-                onClose={() => setIsMenuOpen(false)}
-                navigation={navigation}
-                user={user}
-            />
+            {!ENABLE_PROFILE_IN_TAB_BAR && (
+                <AccountSlideMenu
+                    isVisible={isMenuOpen}
+                    onClose={() => setIsMenuOpen(false)}
+                    navigation={navigation}
+                    user={user}
+                />
+            )}
 
             {/* Quick Check-In Modal for News Items */}
             <QuickCheckInModal
@@ -1599,6 +1506,9 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     screen: {
         flex: 1,
         backgroundColor: colors.background,
+    },
+    body: {
+        flex: 1,
     },
     header: {
         flexDirection: 'row',
@@ -1622,6 +1532,10 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     headerButton: {
         padding: spacing.xs,
         position: 'relative',
+    },
+    subHeader: {
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.sm,
     },
     badge: {
         position: 'absolute',
@@ -1748,6 +1662,30 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         fontWeight: '600',
         color: colors.text,
     },
+    singleAddedRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    singleAddedThumb: {
+        width: 64,
+        height: 90,
+        borderRadius: 8,
+        marginRight: spacing.md,
+    },
+    singleAddedMeta: {
+        flex: 1,
+    },
+    singleAddedTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.text,
+        marginBottom: 4,
+    },
+    singleAddedSubtext: {
+        fontSize: 13,
+        color: colors.textMuted,
+    },
     description: {
         fontSize: 15, // Increased from 14
         color: colors.textSecondary,
@@ -1793,6 +1731,10 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
         borderColor: colors.border,
+    },
+    otherThumbPlaceholder: {
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     newsAvatar: {
         backgroundColor: colors.surfaceElevated,
@@ -2036,127 +1978,6 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
         color: colors.error,
         textAlign: 'center',
         fontSize: 14,
-    },
-    // Inline search styles
-    searchInputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: colors.surface,
-        borderRadius: 20,
-        paddingHorizontal: spacing.md, // Increased from sm
-        paddingVertical: 8, // Increased from 6
-        width: Dimensions.get('window').width * 0.60,
-        gap: 8,
-        ...shadows.sm,
-    },
-    searchInput: {
-        flex: 1,
-        fontSize: 15, // Increased from 14
-        color: colors.text,
-        paddingVertical: 0,
-    },
-    searchOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.3)',
-        zIndex: 100,
-    },
-    searchDropdown: {
-        position: 'absolute',
-        top: 130, // Adjusted
-        left: spacing.md,
-        right: spacing.md,
-        backgroundColor: colors.surface,
-        borderRadius: 16, // Increased from 12
-        ...shadows.lg,
-        maxHeight: 450, // Increased
-        overflow: 'hidden',
-    },
-    searchLoadingContainer: {
-        padding: spacing.lg,
-        alignItems: 'center',
-    },
-    searchSection: {
-        paddingBottom: spacing.md, // Increased from sm
-    },
-    searchSectionTitle: {
-        fontSize: 12, // Increased from 11
-        fontWeight: '600',
-        color: colors.textMuted,
-        textTransform: 'uppercase',
-        letterSpacing: 0.5,
-        paddingHorizontal: spacing.md,
-        paddingTop: spacing.md,
-        paddingBottom: spacing.xs,
-    },
-    searchResultItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.md, // Increased from sm
-        gap: spacing.md, // Increased from sm
-    },
-    searchResultAvatar: {
-        width: 40, // Increased from 36
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchResultAvatarText: {
-        color: colors.textInverted,
-        fontWeight: '600',
-        fontSize: 16, // Increased from 14
-    },
-    searchResultCover: {
-        width: 40, // Increased from 36
-        height: 54, // Increased from 48
-        borderRadius: 6, // Increased from 4
-        backgroundColor: colors.surfaceElevated,
-    },
-    searchResultCoverFallback: {
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchResultInfo: {
-        flex: 1,
-    },
-    searchResultTitle: {
-        fontSize: 15, // Increased from 14
-        fontWeight: '600',
-        color: colors.text,
-    },
-    searchResultSubtitle: {
-        fontSize: 13, // Increased from 12
-        color: colors.textMuted,
-        marginTop: 2,
-    },
-    searchEmptyState: {
-        alignItems: 'center',
-        padding: spacing.xl, // Increased from lg
-        gap: spacing.md, // Increased from sm
-    },
-    searchEmptyText: {
-        fontSize: 15, // Increased from 14
-        color: colors.textMuted,
-    },
-    seeMoreButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingVertical: spacing.lg, // Increased from md
-        borderTopWidth: 1,
-        borderTopColor: colors.border,
-    },
-    seeMoreText: {
-        fontSize: 15, // Increased from 14
-        fontWeight: '500',
-        color: colors.primary,
     },
     // Check-in event styles
     checkinAction: {

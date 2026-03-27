@@ -25,16 +25,22 @@ const MENU_ITEMS = [
     { key: 'favorites', label: 'My Favorites', icon: 'star-outline', screen: 'Favorites' },
     { key: 'lists', label: 'My Lists', icon: 'list-outline', screen: 'Profile', params: { tab: 'lists' } },
     { key: 'friends', label: 'My Friends', icon: 'people-outline', screen: 'FriendsList' },
+];
+
+const BOTTOM_MENU_ITEMS = [
+    { key: 'myProfile', label: 'My Profile', icon: 'person-outline', screen: 'Profile' },
+    { key: 'notifications', label: 'Notifications', icon: 'notifications-outline', screen: 'Notifications' },
     { key: 'settings', label: 'Account Settings', icon: 'settings-outline', screen: 'Account' },
 ];
 
-export default function AccountSlideMenu({ isVisible, onClose, navigation, user }) {
+export default function AccountSlideMenu({ isVisible, onClose, navigation, user, direction = 'right' }) {
     const { apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const insets = useSafeAreaInsets();
     const menuProgress = useSharedValue(0);
     const nav = useNavigation();
 
+    const isLeftSlide = direction === 'left';
     const overlayColor = isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)';
 
     // Get display name
@@ -80,7 +86,12 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
     // Panel slide animation
     const panelStyle = useAnimatedStyle(() => ({
         transform: [
-            { translateX: interpolate(menuProgress.value, [0, 1], [MENU_WIDTH, 0], Extrapolate.CLAMP) },
+            { translateX: interpolate(
+                menuProgress.value,
+                [0, 1],
+                [isLeftSlide ? -MENU_WIDTH : MENU_WIDTH, 0],
+                Extrapolate.CLAMP,
+            ) },
         ],
     }));
 
@@ -106,7 +117,7 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
         },
         panel: {
             position: 'absolute',
-            right: 0,
+            ...(isLeftSlide ? { left: 0 } : { right: 0 }),
             top: 0,
             bottom: 0,
             width: MENU_WIDTH,
@@ -155,6 +166,12 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
             color: colors.text,
             fontWeight: '500',
             flex: 1,
+        },
+        bottomSection: {
+            marginTop: 'auto',
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            paddingTop: spacing.md,
         },
     });
 
@@ -208,6 +225,28 @@ export default function AccountSlideMenu({ isVisible, onClose, navigation, user 
                         <Text style={styles.menuItemLabel}>{item.label}</Text>
                     </Pressable>
                 ))}
+
+                {/* Bottom Links */}
+                <View style={styles.bottomSection}>
+                    {BOTTOM_MENU_ITEMS.map((item) => (
+                        <Pressable
+                            key={item.key}
+                            onPress={() => handleMenuItemPress(item)}
+                            style={({ pressed }) => [
+                                styles.menuItem,
+                                pressed && styles.menuItemPressed,
+                            ]}
+                        >
+                            <Ionicons
+                                name={item.icon}
+                                size={20}
+                                color={colors.text}
+                                style={styles.menuItemIcon}
+                            />
+                            <Text style={styles.menuItemLabel}>{item.label}</Text>
+                        </Pressable>
+                    ))}
+                </View>
             </Animated.View>
         </View>
     );

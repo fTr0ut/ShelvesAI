@@ -5,7 +5,6 @@ import {
     Image,
     ScrollView,
     StyleSheet,
-    Switch,
     Text,
     TextInput,
     TouchableOpacity,
@@ -20,6 +19,14 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
+import {
+    buildOwnerPhotoThumbnailUri,
+    formatAddedEventHeader,
+    getAddedItemDetails,
+    getAddedPreviewItems,
+    isAddedEventType,
+    resolveAddedEventCount,
+} from '../utils/feedAddedEvent';
 
 export default function ProfileScreen({ navigation, route }) {
     const { token, apiBase, user: currentUser } = useContext(AuthContext);
@@ -46,6 +53,8 @@ export default function ProfileScreen({ navigation, route }) {
     const [listsLoaded, setListsLoaded] = useState(false);
     const [hasViewableWishlists, setHasViewableWishlists] = useState(false);
     const [hasViewableFavorites, setHasViewableFavorites] = useState(false);
+    const [imageAuthToken, setImageAuthToken] = useState(null);
+    const [addedThumbFailures, setAddedThumbFailures] = useState({});
 
     // Editable fields
     const [firstName, setFirstName] = useState('');
@@ -54,8 +63,6 @@ export default function ProfileScreen({ navigation, route }) {
     const [city, setCity] = useState('');
     const [state, setState] = useState('');
     const [country, setCountry] = useState('');
-    const [isPrivate, setIsPrivate] = useState(false);
-    const [showPersonalPhotos, setShowPersonalPhotos] = useState(false);
     const isMountedRef = useRef(false);
     const isEditingRef = useRef(false);
     const cityInputRef = useRef(null);
@@ -83,8 +90,6 @@ export default function ProfileScreen({ navigation, route }) {
         setStateIfMounted(setCity, profileData.city || '');
         setStateIfMounted(setState, profileData.state || '');
         setStateIfMounted(setCountry, profileData.country || '');
-        setStateIfMounted(setIsPrivate, profileData.isPrivate || false);
-        setStateIfMounted(setShowPersonalPhotos, profileData.showPersonalPhotos || false);
     }, [setStateIfMounted]);
 
     useEffect(() => {
@@ -101,6 +106,23 @@ export default function ProfileScreen({ navigation, route }) {
     useEffect(() => {
         loadProfile();
     }, [username]);
+
+    useEffect(() => {
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        (async () => {
+            try {
+                const resolved = await getValidToken(token, apiBase);
+                if (isActive) setImageAuthToken(resolved || token);
+            } catch (_err) {
+                if (isActive) setImageAuthToken(token);
+            }
+        })();
+        return () => { isActive = false; };
+    }, [apiBase, token]);
 
     const loadProfile = async () => {
         try {
@@ -243,7 +265,7 @@ export default function ProfileScreen({ navigation, route }) {
                 path: '/api/profile',
                 method: 'PUT',
                 token,
-                body: { firstName, lastName, bio, city, state, country, isPrivate, showPersonalPhotos },
+                body: { firstName, lastName, bio, city, state, country },
             });
             setEditing(false);
             loadProfile();
@@ -253,7 +275,7 @@ export default function ProfileScreen({ navigation, route }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, token, firstName, lastName, bio, city, state, country, isPrivate, showPersonalPhotos]);
+    }, [apiBase, token, firstName, lastName, bio, city, state, country]);
 
     const handleStartEditing = useCallback(() => {
         if (profile) {
@@ -486,18 +508,41 @@ export default function ProfileScreen({ navigation, route }) {
         return formatted ? `Updated on ${formatted}` : null;
     };
 
-    const getItemPreview = (entry) => {
-        const collectable = entry.collectable || entry.item || null;
-        const manual = entry.manual || entry.manualItem || null;
-        return collectable?.title || manual?.name || entry?.title || 'Untitled';
-    };
-
     const renderPostCard = ({ item }) => {
         const { shelf, items = [], eventType } = item;
         const timeAgo = formatRelativeTime(shelf?.updatedAt || item.createdAt);
-        const previewItems = items.slice(0, 3);
-        const totalItems = item?.eventItemCount || items.length || 0;
+        const isAddedEvent = isAddedEventType(eventType);
+        const totalItems = isAddedEvent ? resolveAddedEventCount(item) : (item?.eventItemCount || items.length || 0);
+        const previewItems = getAddedPreviewItems(items, apiBase, 3);
+        const singleAddedItem = isAddedEvent && totalItems === 1
+            ? getAddedItemDetails((items || [])[0] || {}, apiBase)
+            : null;
+        const isOtherShelfAdded = isAddedEvent && String(shelf?.type || '').toLowerCase() === 'other';
+        const addedHeaderText = isAddedEvent
+            ? formatAddedEventHeader({
+                shelf,
+                eventItemCount: totalItems,
+                items,
+            })
+            : null;
+        const addedImageHeaders = imageAuthToken
+            ? { Authorization: `Bearer ${imageAuthToken}`, 'ngrok-skip-browser-warning': 'true' }
+            : null;
+        const coverItems = previewItems.filter((preview) => !!preview.coverUrl).slice(0, 3);
         const reviewedUpdatedLabel = getReviewedUpdatedLabel(item);
+        const getThumbFailureKey = (entryKey, detail, idx) => `${entryKey}:${detail?.itemId || detail?.name || idx}`;
+        const getOtherOwnerThumbSource = (entryKey, detail, idx) => {
+            if (!isOtherShelfAdded || !addedImageHeaders) return null;
+            const thumbUri = buildOwnerPhotoThumbnailUri({
+                apiBase,
+                shelfId: shelf?.id,
+                itemId: detail?.itemId,
+            });
+            if (!thumbUri) return null;
+            const failureKey = getThumbFailureKey(entryKey, detail, idx);
+            if (addedThumbFailures[failureKey]) return null;
+            return { uri: thumbUri, headers: addedImageHeaders };
+        };
 
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
@@ -520,20 +565,122 @@ export default function ProfileScreen({ navigation, route }) {
             >
                 <View style={styles.postHeader}>
                     <Text style={styles.postAction}>
-                        {actionText}{' '}
-                        {totalItems > 0 && <Text style={styles.postItemCount}>{totalItems} item{totalItems !== 1 ? 's' : ''}</Text>}
-                        {' to '}
-                        <Text style={styles.postShelfName}>{shelf?.name || 'a shelf'}</Text>
+                        {isAddedEvent ? (
+                            addedHeaderText
+                        ) : (
+                            <>
+                                {actionText}{' '}
+                                {totalItems > 0 && <Text style={styles.postItemCount}>{totalItems} item{totalItems !== 1 ? 's' : ''}</Text>}
+                                {' to '}
+                                <Text style={styles.postShelfName}>{shelf?.name || 'a shelf'}</Text>
+                            </>
+                        )}
                     </Text>
                     <Text style={styles.postTime}>{timeAgo}</Text>
                 </View>
 
-                {previewItems.length > 0 && (
+                {singleAddedItem ? (
+                    <View style={styles.postSingleAddedRow}>
+                        {(() => {
+                            const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const ownerSource = getOtherOwnerThumbSource(entryKey, singleAddedItem, 0);
+                            const imageSource = isOtherShelfAdded
+                                ? ownerSource
+                                : (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null);
+                            if (!imageSource) {
+                                return (
+                                    <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
+                                        <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                    </View>
+                                );
+                            }
+                            return (
+                                <Image
+                                    source={imageSource}
+                                    style={styles.postCoverThumb}
+                                    resizeMode="cover"
+                                    onError={() => {
+                                        if (!isOtherShelfAdded) return;
+                                        const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
+                                        setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                    }}
+                                />
+                            );
+                        })()}
+                        <View style={styles.postSingleAddedMeta}>
+                            <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                            <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>
+                                {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
+                            </Text>
+                        </View>
+                    </View>
+                ) : null}
+
+                {(isAddedEvent && totalItems > 1 && isOtherShelfAdded) ? (
+                    <View style={styles.postCoverRow}>
+                        {previewItems.map((preview, idx) => {
+                            const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const ownerSource = getOtherOwnerThumbSource(entryKey, preview, idx);
+                            const failureKey = getThumbFailureKey(entryKey, preview, idx);
+                            const previewKey = `${entryKey}-${preview.itemId || preview.manualId || preview.name || 'preview'}-${idx}-other-thumb`;
+                            if (ownerSource) {
+                                return (
+                                    <Image
+                                        key={previewKey}
+                                        source={ownerSource}
+                                        style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
+                                        resizeMode="cover"
+                                        onError={() => {
+                                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                        }}
+                                    />
+                                );
+                            }
+                            return (
+                                <View
+                                    key={previewKey}
+                                    style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }, styles.postOtherThumbPlaceholder]}
+                                >
+                                    <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                </View>
+                            );
+                        })}
+                        {totalItems > previewItems.length && (
+                            <View style={styles.postMoreCoversChip}>
+                                <Text style={styles.postMoreCoversText}>+{totalItems - previewItems.length}</Text>
+                            </View>
+                        )}
+                    </View>
+                ) : null}
+
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length > 0) && (
+                    <View style={styles.postCoverRow}>
+                        {coverItems.map((preview, idx) => {
+                            const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const previewKey = `${entryKey}-${preview.itemId || preview.manualId || preview.name || 'preview'}-${idx}-cover`;
+                            return (
+                                <Image
+                                    key={previewKey}
+                                    source={{ uri: preview.coverUrl }}
+                                    style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
+                                    resizeMode="cover"
+                                />
+                            );
+                        })}
+                        {totalItems > coverItems.length && (
+                            <View style={styles.postMoreCoversChip}>
+                                <Text style={styles.postMoreCoversText}>+{totalItems - coverItems.length}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length === 0 && previewItems.length > 0) && (
                     <View style={styles.postItemsPreview}>
                         {previewItems.map((entry, idx) => (
                             <View key={idx} style={styles.postItemChip}>
                                 <Ionicons name="book" size={12} color={colors.primary} />
-                                <Text style={styles.postItemTitle} numberOfLines={1}>{getItemPreview(entry)}</Text>
+                                <Text style={styles.postItemTitle} numberOfLines={1}>{entry?.name || 'Untitled'}</Text>
                             </View>
                         ))}
                         {totalItems > previewItems.length && (
@@ -758,48 +905,6 @@ export default function ProfileScreen({ navigation, route }) {
                             </Text>
                         </View>
                     ) : null}
-
-                    {/* Privacy toggle (owner only) */}
-                    {editing && (
-                        <View style={styles.privacyRow}>
-                            <View>
-                                <Text style={styles.privacyLabel}>Private Account</Text>
-                                <Text style={styles.privacyHint}>Hide shelves from non-friends</Text>
-                            </View>
-                            <Switch
-                                value={isPrivate}
-                                onValueChange={setIsPrivate}
-                                trackColor={{ false: colors.border, true: colors.primary + '80' }}
-                                thumbColor={isPrivate ? colors.primary : colors.surfaceElevated}
-                            />
-                        </View>
-                    )}
-
-                    {editing && (
-                        <View style={styles.privacyRow}>
-                            <View style={styles.personalPhotoTextBlock}>
-                                <View style={styles.personalPhotoLabelRow}>
-                                    <Text style={styles.privacyLabel}>Show Personal Photos</Text>
-                                    <TouchableOpacity
-                                        onPress={() => Alert.alert(
-                                            'Show Personal Photos',
-                                            "When enabled, your 'Your photo' images can be visible based on each shelf's visibility. You can still turn visibility off on individual items.",
-                                        )}
-                                        style={styles.helpIconButton}
-                                    >
-                                        <Ionicons name="help-circle-outline" size={16} color={colors.textMuted} />
-                                    </TouchableOpacity>
-                                </View>
-                                <Text style={styles.privacyHint}>Allow friends/public visibility when item toggle is on</Text>
-                            </View>
-                            <Switch
-                                value={showPersonalPhotos}
-                                onValueChange={setShowPersonalPhotos}
-                                trackColor={{ false: colors.border, true: colors.primary + '80' }}
-                                thumbColor={showPersonalPhotos ? colors.primary : colors.surfaceElevated}
-                            />
-                        </View>
-                    )}
 
                     {/* Save button */}
                     {editing && (
@@ -1180,38 +1285,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             fontSize: 14,
             color: colors.textMuted,
         },
-        privacyRow: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            width: '100%',
-            paddingHorizontal: spacing.md,
-            paddingVertical: spacing.sm,
-            backgroundColor: colors.surface,
-            borderRadius: radius.md,
-            marginBottom: spacing.md,
-        },
-        personalPhotoTextBlock: {
-            flex: 1,
-            paddingRight: spacing.sm,
-        },
-        personalPhotoLabelRow: {
-            flexDirection: 'row',
-            alignItems: 'center',
-        },
-        helpIconButton: {
-            marginLeft: spacing.xs,
-            padding: 2,
-        },
-        privacyLabel: {
-            fontSize: 15,
-            color: colors.text,
-        },
-        privacyHint: {
-            fontSize: 12,
-            color: colors.textMuted,
-            marginTop: 2,
-        },
         saveButton: {
             backgroundColor: colors.primary,
             paddingVertical: spacing.sm + 2,
@@ -1520,6 +1593,25 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             color: colors.textMuted,
             marginLeft: spacing.sm,
         },
+        postSingleAddedRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginBottom: spacing.sm,
+        },
+        postSingleAddedMeta: {
+            flex: 1,
+            marginLeft: spacing.sm,
+        },
+        postSingleAddedTitle: {
+            fontSize: 14,
+            fontWeight: '600',
+            color: colors.text,
+            marginBottom: 2,
+        },
+        postSingleAddedSubtext: {
+            fontSize: 12,
+            color: colors.textMuted,
+        },
         postItemsPreview: {
             flexDirection: 'row',
             flexWrap: 'wrap',
@@ -1545,6 +1637,40 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             color: colors.primary,
             fontWeight: '500',
             alignSelf: 'center',
+        },
+        postCoverRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginBottom: spacing.sm,
+            paddingLeft: 2,
+        },
+        postCoverThumb: {
+            width: 56,
+            height: 78,
+            borderRadius: 8,
+            backgroundColor: colors.surfaceElevated,
+            borderWidth: 1,
+            borderColor: colors.border,
+        },
+        postOtherThumbPlaceholder: {
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        postMoreCoversChip: {
+            width: 56,
+            height: 78,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surfaceElevated,
+            marginLeft: -8,
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        postMoreCoversText: {
+            fontSize: 12,
+            fontWeight: '600',
+            color: colors.textMuted,
         },
         postFooter: {
             flexDirection: 'row',

@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useState } from 'react';
+import { CommonActions } from '@react-navigation/native';
 import {
     Alert,
     KeyboardAvoidingView,
@@ -17,7 +18,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 
 export default function ManualEditScreen({ route, navigation }) {
-    const { item, shelfId, detailRouteKey } = route.params || {};
+    const { item, shelfId, detailRouteKey, detailNavigatorKey } = route.params || {};
     const { token, apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius } = useTheme();
 
@@ -97,14 +98,14 @@ export default function ManualEditScreen({ route, navigation }) {
                     notes: notes.trim() || null,
                 },
             });
-            if (detailRouteKey && response?.item) {
-                navigation.navigate({
-                    key: detailRouteKey,
-                    params: {
+            if (detailRouteKey && detailNavigatorKey && response?.item) {
+                navigation.dispatch({
+                    ...CommonActions.setParams({
                         updatedManualEntry: response.item,
                         updatedManualEntryAt: Date.now(),
-                    },
-                    merge: true,
+                    }),
+                    source: detailRouteKey,
+                    target: detailNavigatorKey,
                 });
             }
             navigation.goBack();
@@ -116,7 +117,7 @@ export default function ManualEditScreen({ route, navigation }) {
     }, [
         apiBase, shelfId, item, title, author, publisher, year, format,
         edition, limitedEdition, ageStatement, specialMarkings, labelColor,
-        regionalItem, barcode, description, itemSpecificText, genre, notes, token, navigation, detailRouteKey
+        regionalItem, barcode, description, itemSpecificText, genre, notes, token, navigation, detailRouteKey, detailNavigatorKey
     ]);
 
     return (

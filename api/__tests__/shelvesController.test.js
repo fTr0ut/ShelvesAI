@@ -6,12 +6,14 @@ const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
+const manualMediaQueries = require('../database/queries/manualMedia');
 const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
 const ratingsQueries = require('../database/queries/ratings');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
+const { query } = require('../database/pg');
 
 jest.mock('../services/visionPipeline');
 jest.mock('../database/queries/shelves');
@@ -40,6 +42,10 @@ jest.mock('../database/queries/userCollectionPhotos', () => ({
     getByCollectionItem: jest.fn().mockResolvedValue(null),
     loadOwnerPhotoThumbnailBuffer: jest.fn(),
     upsertOwnerPhotoThumbnailForItem: jest.fn(),
+    attachVisionCropToItem: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/manualMedia', () => ({
+    uploadFromBuffer: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('../database/queries/feed', () => ({
     logEvent: jest.fn().mockResolvedValue(null),
@@ -86,6 +92,8 @@ describe('shelvesController', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        query.mockReset();
+        query.mockResolvedValue({ rows: [], rowCount: 0 });
         req = {
             user: { id: 1, isPremium: true },
             params: { shelfId: '10' },
@@ -125,6 +133,10 @@ describe('shelvesController', () => {
         shelvesQueries.findCollectionByReference.mockReset();
         collectablesQueries.findByLightweightFingerprint.mockReset();
         collectablesQueries.findById.mockReset();
+        if (!collectablesQueries.fuzzyMatch) {
+            collectablesQueries.fuzzyMatch = jest.fn();
+        }
+        collectablesQueries.fuzzyMatch.mockReset();
         collectablesQueries.upsert.mockReset();
         itemReplacementTracesQueries.createIntent.mockReset();
         itemReplacementTracesQueries.getByIdForUser.mockReset();
@@ -138,6 +150,8 @@ describe('shelvesController', () => {
         userCollectionPhotosQueries.getByCollectionItem.mockReset();
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
+        userCollectionPhotosQueries.attachVisionCropToItem.mockReset();
+        manualMediaQueries.uploadFromBuffer.mockReset();
         needsReviewQueries.getById.mockReset();
         needsReviewQueries.markCompleted.mockReset();
         ratingsQueries.getRating.mockReset();
@@ -160,6 +174,7 @@ describe('shelvesController', () => {
             createdNew: true,
         });
         collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+        collectablesQueries.fuzzyMatch.mockResolvedValue(null);
         shelvesQueries.getForViewing.mockResolvedValue({ id: 10, ownerId: 1, visibility: 'private' });
         shelvesQueries.getItemById.mockResolvedValue({ id: 55, userId: 1, shelfId: 10 });
         if (shelvesQueries.updateReviewedEventLink) {
@@ -173,6 +188,8 @@ describe('shelvesController', () => {
         userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue(null);
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
+        userCollectionPhotosQueries.attachVisionCropToItem.mockResolvedValue(null);
+        manualMediaQueries.uploadFromBuffer.mockResolvedValue(null);
     });
 
     describe('createShelf', () => {
@@ -207,6 +224,80 @@ describe('shelvesController', () => {
                 error: 'Description is required when shelf type is "other".',
             });
             expect(shelvesQueries.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('add item feed payloads', () => {
+        it('logs normalized item.manual_added payload with creator/year/media fields', async () => {
+            req.params = { shelfId: '10' };
+            req.body = { name: 'Manual Item', year: 1998 };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other', visibility: 'public' });
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: { id: 211 },
+                manual: {
+                    id: 311,
+                    name: 'Manual Item',
+                    author: 'Manual Creator',
+                    year: 1998,
+                    type: 'other',
+                    coverMediaPath: 'manuals/311.jpg',
+                },
+            });
+
+            await shelvesController.addManualEntry(req, res);
+
+            expect(feedQueries.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+                eventType: 'item.manual_added',
+                payload: expect.objectContaining({
+                    itemId: 211,
+                    manualId: 311,
+                    title: 'Manual Item',
+                    name: 'Manual Item',
+                    creator: 'Manual Creator',
+                    year: 1998,
+                    coverMediaPath: 'manuals/311.jpg',
+                    source: 'manual',
+                }),
+            }));
+        });
+
+        it('logs normalized item.collectable_added payload with creator/year/cover fields', async () => {
+            req.params = { shelfId: '10' };
+            req.body = { collectableId: 451 };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books', visibility: 'public' });
+            collectablesQueries.findById.mockResolvedValue({
+                id: 451,
+                title: 'Collectable Item',
+                primaryCreator: 'Collectable Creator',
+                year: 2007,
+                kind: 'books',
+                coverUrl: 'https://img.example/cover.jpg',
+                coverMediaPath: 'covers/451.jpg',
+            });
+            shelvesQueries.addCollectable.mockResolvedValue({
+                id: 551,
+                position: null,
+                format: null,
+                notes: null,
+                rating: null,
+            });
+
+            await shelvesController.addCollectable(req, res);
+
+            expect(feedQueries.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+                eventType: 'item.collectable_added',
+                payload: expect.objectContaining({
+                    itemId: 551,
+                    collectableId: 451,
+                    title: 'Collectable Item',
+                    name: 'Collectable Item',
+                    creator: 'Collectable Creator',
+                    year: 2007,
+                    coverUrl: 'https://img.example/cover.jpg',
+                    coverMediaPath: 'covers/451.jpg',
+                    source: 'user',
+                }),
+            }));
         });
     });
 
@@ -770,6 +861,79 @@ describe('shelvesController', () => {
             }));
             expect(res.send).toHaveBeenCalledWith(generatedCrop);
         });
+
+        it('skips manual cover promotion for other-shelf crops when owner photo is not shareable', async () => {
+            const cropBuffer = Buffer.from('existing-crop');
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other' });
+            visionItemRegionsQueries.getByIdForScan.mockResolvedValue({
+                id: 8,
+                box2d: [100, 200, 700, 900],
+                manualId: 808,
+            });
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue({
+                id: 901,
+                regionId: 8,
+                contentType: 'image/jpeg',
+            });
+            visionItemCropsQueries.loadImageBuffer.mockResolvedValue({
+                buffer: cropBuffer,
+                contentType: 'image/jpeg',
+                contentLength: cropBuffer.length,
+            });
+            shelvesQueries.findCollectionByReference.mockResolvedValue({ id: 55 });
+            userCollectionPhotosQueries.attachVisionCropToItem.mockResolvedValue({
+                id: 55,
+                ownerPhotoSource: 'vision_crop',
+                ownerPhotoVisible: false,
+            });
+
+            await shelvesController.getVisionScanRegionCrop(req, res);
+
+            expect(userCollectionPhotosQueries.attachVisionCropToItem).toHaveBeenCalledWith(expect.objectContaining({
+                itemId: 55,
+                userId: 1,
+                shelfId: 10,
+                cropId: 901,
+            }));
+            expect(manualMediaQueries.uploadFromBuffer).not.toHaveBeenCalled();
+            expect(res.send).toHaveBeenCalledWith(cropBuffer);
+        });
+
+        it('promotes manual cover for other-shelf crops when owner photo sharing is enabled', async () => {
+            const cropBuffer = Buffer.from('existing-crop');
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other' });
+            visionItemRegionsQueries.getByIdForScan.mockResolvedValue({
+                id: 8,
+                box2d: [100, 200, 700, 900],
+                manualId: 808,
+            });
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue({
+                id: 901,
+                regionId: 8,
+                contentType: 'image/jpeg',
+            });
+            visionItemCropsQueries.loadImageBuffer.mockResolvedValue({
+                buffer: cropBuffer,
+                contentType: 'image/jpeg',
+                contentLength: cropBuffer.length,
+            });
+            shelvesQueries.findCollectionByReference.mockResolvedValue({ id: 55 });
+            userCollectionPhotosQueries.attachVisionCropToItem.mockResolvedValue({
+                id: 55,
+                ownerPhotoSource: 'vision_crop',
+                ownerPhotoVisible: true,
+            });
+
+            await shelvesController.getVisionScanRegionCrop(req, res);
+
+            expect(manualMediaQueries.uploadFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                manualId: 808,
+                buffer: cropBuffer,
+                contentType: 'image/jpeg',
+            }));
+            expect(res.send).toHaveBeenCalledWith(cropBuffer);
+        });
     });
 
     describe('processShelfVision', () => {
@@ -1100,6 +1264,187 @@ describe('shelvesController', () => {
                 item: expect.objectContaining({
                     id: 999,
                     manual: expect.objectContaining({ id: 701 }),
+                }),
+            }));
+        });
+
+        it('logs normalized collectable review payload when review completion creates shelf item', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books', visibility: 'public' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: { title: 'Review Title', primaryCreator: 'Review Creator' },
+            });
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            if (collectablesQueries.fuzzyMatch) {
+                collectablesQueries.fuzzyMatch.mockResolvedValue({
+                    id: 801,
+                    title: 'Review Title',
+                    primaryCreator: 'Review Creator',
+                    year: 2011,
+                    kind: 'books',
+                    coverUrl: 'https://img.example/review.jpg',
+                });
+            }
+            shelvesQueries.addCollectable.mockResolvedValue({
+                id: 901,
+                position: null,
+                notes: null,
+                rating: null,
+            });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(feedQueries.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+                eventType: 'item.collectable_added',
+                payload: expect.objectContaining({
+                    source: 'review',
+                    reviewItemId: 55,
+                    itemId: 901,
+                    collectableId: 801,
+                    title: 'Review Title',
+                    creator: 'Review Creator',
+                    year: 2011,
+                }),
+            }));
+        });
+
+        it('logs normalized manual review payload for other-shelf review completion', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other', visibility: 'public' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: {
+                    title: 'Manual Review',
+                    author: 'Manual Review Creator',
+                },
+            });
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue(null);
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: {
+                    id: 1201,
+                    position: null,
+                    format: null,
+                    notes: null,
+                    rating: null,
+                },
+                manual: {
+                    id: 1301,
+                    name: 'Manual Review',
+                    author: 'Manual Review Creator',
+                    year: 2020,
+                    type: 'other',
+                    coverMediaPath: 'manuals/1301.jpg',
+                },
+            });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(feedQueries.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+                eventType: 'item.manual_added',
+                payload: expect.objectContaining({
+                    source: 'review',
+                    reviewItemId: 55,
+                    itemId: 1201,
+                    manualId: 1301,
+                    title: 'Manual Review',
+                    creator: 'Manual Review Creator',
+                    year: 2020,
+                    coverMediaPath: 'manuals/1301.jpg',
+                }),
+            }));
+        });
+    });
+
+    describe('getManualItem', () => {
+        beforeEach(() => {
+            req.params = { manualId: '901' };
+            req.user = { id: 'friend-2' };
+        });
+
+        it('denies access when viewer cannot access source shelf', async () => {
+            shelvesQueries.getManualById.mockResolvedValue({
+                id: 901,
+                shelfId: 10,
+                coverMediaPath: 'manuals/901.jpg',
+            });
+            shelvesQueries.getForViewing.mockResolvedValue(null);
+
+            await shelvesController.getManualItem(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(403);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Viewer does not have access' });
+        });
+
+        it('redacts manual cover media for authorized non-owner viewer when sharing is off', async () => {
+            shelvesQueries.getManualById.mockResolvedValue({
+                id: 901,
+                shelfId: 10,
+                coverMediaPath: 'manuals/901.jpg',
+            });
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 'owner-1',
+                type: 'other',
+                visibility: 'public',
+            });
+            query.mockResolvedValueOnce({
+                rows: [{
+                    owner_id: 'owner-1',
+                    shelf_type: 'other',
+                    owner_photo_source: 'upload',
+                    owner_photo_visible: true,
+                    show_personal_photos: false,
+                }],
+            });
+
+            await shelvesController.getManualItem(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                manual: expect.objectContaining({
+                    id: 901,
+                    coverMediaPath: null,
+                    coverMediaUrl: null,
+                }),
+            }));
+        });
+
+        it('keeps manual cover media for authorized non-owner viewer when sharing is on', async () => {
+            shelvesQueries.getManualById.mockResolvedValue({
+                id: 901,
+                shelfId: 10,
+                coverMediaPath: 'manuals/901.jpg',
+            });
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 'owner-1',
+                type: 'other',
+                visibility: 'public',
+            });
+            query.mockResolvedValueOnce({
+                rows: [{
+                    owner_id: 'owner-1',
+                    shelf_type: 'other',
+                    owner_photo_source: 'vision_crop',
+                    owner_photo_visible: true,
+                    show_personal_photos: true,
+                }],
+            });
+
+            await shelvesController.getManualItem(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                manual: expect.objectContaining({
+                    id: 901,
+                    coverMediaPath: 'manuals/901.jpg',
+                    coverMediaUrl: expect.stringContaining('/manuals/901.jpg'),
                 }),
             }));
         });

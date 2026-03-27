@@ -17,9 +17,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { addComment, getComments, toggleLike } from '../services/feedApi';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import {
+  buildOwnerPhotoThumbnailUri,
+  formatAddedEventHeader,
+  getAddedItemDetails,
+  getAddedPreviewItems,
+  isAddedEventType,
+  resolveAddedEventCount,
+} from '../utils/feedAddedEvent';
 
 export default function FeedDetailScreen({ route, navigation }) {
   const { entry, id, feedId } = route.params || {};
@@ -38,6 +46,8 @@ export default function FeedDetailScreen({ route, navigation }) {
   const [likeCount, setLikeCount] = useState(entry?.likeCount || 0);
   const [hasLiked, setHasLiked] = useState(entry?.hasLiked || false);
   const [likePending, setLikePending] = useState(false);
+  const [imageAuthToken, setImageAuthToken] = useState(null);
+  const [addedThumbFailures, setAddedThumbFailures] = useState({});
 
   const scrollViewRef = useRef(null);
 
@@ -97,6 +107,23 @@ export default function FeedDetailScreen({ route, navigation }) {
     loadComments();
   }, [loadComments]);
 
+  useEffect(() => {
+    let isActive = true;
+    if (!token) {
+      setImageAuthToken(null);
+      return () => { isActive = false; };
+    }
+    (async () => {
+      try {
+        const resolved = await getValidToken(token, apiBase);
+        if (isActive) setImageAuthToken(resolved || token);
+      } catch (_err) {
+        if (isActive) setImageAuthToken(token);
+      }
+    })();
+    return () => { isActive = false; };
+  }, [apiBase, token]);
+
   const handleToggleLike = useCallback(async () => {
     if (!token || !targetId || likePending) return;
     const nextLiked = !hasLiked;
@@ -145,6 +172,37 @@ export default function FeedDetailScreen({ route, navigation }) {
   const isCheckIn = eventType === 'checkin.activity';
   const isCheckinRated = eventType === 'checkin.rated';
   const isReviewed = eventType === 'reviewed';
+  const isAddedEvent = isAddedEventType(eventType);
+  const addedItemCount = isAddedEvent ? resolveAddedEventCount(resolvedEntry) : 0;
+  const addedHeaderText = isAddedEvent
+    ? formatAddedEventHeader({
+      shelf,
+      eventItemCount: addedItemCount,
+      items: items || [],
+    })
+    : null;
+  const addedPreviewItems = isAddedEvent ? getAddedPreviewItems(items || [], apiBase, 3) : [];
+  const singleAddedItem = isAddedEvent && addedItemCount === 1
+    ? getAddedItemDetails((items || [])[0] || {}, apiBase)
+    : null;
+  const isOtherShelfAdded = isAddedEvent && String(shelf?.type || '').toLowerCase() === 'other';
+  const addedImageHeaders = imageAuthToken
+    ? { Authorization: `Bearer ${imageAuthToken}`, 'ngrok-skip-browser-warning': 'true' }
+    : null;
+  const getThumbFailureKey = (entryKey, detail, idx) => `${entryKey}:${detail?.itemId || detail?.name || idx}`;
+  const getOtherOwnerThumbSource = (entryKey, detail, idx) => {
+    if (!isOtherShelfAdded || !addedImageHeaders) return null;
+    const thumbUri = buildOwnerPhotoThumbnailUri({
+      apiBase,
+      shelfId: shelf?.id,
+      itemId: detail?.itemId,
+    });
+    if (!thumbUri) return null;
+    const failureKey = getThumbFailureKey(entryKey, detail, idx);
+    if (addedThumbFailures[failureKey]) return null;
+    return { uri: thumbUri, headers: addedImageHeaders };
+  };
+  const shouldRenderItemsList = !isAddedEvent || addedItemCount > 1;
 
   // Use displayHints with fallback defaults
   const hints = displayHints || {
@@ -558,6 +616,9 @@ export default function FeedDetailScreen({ route, navigation }) {
               </Text>
             </View>
           </View>
+          {isAddedEvent ? (
+            <Text style={styles.addedHeaderText}>{addedHeaderText}</Text>
+          ) : null}
 
           {(isCheckIn || isCheckinRated) ? (
             <View style={styles.checkinCard}>
@@ -633,9 +694,6 @@ export default function FeedDetailScreen({ route, navigation }) {
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.shelfName}>{shelf?.name || 'Untitled Shelf'}</Text>
-                  {shelf?.description ? (
-                    <Text style={styles.shelfDescription}>{shelf.description}</Text>
-                  ) : null}
                   <View style={styles.shelfMeta}>
                     <View style={styles.metaItem}>
                       <Ionicons name="library-outline" size={14} color={colors.textMuted} />
@@ -649,30 +707,116 @@ export default function FeedDetailScreen({ route, navigation }) {
                 </View>
               )}
 
+              {singleAddedItem ? (
+                <View style={styles.addedSingleRow}>
+                  {(() => {
+                    const entryKey = resolvedEntry?.aggregateId || resolvedEntry?.id || resolvedEntry?.createdAt || 'entry';
+                    const ownerSource = getOtherOwnerThumbSource(entryKey, singleAddedItem, 0);
+                    const imageSource = isOtherShelfAdded
+                      ? ownerSource
+                      : (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null);
+                    if (!imageSource) {
+                      return (
+                        <View style={[styles.addedThumb, styles.addedOtherPlaceholder]}>
+                          <Ionicons name="book-outline" size={20} color={colors.textMuted} />
+                        </View>
+                      );
+                    }
+                    return (
+                      <Image
+                        source={imageSource}
+                        style={styles.addedThumb}
+                        resizeMode="cover"
+                        onError={() => {
+                          if (!isOtherShelfAdded) return;
+                          const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
+                          setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                        }}
+                      />
+                    );
+                  })()}
+                  <View style={styles.addedSingleMeta}>
+                    <Text style={styles.addedSingleTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                    <Text style={styles.addedSingleSubtext} numberOfLines={1}>
+                      {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {(isAddedEvent && addedItemCount > 1) ? (
+                <View style={styles.addedPreviewRow}>
+                  {addedPreviewItems.map((preview, idx) => {
+                    const entryKey = resolvedEntry?.aggregateId || resolvedEntry?.id || resolvedEntry?.createdAt || 'entry';
+                    if (isOtherShelfAdded) {
+                      const ownerSource = getOtherOwnerThumbSource(entryKey, preview, idx);
+                      const failureKey = getThumbFailureKey(entryKey, preview, idx);
+                      if (ownerSource) {
+                        return (
+                          <Image
+                            key={`${preview.itemId || preview.name || idx}-other-preview`}
+                            source={ownerSource}
+                            style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
+                            resizeMode="cover"
+                            onError={() => {
+                              setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                            }}
+                          />
+                        );
+                      }
+                      return (
+                        <View
+                          key={`${preview.itemId || preview.name || idx}-other-preview`}
+                          style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }, styles.addedOtherPlaceholder]}
+                        >
+                          <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                        </View>
+                      );
+                    }
+                    if (!preview.coverUrl) return null;
+                    return (
+                      <Image
+                        key={`${preview.itemId || preview.name || idx}-preview`}
+                        source={{ uri: preview.coverUrl }}
+                        style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
+                        resizeMode="cover"
+                      />
+                    );
+                  })}
+                  {addedItemCount > addedPreviewItems.length ? (
+                    <View style={styles.addedMoreChip}>
+                      <Text style={styles.addedMoreText}>+{addedItemCount - addedPreviewItems.length}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
               {/* Dynamic Section Title from displayHints */}
               {hints.sectionTitle && (
                 <Text style={styles.sectionTitle}>{hints.sectionTitle}</Text>
               )}
 
               {/* Items - render based on displayHints.itemDisplayMode */}
-              <View style={styles.itemsListContainer}>
-                <ScrollView nestedScrollEnabled={true}>
-                  {(items || []).length > 0 ? (
-                    items.map((item, idx) => (
-                      <View key={item._id || `item-${idx}`}>
-                        {hints.itemDisplayMode === 'rated'
-                          ? renderRatingItem({ item, index: idx })
-                          : (hints.itemDisplayMode === 'reviewed'
-                            ? renderReviewedItem({ item, index: idx })
-                            : renderItem({ item, index: idx }))
-                        }
-                      </View>
-                    ))
-                  ) : (
-                    <Text style={styles.emptyText}>No items to display</Text>
-                  )}
-                </ScrollView>
-              </View>
+              {shouldRenderItemsList ? (
+                <View style={styles.itemsListContainer}>
+                  <ScrollView nestedScrollEnabled={true}>
+                    {(items || []).length > 0 ? (
+                      items.map((item, idx) => (
+                        <View key={item._id || `item-${idx}`}>
+                          {hints.itemDisplayMode === 'rated'
+                            ? renderRatingItem({ item, index: idx })
+                            : (hints.itemDisplayMode === 'reviewed'
+                              ? renderReviewedItem({ item, index: idx })
+                              : renderItem({ item, index: idx }))
+                          }
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.emptyText}>No items to display</Text>
+                    )}
+                  </ScrollView>
+                </View>
+              ) : null}
             </>
           )}
 
@@ -784,6 +928,12 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     fontSize: 13,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  addedHeaderText: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
   },
   shelfCard: {
     backgroundColor: colors.surface,
@@ -925,6 +1075,69 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: spacing.sm,
+  },
+  addedSingleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+  },
+  addedThumb: {
+    width: 72,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addedSingleMeta: {
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  addedSingleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  addedSingleSubtext: {
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  addedPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    paddingLeft: 2,
+  },
+  addedPreviewThumb: {
+    width: 56,
+    height: 78,
+    borderRadius: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addedOtherPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addedMoreChip: {
+    width: 56,
+    height: 78,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    marginLeft: -8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addedMoreText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
   },
   sectionTitle: {
     fontSize: 14,

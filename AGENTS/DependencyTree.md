@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ---
 
@@ -49,7 +49,21 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
-- 2026-03-26 | market-value-ui-enhancements | Added market value estimate feature: new `user_market_value_estimates` DB table (migration `20260326000000`), new query module `database/queries/marketValueEstimates.js`, three new API endpoints on `/api/collectables/:id` (`market-value-sources` GET, `user-estimate` GET/PUT), new `MarketValueSourcesScreen` (registered in App.js root stack + BottomTabNavigator ShelvesTabStack). Updated `CollectableDetailScreen` to show "Est. Market Value" label for API-sourced values with clickable navigation to sources screen, and appends user estimate as "Your Estimate" metadata row when present.
+- 2026-03-27 | mobile-ui-enhancements | Three UI enhancements: (1) `CollectableDetailScreen` owner photo section now shows `<ownerUsername>'s Photo` instead of "Your photos" and hides "added automatically from your scan" when viewing a friend's shelf item (uses existing `isOwnerContext`/`normalizedOwnerUsername` pattern). (2) `ShelfDetailScreen` FAB restyled from primary-colored circle with `+` icon to green (`colors.success`) pill-shaped button with "Add" text, repositioned closer to tab bar (`spacing.sm` offset). (3) Experimental feature-flagged (`ENABLE_PROFILE_IN_TAB_BAR` in new `mobile/src/config/featureFlags.js`, default `false`) profile-in-tab-bar: adds Profile tab at leftmost position in `BottomTabNavigator` with `initialRouteName="Home"` to preserve default landing page, custom flex layout (Profile/Home/Add flex 1, Shelves flex 2 with left-aligned icon) to keep FAB centered and Home centered between Profile and FAB; opens `AccountSlideMenu` sliding left-to-right (new `direction` prop on `AccountSlideMenu`); hides profile icon from `SocialFeedScreen` and `ShelvesScreen` headers when enabled. `AccountSlideMenu` also gained bottom-pinned "My Profile" and "Notifications" links (`BOTTOM_MENU_ITEMS` array, rendered in a `bottomSection` with `marginTop: 'auto'` separator).
+- 2026-03-27 | mobile-profile-feed-preview-key-fix | Updated `mobile/src/screens/ProfileScreen.js` added-event preview keys for stacked thumbnails (`other-thumb` + `cover`) to include feed entry identity and index (`entryKey` + item identity + `idx`) so repeated item names no longer collide and trigger React duplicate-key warnings on Profile.
+- 2026-03-27 | mobile-social-feed-other-thumb-key-fix | Updated `mobile/src/screens/SocialFeedScreen.js` added-event `other` shelf thumbnail keys to include feed entry identity and index (`entryKey` + item identity + `idx`) so repeated item names no longer generate duplicate React keys (fixes `Encountered two children with the same key ... Dog-other-thumb` warning during feed render).
+- 2026-03-27 | mobile-owner-photo-placeholder-book-icon | Updated `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen` `other` added-event fallback thumbnails to use `Ionicons book-outline` instead of `image-outline` when owner-photo thumbnails are redacted/unavailable.
+- 2026-03-27 | mobile-feed-owner-thumb-itemid-hardening | Updated `mobile/src/utils/feedAddedEvent.js` owner-photo thumbnail id resolution to use only explicit collection item ids (`item.itemId` / `payload.itemId`) and no longer fall back to generic `id`, preventing feed thumb requests from non-canonical ids.
+- 2026-03-27 | other-manual-cover-read-time-privacy-gating | Added backend read-time redaction for `other` manual cover media in `api/controllers/feedController.js` (`GET /api/feed`, `GET /api/feed/:id`) and `api/controllers/shelvesController.js` (`GET /api/manuals/:manualId`): cover fields are now nulled for non-owners when the linked collection item has an owner photo (`vision_crop` or `upload`) but sharing is currently disabled (`owner_photo_visible=false` or `users.show_personal_photos=false`). Feed redaction now also nulls `itemId` references for blocked manual items so clients cannot derive owner-photo thumbnail endpoints from redacted entries. Copy-to-cover writes remain unchanged; schema/contracts unchanged; standalone manual-cover-only items without linked owner photo remain visible.
+- 2026-03-27 | owner-photo-privacy-manual-promotion-guard | Hardened `shelvesController.attachCropToCollectionItem` so `other`-shelf crop-to-manual cover promotion only runs when crop attach succeeds and the attached owner photo is both `vision_crop` and share-enabled (`owner_photo_visible = true`). Added regression tests in `api/__tests__/shelvesController.test.js` for share-off skip and share-on promotion behavior.
+- 2026-03-26 | vision-crop-warmup-blocking | Changed crop warmup in `shelvesController.processShelfVision` from fire-and-forget (`queueVisionCropWarmup` via `setImmediate`) to blocking (`await warmVisionScanCrops`) before `processingStatus.completeJob`, so crop photos are generated and attached to shelf items before the mobile client sees 100% completion. Added `generatingPhotos` progress step at 95% in `api/config/visionProgressMessages.json`. Both async and sync vision processing paths updated. No mobile code changes required — existing polling naturally handles the new progress step.
+- 2026-03-26 | feed-added-event-visual-refresh | Refined added-event system end-to-end for shelf posts. API now standardizes `item.collectable_added` / `item.manual_added` payloads across `shelvesController` and `visionPipeline` with normalized title/name, creator, year, media fields, ids, and source metadata; feed mapping in `feedController` now exposes top-level `title`/`creator`/`year` for added items in both `GET /api/feed` and `GET /api/feed/:id`, and feed-detail item hydration now selects collectable year. Mobile added new shared helper `mobile/src/utils/feedAddedEvent.js` and updated `SocialFeedScreen`, `ProfileScreen`, and `FeedDetailScreen` to use dynamic shelf-type header copy, remove shelf-description body usage in added cards, render single-item detail rows (thumbnail + name/creator/year), preserve multi-item stacked thumbnails, and show `other` shelf owner-photo thumbnails with placeholder fallback when unavailable.
+- 2026-03-26 | mobile-navigation-manual-edit-nested-setparams-target-fix | Fixed manual-edit return updates across nested navigation by passing `detailNavigatorKey` from `CollectableDetailScreen` into `ManualEditScreen` and dispatching `CommonActions.setParams` with both `source` (`detailRouteKey`) and `target` (`detailNavigatorKey`), preventing unhandled `SET_PARAMS` warnings when detail is mounted inside the nested Shelves stack.
+- 2026-03-26 | mobile-navigation-manual-edit-close-behavior-fix | Updated `ManualEditScreen` save flow to dispatch `CommonActions.setParams` to the existing `CollectableDetail` route via `detailRouteKey` (instead of `navigate(...)`), so save updates detail params without pushing/focusing another route and `goBack()` reliably closes the edit screen.
+- 2026-03-26 | mobile-navigation-manual-edit-save-route-fix | Fixed `ManualEditScreen` save flow to include route `name: 'CollectableDetail'` in object-form `navigation.navigate(...)` when targeting `detailRouteKey`, resolving React Navigation runtime error requiring a route name for object arguments.
+- 2026-03-26 | mobile-navigation-add-to-shelf-nested-route-fix | Fixed `BottomTabNavigator` add-to-shelf FAB navigation to target the actual nested navigator path (`Main -> Shelves -> ShelfSelect`) when persistent shelves footer mode is enabled, replacing the invalid direct `navigate('Shelves', { screen: 'ShelfSelect' })` dispatch.
+- 2026-03-26 | market-value-ui-enhancements | Added market value estimate feature: new `user_market_value_estimates` DB table (migration `20260326000000`), new query module `database/queries/marketValueEstimates.js`, three new API endpoints on `/api/collectables/:id` (`market-value-sources` GET, `user-estimate` GET/PUT — all support `?type=manual` for `user_manuals` items), new `MarketValueSourcesScreen` (registered in App.js root stack + BottomTabNavigator ShelvesTabStack). Updated `CollectableDetailScreen` to show "Est. Market Value" label with clickable navigation to sources screen in both the manual (`manualEditableFields`) and collectable (`preferredKeys`) metadata paths, and appends user estimate as "Your Estimate" metadata row when present. User estimate fetch supports both collectable and manual items via `?type=manual` query param.
+- 2026-03-26 | collectable-detail-replace-cta-layout | Updated `CollectableDetailScreen` header actions so the manual-entry edit pencil no longer gets displaced when the vision-linked replacement CTA is present: the `Not the item you intended to add?` CTA now renders in its own row beneath the header while manual edit access remains in the right header action slot.
 - 2026-03-26 | mobile-navigation-persistent-shelves-footer | Added rollback-gated persistent footer flow for shelf details by introducing a nested Shelves stack inside `BottomTabNavigator` (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) behind `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER`. Add-FAB now routes to nested `Shelves -> ShelfSelect` when enabled (legacy root `ShelfSelect` path retained when disabled). Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so list/scroll content and local floating actions clear the persistent tab bar only when rendered under tab navigation.
 - 2026-03-25 | reviewed-republish-upsert-and-updated-label | Implemented stable reviewed re-publish workflow: added `user_collections.reviewed_event_log_id/reviewed_event_published_at/reviewed_event_updated_at` (migration `20260325201500_add_reviewed_event_link_to_user_collections` + init schema alter), exposed linkage fields in shelf-item payloads (`reviewedEventId`, `reviewPublishedAt`, `reviewUpdatedAt`), and added `feedQueries.upsertReviewedEvent(...)` to update existing reviewed event logs in place (or create/link fallback), with content-change guard on notes/rating/metadata and aggregate `last_activity_at` bump for changed republishes. Updated `shelvesController` collectable/manual note-share paths to use reviewed upsert + persist linkage on `user_collections`, updated mobile note-save payloads to pass optional `reviewedEventId`, and added reviewed `Updated on <absolute local datetime>` rendering across `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen`. Feed entry merge ordering now sorts by activity (`updatedAt` fallback) to keep re-published reviewed cards at the top.
 - 2026-03-25 | reviewed-card-read-more-and-detail-expand | Updated reviewed-note UI behavior: in `SocialFeedScreen` reviewed cards now detect when note text is line-clamped and show a small `n/ click to read more` hint (with italicized `click to read more`), while `FeedDetailScreen` reviewed item notes no longer clamp to 2 lines so the full note text is shown.
@@ -126,6 +140,7 @@ ShelvesAI/
 - 2026-03-23 | db-tooling | Added `api/scripts/pgrewind.js` and `npm run pgrewind` for local-only rewind testing: deletes rows with `created_at >= now - --hours`, supports `--dry-run`, hardcodes `localhost:5432/shelvesai` + user `shelves`, and performs runtime safety checks to block non-local targets.
 - 2026-03-23 | vision-upload-limits | Raised private vision scan photo validation limits for modern phones: `visionScanPhotos.upsertFromBuffer()` now validates with `VISION_SCAN_MAX_DIMENSION` (default `8192`) and `VISION_SCAN_MAX_PIXELS` (default `40000000`) instead of the global 4096 cap. Added area-check support in `utils/imageValidation.js`, new unit tests (`__tests__/imageValidation.test.js`), and documented env knobs in `.env.local.example`.
 - 2026-03-22 | dev-workflow | Added `npm run dev:local` scripts to both `api/` and `mobile/` for fully local development. API: `server.js` now loads `.env.local` overrides (highest priority); `database/pg.js` uses development defaults matching `knexfile.js` (localhost/shelves/localdev123/shelvesai); added `cross-env` devDep. Mobile: new `scripts/dev-local.js` reads `LOCAL_API_ADDRESS` from `.env.local` (default `http://localhost:5001`), sets `EXPO_PUBLIC_API_BASE`, spawns Expo; `app.config.js` accepts `LOCAL_API_ADDRESS` as fallback for `API_BASE`. New files: `api/.env.local.example`, `mobile/.env.local.example`, root `.env.local.example`.
+- 2026-03-26 | website-seo | Generated static `sitemap.xml` for website and documented existing website routes (`about`, `books`, `collectibles`, `how-it-works`, `movies`, `privacy`, `video-games`, `vinyl`) in DependencyTree.md.
 
 ---
 
@@ -396,6 +411,7 @@ controllers/accountController.js
   → database/queries/utils.js
   → database/queries/visionQuota.js
   → services/mediaUrl.js
+  Allowed update fields: first_name, last_name, phone_number, country, city, state, is_private, is_premium, picture, show_personal_photos
   Guards: checks req.user.premiumLockedByAdmin before allowing is_premium update
 ```
 
@@ -1151,7 +1167,7 @@ components/news/QuickCheckInModal.js
 | CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, assets/tmdb-logo.svg, expo-image-manipulator, expo-file-system/legacy |
 | CheckInScreen | AuthContext, ThemeContext, api, useSearch |
 | ManualEditScreen | AuthContext, ThemeContext, api |
-| AccountScreen | AuthContext, ThemeContext, PushContext, api, useAsync |
+| AccountScreen | AuthContext, ThemeContext, PushContext, api, useAsync (manages is_private + show_personal_photos toggles) |
 | ProfileScreen | AuthContext, ThemeContext, api, imageUpload |
 | ProfileEditScreen | AuthContext, ThemeContext, api, imageUpload |
 | FriendSearchScreen | AuthContext, ThemeContext, api |
@@ -1197,10 +1213,35 @@ website/src/app/page.tsx
   → website/src/content.json
   → website/src/app/WaitlistForm.tsx
   → website/src/app/page.module.css
+  → website/src/app/HomeSlideshow.tsx
 
 website/src/app/WaitlistForm.tsx
   → website/src/app/waitlist-form.module.css
   → (env) NEXT_PUBLIC_API_BASE
+
+website/src/app/about/page.tsx
+  (static content page)
+
+website/src/app/how-it-works/page.tsx
+  (static content page)
+
+website/src/app/privacy/page.tsx
+  (static content page)
+
+website/src/app/books/page.tsx
+  → website/src/app/components/CategoryPage.tsx
+
+website/src/app/collectibles/page.tsx
+  → website/src/app/components/CategoryPage.tsx
+
+website/src/app/movies/page.tsx
+  → website/src/app/components/CategoryPage.tsx
+
+website/src/app/video-games/page.tsx
+  → website/src/app/components/CategoryPage.tsx
+
+website/src/app/vinyl/page.tsx
+  → website/src/app/components/CategoryPage.tsx
 
 website/src/app/reset-password/page.tsx
   → website/src/app/reset-password/reset-password-client.tsx
@@ -1555,6 +1596,9 @@ news_items (SERIAL PK)
 | `20260324_add_collection_item_id_to_vision_item_regions` | + `vision_item_regions.collection_item_id` FK -> `user_collections.id` + index `idx_vision_item_regions_collection_item` for exact region-to-item crop attachment |
 | `20260325010000_create_item_replacement_traces` | + `item_replacement_traces` table (source/target item refs, trigger source/status lifecycle, metadata, analytics indexes) |
 | `20260325010010_add_item_replacement_traces_rls` | RLS policies for `item_replacement_traces` (`*_isolation` + `*_admin`) |
+| `20260325201500_add_reviewed_event_link_to_user_collections` | + `user_collections.reviewed_event_*` columns for review/feed event linking |
+| `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table |
+| `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default → TRUE (flips existing users), `user_collections.owner_photo_visible` default → TRUE |
 
 ---
 
@@ -1618,4 +1662,3 @@ These files have the most dependents or are critical infrastructure:
 | `shared/theme/tokens.js` | 5 mobile UI components import it directly |
 | `admin-dashboard/src/api/client.js` | All admin API calls flow through it |
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
-
