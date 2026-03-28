@@ -15,6 +15,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.shelvesai.app",
+      "associatedDomains": [
+        "applinks:shelvesai.com",
+        "applinks:www.shelvesai.com"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Shelves.AI to capture your shelves.",
         "NSPhotoLibraryUsageDescription": "Allow Shelves.AI to import shelf photos.",
@@ -28,6 +32,48 @@
       },
       "package": "com.shelvesai.app",
       "softwareKeyboardLayoutMode": "resize",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "shelvesai.com",
+              "pathPrefix": "/app"
+            },
+            {
+              "scheme": "https",
+              "host": "www.shelvesai.com",
+              "pathPrefix": "/app"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "shelvesai.com",
+              "pathPrefix": "/reset-password"
+            },
+            {
+              "scheme": "https",
+              "host": "www.shelvesai.com",
+              "pathPrefix": "/reset-password"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",

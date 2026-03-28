@@ -10,22 +10,46 @@
     "expectNames": ["Main", "Shelves"]
   },
   {
-    "name": "Feed detail",
-    "url": "shelvesai://feed/evt_123",
+    "name": "Canonical event detail",
+    "url": "shelvesai://app/events/evt_123/test-event",
     "expectNames": ["FeedDetail"],
-    "expectParams": { "id": "evt_123" }
+    "expectParams": { "id": "evt_123", "slug": "test-event" }
   },
   {
-    "name": "Shelf detail",
-    "url": "shelvesai://shelf/42",
+    "name": "Legacy feed detail alias",
+    "url": "shelvesai://feed/evt_legacy",
+    "expectNames": ["FeedDetail"],
+    "expectParams": { "id": "evt_legacy" }
+  },
+  {
+    "name": "Canonical shelf detail",
+    "url": "shelvesai://app/shelves/42/my-shelf",
     "expectNames": ["ShelfDetail"],
-    "expectParams": { "id": "42" }
+    "expectParams": { "id": "42", "slug": "my-shelf" }
   },
   {
-    "name": "Collectable detail",
-    "url": "shelvesai://collectable/99",
+    "name": "Legacy shelf detail alias",
+    "url": "shelvesai://shelf/43",
+    "expectNames": ["ShelfDetail"],
+    "expectParams": { "id": "43" }
+  },
+  {
+    "name": "Canonical collectable detail",
+    "url": "shelvesai://app/collectables/99/zelda",
     "expectNames": ["CollectableDetail"],
-    "expectParams": { "id": "99" }
+    "expectParams": { "collectableId": "99", "slug": "zelda" }
+  },
+  {
+    "name": "Legacy collectable alias",
+    "url": "shelvesai://collectable/100",
+    "expectNames": ["CollectableDetail"],
+    "expectParams": { "collectableId": "100" }
+  },
+  {
+    "name": "Canonical manual detail",
+    "url": "shelvesai://app/manuals/77/rare-card",
+    "expectNames": ["CollectableDetail"],
+    "expectParams": { "manualId": "77", "slug": "rare-card" }
   },
   {
     "name": "Profile",

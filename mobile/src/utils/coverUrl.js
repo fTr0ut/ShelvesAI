@@ -17,7 +17,8 @@
 export function buildMediaUri(value, apiBase = '') {
     if (!value) return null;
     if (/^https?:/i.test(value)) return value;
-    const trimmed = String(value).replace(/^\/+/, '');
+    const normalized = String(value).replace(/\\/g, '/');
+    const trimmed = normalized.replace(/^\/+/, '');
     const resource = trimmed.startsWith('media/') ? trimmed : `media/${trimmed}`;
     if (!apiBase) return `/${resource}`;
     return `${apiBase.replace(/\/+$/, '')}/${resource}`;
@@ -28,8 +29,8 @@ export function buildMediaUri(value, apiBase = '') {
  *
  * Priority order:
  *  1. `coverMediaUrl`  — pre-resolved by API (S3/CloudFront)
- *  2. `coverImageUrl`  — external or local path
- *  3. `coverMediaPath` — local media path
+ *  2. `coverMediaPath` — local media path (cached, preferred when available)
+ *  3. `coverImageUrl`  — external or local path
  *  4. `coverUrl`       — legacy field
  *  5. `images[]`       — image array (urlLarge > urlMedium > urlSmall > url)
  *
@@ -45,21 +46,18 @@ export function resolveCollectableCoverUrl(collectable, apiBase = '') {
         return collectable.coverMediaUrl;
     }
 
-    const coverImageUrl = collectable.coverImageUrl;
-    const coverImageSource = collectable.coverImageSource;
-    if (coverImageUrl) {
-        if (/^https?:/i.test(coverImageUrl) || coverImageSource === 'external') {
-            return coverImageUrl;
-        }
-        if (coverImageSource === 'local') {
-            return buildMediaUri(coverImageUrl, apiBase);
-        }
-        // Backward compatibility: many older rows store local paths without source.
-        return buildMediaUri(coverImageUrl, apiBase);
-    }
-
     if (collectable.coverMediaPath) {
         return buildMediaUri(collectable.coverMediaPath, apiBase);
+    }
+
+    const coverImageUrl = collectable.coverImageUrl;
+    if (coverImageUrl) {
+        if (/^https?:/i.test(coverImageUrl)) {
+            return coverImageUrl;
+        }
+        // Treat any non-absolute coverImageUrl as a local media path.
+        // Some records may have stale/missing coverImageSource metadata.
+        return buildMediaUri(coverImageUrl, apiBase);
     }
 
     if (collectable.coverUrl) {
@@ -71,7 +69,9 @@ export function resolveCollectableCoverUrl(collectable, apiBase = '') {
     const images = Array.isArray(collectable.images) ? collectable.images : [];
     for (const image of images) {
         const url = image?.urlLarge || image?.urlMedium || image?.urlSmall || image?.url;
-        if (url) return url;
+        if (url) {
+            return /^https?:/i.test(url) ? url : buildMediaUri(url, apiBase);
+        }
     }
 
     return null;

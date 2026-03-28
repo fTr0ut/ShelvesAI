@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { apiRequest } from '../../services/api';
+import { resolveCollectableCoverUrl } from '../../utils/coverUrl';
 
 /**
  * Hook: manages global search state and handlers.
@@ -189,9 +190,7 @@ export function GlobalSearchOverlay({ search }) {
                                     <View style={styles.section}>
                                         <Text style={styles.sectionTitle}>Items</Text>
                                         {search.results.collectables.map((item) => {
-                                            const coverUrl = item.coverMediaPath
-                                                ? `${search.apiBase}/media/${item.coverMediaPath}`
-                                                : item.coverUrl;
+                                            const coverUrl = resolveCollectableCoverUrl(item, search.apiBase);
                                             return (
                                                 <TouchableOpacity
                                                     key={item.id}

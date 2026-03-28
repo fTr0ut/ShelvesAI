@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getStateFromPath } from '@react-navigation/native';
+import { getStateFromPath as defaultGetStateFromPath } from '@react-navigation/core';
 import linkingConfig from '../src/navigation/linkingConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +35,9 @@ let failures = 0;
 
 cases.forEach((testCase) => {
   const pathValue = urlToPath(testCase.url);
-  const state = getStateFromPath(pathValue, linkingConfig.config);
+  const state = typeof linkingConfig.getStateFromPath === 'function'
+    ? linkingConfig.getStateFromPath(pathValue, linkingConfig.config)
+    : defaultGetStateFromPath(pathValue, linkingConfig.config);
   const { names, lastRoute } = getRouteChain(state);
   const nameMatch = JSON.stringify(names) === JSON.stringify(testCase.expectNames);
   const paramsMatch = testCase.expectParams

@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-27
+Last updated: 2026-03-28
 
 ---
 
@@ -49,10 +49,14 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-28 | deep-link-share-web-fallback | Implemented cross-service share/deep-link foundation for canonical `https://shelvesai.com/app/...` URLs with web fallback chain. Added new public API route module `api/routes/share.js` mounted at `GET /api/share/*` (`collectables/:id`, `manuals/:id`, `shelves/:id`, `events/:id`) returning `{ visibility, entityType, id, slug, title, description, imageUrl, canonicalUrl, appUrl }` with public-vs-restricted metadata behavior. Added website dynamic share routes under `website/src/app/app/{collectables,manuals,shelves,events}/[id]/[slug]/page.tsx`, shared metadata fetcher `website/src/lib/shareMetadata.ts`, reusable landing/redirect components (`ShareLanding`, `ShareFallbackRedirect`) and new `website/src/app/download/page.tsx`. Added `.well-known` route handlers for iOS/Android association (`apple-app-site-association`, `assetlinks.json`) and env placeholders in `website/.env.example` for store links/fingerprints. Updated mobile deep-link parsing (`mobile/src/navigation/linkingConfig.js`) to canonical `/app/*` paths with legacy alias normalization and manual deep-link handling, updated deep-link test cases/scripts, added manual-id support in `CollectableDetailScreen`, and added iOS/Android app-link config in `mobile/app.json` plus Android manifest HTTPS intent filters.
+- 2026-03-27 | mobile-global-search-bar | Extracted global search (friends/collectables API search with floating dropdown) from `SocialFeedScreen` into new shared component `mobile/src/components/ui/GlobalSearchBar.js`, exporting `useGlobalSearch` hook, `GlobalSearchInput`, and `GlobalSearchOverlay`. Both `SocialFeedScreen` and `ShelvesScreen` now use the shared component. Header layout refactored on both screens: search bar + notifications in top row, page title ("Feed" / "My Shelves") in a sub-header row below. `ShelvesScreen` retains its local "Search shelves..." filter below the sub-header. Overlay renders at screen body level (not inside header or Modal) via a `body` wrapper View to correctly shade the body without stealing TextInput focus. Removed inline search state/handlers/styles from `SocialFeedScreen`. Added `GlobalSearchBar` to `ui/index.js` barrel exports.
 - 2026-03-27 | mobile-ui-enhancements | Three UI enhancements: (1) `CollectableDetailScreen` owner photo section now shows `<ownerUsername>'s Photo` instead of "Your photos" and hides "added automatically from your scan" when viewing a friend's shelf item (uses existing `isOwnerContext`/`normalizedOwnerUsername` pattern). (2) `ShelfDetailScreen` FAB restyled from primary-colored circle with `+` icon to green (`colors.success`) pill-shaped button with "Add" text, repositioned closer to tab bar (`spacing.sm` offset). (3) Experimental feature-flagged (`ENABLE_PROFILE_IN_TAB_BAR` in new `mobile/src/config/featureFlags.js`, default `false`) profile-in-tab-bar: adds Profile tab at leftmost position in `BottomTabNavigator` with `initialRouteName="Home"` to preserve default landing page, custom flex layout (Profile/Home/Add flex 1, Shelves flex 2 with left-aligned icon) to keep FAB centered and Home centered between Profile and FAB; opens `AccountSlideMenu` sliding left-to-right (new `direction` prop on `AccountSlideMenu`); hides profile icon from `SocialFeedScreen` and `ShelvesScreen` headers when enabled. `AccountSlideMenu` also gained bottom-pinned "My Profile" and "Notifications" links (`BOTTOM_MENU_ITEMS` array, rendered in a `bottomSection` with `marginTop: 'auto'` separator).
 - 2026-03-27 | mobile-profile-feed-preview-key-fix | Updated `mobile/src/screens/ProfileScreen.js` added-event preview keys for stacked thumbnails (`other-thumb` + `cover`) to include feed entry identity and index (`entryKey` + item identity + `idx`) so repeated item names no longer collide and trigger React duplicate-key warnings on Profile.
 - 2026-03-27 | mobile-social-feed-other-thumb-key-fix | Updated `mobile/src/screens/SocialFeedScreen.js` added-event `other` shelf thumbnail keys to include feed entry identity and index (`entryKey` + item identity + `idx`) so repeated item names no longer generate duplicate React keys (fixes `Encountered two children with the same key ... Dog-other-thumb` warning during feed render).
 - 2026-03-27 | mobile-owner-photo-placeholder-book-icon | Updated `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen` `other` added-event fallback thumbnails to use `Ionicons book-outline` instead of `image-outline` when owner-photo thumbnails are redacted/unavailable.
+- 2026-03-27 | mobile-cover-resolution-xbox-fix | Fixed missing cover art on detail/search for some vision-imported games by hardening `mobile/src/utils/coverUrl.js` to treat any non-absolute `coverImageUrl` as local media (ignoring stale source metadata), and updating search result renderers in `mobile/src/components/ui/GlobalSearchBar.js` and `mobile/src/screens/FriendSearchScreen.js` to resolve covers via `resolveCollectableCoverUrl(...)` (includes `coverImageUrl` fallback).
+- 2026-03-27 | collectable-detail-cover-fallback-hardening | Updated `CollectableDetailScreen.resolveCoverUri()` to retain shelf-provided cover fields (`baseCollectable`) as fallback when refreshed `/api/collectables/:id` payload is missing/partial, preventing regression from a working shelf thumbnail to blank detail hero.
 - 2026-03-27 | mobile-feed-owner-thumb-itemid-hardening | Updated `mobile/src/utils/feedAddedEvent.js` owner-photo thumbnail id resolution to use only explicit collection item ids (`item.itemId` / `payload.itemId`) and no longer fall back to generic `id`, preventing feed thumb requests from non-canonical ids.
 - 2026-03-27 | other-manual-cover-read-time-privacy-gating | Added backend read-time redaction for `other` manual cover media in `api/controllers/feedController.js` (`GET /api/feed`, `GET /api/feed/:id`) and `api/controllers/shelvesController.js` (`GET /api/manuals/:manualId`): cover fields are now nulled for non-owners when the linked collection item has an owner photo (`vision_crop` or `upload`) but sharing is currently disabled (`owner_photo_visible=false` or `users.show_personal_photos=false`). Feed redaction now also nulls `itemId` references for blocked manual items so clients cannot derive owner-photo thumbnail endpoints from redacted entries. Copy-to-cover writes remain unchanged; schema/contracts unchanged; standalone manual-cover-only items without linked owner photo remain visible.
 - 2026-03-27 | owner-photo-privacy-manual-promotion-guard | Hardened `shelvesController.attachCropToCollectionItem` so `other`-shelf crop-to-manual cover promotion only runs when crop attach succeeds and the attached owner photo is both `vision_crop` and share-enabled (`owner_photo_visible = true`). Added regression tests in `api/__tests__/shelvesController.test.js` for share-off skip and share-on promotion behavior.
@@ -253,6 +257,7 @@ api/server.js
   → api/routes/admin.js
   → api/routes/manuals.js
   → api/routes/waitlist.js
+  → api/routes/share.js
 ```
 
 ### Runtime Logging Utilities
@@ -429,6 +434,21 @@ routes/collectables.js
   → utils/normalize.js
   →database/queries/marketValueEstimates.js
   Endpoints: GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
+```
+
+#### share
+```
+routes/share.js
+  → database/pg.js
+  → services/mediaUrl.js
+  → logger.js
+  Public endpoints:
+    GET /api/share/collectables/:id
+    GET /api/share/manuals/:id
+    GET /api/share/shelves/:id
+    GET /api/share/events/:id
+  Response contract:
+    visibility, entityType, id, slug, title, description, imageUrl, canonicalUrl, appUrl
 ```
 
 #### wishlists
@@ -1119,6 +1139,12 @@ ui/Hero.js → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
 ui/ShelfListItem.js → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
 
 ui/StarRating.js → context/ThemeContext.js
+
+ui/GlobalSearchBar.js
+  → context/AuthContext.js
+  → context/ThemeContext.js
+  → services/api.js
+  exports: useGlobalSearch (hook), GlobalSearchInput, GlobalSearchOverlay
 ```
 
 ### News Components
@@ -1156,9 +1182,9 @@ components/news/QuickCheckInModal.js
 | UsernameSetupScreen | AuthContext, ThemeContext, api |
 | OnboardingProfileRequiredScreen | AuthContext, ThemeContext |
 | OnboardingProfileOptionalScreen | AuthContext, ThemeContext, api, imageUpload |
-| SocialFeedScreen | ui/AccountSlideMenu, news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl |
+| SocialFeedScreen | ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl, feedAddedEvent |
 | FeedDetailScreen | AuthContext, ThemeContext, api, feedApi, coverUrl |
-| ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, AuthContext, ThemeContext, api |
+| ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), AuthContext, ThemeContext, api |
 | ShelfDetailScreen | AuthContext, ThemeContext, api, coverUrl, ocr, ui/CachedImage, ui/StarRating, ui/CategoryIcon, VisionProcessingModal, useVisionProcessing |
 | ShelfCreateScreen | AuthContext, ThemeContext, api |
 | ShelfEditScreen | AuthContext, ThemeContext, api |

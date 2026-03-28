@@ -35,7 +35,7 @@ import TmdbLogo from '../assets/tmdb-logo.svg';
 const PERSISTENT_TAB_FOOTER_SPACER = 88;
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId, readOnly, id, collectableId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
+    const { item, shelfId, readOnly, id, collectableId, manualId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
     const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const insets = useSafeAreaInsets();
@@ -76,6 +76,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [ownerPhotoViewerUri, setOwnerPhotoViewerUri] = useState(null);
     const [ownerPhotoViewerOriginalUri, setOwnerPhotoViewerOriginalUri] = useState(null);
     const [ownerPhotoViewerEditing, setOwnerPhotoViewerEditing] = useState(false);
+    const [coverViewerVisible, setCoverViewerVisible] = useState(false);
+    const [coverViewerUri, setCoverViewerUri] = useState(null);
+    const [coverViewerAspectRatio, setCoverViewerAspectRatio] = useState(null);
     const [collectionNotes, setCollectionNotes] = useState(item?.notes ?? null);
     const [notesDraft, setNotesDraft] = useState(item?.notes || '');
     const [notesSaving, setNotesSaving] = useState(false);
@@ -87,18 +90,20 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [userEstimate, setUserEstimate] = useState(null);
 
     const notesShelfId = item?.shelfId || shelfId || null;
-    const resolvedCollectableId = collectableId
-        || item?.collectable?.id
-        || item?.collectableId
-        || item?.collectable_id
-        || item?.collectableSnapshot?.id
-        || id
-        || null;
+    const resolvedCollectableId = manualId
+        ? null
+        : (collectableId
+            || item?.collectable?.id
+            || item?.collectableId
+            || item?.collectable_id
+            || item?.collectableSnapshot?.id
+            || id
+            || null);
     const baseCollectable = item?.collectable
         || item?.collectableSnapshot
         || (resolvedCollectableId ? { id: resolvedCollectableId } : {});
     const collectable = resolvedCollectable || baseCollectable;
-    const baseManual = item?.manual || item?.manualSnapshot || {};
+    const baseManual = item?.manual || item?.manualSnapshot || (manualId ? { id: manualId } : {});
     const manual = resolvedManual || baseManual;
     // Detect manual items: either has manual data with content, or collectable is empty/missing
     const hasManualContent = !!(manual?.id || manual?.title || manual?.name || manual?.coverMediaUrl || manual?.coverMediaPath);
@@ -1649,11 +1654,74 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return manualUrl;
         }
 
-        // Check collectable cover
-        return resolveCollectableCoverUrl(collectable, apiBase);
+        // Check collectable cover. Prefer resolved data, but preserve working
+        // shelf-provided cover fields as fallback for display stability.
+        const coverCollectable = {
+            ...(resolvedCollectable || {}),
+            ...(baseCollectable || {}),
+            coverMediaUrl: resolvedCollectable?.coverMediaUrl || baseCollectable?.coverMediaUrl || null,
+            coverMediaPath: resolvedCollectable?.coverMediaPath || baseCollectable?.coverMediaPath || null,
+            coverImageUrl: resolvedCollectable?.coverImageUrl || baseCollectable?.coverImageUrl || null,
+            coverUrl: resolvedCollectable?.coverUrl || baseCollectable?.coverUrl || null,
+            images: (Array.isArray(resolvedCollectable?.images) && resolvedCollectable.images.length > 0)
+                ? resolvedCollectable.images
+                : (Array.isArray(baseCollectable?.images) ? baseCollectable.images : []),
+        };
+        return resolveCollectableCoverUrl(coverCollectable, apiBase);
     };
 
     const coverUri = resolveCoverUri();
+    const coverViewerImageHitboxStyle = useMemo(() => {
+        if (!Number.isFinite(coverViewerAspectRatio) || coverViewerAspectRatio <= 0) {
+            return styles.coverViewerImageHitboxFallback;
+        }
+        if (coverViewerAspectRatio >= 1) {
+            return {
+                width: '100%',
+                aspectRatio: coverViewerAspectRatio,
+            };
+        }
+        return {
+            height: '100%',
+            aspectRatio: coverViewerAspectRatio,
+        };
+    }, [coverViewerAspectRatio, styles.coverViewerImageHitboxFallback]);
+
+    const handleOpenCoverViewer = () => {
+        if (!coverUri) return;
+        setCoverViewerUri(coverUri);
+        setCoverViewerVisible(true);
+    };
+    const handleCloseCoverViewer = () => {
+        setCoverViewerVisible(false);
+        setCoverViewerUri(null);
+    };
+
+    useEffect(() => {
+        if (!coverViewerUri) {
+            setCoverViewerAspectRatio(null);
+            return;
+        }
+        let canceled = false;
+        Image.getSize(
+            coverViewerUri,
+            (width, height) => {
+                if (canceled) return;
+                const ratio = Number(width) > 0 && Number(height) > 0
+                    ? Number(width) / Number(height)
+                    : null;
+                setCoverViewerAspectRatio(ratio);
+            },
+            () => {
+                if (canceled) return;
+                setCoverViewerAspectRatio(null);
+            },
+        );
+        return () => {
+            canceled = true;
+        };
+    }, [coverViewerUri]);
+
     const rawOwnerPhotoVersion = ownerPhoto?.updatedAt
         ? new Date(ownerPhoto.updatedAt).getTime()
         : null;
@@ -1887,11 +1955,17 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     ) : (
                         <View style={styles.coverBox}>
                             {coverUri ? (
-                                <CachedImage
-                                    source={{ uri: coverUri }}
-                                    style={styles.coverImage}
-                                    contentFit="cover"
-                                />
+                                <TouchableOpacity
+                                    style={styles.coverOpenButton}
+                                    onPress={handleOpenCoverViewer}
+                                    activeOpacity={0.9}
+                                >
+                                    <CachedImage
+                                        source={{ uri: coverUri }}
+                                        style={styles.coverImage}
+                                        contentFit="cover"
+                                    />
+                                </TouchableOpacity>
                             ) : (
                                 <View style={styles.coverFallback}>
                                     <CategoryIcon type={type} size={48} />
@@ -2107,6 +2181,51 @@ export default function CollectableDetailScreen({ route, navigation }) {
             </ScrollView>
 
             <Modal
+                visible={coverViewerVisible}
+                animationType="fade"
+                presentationStyle="fullScreen"
+                onRequestClose={handleCloseCoverViewer}
+            >
+                {coverViewerUri ? (
+                    <View
+                        style={[
+                            styles.viewerScreen,
+                            {
+                                paddingTop: insets.top,
+                                paddingBottom: insets.bottom,
+                                paddingLeft: insets.left,
+                                paddingRight: insets.right,
+                            },
+                        ]}
+                    >
+                        <View style={styles.viewerHeader}>
+                            <TouchableOpacity
+                                style={styles.viewerHeaderBtn}
+                                onPress={handleCloseCoverViewer}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.viewerToolText}>Close</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.viewerHeaderTitle}>Cover Art</Text>
+                            <View style={styles.viewerHeaderBtn} />
+                        </View>
+                        <Pressable style={styles.viewerImageArea} onPress={handleCloseCoverViewer}>
+                            <Pressable
+                                style={[styles.coverViewerImageHitbox, coverViewerImageHitboxStyle]}
+                                onPress={(event) => event.stopPropagation?.()}
+                            >
+                                <CachedImage
+                                    source={{ uri: coverViewerUri }}
+                                    style={styles.viewerImage}
+                                    contentFit="contain"
+                                />
+                            </Pressable>
+                        </Pressable>
+                    </View>
+                ) : null}
+            </Modal>
+
+            <Modal
                 visible={ownerPhotoViewerVisible}
                 animationType="fade"
                 presentationStyle="fullScreen"
@@ -2294,6 +2413,10 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         position: 'relative',
     },
     coverImage: {
+        width: '100%',
+        height: '100%',
+    },
+    coverOpenButton: {
         width: '100%',
         height: '100%',
     },
@@ -2549,6 +2672,15 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     viewerImage: {
         width: '100%',
         height: '100%',
+    },
+    coverViewerImageHitbox: {
+        alignSelf: 'center',
+        maxWidth: '100%',
+        maxHeight: '100%',
+    },
+    coverViewerImageHitboxFallback: {
+        width: '92%',
+        height: '92%',
     },
     viewerToolRow: {
         flexDirection: 'row',

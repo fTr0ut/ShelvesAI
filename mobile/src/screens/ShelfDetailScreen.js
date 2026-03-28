@@ -1216,7 +1216,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                     style={[
                         styles.fab,
-                        bottomFooterSpacer > 0 ? { bottom: spacing.sm + bottomFooterSpacer } : null,
+                        bottomFooterSpacer > 0 ? { bottom: spacing.xs + bottomFooterSpacer / 2 } : null,
                         visionLoading && styles.fabDisabled,
                     ]}
                     onPress={handleAddItem}
@@ -1460,7 +1460,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     fab: {
         position: 'absolute',
         right: spacing.md,
-        bottom: spacing.xl,
+        bottom: spacing.md,
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: radius.full,

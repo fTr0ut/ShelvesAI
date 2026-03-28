@@ -28,6 +28,20 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="shelvesai"/>
       </intent-filter>
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https" android:host="shelvesai.com" android:pathPrefix="/app"/>
+        <data android:scheme="https" android:host="www.shelvesai.com" android:pathPrefix="/app"/>
+      </intent-filter>
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https" android:host="shelvesai.com" android:pathPrefix="/reset-password"/>
+        <data android:scheme="https" android:host="www.shelvesai.com" android:pathPrefix="/reset-password"/>
+      </intent-filter>
     </activity>
   </application>
 </manifest>

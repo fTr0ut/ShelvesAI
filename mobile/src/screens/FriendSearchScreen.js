@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { resolveCollectableCoverUrl } from '../utils/coverUrl';
 
 export default function FriendSearchScreen({ route, navigation }) {
     const { initialQuery } = route.params || {};
@@ -196,9 +197,7 @@ export default function FriendSearchScreen({ route, navigation }) {
     };
 
     const renderItem = ({ item }) => {
-        const coverUrl = item.coverMediaPath
-            ? `${apiBase}/media/${item.coverMediaPath}`
-            : item.coverUrl;
+        const coverUrl = resolveCollectableCoverUrl(item, apiBase);
 
         return (
             <TouchableOpacity
