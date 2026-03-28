@@ -7,6 +7,7 @@ const DEFAULT_PREFERENCES = {
     pushComments: true,
     pushFriendRequests: true,
     pushFriendAccepts: true,
+    pushMentions: true,
 };
 
 /**
@@ -57,6 +58,7 @@ async function updatePreferences(userId, updates) {
         'push_comments',
         'push_friend_requests',
         'push_friend_accepts',
+        'push_mentions',
     ];
 
     // Convert camelCase to snake_case and filter allowed fields
@@ -66,6 +68,7 @@ async function updatePreferences(userId, updates) {
         pushComments: 'push_comments',
         pushFriendRequests: 'push_friend_requests',
         pushFriendAccepts: 'push_friend_accepts',
+        pushMentions: 'push_mentions',
     };
 
     const setClauses = [];
@@ -99,6 +102,7 @@ async function updatePreferences(userId, updates) {
             updates.pushComments ?? true,
             updates.pushFriendRequests ?? true,
             updates.pushFriendAccepts ?? true,
+            updates.pushMentions ?? true,
         ]
     );
 
@@ -120,6 +124,7 @@ async function isTypeEnabled(userId, type) {
         comment: prefs.pushComments,
         friend_request: prefs.pushFriendRequests,
         friend_accept: prefs.pushFriendAccepts,
+        mention: prefs.pushMentions,
     };
 
     return typeMap[type] ?? false;

@@ -19,6 +19,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
+import { shareEntityLink } from '../services/shareLinks';
 import {
     buildOwnerPhotoThumbnailUri,
     formatAddedEventHeader,
@@ -55,6 +56,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [hasViewableFavorites, setHasViewableFavorites] = useState(false);
     const [imageAuthToken, setImageAuthToken] = useState(null);
     const [addedThumbFailures, setAddedThumbFailures] = useState({});
+    const [shareBusy, setShareBusy] = useState(false);
 
     // Editable fields
     const [firstName, setFirstName] = useState('');
@@ -249,6 +251,30 @@ export default function ProfileScreen({ navigation, route }) {
             setStateIfMounted(setListsLoading, false);
         }
     }, [apiBase, token, isOwnProfile, setStateIfMounted]);
+
+    const handleShareProfile = useCallback(async () => {
+        const profileUsername = String(profile?.username || '').trim();
+        if (!profileUsername || shareBusy) return;
+        setShareBusy(true);
+        try {
+            const displayName = [profile?.firstName, profile?.lastName]
+                .filter((part) => String(part || '').trim())
+                .join(' ')
+                .trim();
+            const shareTitle = displayName || `@${profileUsername}`;
+            await shareEntityLink({
+                apiBase,
+                kind: 'profiles',
+                id: profileUsername,
+                title: shareTitle,
+                slugSource: shareTitle,
+            });
+        } catch (_err) {
+            Alert.alert('Unable to share', 'Please try again.');
+        } finally {
+            setShareBusy(false);
+        }
+    }, [apiBase, profile?.firstName, profile?.lastName, profile?.username, shareBusy]);
 
     // Load lists when tab switches to lists
     useEffect(() => {
@@ -946,6 +972,20 @@ export default function ProfileScreen({ navigation, route }) {
                                 </TouchableOpacity>
                             )}
 
+                            <View style={styles.profileButtonsRow}>
+                                <TouchableOpacity
+                                    style={styles.wishlistButton}
+                                    onPress={handleShareProfile}
+                                    disabled={shareBusy}
+                                >
+                                    {shareBusy ? (
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                    ) : (
+                                        <Ionicons name="share-social-outline" size={18} color={colors.primary} />
+                                    )}
+                                    <Text style={styles.wishlistButtonText}>Share Profile</Text>
+                                </TouchableOpacity>
+                            </View>
 
 
                             {isOwnProfile && (

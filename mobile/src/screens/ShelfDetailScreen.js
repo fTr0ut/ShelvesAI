@@ -22,6 +22,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
+import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
@@ -162,6 +163,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [visionModalVisible, setVisionModalVisible] = useState(false);
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
+    const [shareBusy, setShareBusy] = useState(false);
     const autoAddHandledRef = useRef(false);
     const isMountedRef = useRef(true);
     const loadingMoreRef = useRef(false);
@@ -1114,6 +1116,25 @@ export default function ShelfDetailScreen({ route, navigation }) {
         ]);
     }, [handleCameraScan, handleOpenSearch, isReadOnly]);
 
+    const handleShareShelf = useCallback(async () => {
+        const shelfId = shelf?.id || id;
+        if (!shelfId || shareBusy) return;
+        setShareBusy(true);
+        try {
+            await shareEntityLink({
+                apiBase,
+                kind: 'shelves',
+                id: shelfId,
+                title: shelf?.name || title || 'Shelf',
+                slugSource: shelf?.name || title || `shelf-${shelfId}`,
+            });
+        } catch (_err) {
+            Alert.alert('Unable to share', 'Please try again.');
+        } finally {
+            setShareBusy(false);
+        }
+    }, [apiBase, id, shareBusy, shelf?.id, shelf?.name, title]);
+
     useEffect(() => {
         if (!autoAddItem || autoAddHandledRef.current) return;
         autoAddHandledRef.current = true;
@@ -1147,13 +1168,24 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     <Text style={styles.headerTitle} numberOfLines={1}>{shelf?.name || title || 'Shelf'}</Text>
                     <Text style={styles.headerSubtitle}>{totalItems} item{totalItems !== 1 ? 's' : ''}{hasMore ? ` (${items.length} loaded)` : ''}</Text>
                 </View>
-                {!isReadOnly ? (
-                    <TouchableOpacity onPress={() => navigation.navigate('ShelfEdit', { shelf })} style={styles.editButton}>
-                        <Ionicons name="settings-outline" size={22} color={colors.text} />
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        onPress={handleShareShelf}
+                        style={styles.editButton}
+                        disabled={shareBusy || !(shelf?.id || id)}
+                    >
+                        {shareBusy ? (
+                            <ActivityIndicator size="small" color={colors.text} />
+                        ) : (
+                            <Ionicons name="share-social-outline" size={20} color={colors.text} />
+                        )}
                     </TouchableOpacity>
-                ) : (
-                    <View style={styles.editButtonPlaceholder} />
-                )}
+                    {!isReadOnly ? (
+                        <TouchableOpacity onPress={() => navigation.navigate('ShelfEdit', { shelf })} style={styles.editButton}>
+                            <Ionicons name="settings-outline" size={22} color={colors.text} />
+                        </TouchableOpacity>
+                    ) : null}
+                </View>
             </View>
 
             {/* Search + Sort */}
@@ -1299,6 +1331,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         paddingHorizontal: spacing.md,
         paddingTop: spacing.lg,
         paddingBottom: spacing.md,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
     },
     backButton: {
         width: 40,

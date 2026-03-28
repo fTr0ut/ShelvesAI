@@ -65,6 +65,16 @@ function resolveCoverImageUrl({ coverMediaPath = null, coverImageUrl = null, cov
   return null;
 }
 
+function resolveProfileImageUrl({ profileMediaPath = null, picture = null } = {}) {
+  if (profileMediaPath) {
+    return resolveMediaUrl(profileMediaPath);
+  }
+  if (picture) {
+    return picture;
+  }
+  return null;
+}
+
 function shouldRedactOtherManualCover({
   shelfType = null,
   ownerPhotoSource = null,
@@ -410,6 +420,69 @@ async function getShelfShare(req, res) {
   }
 }
 
+async function getProfileShare(req, res) {
+  try {
+    const requestedUsername = String(req.params.username || '').trim().replace(/^@+/, '');
+    if (!requestedUsername) {
+      return res.status(400).json({ error: 'Invalid username' });
+    }
+
+    const result = await query(
+      `SELECT u.id,
+              u.username,
+              u.first_name,
+              u.last_name,
+              u.bio,
+              u.picture,
+              u.is_private,
+              u.is_suspended,
+              pm.local_path AS profile_media_path
+       FROM users u
+       LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
+       WHERE LOWER(u.username) = LOWER($1)
+       LIMIT 1`,
+      [requestedUsername],
+    );
+    const row = result.rows[0];
+    const path = `app/profiles/${encodeURIComponent(requestedUsername)}`;
+    if (!row || row.is_suspended) {
+      return res.status(404).json(buildNotFoundPayload({ entityType: 'profile', id: requestedUsername, path }));
+    }
+
+    const canonicalUsername = String(row.username || requestedUsername).trim();
+    const fullName = [row.first_name, row.last_name]
+      .filter((part) => String(part || '').trim())
+      .join(' ')
+      .trim();
+    const title = fullName || `@${canonicalUsername}`;
+    const slug = toSlug(title, `profile-${canonicalUsername}`);
+    const finalPath = `app/profiles/${encodeURIComponent(canonicalUsername)}/${slug}`;
+    if (row.is_private) {
+      return res.json(buildRestrictedPayload({ entityType: 'profile', id: canonicalUsername, path: finalPath }));
+    }
+
+    const imageUrl = resolveProfileImageUrl({
+      profileMediaPath: row.profile_media_path,
+      picture: row.picture,
+    });
+    const description = row.bio || `See @${canonicalUsername}'s shelves on ShelvesAI.`;
+
+    return res.json(buildPayload({
+      visibility: 'public',
+      entityType: 'profile',
+      id: canonicalUsername,
+      slug,
+      title,
+      description,
+      imageUrl,
+      path: finalPath,
+    }));
+  } catch (err) {
+    logger.error('GET /api/share/profiles/:username error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 function describeEvent(row) {
   const owner = row.owner_username || 'Someone';
   const eventType = String(row.event_type || '').toLowerCase();
@@ -550,5 +623,6 @@ router.get('/collectables/:id', getCollectableShare);
 router.get('/manuals/:id', getManualShare);
 router.get('/shelves/:id', getShelfShare);
 router.get('/events/:id', getEventShare);
+router.get('/profiles/:username', getProfileShare);
 
 module.exports = router;

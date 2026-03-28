@@ -22,7 +22,12 @@ const linkingRoutes = {
         collectableId: (value) => String(value || ''),
       },
     },
-    Profile: 'profile/:username',
+    Profile: {
+      path: 'app/profiles/:username/:slug?',
+      parse: {
+        username: (value) => String(value || ''),
+      },
+    },
     Wishlist: 'wishlist/:id',
     ListDetail: 'list/:id',
     Favorites: 'favorites',
@@ -52,9 +57,18 @@ function normalizePath(path = '') {
     if (trimmed.startsWith('app/manual/')) {
       return trimmed.replace(/^app\/manual\//, 'app/manuals/');
     }
+    if (trimmed.startsWith('app/profile/')) {
+      return trimmed.replace(/^app\/profile\//, 'app/profiles/');
+    }
     return trimmed;
   }
 
+  if (trimmed.startsWith('profile/')) {
+    return trimmed.replace(/^profile\//, 'app/profiles/');
+  }
+  if (trimmed.startsWith('profiles/')) {
+    return `app/${trimmed}`;
+  }
   if (trimmed.startsWith('collectable/')) {
     return trimmed.replace(/^collectable\//, 'app/collectables/');
   }

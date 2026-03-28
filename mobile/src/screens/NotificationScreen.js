@@ -43,6 +43,12 @@ function buildNotificationText(notification) {
                 ? `${actorName} commented: "${preview}"`
                 : `${actorName} commented on your activity`;
         }
+        case 'mention': {
+            const mentionPreview = notification?.metadata?.preview;
+            return mentionPreview
+                ? `${actorName} mentioned you: "${mentionPreview}"`
+                : `${actorName} mentioned you in a comment`;
+        }
         case 'friend_request':
             return `${actorName} sent you a friend request`;
         case 'friend_accept':

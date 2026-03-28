@@ -27,6 +27,7 @@ import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import ImageCropper from '../components/ui/ImageCropper';
 import { apiRequest, getValidToken } from '../services/api';
+import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
@@ -88,6 +89,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [reviewPublishedAt, setReviewPublishedAt] = useState(item?.reviewPublishedAt || item?.reviewedEventPublishedAt || null);
     const [reviewUpdatedAt, setReviewUpdatedAt] = useState(item?.reviewUpdatedAt || item?.reviewedEventUpdatedAt || null);
     const [userEstimate, setUserEstimate] = useState(null);
+    const [shareBusy, setShareBusy] = useState(false);
 
     const notesShelfId = item?.shelfId || shelfId || null;
     const resolvedCollectableId = manualId
@@ -561,6 +563,29 @@ export default function CollectableDetailScreen({ route, navigation }) {
             setIsFavorited(previousState); // Revert
         }
     };
+
+    const handleShareItem = useCallback(async () => {
+        const shareKind = isManual && manual?.id ? 'manuals' : 'collectables';
+        const shareId = shareKind === 'manuals'
+            ? manual?.id
+            : (collectable?.id || resolvedCollectableId);
+        if (!shareId || shareBusy) return;
+        setShareBusy(true);
+        try {
+            const shareName = source?.title || source?.name || `item-${shareId}`;
+            await shareEntityLink({
+                apiBase,
+                kind: shareKind,
+                id: shareId,
+                title: shareName,
+                slugSource: shareName,
+            });
+        } catch (_err) {
+            Alert.alert('Unable to share', 'Please try again.');
+        } finally {
+            setShareBusy(false);
+        }
+    }, [apiBase, collectable?.id, isManual, manual?.id, resolvedCollectableId, shareBusy, source?.name, source?.title]);
 
     const handlePickCoverImage = async () => {
         if (!shelfId || !item?.id) {
@@ -2066,6 +2091,22 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                     size={28}
                                     color={colors.textMuted}
                                 />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={handleShareItem}
+                                style={styles.actionIconBtn}
+                                activeOpacity={0.7}
+                                disabled={shareBusy}
+                            >
+                                {shareBusy ? (
+                                    <ActivityIndicator size="small" color={colors.textMuted} />
+                                ) : (
+                                    <Ionicons
+                                        name="share-social-outline"
+                                        size={28}
+                                        color={colors.textMuted}
+                                    />
+                                )}
                             </TouchableOpacity>
                         </View>
                     </View>

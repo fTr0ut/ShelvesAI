@@ -1,6 +1,7 @@
 ﻿import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -19,7 +20,10 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { addComment, getComments, toggleLike } from '../services/feedApi';
+import { getShareableEventId, shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import { useMentionInput } from '../hooks/useMentionInput';
+import { MentionSuggestions } from '../components/ui';
 import {
   buildOwnerPhotoThumbnailUri,
   formatAddedEventHeader,
@@ -46,10 +50,17 @@ export default function FeedDetailScreen({ route, navigation }) {
   const [likeCount, setLikeCount] = useState(entry?.likeCount || 0);
   const [hasLiked, setHasLiked] = useState(entry?.hasLiked || false);
   const [likePending, setLikePending] = useState(false);
+  const [sharePending, setSharePending] = useState(false);
   const [imageAuthToken, setImageAuthToken] = useState(null);
   const [addedThumbFailures, setAddedThumbFailures] = useState({});
 
   const scrollViewRef = useRef(null);
+  const mention = useMentionInput();
+
+  const handleMentionSelect = useCallback((friend) => {
+    const newText = mention.selectMention(friend, commentText);
+    setCommentText(newText);
+  }, [mention, commentText]);
 
   const handleCommentFocus = useCallback(() => {
     // Delay to allow keyboard to start appearing
@@ -203,6 +214,34 @@ export default function FeedDetailScreen({ route, navigation }) {
     return { uri: thumbUri, headers: addedImageHeaders };
   };
   const shouldRenderItemsList = !isAddedEvent || addedItemCount > 1;
+  const shareEventId = getShareableEventId(resolvedEntry) || getShareableEventId(entry);
+
+  const handleShare = useCallback(async () => {
+    if (!shareEventId || sharePending) return;
+    setSharePending(true);
+    try {
+      const ownerName = resolvedEntry?.owner?.username || resolvedEntry?.owner?.name || 'Someone';
+      const shelfName = resolvedEntry?.shelf?.name || 'ShelvesAI';
+      await shareEntityLink({
+        apiBase,
+        kind: 'events',
+        id: shareEventId,
+        title: `${ownerName} - ${shelfName}`,
+        slugSource: `${ownerName} ${shelfName}`,
+      });
+    } catch (_err) {
+      Alert.alert('Unable to share', 'Please try again.');
+    } finally {
+      setSharePending(false);
+    }
+  }, [
+    apiBase,
+    resolvedEntry?.owner?.name,
+    resolvedEntry?.owner?.username,
+    resolvedEntry?.shelf?.name,
+    shareEventId,
+    sharePending,
+  ]);
 
   // Use displayHints with fallback defaults
   const hints = displayHints || {
@@ -835,6 +874,18 @@ export default function FeedDetailScreen({ route, navigation }) {
                 <Ionicons name="chatbubble-outline" size={16} color={colors.textMuted} />
                 <Text style={styles.commentCountText}>{commentCount} Comments</Text>
               </View>
+              <TouchableOpacity
+                style={[styles.likeButton, (sharePending || !shareEventId) && styles.likeButtonDisabled]}
+                onPress={handleShare}
+                disabled={sharePending || !shareEventId}
+              >
+                {sharePending ? (
+                  <ActivityIndicator size="small" color={colors.textMuted} />
+                ) : (
+                  <Ionicons name="share-social-outline" size={16} color={colors.textMuted} />
+                )}
+                <Text style={styles.likeText}>Share</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.sectionTitle}>Comments</Text>
@@ -842,11 +893,21 @@ export default function FeedDetailScreen({ route, navigation }) {
               <Text style={styles.emptyText}>No comments yet</Text>
             )}
 
-            <View style={styles.commentInputRow}>
+            <View style={[styles.commentInputRow, { position: 'relative' }]}>
+              <MentionSuggestions
+                suggestions={mention.suggestions}
+                visible={mention.showSuggestions}
+                onSelect={handleMentionSelect}
+                loading={mention.loading}
+              />
               <TextInput
                 style={styles.commentInput}
                 value={commentText}
-                onChangeText={setCommentText}
+                onChangeText={(text) => {
+                  setCommentText(text);
+                  mention.handleTextChange(text);
+                }}
+                onSelectionChange={mention.handleSelectionChange}
                 placeholder="Add a comment"
                 placeholderTextColor={colors.textMuted}
                 multiline
@@ -1155,7 +1216,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   socialActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
     marginBottom: spacing.md,
   },
   likeButton: {
@@ -1169,6 +1230,9 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   },
   likeButtonActive: {
     backgroundColor: colors.surfaceElevated || colors.surface,
+  },
+  likeButtonDisabled: {
+    opacity: 0.6,
   },
   likeText: {
     fontSize: 13,

@@ -212,10 +212,25 @@ async function getFullProfile(userId) {
     return result.rows[0] || null;
 }
 
+/**
+ * Find multiple users by usernames (batch lookup, case-insensitive)
+ */
+async function findByUsernames(usernames) {
+    if (!usernames || !usernames.length) return [];
+    const result = await query(
+        `SELECT id, username FROM users
+         WHERE LOWER(username) = ANY($1::text[])
+         AND is_suspended = false`,
+        [usernames.map(u => u.toLowerCase())]
+    );
+    return result.rows;
+}
+
 module.exports = {
     findByEmail,
     findById,
     findByUsername,
+    findByUsernames,
     create,
     updateProfile,
     setOnboardingCompleted,

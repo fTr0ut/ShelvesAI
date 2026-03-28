@@ -1,7 +1,23 @@
 const eventSocialQueries = require('../database/queries/eventSocial');
 const notificationsQueries = require('../database/queries/notifications');
+const friendshipQueries = require('../database/queries/friendships');
+const usersQueries = require('../database/queries/users');
 const { parsePagination } = require('../database/queries/utils');
 const logger = require('../logger');
+
+/**
+ * Extract unique @username mentions from text
+ */
+function parseMentions(text) {
+  if (!text) return [];
+  const regex = /(?:^|[\s(])@([a-zA-Z0-9_]+)/g;
+  const usernames = new Set();
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    usernames.add(match[1].toLowerCase());
+  }
+  return [...usernames];
+}
 
 async function ensureEventAccessible(eventId, userId, res) {
   const exists = await eventSocialQueries.ensureEventExists(eventId);
@@ -72,8 +88,9 @@ async function addComment(req, res) {
     const comment = await eventSocialQueries.addComment(eventId, req.user.id, content);
     const { commentCount } = await eventSocialQueries.getComments(eventId, { limit: 1, offset: 0 });
 
+    let ownerId = null;
     try {
-      const ownerId = await eventSocialQueries.getEventOwner(eventId);
+      ownerId = await eventSocialQueries.getEventOwner(eventId);
       if (ownerId && ownerId !== req.user.id) {
         await notificationsQueries.create({
           userId: ownerId,
@@ -89,6 +106,39 @@ async function addComment(req, res) {
       }
     } catch (err) {
       logger.warn('addComment notification error:', err.message);
+    }
+
+    // Process @mentions and send mention notifications
+    try {
+      const mentionedUsernames = parseMentions(content);
+      if (mentionedUsernames.length > 0) {
+        const mentionedUsers = await usersQueries.findByUsernames(mentionedUsernames);
+        const friendIds = await friendshipQueries.getAcceptedFriendIds(req.user.id);
+        const friendIdSet = new Set(friendIds);
+
+        for (const mentionedUser of mentionedUsers) {
+          if (mentionedUser.id === req.user.id) continue;
+          if (mentionedUser.id === ownerId) continue;
+          if (!friendIdSet.has(mentionedUser.id)) continue;
+
+          const canView = await eventSocialQueries.canUserViewEvent(eventId, mentionedUser.id);
+          if (!canView) continue;
+
+          await notificationsQueries.create({
+            userId: mentionedUser.id,
+            actorId: req.user.id,
+            type: 'mention',
+            entityId: eventId,
+            entityType: 'event',
+            metadata: {
+              commentId: comment?.id || null,
+              preview: content.slice(0, 140),
+            },
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('addComment mention notification error:', err.message);
     }
 
     res.status(201).json({ comment, commentCount });

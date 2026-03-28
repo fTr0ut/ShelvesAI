@@ -52,7 +52,13 @@
     "expectParams": { "manualId": "77", "slug": "rare-card" }
   },
   {
-    "name": "Profile",
+    "name": "Canonical profile",
+    "url": "shelvesai://app/profiles/johna/john-doe",
+    "expectNames": ["Profile"],
+    "expectParams": { "username": "johna", "slug": "john-doe" }
+  },
+  {
+    "name": "Legacy profile alias",
     "url": "shelvesai://profile/johna",
     "expectNames": ["Profile"],
     "expectParams": { "username": "johna" }

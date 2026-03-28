@@ -1,6 +1,7 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     Image,
     RefreshControl,
@@ -13,7 +14,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
+import { AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay, MentionSuggestions } from '../components/ui';
+import { useMentionInput } from '../hooks/useMentionInput';
 import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 import NewsFeed from '../components/news/NewsFeed';
 import NewsSection from '../components/news/NewsSection';
@@ -23,6 +25,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
+import { getShareableEventId, shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import {
     buildOwnerPhotoThumbnailUri,
@@ -117,6 +120,7 @@ export default function SocialFeedScreen({ navigation, route }) {
     const [error, setError] = useState('');
     const [activeFilter, setActiveFilter] = useState('all');
     const [pendingLikes, setPendingLikes] = useState({});
+    const [pendingShares, setPendingShares] = useState({});
     const [unreadCount, setUnreadCount] = useState(0);
 
     const isMountedRef = useRef(true);
@@ -128,6 +132,8 @@ export default function SocialFeedScreen({ navigation, route }) {
     // Inline comment state
     const [commentTexts, setCommentTexts] = useState({});
     const [pendingComments, setPendingComments] = useState({});
+    const [activeMentionTargetId, setActiveMentionTargetId] = useState(null);
+    const mention = useMentionInput();
     const [pendingNewsDismissals, setPendingNewsDismissals] = useState({});
     const [truncatedReviewNotes, setTruncatedReviewNotes] = useState({});
     const [imageAuthToken, setImageAuthToken] = useState(null);
@@ -337,6 +343,19 @@ export default function SocialFeedScreen({ navigation, route }) {
         });
     }, []);
 
+    const setPendingShare = useCallback((targetId, isPending) => {
+        if (!targetId) return;
+        setPendingShares((prev) => {
+            const next = { ...prev };
+            if (isPending) {
+                next[targetId] = true;
+            } else {
+                delete next[targetId];
+            }
+            return next;
+        });
+    }, []);
+
     const handleToggleLike = useCallback(async (entry) => {
         const targetId = entry?.aggregateId || entry?.id;
         if (!token || !targetId || pendingLikes[targetId]) return;
@@ -438,8 +457,34 @@ export default function SocialFeedScreen({ navigation, route }) {
         }
     }, [apiBase, token, commentTexts, pendingComments, updateEntrySocial, user]);
 
+    const handleShareEntry = useCallback(async (entry) => {
+        const eventId = getShareableEventId(entry);
+        if (!eventId || pendingShares[eventId]) return;
+        setPendingShare(eventId, true);
+        try {
+            const ownerName = entry?.owner?.username || entry?.owner?.name || 'Someone';
+            const shelfName = entry?.shelf?.name || 'ShelvesAI';
+            await shareEntityLink({
+                apiBase,
+                kind: 'events',
+                id: eventId,
+                title: `${ownerName} - ${shelfName}`,
+                slugSource: `${ownerName} ${shelfName}`,
+            });
+        } catch (_err) {
+            if (isMountedRef.current) {
+                Alert.alert('Unable to share', 'Please try again.');
+            }
+        } finally {
+            if (isMountedRef.current) {
+                setPendingShare(eventId, false);
+            }
+        }
+    }, [apiBase, pendingShares, setPendingShare]);
+
     const renderSocialActions = (entry) => {
         const targetId = entry?.aggregateId || entry?.id;
+        const shareId = getShareableEventId(entry);
         const hasLiked = !!entry?.hasLiked;
         const likeCount = entry?.likeCount || 0;
         const commentCount = entry?.commentCount || 0;
@@ -447,6 +492,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         const likeLabel = likeCount > 0 ? `${likeCount} Like${likeCount === 1 ? '' : 's'}` : 'Like';
         const commentLabel = commentCount > 0 ? `${commentCount} Comment${commentCount === 1 ? '' : 's'}` : 'Comment';
         const isPending = !!(targetId && pendingLikes[targetId]);
+        const isSharePending = !!(shareId && pendingShares[shareId]);
 
         const commentText = commentTexts[targetId] || '';
         const isSending = !!pendingComments[targetId];
@@ -501,6 +547,21 @@ export default function SocialFeedScreen({ navigation, route }) {
                         <Ionicons name="chatbubble-outline" size={16} color={colors.textMuted} />
                         <Text style={styles.socialButtonText}>{commentLabel}</Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.socialButton,
+                            (isSharePending || !shareId) && styles.socialButtonDisabled,
+                        ]}
+                        onPress={() => handleShareEntry(entry)}
+                        disabled={isSharePending || !shareId}
+                    >
+                        {isSharePending ? (
+                            <ActivityIndicator size="small" color={colors.textMuted} />
+                        ) : (
+                            <Ionicons name="share-social-outline" size={16} color={colors.textMuted} />
+                        )}
+                        <Text style={styles.socialButtonText}>Share</Text>
+                    </TouchableOpacity>
                 </View>
 
                 {/* Top Comment Preview */}
@@ -528,13 +589,31 @@ export default function SocialFeedScreen({ navigation, route }) {
                 ) : null}
 
                 {/* Inline Comment Input */}
-                <View style={styles.inlineCommentRow}>
+                <View style={[styles.inlineCommentRow, { position: 'relative', zIndex: activeMentionTargetId === targetId ? 999 : 0 }]}>
+                    {activeMentionTargetId === targetId && (
+                        <MentionSuggestions
+                            suggestions={mention.suggestions}
+                            visible={mention.showSuggestions}
+                            onSelect={(friend) => {
+                                const currentText = commentTexts[targetId] || '';
+                                const newText = mention.selectMention(friend, currentText);
+                                setCommentTexts(prev => ({ ...prev, [targetId]: newText }));
+                            }}
+                            loading={mention.loading}
+                        />
+                    )}
                     <TextInput
                         style={styles.inlineCommentInput}
                         placeholder="Add a comment..."
                         placeholderTextColor={colors.textMuted}
                         value={commentText}
-                        onChangeText={(text) => setCommentTexts(prev => ({ ...prev, [targetId]: text }))}
+                        onChangeText={(text) => {
+                            setCommentTexts(prev => ({ ...prev, [targetId]: text }));
+                            setActiveMentionTargetId(targetId);
+                            mention.handleTextChange(text);
+                        }}
+                        onSelectionChange={mention.handleSelectionChange}
+                        selectionColor={colors.primary}
                         multiline
                     />
                     <TouchableOpacity

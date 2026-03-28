@@ -40,10 +40,10 @@ export function PushProvider({ children, navigationRef }) {
     const { type, entityId, entityType } = data
 
     // Navigate based on notification type
-    if (type === 'like' || type === 'comment') {
-      // Navigate to feed detail for likes and comments
+    if (type === 'like' || type === 'comment' || type === 'mention') {
+      // Navigate to feed detail for likes, comments, and mentions
       if (entityType === 'event' && entityId) {
-        navigationRef.current.navigate('FeedDetail', { eventId: entityId })
+        navigationRef.current.navigate('FeedDetail', { id: entityId })
       }
     } else if (type === 'friend_request' || type === 'friend_accept') {
       // Navigate to notifications screen for friend-related notifications

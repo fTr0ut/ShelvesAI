@@ -14,13 +14,15 @@ function buildPushContent(type, actorName, metadata = {}) {
         comment: 'New Comment',
         friend_request: 'Friend Request',
         friend_accept: 'Friend Accepted',
+        mention: 'You were mentioned',
     };
 
     const bodyMap = {
         like: `${actorName} liked your activity`,
-        comment: `${actorName} commented: "${truncate(metadata.commentText || 'on your activity', 50)}"`,
+        comment: `${actorName} commented: "${truncate(metadata.preview || 'on your activity', 50)}"`,
         friend_request: `${actorName} sent you a friend request`,
         friend_accept: `${actorName} accepted your friend request`,
+        mention: `${actorName} mentioned you in a comment: "${truncate(metadata.preview || '', 50)}"`,
     };
 
     return {

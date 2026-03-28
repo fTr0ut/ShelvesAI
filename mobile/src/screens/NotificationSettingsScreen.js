@@ -29,6 +29,7 @@ export default function NotificationSettingsScreen({ navigation }) {
     pushEnabled: true,
     pushLikes: true,
     pushComments: true,
+    pushMentions: true,
     pushFriendRequests: true,
     pushFriendAccepts: true,
   })
@@ -163,6 +164,22 @@ export default function NotificationSettingsScreen({ navigation }) {
               trackColor={{ false: colors.border, true: colors.primary + '80' }}
               thumbColor={
                 preferences.pushComments ? colors.primary : colors.surfaceElevated
+              }
+            />
+          </View>
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name="at" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>Mentions</Text>
+            </View>
+            <Switch
+              value={preferences.pushMentions}
+              onValueChange={(value) => handleToggle('pushMentions', value)}
+              disabled={saving || !preferences.pushEnabled}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={
+                preferences.pushMentions ? colors.primary : colors.surfaceElevated
               }
             />
           </View>

@@ -49,7 +49,9 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-28 | mention-tagging-in-comments | Added @mention tagging system for comments. New DB migration `20260328000000_add_mention_notification_type.js` expands `notifications` type CHECK constraint to include `'mention'` and adds `push_mentions` boolean to `notification_preferences`. Updated init schema `01-schema.sql` for consistency. API: added `parseMentions()` helper and mention notification logic in `eventSocialController.addComment()` — parses `@username` tokens, batch-resolves via new `usersQueries.findByUsernames()`, verifies friendship + event visibility before creating `type='mention'` notifications. Updated `pushNotificationService.buildPushContent()` with `mention` title/body (also fixed existing `comment` body to read `metadata.preview` instead of `metadata.commentText`). Updated `pushController.js` and `notificationPreferences.js` to support `pushMentions` preference field. Mobile: new `useMentionInput` hook (`mobile/src/hooks/useMentionInput.js`) for `@` detection, friend list caching (`GET /api/friends?limit=200` mapped via `isRequester` to flat friend objects), local filtering, and `@username` insertion. New `MentionSuggestions` component (`mobile/src/components/ui/MentionSuggestions.js`) renders absolutely-positioned overlay with avatar/username/name rows. Integrated into `FeedDetailScreen.js` and `SocialFeedScreen.js` comment inputs. Fixed `PushContext.js` deep link param bug: changed `{ eventId: entityId }` to `{ id: entityId }` to match `FeedDetailScreen` route params (fixes broken push notification navigation for like/comment/mention types). Added `mention` case to `NotificationScreen.buildNotificationText()` and `Mentions` toggle to `NotificationSettingsScreen.js`.
 - 2026-03-28 | deep-link-share-web-fallback | Implemented cross-service share/deep-link foundation for canonical `https://shelvesai.com/app/...` URLs with web fallback chain. Added new public API route module `api/routes/share.js` mounted at `GET /api/share/*` (`collectables/:id`, `manuals/:id`, `shelves/:id`, `events/:id`) returning `{ visibility, entityType, id, slug, title, description, imageUrl, canonicalUrl, appUrl }` with public-vs-restricted metadata behavior. Added website dynamic share routes under `website/src/app/app/{collectables,manuals,shelves,events}/[id]/[slug]/page.tsx`, shared metadata fetcher `website/src/lib/shareMetadata.ts`, reusable landing/redirect components (`ShareLanding`, `ShareFallbackRedirect`) and new `website/src/app/download/page.tsx`. Added `.well-known` route handlers for iOS/Android association (`apple-app-site-association`, `assetlinks.json`) and env placeholders in `website/.env.example` for store links/fingerprints. Updated mobile deep-link parsing (`mobile/src/navigation/linkingConfig.js`) to canonical `/app/*` paths with legacy alias normalization and manual deep-link handling, updated deep-link test cases/scripts, added manual-id support in `CollectableDetailScreen`, and added iOS/Android app-link config in `mobile/app.json` plus Android manifest HTTPS intent filters.
+- 2026-03-28 | native-share-ui-profile-share-links | Added native mobile share actions across event cards (`SocialFeedScreen` + `FeedDetailScreen`), shelf detail header, collectable detail actions, and profile screen actions using new helper service `mobile/src/services/shareLinks.js` (metadata fetch + canonical fallback + `Share.share`). Expanded share backend with `GET /api/share/profiles/:username` in `api/routes/share.js`. Added website profile share route `website/src/app/app/profiles/[username]/[slug]/page.tsx` and extended `website/src/lib/shareMetadata.ts` kind support to `profiles`. Updated mobile deep-link canonical profile support to `app/profiles/:username/:slug?` with legacy `profile/:username` alias compatibility and added deep-link test case coverage.
 - 2026-03-27 | mobile-global-search-bar | Extracted global search (friends/collectables API search with floating dropdown) from `SocialFeedScreen` into new shared component `mobile/src/components/ui/GlobalSearchBar.js`, exporting `useGlobalSearch` hook, `GlobalSearchInput`, and `GlobalSearchOverlay`. Both `SocialFeedScreen` and `ShelvesScreen` now use the shared component. Header layout refactored on both screens: search bar + notifications in top row, page title ("Feed" / "My Shelves") in a sub-header row below. `ShelvesScreen` retains its local "Search shelves..." filter below the sub-header. Overlay renders at screen body level (not inside header or Modal) via a `body` wrapper View to correctly shade the body without stealing TextInput focus. Removed inline search state/handlers/styles from `SocialFeedScreen`. Added `GlobalSearchBar` to `ui/index.js` barrel exports.
 - 2026-03-27 | mobile-ui-enhancements | Three UI enhancements: (1) `CollectableDetailScreen` owner photo section now shows `<ownerUsername>'s Photo` instead of "Your photos" and hides "added automatically from your scan" when viewing a friend's shelf item (uses existing `isOwnerContext`/`normalizedOwnerUsername` pattern). (2) `ShelfDetailScreen` FAB restyled from primary-colored circle with `+` icon to green (`colors.success`) pill-shaped button with "Add" text, repositioned closer to tab bar (`spacing.sm` offset). (3) Experimental feature-flagged (`ENABLE_PROFILE_IN_TAB_BAR` in new `mobile/src/config/featureFlags.js`, default `false`) profile-in-tab-bar: adds Profile tab at leftmost position in `BottomTabNavigator` with `initialRouteName="Home"` to preserve default landing page, custom flex layout (Profile/Home/Add flex 1, Shelves flex 2 with left-aligned icon) to keep FAB centered and Home centered between Profile and FAB; opens `AccountSlideMenu` sliding left-to-right (new `direction` prop on `AccountSlideMenu`); hides profile icon from `SocialFeedScreen` and `ShelvesScreen` headers when enabled. `AccountSlideMenu` also gained bottom-pinned "My Profile" and "Notifications" links (`BOTTOM_MENU_ITEMS` array, rendered in a `bottomSection` with `marginTop: 'auto'` separator).
 - 2026-03-27 | mobile-profile-feed-preview-key-fix | Updated `mobile/src/screens/ProfileScreen.js` added-event preview keys for stacked thumbnails (`other-thumb` + `cover`) to include feed entry identity and index (`entryKey` + item identity + `idx`) so repeated item names no longer collide and trigger React duplicate-key warnings on Profile.
@@ -369,6 +371,8 @@ controllers/feedController.js
 controllers/eventSocialController.js
   → database/queries/eventSocial.js
   → database/queries/notifications.js
+  → database/queries/friendships.js
+  → database/queries/users.js
   → database/queries/utils.js
 ```
 
@@ -447,6 +451,7 @@ routes/share.js
     GET /api/share/manuals/:id
     GET /api/share/shelves/:id
     GET /api/share/events/:id
+    GET /api/share/profiles/:username
   Response contract:
     visibility, entityType, id, slug, title, description, imageUrl, canonicalUrl, appUrl
 ```
@@ -1085,6 +1090,10 @@ hooks/useNews.js
 
 hooks/useShelfDetailSync.js  (no internal imports — createContext)
 hooks/useFriendSearchSync.js (no internal imports — createContext)
+
+hooks/useMentionInput.js
+  → context/AuthContext.js
+  → services/api.js
 ```
 
 ### Components
@@ -1145,6 +1154,9 @@ ui/GlobalSearchBar.js
   → context/ThemeContext.js
   → services/api.js
   exports: useGlobalSearch (hook), GlobalSearchInput, GlobalSearchOverlay
+
+ui/MentionSuggestions.js
+  → context/ThemeContext.js
 ```
 
 ### News Components
@@ -1625,6 +1637,7 @@ news_items (SERIAL PK)
 | `20260325201500_add_reviewed_event_link_to_user_collections` | + `user_collections.reviewed_event_*` columns for review/feed event linking |
 | `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table |
 | `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default → TRUE (flips existing users), `user_collections.owner_photo_visible` default → TRUE |
+| `20260328000000_add_mention_notification_type` | Expand `notifications` type CHECK constraint to include `'mention'`, + `notification_preferences.push_mentions` (BOOLEAN DEFAULT TRUE) |
 
 ---
 

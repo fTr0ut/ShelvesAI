@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-export type ShareKind = "collectables" | "manuals" | "shelves" | "events";
+export type ShareKind = "collectables" | "manuals" | "shelves" | "events" | "profiles";
 export type ShareVisibility = "public" | "restricted" | "not_found";
 
 export type SharePayload = {

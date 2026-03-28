@@ -633,7 +633,7 @@ CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'friend_request', 'friend_accept')),
+    type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'friend_request', 'friend_accept', 'mention')),
     entity_id TEXT NOT NULL,
     entity_type TEXT NOT NULL CHECK (entity_type IN ('event', 'friendship')),
     metadata JSONB DEFAULT '{}' NOT NULL,
@@ -675,6 +675,7 @@ CREATE TABLE notification_preferences (
     push_comments BOOLEAN DEFAULT TRUE NOT NULL,
     push_friend_requests BOOLEAN DEFAULT TRUE NOT NULL,
     push_friend_accepts BOOLEAN DEFAULT TRUE NOT NULL,
+    push_mentions BOOLEAN DEFAULT TRUE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
