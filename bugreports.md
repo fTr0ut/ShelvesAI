@@ -19,8 +19,15 @@
 
 -~~When shelf = 'other', the AI progress modal window only stays at 10% the entire process. Flesh out the progress status updates further to make the process seem less stale.~~ **DONE 3/25/26** - Added dedicated `other`-workflow progress stages in `visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`) and updated `VisionPipelineService` to use monotonic, `other`-specific status updates (including second-pass extraction), preventing long-running `other` scans from appearing stuck at 10%.
 
--Implemented rollback-friendly persistent footer navigation for Shelves detail flows. **DONE 3/26/26** - `BottomTabNavigator` now supports `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER` (single-line kill switch) and, when enabled, mounts a nested Shelves stack (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) so the tab footer stays visible through shelf/detail routes opened from the Shelves tab. Add-FAB now routes to nested `Shelves -> ShelfSelect` in this mode, while legacy root routing remains when disabled. Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so content/FABs clear the persistent footer.
--Feed added-event visual refresh. **DONE 3/26/26** - Reworked posting visuals across `SocialFeedScreen`, `ProfileScreen`, and `FeedDetailScreen` so added-event headers now use shelf-type dynamic grammar (no item title in header), shelf description is removed from added-event card bodies, single-item events show thumbnail + name/creator/year, and multi-item events keep thumbnail stacking. Added shared helper `mobile/src/utils/feedAddedEvent.js` and owner-photo thumbnail support for `other` shelves with placeholder fallback when personal-photo thumbs are unavailable. Backend now standardizes add-event payloads (`item.collectable_added` / `item.manual_added`) across shelf/manual/review/vision emitters and exposes normalized `title`/`creator`/`year` in feed item mapping (`GET /api/feed`, `GET /api/feed/:id`), including collectable year in feed-detail hydration.
+
+-Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.
+
+
+
+### General Enhancements
+-Behavior change: People will add all sorts of collectabls and manuals to a single shelf. Right now, if I add a movie that is classified as a shelf = 'book' type, the event card will say "Johnny added a new book to My First Shelf", even though the collectable is a movie. Adjust the event card to reference the collectable type first, fallback to shelf type when it's a manual add. iOS v1 build 3 3/29/26
+
+--Add deep-linking to Wishlists and a Share button visible to owners of the wishlist. iOS v1 build 3 3/29/26
 
 
 
@@ -46,7 +53,20 @@
 
 -~~iOS reported a hang on the mobile app, tailspin log provided. 3/23/26~~ **DONE 3/24/26** - Tailspin indicated `UIKit-runloop` + keyboard-management dependency stalls on main thread. Added mitigation by removing the global iOS `KeyboardAvoidingView` wrapper around the app navigator and applying per-screen keyboard-stability fixes for profile/onboarding text-entry flows.
 
-### Cleanup
+-Foreign users have access to a owner's Wishlist, which is intended. However, they have the delete icon visible on their screen. They receive an error message when attempting to delete said item because of token auth, but the icon needs to be hidden. iOS v1 build 3 03/28/26
+
+-When copying a Share link to the device's clipboard, two of the same link are copied in. iOS v1 build 3 03/28/26
+
+-Possible bug: it appears that in some instances, multiple push notifications are being sent out for one push event (like on an event card). iOS v1 build 3 3/29/26
+
+-Platform doesn't seem to be mapped to a collectable field from the Games upsert. iOS v1 build 3 3/29/26
+
+
+
+
+
+
+### Cleanup and Changelog
 -~~every post/get is assigned a jobid. That doesn't seem necessary. We should only assign jobids to workflow request items.~~ **DONE 3/23/26** - Request middleware unmounted; workflow/scheduled job logging via `jobRunner` remains available.
 -~~Re-add request-level auto job IDs for workflow endpoints only (vision/catalog/etc) after global request logger removal.~~ **DONE 3/23/26** - Added lightweight workflow context middleware (`api/middleware/workflowJobContext.js`) and mounted it on `POST /api/shelves/:shelfId/vision` and `POST /api/shelves/:shelfId/catalog-lookup` to auto-assign request job IDs without re-enabling global GET/POST request DB logging.
 -Added market value enhancement end-to-end (3/23/26): introduced `market_value` on `collectables` + `user_manuals`, added `market_value_sources` JSONB storage for Gemini links, wired persistence through vision/manual/catalog flows, and updated Gemini prompts/schema to request both value and sources. API payloads currently omit `marketValueSources` intentionally.
@@ -54,3 +74,5 @@
 -Added same-photo vision idempotency for shelf scans (3/23/26): introduced persistent `vision_result_cache` keyed by `user_id+shelf_id+image_sha256` with 24h TTL. `POST /api/shelves/:shelfId/vision` now short-circuits on cache hit (sync + async) and logs cache hit/miss; successful uncached runs persist cache entries.
 -Vision pipeline stabilization updates (3/24/26): fixed `collectables.upsert` JSON/text parameter ordering that caused `Token "USD" is invalid` save failures, added Gemini confidence patch retry (single follow-up turn) for extraction rows missing confidence, added explicit OCR-vs-enrichment stage logs, and changed `saveToShelf` to route failed saves into `needs_review` with `reason: save_error` instead of silently dropping them.
 -Vinyl enrichment prompt fix (3/24/26): corrected Gemini enrichment category resolution so `vinyl` shelves map to music-specific enrichment instructions instead of falling back to book defaults; also updated schema hint text to use category-aware identifier/format examples (e.g., UPC/Discogs/MusicBrainz + Vinyl LP terms).
+-Implemented rollback-friendly persistent footer navigation for Shelves detail flows. **DONE 3/26/26** - `BottomTabNavigator` now supports `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER` (single-line kill switch) and, when enabled, mounts a nested Shelves stack (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) so the tab footer stays visible through shelf/detail routes opened from the Shelves tab. Add-FAB now routes to nested `Shelves -> ShelfSelect` in this mode, while legacy root routing remains when disabled. Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so content/FABs clear the persistent footer.
+-Feed added-event visual refresh. **DONE 3/26/26** - Reworked posting visuals across `SocialFeedScreen`, `ProfileScreen`, and `FeedDetailScreen` so added-event headers now use shelf-type dynamic grammar (no item title in header), shelf description is removed from added-event card bodies, single-item events show thumbnail + name/creator/year, and multi-item events keep thumbnail stacking. Added shared helper `mobile/src/utils/feedAddedEvent.js` and owner-photo thumbnail support for `other` shelves with placeholder fallback when personal-photo thumbs are unavailable. Backend now standardizes add-event payloads (`item.collectable_added` / `item.manual_added`) across shelf/manual/review/vision emitters and exposes normalized `title`/`creator`/`year` in feed item mapping (`GET /api/feed`, `GET /api/feed/:id`), including collectable year in feed-detail hydration.

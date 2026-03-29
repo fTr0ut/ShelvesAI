@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import {
     FlatList,
     RefreshControl,
@@ -8,6 +8,7 @@ import {
     TouchableOpacity,
     View,
     StatusBar,
+    Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +26,12 @@ export default function ShelvesScreen({ navigation }) {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [isSearchingItems, setIsSearchingItems] = useState(false);
+    const [searchPage, setSearchPage] = useState(0);
+    const [hasMoreSearch, setHasMoreSearch] = useState(true);
+    const searchCache = useRef({});
     const [viewMode, setViewMode] = useState('grid');
     const [unmatchedCount, setUnmatchedCount] = useState(0);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -81,13 +88,92 @@ export default function ShelvesScreen({ navigation }) {
         loadUnreadCount();
     }, [loadShelves, loadUnreadCount]);
 
-    const filteredShelves = useMemo(() => {
-        if (!searchQuery.trim()) {
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+            setSearchPage(0);
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    const runSearch = useCallback(async (q, page = 0) => {
+        if (!q || q.trim().length < 2) {
+            setSearchResults([]);
+            return;
+        }
+
+        const limit = 50;
+        const skip = page * limit;
+        const cacheKey = `${q}:${page}`;
+
+        if (searchCache.current[cacheKey]) {
+            if (page === 0) setSearchResults(searchCache.current[cacheKey].results);
+            else setSearchResults(prev => [...prev, ...searchCache.current[cacheKey].results]);
+            setHasMoreSearch(searchCache.current[cacheKey].hasMore);
+            return;
+        }
+
+        try {
+            if (page === 0) setIsSearchingItems(true);
+            const data = await apiRequest({ apiBase, path: `/api/shelves/search?q=${encodeURIComponent(q)}&skip=${skip}&limit=${limit}`, token });
+            const results = data.results || [];
+            const hasMore = results.length === limit;
+
+            searchCache.current[cacheKey] = { results, hasMore };
+
+            if (page === 0) {
+                setSearchResults(results);
+            } else {
+                setSearchResults(prev => [...prev, ...results]);
+            }
+            setHasMoreSearch(hasMore);
+        } catch (e) {
+            console.warn('Search failed', e);
+        } finally {
+            setIsSearchingItems(false);
+        }
+    }, [apiBase, token]);
+
+    useEffect(() => {
+        if (debouncedSearchQuery.trim().length >= 2) {
+            runSearch(debouncedSearchQuery, searchPage);
+        } else {
+            setSearchResults([]);
+        }
+    }, [debouncedSearchQuery, searchPage, runSearch]);
+
+    const handleLoadMoreSearch = () => {
+        if (!isSearchingItems && hasMoreSearch && debouncedSearchQuery.trim().length >= 2) {
+            setSearchPage(prev => prev + 1);
+        }
+    };
+
+    const listData = useMemo(() => {
+        if (!debouncedSearchQuery.trim() || debouncedSearchQuery.trim().length < 2) {
             return [...shelves, { id: 'create-shelf', type: 'special-create', name: 'New Shelf' }];
         }
-        const q = searchQuery.toLowerCase();
-        return shelves.filter(s => s.name?.toLowerCase().includes(q));
-    }, [shelves, searchQuery]);
+
+        const matchingShelves = searchResults.filter(r => r.resultType === 'shelf');
+        const matchingItems = searchResults.filter(r => r.resultType !== 'shelf');
+
+        const finalData = [];
+
+        if (matchingShelves.length > 0) {
+            finalData.push({ id: 'header-shelves', isHeader: true, title: 'Shelves' });
+            finalData.push(...matchingShelves.map(s => ({ ...s, isGlobalResult: true, originalId: s.id, id: `shelf-${s.id}` })));
+        }
+
+        if (matchingItems.length > 0) {
+            finalData.push({ id: 'header-items', isHeader: true, title: 'Collection Items' });
+            finalData.push(...matchingItems.map(i => ({ ...i, isGlobalResult: true, originalId: i.id, id: `${i.resultType}-${i.id}` })));
+        }
+
+        if (finalData.length === 0 && !isSearchingItems) {
+            finalData.push({ id: 'empty-search', isEmpty: true });
+        }
+
+        return finalData;
+    }, [debouncedSearchQuery, shelves, searchResults, isSearchingItems]);
 
     const showTopCreateShelfButton = useMemo(
         () => shelves.length > 6 && !searchQuery.trim(),
@@ -101,8 +187,27 @@ export default function ShelvesScreen({ navigation }) {
         if (shelf.type === 'special-create') {
             navigation.navigate('ShelfCreateScreen');
         } else {
-            navigation.navigate('ShelfDetail', { id: shelf.id, title: shelf.name });
+            const shelfId = shelf.isGlobalResult ? (shelf.shelfId || shelf.originalId) : shelf.id;
+            navigation.navigate('ShelfDetail', { id: shelfId, title: shelf.name || shelf.title });
         }
+    };
+
+    const handleOpenItem = (item) => {
+        // Restore the original database ID into the item payload for the detail screen
+        const contextItem = {
+            ...item,
+            id: item.originalId || item.id
+        };
+
+        navigation.navigate('CollectableDetail', {
+            item: contextItem,
+            id: contextItem.id,
+            collectableId: item.collectableId,
+            manualId: item.manualId,
+            shelfId: item.shelfId,
+            title: item.title,
+            manualMode: item.resultType === 'manual'
+        });
     };
 
     const renderGridItem = ({ item }) => {
@@ -129,15 +234,25 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.gridIconBox}>
-                    <CategoryIcon type={item.type} size={28} />
+                    <CategoryIcon type={item.type || item.kind} size={28} />
                 </View>
-                <Text style={styles.gridTitle} numberOfLines={2}>{item.name}</Text>
-                <Text style={styles.gridMeta}>{item.itemCount || 0} items</Text>
+                <Text style={styles.gridTitle} numberOfLines={2}>{item.name || item.title}</Text>
+                <Text style={styles.gridMeta}>{item.isGlobalResult ? 'Shelf' : `${item.itemCount || 0} items`}</Text>
             </TouchableOpacity>
         );
     };
 
     const renderListItem = ({ item }) => {
+        if (item.isHeader) {
+            return (
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionHeaderText}>{item.title}</Text>
+                </View>
+            );
+        }
+        if (item.isEmpty) {
+            return renderEmpty();
+        }
         if (item.type === 'special-create') {
             return (
                 <TouchableOpacity
@@ -157,6 +272,62 @@ export default function ShelvesScreen({ navigation }) {
             );
         }
 
+        const getResultItemImageUri = (item) => {
+            if (item.ownerPhotoThumbStorageKey) {
+                return `${apiBase}/api/shelves/${item.shelfId}/items/${item.id}/owner-photo/thumbnail`;
+            }
+            if (item.coverUrl && typeof item.coverUrl === 'string' && item.coverUrl !== 'null') {
+                const url = item.coverUrl.trim();
+                // Replace invalid URI characters
+                return (url.startsWith('http') ? url : `${apiBase}${url.startsWith('/') ? '' : '/'}${url}`).replace(/ /g, '%20');
+            }
+            if (item.coverMediaPath && typeof item.coverMediaPath === 'string' && item.coverMediaPath !== 'null') {
+                const path = item.coverMediaPath.trim();
+                return `${apiBase}${path.startsWith('/') ? '' : '/'}${path}`.replace(/ /g, '%20');
+            }
+            return null;
+        };
+
+        if (item.isGlobalResult && item.resultType !== 'shelf') {
+            const itemUri = getResultItemImageUri(item);
+            return (
+                <TouchableOpacity
+                    style={styles.itemResultCard}
+                    onPress={() => handleOpenItem(item)}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.itemThumbnailContainer}>
+                        {itemUri ? (
+                            <Image
+                                source={{ uri: itemUri }}
+                                style={styles.itemThumbnail}
+                            />
+                        ) : (
+                            <View style={[styles.itemThumbnail, styles.itemThumbnailPlaceholder]}>
+                                <CategoryIcon type={item.kind || 'item'} size={24} />
+                            </View>
+                        )}
+                    </View>
+                    <View style={styles.itemResultContent}>
+                        <Text style={styles.itemResultTitle} numberOfLines={1}>{item.title}</Text>
+                        {!!item.subtitle && <Text style={styles.itemResultSubtitle} numberOfLines={1}>{item.subtitle}</Text>}
+                        <View style={styles.itemResultBadges}>
+                            <View style={styles.badgeContainer}>
+                                <Text style={styles.badgeLabel}>{item.kind || item.resultType}</Text>
+                            </View>
+                            {!!item.format && (
+                                <View style={[styles.badgeContainer, styles.badgeContainerAlt]}>
+                                    <Text style={styles.badgeLabelAlt}>{item.format}</Text>
+                                </View>
+                            )}
+                        </View>
+                        <Text style={styles.itemShelfInfo} numberOfLines={1}>In shelf: {item.shelfName}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+            );
+        }
+
         return (
             <TouchableOpacity
                 style={styles.listCard}
@@ -164,11 +335,15 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.listIcon}>
-                    <CategoryIcon type={item.type} size={22} />
+                    <CategoryIcon type={item.kind || item.type} size={22} />
                 </View>
                 <View style={styles.listContent}>
-                    <Text style={styles.listTitle} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
+                    <Text style={styles.listTitle} numberOfLines={1}>{item.title || item.name}</Text>
+                    {item.isGlobalResult ? (
+                        <Text style={styles.listMeta}>Shelf</Text>
+                    ) : (
+                        <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
+                    )}
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
@@ -259,7 +434,7 @@ export default function ShelvesScreen({ navigation }) {
                         <Ionicons name="search" size={18} color={colors.textMuted} />
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="Search shelves..."
+                            placeholder="Search across your collection..."
                             placeholderTextColor={colors.textMuted}
                             value={searchQuery}
                             onChangeText={setSearchQuery}
@@ -293,14 +468,14 @@ export default function ShelvesScreen({ navigation }) {
                 {/* Content */}
                 {loading && !refreshing ? renderLoading() : (
                     <FlatList
-                        data={filteredShelves}
+                        data={listData}
                         keyExtractor={(item) => String(item.id)}
-                        renderItem={viewMode === 'grid' ? renderGridItem : renderListItem}
-                        numColumns={viewMode === 'grid' ? 2 : 1}
-                        key={viewMode}
+                        renderItem={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? renderGridItem : renderListItem}
+                        numColumns={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? 2 : 1}
+                        key={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? 'grid' : 'list'}
                         contentContainerStyle={styles.listContainer}
                         ListHeaderComponent={showTopCreateShelfButton ? renderTopCreateShelf : null}
-                        columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
+                        columnWrapperStyle={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? styles.gridRow : undefined}
                         refreshControl={
                             <RefreshControl
                                 refreshing={refreshing}
@@ -309,6 +484,8 @@ export default function ShelvesScreen({ navigation }) {
                                 colors={[colors.primary]}
                             />
                         }
+                        onEndReached={handleLoadMoreSearch}
+                        onEndReachedThreshold={0.5}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={renderEmpty}
                     />
@@ -661,5 +838,89 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 13,
         color: 'rgba(255,255,255,0.8)',
         marginTop: 2,
+    },
+    // Search Sections & Items
+    sectionHeader: {
+        marginTop: spacing.md,
+        marginBottom: spacing.sm,
+        paddingHorizontal: spacing.md,
+    },
+    sectionHeaderText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: colors.text,
+    },
+    itemResultCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: spacing.md,
+        paddingHorizontal: spacing.md,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border,
+    },
+    itemThumbnailContainer: {
+        width: 50,
+        height: 70,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+        marginRight: spacing.md,
+        backgroundColor: colors.surface,
+    },
+    itemThumbnail: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
+    },
+    itemThumbnailPlaceholder: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    itemResultContent: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    itemResultTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.text,
+        marginBottom: 2,
+    },
+    itemResultSubtitle: {
+        fontSize: 14,
+        color: colors.textMuted,
+        marginBottom: 4,
+    },
+    itemResultBadges: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+        marginBottom: 4,
+    },
+    badgeContainer: {
+        backgroundColor: colors.primary + '20',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+    },
+    badgeLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: colors.primary,
+        textTransform: 'capitalize',
+    },
+    badgeContainerAlt: {
+        backgroundColor: colors.surfaceTop,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    badgeLabelAlt: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: colors.textSecondary,
+    },
+    itemShelfInfo: {
+        fontSize: 12,
+        color: colors.textMuted,
+        fontStyle: 'italic',
     },
 });

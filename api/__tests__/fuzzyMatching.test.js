@@ -17,8 +17,8 @@ describe('collectablesQueries.fuzzyMatch', () => {
         query.mockResolvedValue({
             rows: [{
                 title: 'The Hobbit',
-                combined_sim: 0.8
-            }]
+                combined_sim: 0.8,
+            }],
         });
 
         await collectablesQueries.fuzzyMatch('The Hobbit', 'Tolkien', 'book', 0.5);
@@ -33,7 +33,6 @@ describe('collectablesQueries.fuzzyMatch', () => {
 
         await collectablesQueries.fuzzyMatch('The Hobbit', 'Tolkien', null, 0.5);
 
-        // Check that sql does not contain "AND kind ="
         const callArgs = query.mock.calls[0];
         const sql = callArgs[0];
         expect(sql).not.toContain('AND kind =');
@@ -50,8 +49,8 @@ describe('collectablesQueries.fuzzyMatch', () => {
         query.mockResolvedValue({
             rows: [{
                 title: 'Something Else',
-                combined_sim: 0.2
-            }]
+                combined_sim: 0.2,
+            }],
         });
 
         const result = await collectablesQueries.fuzzyMatch('Title', 'Author', 'book', 0.3);
@@ -63,8 +62,8 @@ describe('collectablesQueries.fuzzyMatch', () => {
             rows: [{
                 id: 1,
                 title: 'The Hobbit',
-                combined_sim: 0.8
-            }]
+                combined_sim: 0.8,
+            }],
         });
 
         const result = await collectablesQueries.fuzzyMatch('The Hobbit', 'Tolkien', 'book');
@@ -80,25 +79,29 @@ describe('collectablesQueries search normalization', () => {
     it('searchByTitle should include normalized matching branch', async () => {
         query.mockResolvedValue({ rows: [] });
 
-        await collectablesQueries.searchByTitle('Pokémon', 'book', 7);
+        await collectablesQueries.searchByTitle('Pokemon', 'book', 7);
 
         const [sql, params] = query.mock.calls[0];
-        expect(sql).toContain('c.title % $1 OR');
+        expect(sql).toContain('WHERE (');
+        expect(sql).toContain('c.title % $1');
         expect(sql).toContain(') % $2');
-        expect(params).toEqual(['Pokémon', 'pokemon', 'books', 7]);
+        expect(sql).toContain(')');
+        expect(sql).toContain('AND c.kind = $3');
+        expect(params).toEqual(['Pokemon', 'pokemon', 'books', 7]);
     });
 
     it('searchGlobal should include normalized branch and ranking', async () => {
         query.mockResolvedValue({ rows: [] });
 
-        await collectablesQueries.searchGlobal({ q: 'Pokémon', kind: 'book', limit: 5, offset: 2 });
+        await collectablesQueries.searchGlobal({ q: 'Pokemon', kind: 'book', limit: 5, offset: 2 });
 
         const [sql, params] = query.mock.calls[0];
+        expect(sql).toContain('WHERE (');
         expect(sql).toContain('OR COALESCE(c.primary_creator, \'\') % $1');
-        expect(sql).toContain('OR');
         expect(sql).toContain('% $2');
+        expect(sql).toContain('AND c.kind = $3');
         expect(sql).toContain('ORDER BY search_score DESC');
-        expect(params).toEqual(['Pokémon', 'pokemon', 'books', 5, 2]);
+        expect(params).toEqual(['Pokemon', 'pokemon', 'books', 5, 2]);
     });
 
     it('searchGlobalWildcard should include normalized ILIKE branch', async () => {
@@ -107,9 +110,10 @@ describe('collectablesQueries search normalization', () => {
         await collectablesQueries.searchGlobalWildcard({ pattern: 'Pok*mon', kind: 'book', limit: 4, offset: 1 });
 
         const [sql, params] = query.mock.calls[0];
+        expect(sql).toContain('WHERE (');
         expect(sql).toContain('OR c.primary_creator ILIKE $1');
-        expect(sql).toContain('OR');
         expect(sql).toContain('ILIKE $2');
+        expect(sql).toContain('AND c.kind = $3');
         expect(params).toEqual(['Pok%mon', 'pok%mon', 'books', 4, 1]);
     });
 });

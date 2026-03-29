@@ -213,7 +213,10 @@ async function searchByTitle(term, kind = null, limit = 20) {
            m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title % $1 OR ${normalizedTitleExpr} % $2
+    WHERE (
+      c.title % $1
+      OR ${normalizedTitleExpr} % $2
+    )
   `;
     const params = [term, normalizedTerm];
 
@@ -435,10 +438,12 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
            m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title % $1
-       OR COALESCE(c.primary_creator, '') % $1
-       OR ${normalizedTitleExpr} % $2
-       OR ${normalizedCreatorExpr} % $2
+    WHERE (
+      c.title % $1
+      OR COALESCE(c.primary_creator, '') % $1
+      OR ${normalizedTitleExpr} % $2
+      OR ${normalizedCreatorExpr} % $2
+    )
   `;
     const params = [q, normalizedQuery];
 
@@ -471,10 +476,12 @@ async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
     SELECT c.*, m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE c.title ILIKE $1
-       OR c.primary_creator ILIKE $1
-       OR ${normalizedTitleExpr} ILIKE $2
-       OR ${normalizedCreatorExpr} ILIKE $2
+    WHERE (
+      c.title ILIKE $1
+      OR c.primary_creator ILIKE $1
+      OR ${normalizedTitleExpr} ILIKE $2
+      OR ${normalizedCreatorExpr} ILIKE $2
+    )
   `;
     const params = [sqlPattern, normalizedPattern];
 
@@ -526,8 +533,10 @@ async function fuzzyMatch(title, primaryCreator, kind, threshold = 0.3) {
            m.local_path as cover_media_path
     FROM collectables c
     LEFT JOIN media m ON m.id = c.cover_media_id
-    WHERE similarity(c.title, $1) > $5
-       OR similarity(${normalizedTitleExpr}, $3) > $5
+    WHERE (
+      similarity(c.title, $1) > $5
+      OR similarity(${normalizedTitleExpr}, $3) > $5
+    )
   `;
     const params = [title, primaryCreator || '', normalizedTitle, normalizedCreator, threshold];
 

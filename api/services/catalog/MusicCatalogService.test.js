@@ -231,6 +231,20 @@ describe('MusicCatalogService.safeLookup', () => {
     expect(result).toBeNull();
   });
 
+  it('supports artist-only lookup when title is empty', async () => {
+    const rg = buildSampleReleaseGroup({ id: 'rg-artist-only', score: 88 });
+    const searchResponse = buildSearchResponse([rg]);
+    const detailsResponse = buildSampleReleaseGroup({ id: 'rg-artist-only' });
+
+    const service = createService(searchResponse, detailsResponse);
+    const result = await service.safeLookup({ title: '', author: 'Miles Davis' });
+
+    expect(result).toBeTruthy();
+    expect(result.provider).toBe('musicbrainz');
+    expect(result.search.query).toMatchObject({ artist: 'Miles Davis' });
+    expect(result.search.query.title).toBeUndefined();
+  });
+
   it('returns null when search returns no results', async () => {
     const service = createService(buildSearchResponse([]), null);
     const result = await service.safeLookup({ title: 'Kind of Blue' });

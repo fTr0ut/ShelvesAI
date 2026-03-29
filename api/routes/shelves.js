@@ -46,6 +46,9 @@ function requireVisionPayload(req, res, next) {
 router.get('/', ctrl.listShelves);
 router.post('/', requireFields(['name', 'type']), validateStringLengths({ name: 500, description: 5000 }), ctrl.createShelf);
 
+// Note: Must come before /:shelfId
+router.get('/search', validateStringLengths({ q: 500 }, { source: 'query' }), ctrl.searchUserCollection);
+
 router.get('/:shelfId', shelfIntParam, ctrl.getShelf);
 router.put('/:shelfId', shelfIntParam, validateStringLengths({ name: 500, description: 5000 }), ctrl.updateShelf);
 router.delete('/:shelfId', shelfIntParam, ctrl.deleteShelf);
@@ -53,7 +56,7 @@ router.delete('/:shelfId', shelfIntParam, ctrl.deleteShelf);
 router.get('/:shelfId/items', shelfIntParam, ctrl.listShelfItems);
 router.post('/:shelfId/manual/search', shelfIntParam, ctrl.searchManualEntry);
 router.post('/:shelfId/manual', shelfIntParam, requireFields(['name']), validateStringLengths({ name: 500, description: 5000 }), ctrl.addManualEntry);
-router.post('/:shelfId/items', shelfIntParam, requireFields(['collectableId']), ctrl.addCollectable);
+router.post('/:shelfId/items', shelfIntParam, ctrl.addCollectable);
 router.post('/:shelfId/items/from-api', shelfIntParam, ctrl.addCollectableFromApi);
 router.post('/:shelfId/items/:itemId/replacement-intent', shelfItemIntParams, ctrl.createReplacementIntent);
 router.post('/:shelfId/items/:itemId/replace', shelfItemIntParams, ctrl.replaceShelfItem);

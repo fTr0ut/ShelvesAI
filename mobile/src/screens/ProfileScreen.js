@@ -638,6 +638,16 @@ export default function ProfileScreen({ navigation, route }) {
                             <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>
                                 {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
                             </Text>
+                            {singleAddedItem.rating != null && singleAddedItem.rating > 0 && (
+                                <View style={{ flexDirection: 'row', marginTop: 2 }}>
+                                    {Array.from({ length: 5 }, (_, i) => {
+                                        const r = singleAddedItem.rating;
+                                        if (i < Math.floor(r)) return <Ionicons key={i} name="star" size={12} color="#FFD700" />;
+                                        if (i === Math.floor(r) && r % 1 >= 0.5) return <Ionicons key={i} name="star-half" size={12} color="#FFD700" />;
+                                        return <Ionicons key={i} name="star-outline" size={12} color="#FFD700" />;
+                                    })}
+                                </View>
+                            )}
                         </View>
                     </View>
                 ) : null}
@@ -707,6 +717,16 @@ export default function ProfileScreen({ navigation, route }) {
                             <View key={idx} style={styles.postItemChip}>
                                 <Ionicons name="book" size={12} color={colors.primary} />
                                 <Text style={styles.postItemTitle} numberOfLines={1}>{entry?.name || 'Untitled'}</Text>
+                                {entry?.rating != null && entry.rating > 0 && (
+                                    <View style={{ flexDirection: 'row', marginLeft: 4 }}>
+                                        {Array.from({ length: 5 }, (_, i) => {
+                                            const r = entry.rating;
+                                            if (i < Math.floor(r)) return <Ionicons key={i} name="star" size={10} color="#FFD700" />;
+                                            if (i === Math.floor(r) && r % 1 >= 0.5) return <Ionicons key={i} name="star-half" size={10} color="#FFD700" />;
+                                            return <Ionicons key={i} name="star-outline" size={10} color="#FFD700" />;
+                                        })}
+                                    </View>
+                                )}
                             </View>
                         ))}
                         {totalItems > previewItems.length && (

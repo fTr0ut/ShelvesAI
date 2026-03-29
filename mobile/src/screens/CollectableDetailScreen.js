@@ -29,6 +29,7 @@ import ImageCropper from '../components/ui/ImageCropper';
 import { apiRequest, getValidToken } from '../services/api';
 import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
+import AddToShelfModal from '../components/AddToShelfModal';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
@@ -67,6 +68,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [manualCoverUrl, setManualCoverUrl] = useState(null);
     const [showWishlistModal, setShowWishlistModal] = useState(false);
     const [wishlists, setWishlists] = useState([]);
+    const [showAddToShelfModal, setShowAddToShelfModal] = useState(false);
+    const [addedToShelfId, setAddedToShelfId] = useState(null);
     const [ownerPhoto, setOwnerPhoto] = useState(null);
     const [ownerPhotoLoading, setOwnerPhotoLoading] = useState(false);
     const [ownerPhotoBusy, setOwnerPhotoBusy] = useState(false);
@@ -185,6 +188,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     };
 
+    const handleAddToShelfSuccess = useCallback((shelf) => {
+        setAddedToShelfId(shelf.id);
+    }, []);
+
     const handleStartReplacementFlow = useCallback(async () => {
         if (!hasShelfItemContext || !isOwnedShelfItem) return;
 
@@ -209,6 +216,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             const prefillDescription = collectable?.description || manual?.description || '';
 
             navigation.replace('ItemSearch', {
+                mode: 'shelf_add_or_replace',
                 shelfId,
                 shelfType: prefillType,
                 replaceContext: {
@@ -2068,6 +2076,20 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                 showOwnerPhotoInRatingColumn && isManual && styles.actionButtonsColumnAlignWithRatings,
                             ]}
                         >
+                            {!hasShelfItemContext && user?.id && (collectable?.id || manual?.id) && !addedToShelfId && (
+                                <TouchableOpacity
+                                    onPress={() => setShowAddToShelfModal(true)}
+                                    style={styles.actionIconBtn}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
+                                </TouchableOpacity>
+                            )}
+                            {!hasShelfItemContext && user?.id && addedToShelfId && (
+                                <View style={styles.actionIconBtn}>
+                                    <Ionicons name="checkmark-circle" size={28} color={colors.success || '#4CAF50'} />
+                                </View>
+                            )}
                             {(collectable?.id || manual?.id) && (
                                 <TouchableOpacity
                                     onPress={handleToggleFavorite}
@@ -2375,6 +2397,16 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     </View>
                 </TouchableOpacity>
             </Modal>
+
+            <AddToShelfModal
+                visible={showAddToShelfModal}
+                onClose={() => setShowAddToShelfModal(false)}
+                onSuccess={handleAddToShelfSuccess}
+                apiBase={apiBase}
+                token={token}
+                collectableId={collectable?.id || null}
+                manualId={!collectable?.id ? (manual?.id || null) : null}
+            />
         </SafeAreaView >
     );
 }

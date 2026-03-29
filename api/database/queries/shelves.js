@@ -10,6 +10,16 @@ function resolveQuery(client) {
     return client ? client.query.bind(client) : query;
 }
 const { rowToCamelCase, parsePagination } = require('./utils');
+const {
+    normalizeSearchText,
+    buildNormalizedSqlExpression,
+} = require('../../utils/searchNormalization');
+
+const normalizedCollectableTitleExpr = buildNormalizedSqlExpression('c.title');
+const normalizedCollectableCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
+const normalizedManualTitleExpr = buildNormalizedSqlExpression('um.name');
+const normalizedManualCreatorExpr = buildNormalizedSqlExpression('COALESCE(um.author, \'\')');
+const normalizedShelfNameExpr = buildNormalizedSqlExpression('s.name');
 
 function normalizeManualFuzzyToken(value) {
     if (value === undefined || value === null) return '';
@@ -765,10 +775,17 @@ async function getItemById(itemId, userId, shelfId) {
             c.kind as collectable_kind,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
-            m.local_path as collectable_cover_media_path
+            m.local_path as collectable_cover_media_path,
+            um.id as manual_id,
+            um.name as manual_name,
+            um.author as manual_author,
+            um.type as manual_type,
+            um.cover_media_path as manual_cover_media_path,
+            um.year as manual_year
          FROM user_collections uc
          LEFT JOIN collectables c ON c.id = uc.collectable_id
          LEFT JOIN media m ON m.id = c.cover_media_id
+         LEFT JOIN user_manuals um ON um.id = uc.manual_id
          WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
         [itemId, userId, shelfId]
     );
@@ -784,6 +801,140 @@ async function getManualById(manualId) {
         [manualId]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+/**
+ * Search across a user's shelves, collectables, and manual entries
+ */
+async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 0 } = {}) {
+    const q = String(searchQuery || '').trim();
+    if (!q) return [];
+    
+    const normalizedQuery = normalizeSearchText(q);
+
+    const sql = `
+        SELECT result_type, id, shelf_id, collectable_id, manual_id, title, subtitle, kind, format, system_name, shelf_name,
+               cover_url, cover_media_path,
+               owner_photo_source, owner_photo_thumb_storage_provider, owner_photo_thumb_storage_key,
+               owner_photo_thumb_updated_at, is_vision_linked
+        FROM (
+            SELECT 'shelf' as result_type,
+                   s.id as id,
+                   NULL::integer as shelf_id,
+                   NULL::integer as collectable_id,
+                   NULL::integer as manual_id,
+                   s.name as title,
+                   NULL::text as subtitle,
+                   s.type as kind,
+                   NULL::text as format,
+                   NULL::text as system_name,
+                   NULL::text as shelf_name,
+                   NULL::text as cover_url,
+                   NULL::text as cover_media_path,
+                   NULL::text as owner_photo_source,
+                   NULL::text as owner_photo_thumb_storage_provider,
+                   NULL::text as owner_photo_thumb_storage_key,
+                   NULL::timestamp as owner_photo_thumb_updated_at,
+                   false as is_vision_linked,
+                   GREATEST(
+                       similarity(s.name, $1),
+                       similarity(${normalizedShelfNameExpr}, $2)
+                   ) AS score
+            FROM shelves s
+            WHERE s.owner_id = $3
+              AND (
+                  s.name % $1 OR
+                  ${normalizedShelfNameExpr} % $2 OR
+                  s.name ILIKE '%' || $1 || '%'
+              )
+            
+            UNION ALL
+            
+            SELECT 'collectable' as result_type,
+                   uc.id as id,
+                   uc.shelf_id as shelf_id,
+                   uc.collectable_id as collectable_id,
+                   NULL::integer as manual_id,
+                   c.title as title,
+                   c.primary_creator as subtitle,
+                   c.kind as kind,
+                   uc.format as format,
+                   c.system_name as system_name,
+                   s.name as shelf_name,
+                   c.cover_url as cover_url,
+                   m.local_path as cover_media_path,
+                   uc.owner_photo_source,
+                   uc.owner_photo_thumb_storage_provider,
+                   uc.owner_photo_thumb_storage_key,
+                   uc.owner_photo_thumb_updated_at,
+                   EXISTS (
+                       SELECT 1 FROM vision_item_regions vir WHERE vir.collection_item_id = uc.id
+                   ) AS is_vision_linked,
+                   GREATEST(
+                       similarity(c.title, $1),
+                       similarity(COALESCE(c.primary_creator, ''), $1),
+                       similarity(${normalizedCollectableTitleExpr}, $2),
+                       similarity(${normalizedCollectableCreatorExpr}, $2)
+                   ) AS score
+            FROM user_collections uc
+            JOIN collectables c ON c.id = uc.collectable_id
+            JOIN shelves s ON s.id = uc.shelf_id
+            LEFT JOIN media m ON m.id = c.cover_media_id
+            WHERE uc.user_id = $3
+              AND (
+                  c.title % $1 OR
+                  c.primary_creator % $1 OR
+                  ${normalizedCollectableTitleExpr} % $2 OR
+                  ${normalizedCollectableCreatorExpr} % $2 OR
+                  c.title ILIKE '%' || $1 || '%'
+              )
+              
+            UNION ALL
+            
+            SELECT 'manual' as result_type,
+                   uc.id as id,
+                   uc.shelf_id as shelf_id,
+                   NULL::integer as collectable_id,
+                   uc.manual_id as manual_id,
+                   um.name as title,
+                   um.author as subtitle,
+                   um.type as kind,
+                   COALESCE(uc.format, um.format) as format,
+                   NULL::text as system_name,
+                   s.name as shelf_name,
+                   NULL::text as cover_url,
+                   um.cover_media_path as cover_media_path,
+                   uc.owner_photo_source,
+                   uc.owner_photo_thumb_storage_provider,
+                   uc.owner_photo_thumb_storage_key,
+                   uc.owner_photo_thumb_updated_at,
+                   EXISTS (
+                       SELECT 1 FROM vision_item_regions vir WHERE vir.collection_item_id = uc.id
+                   ) AS is_vision_linked,
+                   GREATEST(
+                       similarity(um.name, $1),
+                       similarity(COALESCE(um.author, ''), $1),
+                       similarity(${normalizedManualTitleExpr}, $2),
+                       similarity(${normalizedManualCreatorExpr}, $2)
+                   ) AS score
+            FROM user_collections uc
+            JOIN user_manuals um ON um.id = uc.manual_id
+            JOIN shelves s ON s.id = uc.shelf_id
+            WHERE uc.user_id = $3
+              AND (
+                  um.name % $1 OR
+                  um.author % $1 OR
+                  ${normalizedManualTitleExpr} % $2 OR
+                  ${normalizedManualCreatorExpr} % $2 OR
+                  um.name ILIKE '%' || $1 || '%'
+              )
+        ) results
+        ORDER BY score DESC NULLS LAST, title ASC
+        LIMIT $4 OFFSET $5
+    `;
+
+    const result = await query(sql, [q, normalizedQuery, userId, limit, offset]);
+    return result.rows.map(rowToCamelCase);
 }
 
 module.exports = {
@@ -810,4 +961,5 @@ module.exports = {
     updateReviewedEventLink,
     getItemById,
     getManualById,
+    searchUserCollection,
 };

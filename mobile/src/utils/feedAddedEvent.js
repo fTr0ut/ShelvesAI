@@ -111,6 +111,7 @@ export function getAddedItemDetails(item = {}, apiBase = '') {
     );
     // Only trust explicit collection item ids for owner-photo thumbnail lookups.
     const itemId = item?.itemId || payload?.itemId || payload?.item_id || null;
+    const rating = item?.rating ?? payload?.rating ?? null;
 
     return {
         name,
@@ -120,6 +121,7 @@ export function getAddedItemDetails(item = {}, apiBase = '') {
         collectableId,
         itemId,
         isManual: !collectableId,
+        rating,
     };
 }
 

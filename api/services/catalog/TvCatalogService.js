@@ -91,7 +91,7 @@ const logger = require('../../logger');
 
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
-                const search = await this.searchTv({ title, year });
+                const search = await this.searchTv({ title, year, page: 1 });
                 if (!search || !Array.isArray(search.results) || !search.results.length) {
                     return null;
                 }
@@ -155,25 +155,48 @@ const logger = require('../../logger');
         return null;
     }
 
-    async safeLookupMany(item, limit = 5, retries = this.retries) {
+    async safeLookupMany(item, limit = 5, retries = this.retries, options = {}) {
         const title = normalizeString(item?.name || item?.title);
         const year = extractYear(item?.year);
         const format = normalizeString(item?.format);
+        const offset = Number.isFinite(Number(options?.offset)) && Number(options.offset) >= 0
+            ? Math.floor(Number(options.offset))
+            : 0;
         if (!title) {
             return [];
         }
 
-        const queryLogContext = pruneObject({ title, year, format });
+        const queryLogContext = pruneObject({ title, year, format, offset, limit });
 
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
-                const search = await this.searchTv({ title, year });
-                if (!search || !Array.isArray(search.results) || !search.results.length) {
-                    return [];
-                }
+                const pageSize = 20;
+                let remaining = Math.max(1, limit || 1);
+                let providerOffset = offset;
+                let page = Math.floor(providerOffset / pageSize) + 1;
+                let inPageOffset = providerOffset % pageSize;
+                const topMatches = [];
+                let totalResults = 0;
+                let exhausted = false;
 
-                const ranked = this.rankMatches(search.results, { title, year });
-                const topMatches = ranked.slice(0, Math.max(1, limit || 1));
+                while (remaining > 0 && !exhausted) {
+                    const search = await this.searchTv({ title, year, page });
+                    if (!search || !Array.isArray(search.results) || !search.results.length) {
+                        break;
+                    }
+                    totalResults = search.total_results ?? totalResults;
+                    const ranked = this.rankMatches(search.results, { title, year });
+                    if (!ranked.length) break;
+                    const pageSlice = ranked.slice(inPageOffset, inPageOffset + remaining);
+                    topMatches.push(...pageSlice);
+                    remaining -= pageSlice.length;
+                    inPageOffset = 0;
+                    page += 1;
+                    const totalPages = Number.isFinite(search.total_pages) ? search.total_pages : null;
+                    if (totalPages && page > totalPages) exhausted = true;
+                    if (pageSlice.length === 0) exhausted = true;
+                }
+                if (!topMatches.length) return [];
                 const results = [];
 
                 for (const match of topMatches) {
@@ -213,7 +236,7 @@ const logger = require('../../logger');
                         tv: details,
                         search: {
                             query: queryLogContext,
-                            totalResults: search.total_results ?? search.results.length,
+                            totalResults,
                         },
                     });
                 }
@@ -270,7 +293,7 @@ const logger = require('../../logger');
         return null;
     }
 
-    async searchTv({ title, year }) {
+    async searchTv({ title, year, page = 1 }) {
         const params = new URLSearchParams();
         params.set('query', title);
         params.set('include_adult', 'false');
@@ -278,7 +301,7 @@ const logger = require('../../logger');
             params.set('first_air_date_year', String(year));
         }
         params.set('language', 'en-US');
-        params.set('page', '1');
+        params.set('page', String(Math.max(1, Number(page) || 1)));
 
         const url = `${this.baseUrl.replace(/\/$/, '')}/search/tv?${params.toString()}`;
         return this.fetchJson(url);

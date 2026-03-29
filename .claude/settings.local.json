@@ -21,7 +21,11 @@
       "Bash(npm run:*)",
       "Bash(xxd)",
       "Bash(grep -n \"navigation.navigate.*CollectableDetail\\\\|navigation.navigate.*FeedDetail\\\\|navigation.navigate.*ShelfDetail\" /c/Users/johna/Documents/Projects/ShelvesAI/mobile/src/screens/*.js)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(grep -n \"addItem\\\\|addManual\\\\|collection_items\" c:/Users/johna/Documents/Projects/ShelvesAI/api/routes/*.js)",
+      "Bash(grep -n \"event_logs\\\\|CREATE TABLE\" c:/Users/johna/Documents/Projects/ShelvesAI/api/database/migrations/*.js)",
+      "Bash(grep -l \"CREATE TABLE event_logs\" c:/Users/johna/Documents/Projects/ShelvesAI/api/database/migrations/*.js)",
+      "Bash(grep:*)"
     ]
   }
 }

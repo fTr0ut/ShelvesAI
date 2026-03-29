@@ -391,6 +391,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
             const prefillDescription = collectable?.description || manual?.description || '';
 
             navigation.navigate('ItemSearch', {
+                mode: 'shelf_add_or_replace',
                 shelfId: id,
                 shelfType,
                 replaceContext: {
@@ -1104,7 +1105,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
 
     const handleOpenSearch = useCallback(() => {
         if (isReadOnly) return;
-        navigation.navigate('ItemSearch', { shelfId: id, shelfType });
+        navigation.navigate('ItemSearch', { mode: 'shelf_add_or_replace', shelfId: id, shelfType });
     }, [navigation, id, shelfType, isReadOnly]);
 
     const handleAddItem = useCallback(() => {

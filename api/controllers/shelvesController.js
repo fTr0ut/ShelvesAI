@@ -1178,9 +1178,52 @@ async function addCollectable(req, res) {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
-    const { collectableId, format, notes, rating, position } = req.body ?? {};
-    if (!collectableId) return res.status(400).json({ error: "collectableId is required" });
+    const { collectableId, manualId, format, notes, rating, position } = req.body ?? {};
 
+    // Require exactly one of collectableId or manualId
+    if (!collectableId && !manualId) {
+      return res.status(400).json({ error: "collectableId or manualId is required" });
+    }
+    if (collectableId && manualId) {
+      return res.status(400).json({ error: "Provide collectableId or manualId, not both" });
+    }
+
+    // --- manualId path ---
+    if (manualId) {
+      const manual = await shelvesQueries.getManualById(manualId);
+      if (!manual) return res.status(404).json({ error: "Manual item not found" });
+      if (manual.userId !== req.user.id) {
+        return res.status(403).json({ error: "You do not own this manual item" });
+      }
+
+      const item = await shelvesQueries.addManualCollection({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        manualId: manual.id,
+      });
+
+      await logShelfEvent({
+        userId: req.user.id,
+        shelfId: shelf.id,
+        type: "item.manual_added",
+        payload: buildManualAddedEventPayload({
+          itemId: item.id,
+          manual,
+          shelfType: shelf.type,
+          source: 'user',
+        }),
+      });
+
+      return res.status(201).json({
+        item: {
+          id: item.id,
+          manual: { id: manual.id, name: manual.name, title: manual.title || manual.name },
+          position: item.position,
+        },
+      });
+    }
+
+    // --- collectableId path (existing flow) ---
     const collectable = await collectablesQueries.findById(collectableId);
     if (!collectable) return res.status(404).json({ error: "Collectable not found" });
 
@@ -3586,15 +3629,16 @@ async function rateShelfItem(req, res) {
         payload: {
           itemId: effectiveItemId,
           collectableId: fullItem?.collectableId || null,
-          title: fullItem?.collectableTitle || 'Unknown',
-          primaryCreator: fullItem?.collectableCreator || null,
+          manualId: fullItem?.manualId || null,
+          title: fullItem?.manualName || fullItem?.collectableTitle || 'Unknown',
+          primaryCreator: fullItem?.manualAuthor || fullItem?.collectableCreator || null,
           coverUrl: fullItem?.collectableCover || null,
           coverImageUrl: fullItem?.collectableCoverImageUrl || null,
           coverImageSource: fullItem?.collectableCoverImageSource || null,
-          coverMediaPath: fullItem?.collectableCoverMediaPath || null,
-          coverMediaUrl: resolveMediaUrl(fullItem?.collectableCoverMediaPath),
+          coverMediaPath: fullItem?.manualCoverMediaPath || fullItem?.collectableCoverMediaPath || null,
+          coverMediaUrl: resolveMediaUrl(fullItem?.manualCoverMediaPath || fullItem?.collectableCoverMediaPath),
           rating: currentRating,
-          type: fullItem?.collectableKind || shelf.type,
+          type: fullItem?.collectableKind || fullItem?.manualType || shelf.type,
         },
       });
       logFeedMicro('rateShelfItem.ratedLogged', {
@@ -3743,6 +3787,26 @@ async function getManualItem(req, res) {
   }
 }
 
+async function searchUserCollection(req, res) {
+  try {
+    const userId = req.user.id;
+    const q = req.query.q || '';
+    
+    // We already use validateStringLengths for `q`, but enforce minimum length here to save DB cost
+    if (q.trim().length < 2) {
+      return res.json({ results: [] });
+    }
+
+    const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 50, maxLimit: 100 });
+    const results = await shelvesQueries.searchUserCollection(userId, q, { limit, offset: skip });
+
+    res.json({ results });
+  } catch (err) {
+    logger.error('searchUserCollection error:', err);
+    res.status(500).json({ error: 'Server error while searching collection' });
+  }
+}
+
 module.exports = {
   listShelves,
   createShelf,
@@ -3780,4 +3844,5 @@ module.exports = {
   abortVision,
   addCollectableFromApi,
   getManualItem,
+  searchUserCollection,
 };

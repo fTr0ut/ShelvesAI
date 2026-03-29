@@ -140,100 +140,74 @@ const logger = require('../../logger');
   async safeLookup(item, retries = this.retries) {
     const title = normalizeString(item?.name || item?.title);
     const director = normalizeString(item?.author || item?.primaryCreator);
-    const year = extractYear(item?.year);
-    const format = normalizeString(item?.format);
-    if (!title) {
+    if (!title && !director) {
       return null;
     }
 
-    const queryLogContext = pruneObject({ title, director, year, format });
-
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const search = await this.searchMovie({ title, year });
-        if (!search || !Array.isArray(search.results) || !search.results.length) {
-          return null;
-        }
-
-        const match = this.pickBestMatch(search.results, { title, year });
-        if (!match) {
-          return null;
-        }
-
-        const details = await this.fetchMovieDetails(match.id);
-        if (!details) {
-          return null;
-        }
-
-        return {
-          provider: 'tmdb',
-          score: match._score || null,
-          movie: details,
-          search: {
-            query: queryLogContext,
-            totalResults: search.total_results ?? search.results.length,
-          },
-        };
-      } catch (err) {
-        const message = String(err?.message || err);
-        if ((message.includes('429') || message.includes('rate limit')) && attempt < retries) {
-          const backoff = 500 * Math.pow(2, attempt);
-          logger.warn('[MovieCatalogService.safeLookup] rate limited', {
-            attempt,
-            backoff,
-            query: queryLogContext,
-          });
-          await this.delayFn(backoff);
-          continue;
-        }
-        if (message.includes('abort') && attempt < retries) {
-          const backoff = 500 * (attempt + 1);
-          logger.warn('[MovieCatalogService.safeLookup] request aborted', {
-            attempt,
-            backoff,
-            query: queryLogContext,
-          });
-          await this.delayFn(backoff);
-          continue;
-        }
-        if (message.includes('404')) {
-          logger.warn('[MovieCatalogService.safeLookup] details not found', {
-            query: queryLogContext,
-            attempt,
-          });
-          return null;
-        }
-        if (message.includes('401')) {
-          logger.error('[MovieCatalogService.safeLookup] unauthorized', queryLogContext);
-          return null;
-        }
-        throw err;
-      }
-    }
-
-    return null;
+    const results = await this.safeLookupMany(item, 1, retries, { offset: 0 });
+    return results[0] || null;
   }
 
-  async safeLookupMany(item, limit = 5, retries = this.retries) {
+  async safeLookupMany(item, limit = 5, retries = this.retries, options = {}) {
     const title = normalizeString(item?.name || item?.title);
     const director = normalizeString(item?.author || item?.primaryCreator);
     const year = extractYear(item?.year);
     const format = normalizeString(item?.format);
-    if (!title) {
+    const offset = Number.isFinite(Number(options?.offset)) && Number(options.offset) >= 0
+      ? Math.floor(Number(options.offset))
+      : 0;
+    if (!title && !director) {
       return [];
     }
 
-    const queryLogContext = pruneObject({ title, director, year, format });
+    const queryLogContext = pruneObject({ title, director, year, format, offset, limit });
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const search = await this.searchMovie({ title, year });
-        if (!search || !Array.isArray(search.results) || !search.results.length) {
-          return [];
+        let topMatches = [];
+        let totalResults = 0;
+        if (title) {
+          const pageSize = 20;
+          let remaining = Math.max(1, limit || 1);
+          let providerOffset = offset;
+          let page = Math.floor(providerOffset / pageSize) + 1;
+          let inPageOffset = providerOffset % pageSize;
+          let exhausted = false;
+
+          while (remaining > 0 && !exhausted) {
+            const search = await this.searchMovie({ title, year, page });
+            if (!search || !Array.isArray(search.results) || !search.results.length) {
+              break;
+            }
+            totalResults = search.total_results ?? totalResults;
+            const ranked = this.rankMatches(search.results, { title, year });
+            if (!ranked.length) {
+              exhausted = true;
+              break;
+            }
+
+            const pageSlice = ranked.slice(inPageOffset, inPageOffset + remaining);
+            topMatches.push(...pageSlice);
+            remaining -= pageSlice.length;
+            inPageOffset = 0;
+            page += 1;
+
+            const totalPages = Number.isFinite(search.total_pages) ? search.total_pages : null;
+            if (totalPages && page > totalPages) exhausted = true;
+            if (pageSlice.length === 0) exhausted = true;
+          }
+        } else {
+          const directorMatches = await this.searchMoviesByDirector({
+            director,
+            year,
+            limit: Math.max(1, limit || 1),
+            offset,
+          });
+          if (!directorMatches.length) return [];
+          topMatches = directorMatches.slice(0, Math.max(1, limit || 1));
+          totalResults = directorMatches.length;
         }
 
-        const ranked = this.rankMatches(search.results, { title, year });
-        const topMatches = ranked.slice(0, Math.max(1, limit || 1));
         const results = [];
 
         for (const match of topMatches) {
@@ -282,17 +256,20 @@ const logger = require('../../logger');
           }
 
           if (!details) continue;
+          const directorScore = this.scoreDirectorMatch(details, director);
+          const mergedScore = Number(match?._score || 0) + directorScore;
           results.push({
             provider: 'tmdb',
-            score: match._score || null,
+            score: Number.isFinite(mergedScore) ? mergedScore : (match._score || null),
             movie: details,
             search: {
               query: queryLogContext,
-              totalResults: search.total_results ?? search.results.length,
+              totalResults,
             },
           });
         }
 
+        results.sort((a, b) => (b?.score || 0) - (a?.score || 0));
         return results;
       } catch (err) {
         const message = String(err?.message || err);
@@ -398,7 +375,7 @@ const logger = require('../../logger');
     return null;
   }
 
-  async searchMovie({ title, year }) {
+  async searchMovie({ title, year, page = 1 }) {
     const params = new URLSearchParams();
     params.set('query', title);
     params.set('include_adult', 'false');
@@ -407,10 +384,85 @@ const logger = require('../../logger');
       params.set('primary_release_year', String(year));
     }
     params.set('language', 'en-US');
-    params.set('page', '1');
+    params.set('page', String(Math.max(1, Number(page) || 1)));
 
     const url = `${this.baseUrl.replace(/\/$/, '')}/search/movie?${params.toString()}`;
     return this.fetchJson(url);
+  }
+
+  async searchPerson({ name }) {
+    const personName = normalizeString(name);
+    if (!personName) return null;
+    const params = new URLSearchParams();
+    params.set('query', personName);
+    params.set('include_adult', 'false');
+    params.set('language', 'en-US');
+    params.set('page', '1');
+
+    const url = `${this.baseUrl.replace(/\/$/, '')}/search/person?${params.toString()}`;
+    return this.fetchJson(url);
+  }
+
+  async fetchPersonMovieCredits(personId) {
+    if (!personId) return null;
+    const params = new URLSearchParams();
+    params.set('language', 'en-US');
+    const url = `${this.baseUrl.replace(/\/$/, '')}/person/${personId}/movie_credits?${params.toString()}`;
+    return this.fetchJson(url);
+  }
+
+  async searchMoviesByDirector({ director, year, limit = 5, offset = 0 }) {
+    const personSearch = await this.searchPerson({ name: director });
+    const people = Array.isArray(personSearch?.results) ? personSearch.results : [];
+    if (!people.length) return [];
+
+    const normalizedDirector = normalizeCompare(director);
+    const rankedPeople = people
+      .map((person) => {
+        const personName = normalizeCompare(person?.name);
+        const department = normalizeCompare(person?.known_for_department);
+        let score = Number(person?.popularity) || 0;
+        if (department === 'directing') score += 20;
+        if (personName && normalizedDirector && personName === normalizedDirector) score += 30;
+        else if (personName && normalizedDirector && (personName.includes(normalizedDirector) || normalizedDirector.includes(personName))) score += 15;
+        return { ...person, _score: score };
+      })
+      .sort((a, b) => (b?._score || 0) - (a?._score || 0))
+      .slice(0, 3);
+
+    const matches = [];
+    const seenMovieIds = new Set();
+    for (const person of rankedPeople) {
+      const credits = await this.fetchPersonMovieCredits(person.id);
+      const crew = Array.isArray(credits?.crew) ? credits.crew : [];
+      const directed = crew.filter((entry) => normalizeCompare(entry?.job) === 'director');
+      for (const entry of directed) {
+        if (!entry?.id || seenMovieIds.has(entry.id)) continue;
+        const releaseYear = extractYear(entry?.release_date);
+        if (year && releaseYear && Math.abs(releaseYear - year) > 2) continue;
+        seenMovieIds.add(entry.id);
+        let score = Number(entry?.popularity) || 0;
+        if (entry?.vote_count) score += Math.min(entry.vote_count / 100, 10);
+        if (year && releaseYear) {
+          const diff = Math.abs(releaseYear - year);
+          if (diff === 0) score += 20;
+          else if (diff === 1) score += 10;
+          else if (diff <= 2) score += 5;
+        }
+        score += Number(person?._score || 0) / 5;
+        matches.push({
+          ...entry,
+          _score: score,
+        });
+      }
+    }
+
+    matches.sort((a, b) => (b?._score || 0) - (a?._score || 0));
+    const normalizedOffset = Number.isFinite(Number(offset)) && Number(offset) >= 0
+      ? Math.floor(Number(offset))
+      : 0;
+    const expandedLimit = Math.max(1, limit || 1) * 3;
+    return matches.slice(normalizedOffset, normalizedOffset + expandedLimit);
   }
 
   async fetchMovieDetails(id) {
@@ -422,8 +474,8 @@ const logger = require('../../logger');
     return this.fetchJson(url);
   }
 
-  pickBestMatch(results, { title, year }) {
-    const ranked = this.rankMatches(results, { title, year });
+  pickBestMatch(results, { title, year, director }) {
+    const ranked = this.rankMatches(results, { title, year, director });
     return ranked[0] || null;
   }
 
@@ -459,6 +511,20 @@ const logger = require('../../logger');
     }
     candidates.sort((a, b) => (b._score || 0) - (a._score || 0));
     return candidates;
+  }
+
+  scoreDirectorMatch(details, director) {
+    const needle = normalizeCompare(director);
+    if (!needle) return 0;
+    const crew = Array.isArray(details?.credits?.crew) ? details.credits.crew : [];
+    const directors = crew
+      .filter((member) => normalizeCompare(member?.job) === 'director')
+      .map((member) => normalizeCompare(member?.name))
+      .filter(Boolean);
+    if (!directors.length) return 0;
+    if (directors.includes(needle)) return 40;
+    if (directors.some((name) => name.includes(needle) || needle.includes(name))) return 20;
+    return -5;
   }
 
   async fetchJson(url) {

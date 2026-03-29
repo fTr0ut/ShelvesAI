@@ -299,13 +299,20 @@ class CollectableMatchingService {
         const limit = Number.isFinite(options.limit) && options.limit > 0
             ? options.limit
             : API_SUGGESTION_LIMIT;
+        const offset = Number.isFinite(options.offset) && options.offset >= 0
+            ? options.offset
+            : 0;
         const lookupInput = buildLookupInput(itemData);
 
         try {
-            logger.info('[CollectableMatchingService] Calling API for:', shelfType, '(limit', limit + ')');
+            logger.info('[CollectableMatchingService] Calling API for:', shelfType, '(limit', limit + ', offset', offset + ')');
             let results = [];
             if (typeof catalogService.safeLookupMany === 'function') {
-                results = await catalogService.safeLookupMany(lookupInput, limit);
+                if (catalogService.serviceName === 'igdb') {
+                    results = await catalogService.safeLookupMany(lookupInput, limit, undefined, null, { offset });
+                } else {
+                    results = await catalogService.safeLookupMany(lookupInput, limit, undefined, { offset });
+                }
             } else if (typeof catalogService.safeLookup === 'function') {
                 const single = await catalogService.safeLookup(lookupInput);
                 if (single) results = [single];

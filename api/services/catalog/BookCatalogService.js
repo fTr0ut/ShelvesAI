@@ -7,10 +7,12 @@ const {
 } = require('./metadataScore');
 const {
   lookupWorkBookMetadata,
+  searchAndHydrateBooks,
   lookupWorkByISBN,
 } = require('../openLibrary');
 const { HardcoverClient } = require('../hardcover');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
+const logger = require('../../logger');
 
 // Config-driven router (optional, for gradual migration)
 let catalogRouter = null;
@@ -18,7 +20,6 @@ function getCatalogRouter() {
   if (!catalogRouter) {
     try {
       const { getCatalogRouter: getRouter } = require('./CatalogRouter');
-const logger = require('../../logger');
       catalogRouter = getRouter();
     } catch (err) {
       logger.warn('[BookCatalogService] CatalogRouter not available:', err.message);
@@ -345,6 +346,79 @@ class BookCatalogService {
     }
 
     return null;
+  }
+
+  async safeLookupMany(item, limit = 5, retries = DEFAULT_RETRIES, options = {}) {
+    const payload = {
+      title: normalizeString(item?.name || item?.title),
+      author: normalizeString(item?.author || item?.primaryCreator),
+    };
+
+    const normalizedLimit = Math.max(1, Number(limit) || 1);
+    const normalizedOffset = Number.isFinite(Number(options?.offset)) && Number(options.offset) >= 0
+      ? Math.floor(Number(options.offset))
+      : 0;
+
+    if (!payload.title && !payload.author) {
+      return [];
+    }
+
+    const queryLogContext = {
+      title: payload.title || undefined,
+      author: payload.author || undefined,
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    };
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const hydrated = await searchAndHydrateBooks({
+          title: payload.title,
+          author: payload.author,
+          limit: normalizedLimit,
+          offset: normalizedOffset,
+        });
+
+        if (!Array.isArray(hydrated) || !hydrated.length) {
+          return [];
+        }
+
+        return hydrated.slice(0, normalizedLimit).map((result) => ({
+          ...result,
+          provider: 'openlibrary',
+          search: {
+            query: queryLogContext,
+          },
+        }));
+      } catch (err) {
+        const message = String(err?.message || err);
+        if (message.includes('429') && attempt < retries) {
+          const backoff = 500 * Math.pow(2, attempt);
+          logger.warn('[BookCatalogService.safeLookupMany] 429 from OpenLibrary', {
+            backoff,
+            query: queryLogContext,
+          });
+          await makeDelay(backoff);
+          continue;
+        }
+        if (message.includes('aborted') && attempt < retries) {
+          const backoff = 1000 * (attempt + 1);
+          logger.warn('[BookCatalogService.safeLookupMany] request aborted', {
+            backoff,
+            query: queryLogContext,
+          });
+          await makeDelay(backoff);
+          continue;
+        }
+        logger.error('[BookCatalogService.safeLookupMany] failed', {
+          query: queryLogContext,
+          error: err,
+        });
+        return [];
+      }
+    }
+
+    return [];
   }
 
   scoreBookMetadata(enrichment, provider) {

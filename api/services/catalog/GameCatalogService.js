@@ -312,12 +312,17 @@ class GameCatalogService {
       year: year || undefined,
     });
 
-    if (!title) {
+    if (!title && !developer) {
       logger.info('[GameCatalogService.safeLookup] lookup.skipped', {
         ...logContext,
-        reason: 'missing-title',
+        reason: 'missing-title-and-developer',
       });
       return null;
+    }
+
+    if (!title && developer) {
+      const results = await this.safeLookupMany(item, 1, retries, observer);
+      return results[0] || null;
     }
 
     if (!this.clientId || !this.clientSecret) {
@@ -334,7 +339,11 @@ class GameCatalogService {
       return null;
     }
 
-    let query = this.buildSearchQuery({ title, limit: this.maxResults });
+    let query = this.buildSearchQuery({
+      title,
+      developer,
+      limit: this.maxResults,
+    });
     let usingPlatformFilter = false;
 
     for (let attempt = 0; attempt <= retries;) {
@@ -345,6 +354,7 @@ class GameCatalogService {
             usingPlatformFilter = true;
             query = this.buildSearchQuery({
               title,
+              developer,
               limit: this.maxResults,
               platform,
             });
@@ -369,6 +379,7 @@ class GameCatalogService {
           .map((game) =>
             this.scoreCandidate(game, {
               title,
+              developer,
               platform,
             }),
           )
@@ -432,10 +443,155 @@ class GameCatalogService {
     return null;
   }
 
-  buildSearchQuery({ title, limit, platform }) {
+  async safeLookupMany(item, limit = 5, retries = DEFAULT_RETRIES, observerOrOptions = null, maybeOptions = {}) {
+    let observer = null;
+    let options = {};
+    if (
+      observerOrOptions &&
+      typeof observerOrOptions === 'object' &&
+      typeof observerOrOptions.onRateLimited === 'function'
+    ) {
+      observer = observerOrOptions;
+      options =
+        maybeOptions && typeof maybeOptions === 'object' ? maybeOptions : {};
+    } else {
+      options =
+        observerOrOptions && typeof observerOrOptions === 'object'
+          ? observerOrOptions
+          : {};
+      observer = null;
+    }
+
+    const offset =
+      Number.isFinite(Number(options.offset)) && Number(options.offset) >= 0
+        ? Math.floor(Number(options.offset))
+        : 0;
+
+    const title = normalizeString(item?.name || item?.title);
+    const developer = normalizeString(
+      item?.author || item?.primaryCreator || item?.developer,
+    );
+    const platform = normalizeString(item?.systemName || item?.platform);
+    const publisher = normalizeString(item?.publisher);
+    const year = normalizeString(item?.year);
+
+    const logContext = pruneObject({
+      ...summarizeItemForLog(item),
+      title: title || undefined,
+      developer: developer || undefined,
+      platform: platform || undefined,
+      publisher: publisher || undefined,
+      year: year || undefined,
+    });
+
+    if (!title && !developer) {
+      logger.info('[GameCatalogService.safeLookupMany] lookup.skipped', {
+        ...logContext,
+        reason: 'missing-title-and-developer',
+      });
+      return [];
+    }
+
+    if (!this.clientId || !this.clientSecret) {
+      if (!this._warnedMissingCredentials) {
+        logger.warn(
+          '[GameCatalogService.safeLookupMany] IGDB credentials missing; skipping lookup',
+        );
+        this._warnedMissingCredentials = true;
+      }
+      logger.warn('[GameCatalogService.safeLookupMany] lookup.skipped', {
+        ...logContext,
+        reason: 'missing-credentials',
+      });
+      return [];
+    }
+
+    let query = this.buildSearchQuery({
+      title,
+      developer,
+      limit: Math.max(this.maxResults, Math.max(1, Number(limit) || 1)),
+      offset,
+    });
+    let usingPlatformFilter = false;
+
+    for (let attempt = 0; attempt <= retries;) {
+      try {
+        const payload = await this.callIgdb('games', query);
+        if (!Array.isArray(payload) || payload.length === 0) {
+          if (platform && title && !usingPlatformFilter) {
+            usingPlatformFilter = true;
+            query = this.buildSearchQuery({
+              title,
+              developer,
+              limit: Math.max(this.maxResults, Math.max(1, Number(limit) || 1)),
+              offset,
+              platform,
+            });
+            continue;
+          }
+          return [];
+        }
+
+        const candidates = payload
+          .map((game) =>
+            this.scoreCandidate(game, {
+              title,
+              developer,
+              platform,
+            }),
+          )
+          .filter(Boolean);
+
+        const sorted = this.sortCandidates(candidates);
+        const max = Math.max(1, Number(limit) || 1);
+        return sorted.slice(0, max).map((entry) => ({
+          provider: 'igdb',
+          game: entry.game,
+          score: entry.score,
+        }));
+      } catch (err) {
+        const message = String(err?.message || err);
+        if (message.includes('401') && attempt < retries) {
+          attempt += 1;
+          await this.getAccessToken({ forceRefresh: true });
+          continue;
+        }
+        if (message.includes('429')) {
+          const willRetry = attempt < retries;
+          const backoff = willRetry ? 500 * Math.pow(2, attempt) : null;
+          observer?.onRateLimited?.({
+            backoff,
+            attempt,
+            willRetry,
+            item: logContext,
+          });
+          if (willRetry) {
+            await this.delayFn(backoff);
+            attempt += 1;
+            continue;
+          }
+        }
+        if (message.includes('aborted') && attempt < retries) {
+          const backoff = 1000 * (attempt + 1);
+          await this.delayFn(backoff);
+          attempt += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    return [];
+  }
+
+  buildSearchQuery({ title, developer, limit, offset, platform }) {
     const sanitizedTitle = normalizeString(title).replace(/"/g, '\\"');
+    const sanitizedDeveloper = normalizeString(developer).replace(/"/g, '\\"');
     const sanitizedPlatform = normalizeString(platform).replace(/"/g, '\\"');
     const cappedLimit = Math.max(1, Math.min(limit || this.maxResults, 50));
+    const normalizedOffset = Number.isFinite(Number(offset)) && Number(offset) >= 0
+      ? Math.floor(Number(offset))
+      : 0;
     const fields = [
       'id',
       'name',
@@ -478,30 +634,53 @@ class GameCatalogService {
       filters.push(`(${platformFilters.join(' | ')})`);
     }
 
-    const parts = [
-      `search "${sanitizedTitle}";`,
-      `fields ${fields.join(',')};`,
-      `limit ${cappedLimit};`,
-    ];
+    if (sanitizedDeveloper) {
+      const developerFilters = [
+        `involved_companies.company.name ~ *"${sanitizedDeveloper}"*`,
+        `involved_companies.company.slug ~ *"${sanitizedDeveloper}"*`,
+      ];
+      filters.push(`(involved_companies.developer = true & (${developerFilters.join(' | ')}))`);
+    }
+
+    const parts = [];
+    if (sanitizedTitle) {
+      parts.push(`search "${sanitizedTitle}";`);
+    }
+    parts.push(`fields ${fields.join(',')};`);
 
     if (filters.length) {
-      parts.splice(2, 0, `where ${filters.join(' & ')};`);
+      parts.push(`where ${filters.join(' & ')};`);
     }
+    if (normalizedOffset > 0) {
+      parts.push(`offset ${normalizedOffset};`);
+    }
+    parts.push(`limit ${cappedLimit};`);
 
     return parts.join('\n');
   }
 
   pickBestCandidate(candidates = []) {
-    if (!Array.isArray(candidates) || !candidates.length) return null;
-    const sorted = candidates.slice().sort((a, b) => {
+    const sorted = this.sortCandidates(candidates);
+    return sorted[0] || null;
+  }
+
+  sortCandidates(candidates = []) {
+    if (!Array.isArray(candidates) || !candidates.length) return [];
+    return candidates.slice().sort((a, b) => {
       if (a.exactTitleMatch !== b.exactTitleMatch) {
         return a.exactTitleMatch ? -1 : 1;
+      }
+      if (a.exactDeveloperMatch !== b.exactDeveloperMatch) {
+        return a.exactDeveloperMatch ? -1 : 1;
       }
       if (a.exactPlatformMatch !== b.exactPlatformMatch) {
         return a.exactPlatformMatch ? -1 : 1;
       }
       if (a.partialTitleMatch !== b.partialTitleMatch) {
         return a.partialTitleMatch ? -1 : 1;
+      }
+      if (a.partialDeveloperMatch !== b.partialDeveloperMatch) {
+        return a.partialDeveloperMatch ? -1 : 1;
       }
       if (a.partialPlatformMatch !== b.partialPlatformMatch) {
         return a.partialPlatformMatch ? -1 : 1;
@@ -511,25 +690,51 @@ class GameCatalogService {
       }
       return b.score - a.score;
     });
-    return sorted[0];
   }
 
   scoreCandidate(game, expected = {}) {
     if (!game) return null;
     const titleNeedle = normalizeCompare(expected.title);
+    const developerNeedle = normalizeCompare(expected.developer);
     const platformNeedle = normalizeCompare(expected.platform);
 
     const gameTitle = normalizeCompare(game.name);
-    if (!gameTitle || !titleNeedle) return null;
+    const developerNames = this.extractCompanyNames(game, 'developer').map((name) =>
+      normalizeCompare(name),
+    );
 
-    const exactTitleMatch = gameTitle === titleNeedle;
-    const partialTitleMatch =
+    const exactTitleMatch = Boolean(titleNeedle && gameTitle && gameTitle === titleNeedle);
+    const partialTitleMatch = Boolean(
+      titleNeedle &&
+      gameTitle &&
       !exactTitleMatch &&
-      (gameTitle.includes(titleNeedle) || titleNeedle.includes(gameTitle));
+      (gameTitle.includes(titleNeedle) || titleNeedle.includes(gameTitle)),
+    );
 
-    if (!exactTitleMatch && !partialTitleMatch) {
+    const exactDeveloperMatch = Boolean(
+      developerNeedle &&
+      developerNames.includes(developerNeedle),
+    );
+    const partialDeveloperMatch = Boolean(
+      developerNeedle &&
+      !exactDeveloperMatch &&
+      developerNames.some(
+        (name) =>
+          name &&
+          (name.includes(developerNeedle) || developerNeedle.includes(name)),
+      ),
+    );
+
+    const hasTitleConstraint = Boolean(titleNeedle);
+    const hasDeveloperConstraint = Boolean(developerNeedle);
+
+    if (hasTitleConstraint && !exactTitleMatch && !partialTitleMatch) {
       return null;
     }
+    if (hasDeveloperConstraint && !exactDeveloperMatch && !partialDeveloperMatch) {
+      return null;
+    }
+    if (!hasTitleConstraint && !hasDeveloperConstraint) return null;
 
     const platforms = this.extractPlatformNames(game).map((name) =>
       normalizeCompare(name),
@@ -554,6 +759,8 @@ class GameCatalogService {
     let score = 0;
     if (exactTitleMatch) score += 200;
     else if (partialTitleMatch) score += 100;
+    if (exactDeveloperMatch) score += 180;
+    else if (partialDeveloperMatch) score += 90;
 
     if (exactPlatformMatch) score += 50;
     else if (partialPlatformMatch) score += 20;
@@ -567,6 +774,8 @@ class GameCatalogService {
       score,
       exactTitleMatch,
       partialTitleMatch,
+      exactDeveloperMatch,
+      partialDeveloperMatch,
       exactPlatformMatch,
       partialPlatformMatch,
       releaseYearValue,

@@ -800,6 +800,10 @@ const REVIEW_RATING_MERGE_WINDOW_MINUTES = parseInt(
   process.env.REVIEW_RATING_MERGE_WINDOW_MINUTES || '120',
   10,
 );
+const ADDED_RATING_MERGE_WINDOW_MINUTES = parseInt(
+  process.env.ADDED_RATING_MERGE_WINDOW_MINUTES || '30',
+  10,
+);
 
 function getFeedItemIdentity(item = {}) {
   const collectableId = item.collectableId || item.collectable?.id || null;
@@ -1119,6 +1123,133 @@ function mergeReviewedRatingPairs(entries, options = {}) {
   return combined;
 }
 
+/**
+ * Merges item.added + rating events so that a separate "rated" card is absorbed
+ * into the "added" card when both refer to the same item from the same user
+ * within the configured time window.
+ */
+function mergeAddedRatingPairs(entries, options = {}) {
+  const { windowMinutes = ADDED_RATING_MERGE_WINDOW_MINUTES } = options;
+  const windowMs = windowMinutes * 60 * 1000;
+
+  const addedEntries = [];
+  const ratingEntries = [];
+  const others = [];
+
+  for (const entry of entries) {
+    if (entry.eventType === 'item.added') {
+      addedEntries.push(entry);
+    } else if (entry.eventType === 'item.rated') {
+      ratingEntries.push(entry);
+    } else {
+      others.push(entry);
+    }
+  }
+
+  if (!addedEntries.length || !ratingEntries.length) {
+    return entries;
+  }
+
+  const ratingsByTime = [...ratingEntries].sort((a, b) => (
+    new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  ));
+
+  const consumedRatingItems = new Set(); // `${ratingEntryId}:${itemIndex}`
+  const mergedAdded = addedEntries.map((entry) => ({
+    ...entry,
+    items: Array.isArray(entry.items) ? entry.items.map((item) => ({ ...item })) : [],
+  }));
+
+  for (const added of mergedAdded) {
+    const addedUserId = String(added.owner?.id || '');
+    const addedTime = new Date(added.createdAt).getTime();
+    if (!Number.isFinite(addedTime)) continue;
+
+    const addedItems = Array.isArray(added.items) ? added.items : [];
+    for (let i = 0; i < addedItems.length; i++) {
+      const addedItem = addedItems[i];
+      const addedItemId = getFeedItemId(addedItem);
+      let found = null;
+
+      for (const ratingEntry of ratingsByTime) {
+        const ratingUserId = String(ratingEntry.owner?.id || '');
+        if (ratingUserId !== addedUserId) continue;
+
+        const ratingTime = new Date(ratingEntry.createdAt).getTime();
+        if (!Number.isFinite(ratingTime)) continue;
+        const absDiff = Math.abs(ratingTime - addedTime);
+        if (absDiff > windowMs) continue;
+
+        const ratingItems = Array.isArray(ratingEntry.items) ? ratingEntry.items : [];
+        for (let rIdx = 0; rIdx < ratingItems.length; rIdx++) {
+          const consumedKey = `${ratingEntry.id}:${rIdx}`;
+          if (consumedRatingItems.has(consumedKey)) continue;
+
+          const ratingItem = ratingItems[rIdx];
+          const ratingItemId = getFeedItemId(ratingItem);
+          const bothHaveItemId = !!(addedItemId && ratingItemId);
+          const matchesByItemId = bothHaveItemId && ratingItemId === addedItemId;
+          const matchesByIdentity = !bothHaveItemId && feedItemsMatch(addedItem, ratingItem);
+          if (!matchesByItemId && !matchesByIdentity) continue;
+
+          const candidate = {
+            ratingEntry,
+            ratingItem,
+            ratingItemIndex: rIdx,
+            ratingTime,
+            isAfterAdded: ratingTime >= addedTime,
+          };
+
+          if (!found) {
+            found = candidate;
+            continue;
+          }
+
+          // Prefer ratings after the add. Within same direction, prefer latest.
+          if (candidate.isAfterAdded && !found.isAfterAdded) {
+            found = candidate;
+            continue;
+          }
+          if (candidate.isAfterAdded === found.isAfterAdded && candidate.ratingTime > found.ratingTime) {
+            found = candidate;
+          }
+        }
+      }
+
+      if (!found) continue;
+
+      const resolvedRating = found.ratingItem?.rating;
+      if (resolvedRating !== undefined && resolvedRating !== null) {
+        addedItems[i] = {
+          ...addedItem,
+          rating: resolvedRating,
+        };
+      }
+
+      consumedRatingItems.add(`${found.ratingEntry.id}:${found.ratingItemIndex}`);
+    }
+  }
+
+  const remainingRatings = [];
+  for (const rating of ratingEntries) {
+    const ratingItems = Array.isArray(rating.items) ? rating.items : [];
+    const nextItems = ratingItems.filter((_, idx) => !consumedRatingItems.has(`${rating.id}:${idx}`));
+    if (!nextItems.length) continue;
+
+    remainingRatings.push({
+      ...rating,
+      items: nextItems,
+      eventItemCount: nextItems.length,
+    });
+  }
+
+  const combined = [...mergedAdded, ...remainingRatings, ...others];
+  combined.sort((a, b) => (
+    getEntryActivityTime(b) - getEntryActivityTime(a)
+  ));
+  return combined;
+}
+
 async function getFeed(req, res) {
   try {
     const scope = String(req.query.scope || 'global').toLowerCase();
@@ -1261,6 +1392,8 @@ async function getFeed(req, res) {
     entries = mergeCheckinRatingPairs(entries);
     // Merge reviewed + rating pairs into a single reviewed entry
     entries = mergeReviewedRatingPairs(entries);
+    // Merge added + rating pairs so rating appears on the added card
+    entries = mergeAddedRatingPairs(entries);
 
     if (scope === 'all' && offset === 0 && (!typeFilter || typeFilter === 'news.recommendation')) {
       try {
@@ -1628,4 +1761,5 @@ module.exports = {
   _mapFeedDetailItemRow: mapFeedDetailItemRow,
   _mergeCheckinRatingPairs: mergeCheckinRatingPairs,
   _mergeReviewedRatingPairs: mergeReviewedRatingPairs,
+  _mergeAddedRatingPairs: mergeAddedRatingPairs,
 };

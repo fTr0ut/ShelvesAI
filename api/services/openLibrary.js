@@ -9,6 +9,7 @@ const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./co
 // - Covers API patterns: https://openlibrary.org/dev/docs/api/covers
 
 const fetch = require('node-fetch');
+const logger = require('../logger');
 const AbortController = (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 
 const DEFAULT_BASE_URL = 'https://openlibrary.org';
@@ -42,7 +43,7 @@ function normalizeAuthorQuery(author) {
   return normalized;
 }
 
-function buildSearchUrl({ title, author, limit = 10 }) {
+function buildSearchUrl({ title, author, limit = 10, offset = 0, page = 0 }) {
   const base = getBaseUrl();
   const params = new URLSearchParams();
   if (title) params.append('title', title);
@@ -54,6 +55,14 @@ function buildSearchUrl({ title, author, limit = 10 }) {
     params.append('author', normalizedAuthor);
   }
   params.append('limit', String(limit));
+  const normalizedOffset = Number.isFinite(Number(offset)) && Number(offset) > 0
+    ? Math.floor(Number(offset))
+    : 0;
+  const normalizedPage = Number.isFinite(Number(page)) && Number(page) > 1
+    ? Math.floor(Number(page))
+    : 0;
+  if (normalizedOffset > 0) params.append('offset', String(normalizedOffset));
+  if (normalizedPage > 1) params.append('page', String(normalizedPage));
   // `mode=everything` returns broader info (works + editions metadata surface)
   params.append('mode', 'everything');
   return `${base}/search.json?${params.toString()}`;
@@ -416,14 +425,34 @@ async function hydrateDoc(doc) {
 
 /**
  * High-level: search, then hydrate each result by visiting Work/Edition/Author .json pages.
- * @param {{title?: string, author?: string, limit?: number}} params
+ * @param {{title?: string, author?: string, limit?: number, offset?: number}} params
  * @returns {Promise<Array<object>>}
  */
-async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
+async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0 } = {}) {
   if (!title && !author) return [];
   try {
-    const url = buildSearchUrl({ title, author, limit: 10 }); // get >limit so we can score & slice
-    logger.info('[openLibrary.searchAndHydrateBooks] request', { title, author, fetchLimit: 10, clientLimit: limit, url });
+    const fetchLimit = Math.max(1, Math.min(50, Number(limit) || 5));
+    const normalizedOffset = Number.isFinite(Number(offset)) && Number(offset) >= 0
+      ? Math.floor(Number(offset))
+      : 0;
+    const page = Math.floor(normalizedOffset / fetchLimit) + 1;
+    const inPageOffset = normalizedOffset % fetchLimit;
+    const url = buildSearchUrl({
+      title,
+      author,
+      limit: fetchLimit,
+      page,
+    });
+    logger.info('[openLibrary.searchAndHydrateBooks] request', {
+      title,
+      author,
+      fetchLimit,
+      clientLimit: limit,
+      offset: normalizedOffset,
+      page,
+      inPageOffset,
+      url,
+    });
     const json = await fetchJson(url);
     const docs = Array.isArray(json?.docs) ? json.docs : [];
     if (!docs.length) return [];
@@ -436,7 +465,10 @@ async function searchAndHydrateBooks({ title, author, limit = 5 } = {}) {
       return [];
     }
     validScored.sort((a, b) => b.s - a.s);
-    const selected = validScored.slice(0, Math.max(1, limit)).map((x) => x.d);
+    const selected = validScored
+      .slice(inPageOffset, inPageOffset + fetchLimit)
+      .slice(0, Math.max(1, Number(limit) || 1))
+      .map((x) => x.d);
 
     // Hydrate with controlled concurrency
     const hydrated = await mapWithConcurrency(selected, getConcurrency(), hydrateDoc);
@@ -520,7 +552,6 @@ function uniqueStrings(arr) {
  * Ex: sha1("title|author|year")
  */
 const crypto = require('crypto');
-const logger = require('../logger');
 /**
  * Turn a hydrated Open Library object into a canonical "Collection" doc.
  * Input: one element from searchAndHydrateBooks() or lookupWorkBookMetadata()

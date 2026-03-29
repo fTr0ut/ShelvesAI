@@ -105,4 +105,48 @@ describe('MovieCatalogService', () => {
     expect(collectable.lightweightFingerprint).toBe(lightweightFingerprint);
     expect(collectable.fingerprint).toBeTruthy();
   });
+
+  it('supports director-only lookup in safeLookupMany', async () => {
+    const service = new MovieCatalogService({ apiKey: 'fake', retries: 0 });
+    const directorMatch = {
+      id: 123,
+      title: 'Inception',
+      release_date: '2010-07-16',
+      popularity: 99,
+      vote_count: 10000,
+      _score: 120,
+    };
+    jest.spyOn(service, 'searchMoviesByDirector').mockResolvedValue([directorMatch]);
+    jest.spyOn(service, 'fetchMovieDetails').mockResolvedValue(buildSampleMovie({ id: 123 }));
+
+    const results = await service.safeLookupMany({ title: '', author: 'Christopher Nolan' }, 5, 0);
+
+    expect(service.searchMoviesByDirector).toHaveBeenCalledWith(
+      expect.objectContaining({ director: 'Christopher Nolan' }),
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe('tmdb');
+    expect(results[0].movie.id).toBe(123);
+  });
+
+  it('safeLookup delegates to safeLookupMany', async () => {
+    const service = new MovieCatalogService({ apiKey: 'fake', retries: 0 });
+    const single = {
+      provider: 'tmdb',
+      score: 10,
+      movie: buildSampleMovie({ id: 456 }),
+      search: { query: { title: 'Inception' }, totalResults: 1 },
+    };
+    jest.spyOn(service, 'safeLookupMany').mockResolvedValue([single]);
+
+    const result = await service.safeLookup({ title: 'Inception', author: 'Christopher Nolan' }, 0);
+
+    expect(service.safeLookupMany).toHaveBeenCalledWith(
+      { title: 'Inception', author: 'Christopher Nolan' },
+      1,
+      0,
+      { offset: 0 },
+    );
+    expect(result).toBe(single);
+  });
 });

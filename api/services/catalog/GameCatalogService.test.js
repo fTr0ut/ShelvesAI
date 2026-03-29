@@ -213,4 +213,54 @@ describe('GameCatalogService.safeLookup', () => {
       index: 0,
     });
   });
+
+  it('supports developer-only lookup when title is empty', async () => {
+    const developerResult = {
+      id: 7,
+      name: 'Uncharted 2',
+      first_release_date: Date.UTC(2009, 9, 13) / 1000,
+      involved_companies: [
+        { developer: true, company: { name: 'Naughty Dog', slug: 'naughty-dog' } },
+      ],
+    };
+
+    const service = createService([developerResult]);
+    const result = await service.safeLookup({ title: '', name: '', author: 'Naughty Dog' });
+
+    expect(result).toBeTruthy();
+    expect(result.provider).toBe('igdb');
+    expect(result.game).toBe(developerResult);
+
+    const query = service.callIgdb.mock.calls[0][1];
+    expect(query).not.toContain('search "');
+    expect(query).toContain('involved_companies.developer = true');
+    expect(query).toContain('involved_companies.company.name ~ *"Naughty Dog"*');
+  });
+
+  it('returns multiple games for developer-only safeLookupMany', async () => {
+    const gameOne = {
+      id: 8,
+      name: 'Uncharted 2',
+      first_release_date: Date.UTC(2009, 9, 13) / 1000,
+      involved_companies: [
+        { developer: true, company: { name: 'Naughty Dog', slug: 'naughty-dog' } },
+      ],
+    };
+    const gameTwo = {
+      id: 9,
+      name: 'The Last of Us',
+      first_release_date: Date.UTC(2013, 5, 14) / 1000,
+      involved_companies: [
+        { developer: true, company: { name: 'Naughty Dog', slug: 'naughty-dog' } },
+      ],
+    };
+
+    const service = createService([gameOne, gameTwo]);
+    const results = await service.safeLookupMany({ title: '', author: 'Naughty Dog' }, 2, 0);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].provider).toBe('igdb');
+    expect(results[1].provider).toBe('igdb');
+    expect(results.map((entry) => entry.game.id)).toEqual(expect.arrayContaining([8, 9]));
+  });
 });

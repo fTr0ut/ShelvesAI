@@ -155,7 +155,7 @@ class MusicCatalogService {
 
     const title = normalizeString(item?.name || item?.title);
     const artist = normalizeString(item?.author || item?.primaryCreator);
-    if (!title) {
+    if (!title && !artist) {
       return null;
     }
 
@@ -232,18 +232,21 @@ class MusicCatalogService {
     return null;
   }
 
-  async safeLookupMany(item, limit = 5, retries = this.retries) {
+  async safeLookupMany(item, limit = 5, retries = this.retries, options = {}) {
     const title = normalizeString(item?.name || item?.title);
     const artist = normalizeString(item?.author || item?.primaryCreator);
-    if (!title) {
+    const offset = Number.isFinite(Number(options?.offset)) && Number(options.offset) >= 0
+      ? Math.floor(Number(options.offset))
+      : 0;
+    if (!title && !artist) {
       return [];
     }
 
-    const queryLogContext = pruneObject({ title, artist });
+    const queryLogContext = pruneObject({ title, artist, offset, limit });
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const search = await this.searchReleaseGroups({ title, artist });
+        const search = await this.searchReleaseGroups({ title, artist, limit, offset });
         if (
           !search ||
           !Array.isArray(search['release-groups']) ||
@@ -416,19 +419,27 @@ class MusicCatalogService {
     return null;
   }
 
-  async searchReleaseGroups({ title, artist }) {
+  async searchReleaseGroups({ title, artist, limit = 10, offset = 0 }) {
     // Build Lucene query
-    const escapedTitle = title.replace(/"/g, '\\"');
-    let query = `releasegroup:"${escapedTitle}"`;
+    const clauses = [];
+    if (title) {
+      const escapedTitle = title.replace(/"/g, '\\"');
+      clauses.push(`releasegroup:"${escapedTitle}"`);
+    }
     if (artist) {
       const escapedArtist = artist.replace(/"/g, '\\"');
-      query += ` AND artist:"${escapedArtist}"`;
+      clauses.push(`artist:"${escapedArtist}"`);
     }
+    if (!clauses.length) return null;
+    const query = clauses.join(' AND ');
 
     const params = new URLSearchParams();
     params.set('query', query);
     params.set('fmt', 'json');
-    params.set('limit', '10');
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 10, 25));
+    const normalizedOffset = Math.max(0, Math.floor(Number(offset) || 0));
+    params.set('limit', String(cappedLimit));
+    params.set('offset', String(normalizedOffset));
 
     const url = `${MUSICBRAINZ_BASE_URL}/release-group?${params.toString()}`;
     return this.fetchJson(url);
@@ -462,13 +473,15 @@ class MusicCatalogService {
       let score = 0;
 
       // Title matching
-      if (normalizedCandidate === normalizedTitle) {
-        score += 50;
-      } else if (
-        normalizedCandidate.includes(normalizedTitle) ||
-        normalizedTitle.includes(normalizedCandidate)
-      ) {
-        score += 25;
+      if (normalizedTitle) {
+        if (normalizedCandidate === normalizedTitle) {
+          score += 50;
+        } else if (
+          normalizedCandidate.includes(normalizedTitle) ||
+          normalizedTitle.includes(normalizedCandidate)
+        ) {
+          score += 25;
+        }
       }
 
       // Artist matching against artist-credit names
