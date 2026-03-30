@@ -3047,6 +3047,7 @@ async function processShelfVision(req, res) {
             queuePosition: queueMeta.queuePosition,
             estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
             notifyOnComplete: activeDuplicate.notifyOnComplete === true,
+            notifyInAppOnComplete: activeDuplicate.notifyInAppOnComplete === true,
             message: 'Duplicate scan already in progress. Returning existing job.',
             metadata: requestMetadata,
             cached: false,
@@ -3080,6 +3081,7 @@ async function processShelfVision(req, res) {
           payload,
           dedupeKey,
           notifyOnComplete: false,
+          notifyInAppOnComplete: false,
         });
       } catch (enqueueErr) {
         if (enqueueErr?.code === '23505' && dedupeKey) {
@@ -3095,6 +3097,7 @@ async function processShelfVision(req, res) {
               queuePosition: queueMeta.queuePosition,
               estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
               notifyOnComplete: activeDuplicate.notifyOnComplete === true,
+              notifyInAppOnComplete: activeDuplicate.notifyInAppOnComplete === true,
               message: 'Duplicate scan already in progress. Returning existing job.',
               metadata: requestMetadata,
               cached: false,
@@ -3119,7 +3122,24 @@ async function processShelfVision(req, res) {
 
       const queueMeta = await getQueueMetadata(queuedJob.jobId);
       let notifyOnComplete = queuedJob.notifyOnComplete === true;
-      if (!notifyOnComplete) {
+      let notifyInAppOnComplete = queuedJob.notifyInAppOnComplete === true;
+
+      // In-between option: position #2 gets in-app-only completion notification (no push).
+      if (!notifyInAppOnComplete && Number(queueMeta.queuePosition) === 2) {
+        const updated = await workflowQueueJobsQueries.setInAppOnlyCompletionNotice({
+          jobId: queuedJob.jobId,
+        });
+        if (updated) {
+          queuedJob = updated;
+          notifyOnComplete = updated.notifyOnComplete === true;
+          notifyInAppOnComplete = updated.notifyInAppOnComplete === true;
+        } else {
+          notifyOnComplete = false;
+          notifyInAppOnComplete = true;
+        }
+      }
+
+      if (!notifyOnComplete && !notifyInAppOnComplete) {
         notifyOnComplete = await shouldEnableQueueNotification(queueMeta);
         if (notifyOnComplete) {
           const updated = await workflowQueueJobsQueries.updateNotifyOnComplete({
@@ -3142,6 +3162,7 @@ async function processShelfVision(req, res) {
         queuePosition: queueMeta.queuePosition,
         estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
         notifyOnComplete,
+        notifyInAppOnComplete,
         message: 'Vision processing queued. Poll /vision/:jobId/status for updates.',
         metadata: requestMetadata,
         cached: false,
@@ -3458,12 +3479,51 @@ async function getVisionStatus(req, res) {
       queuedMs,
       estimatedWaitSeconds,
       notifyOnComplete: queueJob?.notifyOnComplete === true,
+      notifyInAppOnComplete: queueJob?.notifyInAppOnComplete === true,
       result: omitMarketValueSourcesDeep(result),
       items,
     });
   } catch (err) {
     logger.error('getVisionStatus error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function setVisionBackground(req, res) {
+  try {
+    const { jobId } = req.params;
+    const queueJob = await workflowQueueJobsQueries.getByJobIdForUser({
+      jobId,
+      userId: req.user.id,
+    });
+    if (!queueJob) {
+      return res.status(404).json({ error: 'Job not found or expired' });
+    }
+
+    if (['completed', 'failed', 'aborted'].includes(queueJob.status)) {
+      return res.json({
+        jobId,
+        status: queueJob.status,
+        notifyOnComplete: queueJob.notifyOnComplete === true,
+        notifyInAppOnComplete: queueJob.notifyInAppOnComplete === true,
+      });
+    }
+
+    const updated = await workflowQueueJobsQueries.setInAppOnlyCompletionNotice({ jobId });
+    if (!updated) {
+      return res.status(404).json({ error: 'Job not found or expired' });
+    }
+
+    return res.json({
+      jobId,
+      status: updated.status,
+      notifyOnComplete: updated.notifyOnComplete === true,
+      notifyInAppOnComplete: updated.notifyInAppOnComplete === true,
+      message: 'Completion notice set to in-app notifications only.',
+    });
+  } catch (err) {
+    logger.error('setVisionBackground error:', err);
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -4221,6 +4281,7 @@ module.exports = {
   dismissReviewItem,
   rateShelfItem,
   getVisionStatus,
+  setVisionBackground,
   abortVision,
   addCollectableFromApi,
   getManualItem,

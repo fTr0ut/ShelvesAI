@@ -51,7 +51,7 @@ export function PushProvider({ children, navigationRef }) {
     } else if (type === 'workflow_complete' || type === 'workflow_failed') {
       const shelfId = Number(metadata?.shelfId)
       if (Number.isFinite(shelfId) && shelfId > 0) {
-        navigationRef.current.navigate('ShelfDetail', { shelfId })
+        navigationRef.current.navigate('ShelfDetail', { id: shelfId })
       } else {
         navigationRef.current.navigate('Main', { screen: 'Shelves' })
       }

@@ -39,6 +39,45 @@ function mapRegionRow(row) {
   return mapped;
 }
 
+async function clearOwnerPhotoCropReferencesForScan(q, { userId, shelfId, scanPhotoId }) {
+  // Deleting regions cascades to vision_item_crops. Clear dependent owner-photo pointers first
+  // so ON DELETE SET NULL on user_collections.owner_photo_crop_id does not violate
+  // owner_photo_reference_check (owner_photo_source='vision_crop' requires a crop id).
+  await q(
+    `WITH doomed_crops AS (
+       SELECT vic.id
+       FROM vision_item_crops vic
+       JOIN vision_item_regions vir
+         ON vir.id = vic.region_id
+       WHERE vir.user_id = $1
+         AND vir.shelf_id = $2
+         AND vir.scan_photo_id = $3
+     )
+     UPDATE user_collections uc
+     SET owner_photo_source = NULL,
+         owner_photo_crop_id = NULL,
+         owner_photo_storage_provider = NULL,
+         owner_photo_storage_key = NULL,
+         owner_photo_content_type = NULL,
+         owner_photo_size_bytes = NULL,
+         owner_photo_width = NULL,
+         owner_photo_height = NULL,
+         owner_photo_thumb_storage_provider = NULL,
+         owner_photo_thumb_storage_key = NULL,
+         owner_photo_thumb_content_type = NULL,
+         owner_photo_thumb_size_bytes = NULL,
+         owner_photo_thumb_width = NULL,
+         owner_photo_thumb_height = NULL,
+         owner_photo_thumb_box = NULL,
+         owner_photo_thumb_updated_at = NULL,
+         owner_photo_updated_at = NOW()
+     WHERE uc.user_id = $1
+       AND uc.shelf_id = $2
+       AND uc.owner_photo_crop_id IN (SELECT id FROM doomed_crops)`,
+    [userId, shelfId, scanPhotoId],
+  );
+}
+
 async function upsertRegionsForScan(
   { userId, shelfId, scanPhotoId, regions = [], replaceExisting = false },
   client = null,
@@ -49,6 +88,16 @@ async function upsertRegionsForScan(
 
   const q = resolveQuery(client);
   if (replaceExisting) {
+    try {
+      await clearOwnerPhotoCropReferencesForScan(q, { userId, shelfId, scanPhotoId });
+    } catch (err) {
+      // Keep region replacement compatible with older schemas that may not yet have
+      // vision_item_crops or owner-photo columns.
+      if (err?.code !== '42P01' && err?.code !== '42703') {
+        throw err;
+      }
+    }
+
     await q(
       `DELETE FROM vision_item_regions
        WHERE user_id = $1

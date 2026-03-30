@@ -124,4 +124,34 @@ describe('WorkflowQueueService', () => {
       entityId: 'wf-job-3',
     }));
   });
+
+  test('executeJob sends in-app-only completion notification without push', async () => {
+    const job = {
+      jobId: 'wf-job-4',
+      workflowType: 'vision',
+      userId: 'u1',
+      shelfId: 10,
+      notifyOnComplete: false,
+      notifyInAppOnComplete: true,
+      payload: { shelfId: 10 },
+    };
+    workflowQueueJobs.markCompleted.mockResolvedValue({
+      ...job,
+      status: 'completed',
+      notifyOnComplete: false,
+      notifyInAppOnComplete: true,
+      result: { summaryMessage: 'done' },
+    });
+
+    const handler = jest.fn().mockResolvedValue({ summaryMessage: 'done' });
+    await service.executeJob(job, handler);
+
+    expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'u1',
+      type: 'workflow_complete',
+      entityType: 'workflow_job',
+      entityId: 'wf-job-4',
+      suppressPush: true,
+    }));
+  });
 });

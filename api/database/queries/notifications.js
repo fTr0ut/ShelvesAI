@@ -59,7 +59,7 @@ async function getActorName(actorId) {
     return fullName || row.username || 'Someone';
 }
 
-async function create({ userId, actorId, type, entityId, entityType, metadata = {} }) {
+async function create({ userId, actorId, type, entityId, entityType, metadata = {}, suppressPush = false }) {
     const normalizedMetadata = normalizeMetadata(metadata);
     const values = [
         userId,
@@ -108,7 +108,7 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
     invalidateUnreadCount(userId);
 
     // Fire-and-forget push notification
-    if (notification) {
+    if (notification && suppressPush !== true) {
         (async () => {
             try {
                 const actorName = await getActorName(actorId);

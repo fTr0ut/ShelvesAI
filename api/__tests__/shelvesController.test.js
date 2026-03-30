@@ -52,6 +52,8 @@ jest.mock('../database/queries/workflowQueueJobs', () => ({
     countRunning: jest.fn().mockResolvedValue(0),
     requestAbort: jest.fn().mockResolvedValue(null),
     updateNotifyOnComplete: jest.fn().mockResolvedValue(null),
+    updateNotifyInAppOnComplete: jest.fn().mockResolvedValue(null),
+    setInAppOnlyCompletionNotice: jest.fn().mockResolvedValue(null),
     isAbortRequested: jest.fn().mockResolvedValue(false),
 }));
 jest.mock('../services/workflowQueueService', () => ({
@@ -190,6 +192,8 @@ describe('shelvesController', () => {
         workflowQueueJobsQueries.countRunning.mockReset();
         workflowQueueJobsQueries.requestAbort.mockReset();
         workflowQueueJobsQueries.updateNotifyOnComplete.mockReset();
+        workflowQueueJobsQueries.updateNotifyInAppOnComplete.mockReset();
+        workflowQueueJobsQueries.setInAppOnlyCompletionNotice.mockReset();
         workflowQueueJobsQueries.isAbortRequested.mockReset();
         userCollectionPhotosQueries.getByCollectionItem.mockReset();
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
@@ -211,6 +215,7 @@ describe('shelvesController', () => {
             jobId: 'test-job-id',
             status: 'queued',
             notifyOnComplete: false,
+            notifyInAppOnComplete: false,
             payload: { scanPhotoId: 77 },
         });
         workflowQueueJobsQueries.findActiveByDedupeKey.mockResolvedValue(null);
@@ -224,6 +229,21 @@ describe('shelvesController', () => {
             jobId: 'test-job-id',
             status: 'queued',
             notifyOnComplete: true,
+            notifyInAppOnComplete: false,
+            payload: { scanPhotoId: 77 },
+        });
+        workflowQueueJobsQueries.updateNotifyInAppOnComplete.mockResolvedValue({
+            jobId: 'test-job-id',
+            status: 'queued',
+            notifyOnComplete: false,
+            notifyInAppOnComplete: true,
+            payload: { scanPhotoId: 77 },
+        });
+        workflowQueueJobsQueries.setInAppOnlyCompletionNotice.mockResolvedValue({
+            jobId: 'test-job-id',
+            status: 'queued',
+            notifyOnComplete: false,
+            notifyInAppOnComplete: true,
             payload: { scanPhotoId: 77 },
         });
         workflowQueueJobsQueries.isAbortRequested.mockResolvedValue(false);
@@ -1111,6 +1131,7 @@ describe('shelvesController', () => {
                 jobId: 'dup-job-1',
                 status: 'processing',
                 notifyOnComplete: true,
+                notifyInAppOnComplete: false,
                 payload: { scanPhotoId: 88 },
             });
             workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(0);
@@ -1124,6 +1145,33 @@ describe('shelvesController', () => {
                 status: 'processing',
                 notifyOnComplete: true,
                 scanPhotoId: 88,
+            }));
+        });
+
+        it('enables in-app-only completion notice when queue position is 2', async () => {
+            req.body.async = true;
+            workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(2);
+            workflowQueueJobsQueries.setInAppOnlyCompletionNotice.mockResolvedValue({
+                jobId: 'test-job-id',
+                status: 'queued',
+                notifyOnComplete: false,
+                notifyInAppOnComplete: true,
+                payload: { scanPhotoId: 77 },
+            });
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(workflowQueueJobsQueries.setInAppOnlyCompletionNotice).toHaveBeenCalledWith({
+                jobId: 'test-job-id',
+            });
+            expect(workflowQueueJobsQueries.updateNotifyOnComplete).not.toHaveBeenCalled();
+            expect(res.status).toHaveBeenCalledWith(202);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'test-job-id',
+                status: 'queued',
+                queuePosition: 2,
+                notifyOnComplete: false,
+                notifyInAppOnComplete: true,
             }));
         });
 
@@ -1166,6 +1214,7 @@ describe('shelvesController', () => {
                 status: 'queued',
                 createdAt: new Date().toISOString(),
                 notifyOnComplete: true,
+                notifyInAppOnComplete: false,
                 result: null,
             });
             workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(2);
@@ -1177,6 +1226,7 @@ describe('shelvesController', () => {
                 status: 'queued',
                 queuePosition: 2,
                 notifyOnComplete: true,
+                notifyInAppOnComplete: false,
                 queuedMs: expect.any(Number),
             }));
             expect(processingStatus.setJob).toHaveBeenCalled();
@@ -1189,6 +1239,7 @@ describe('shelvesController', () => {
                 shelfId: 10,
                 status: 'queued',
                 notifyOnComplete: false,
+                notifyInAppOnComplete: false,
             });
             workflowQueueJobsQueries.requestAbort.mockResolvedValue({
                 jobId: 'job-queued-1',
@@ -1207,6 +1258,37 @@ describe('shelvesController', () => {
                 jobId: 'job-queued-1',
                 aborted: true,
                 status: 'aborted',
+            }));
+        });
+
+        it('marks queued jobs as in-app-only when hidden to background', async () => {
+            workflowQueueJobsQueries.getByJobIdForUser.mockResolvedValue({
+                jobId: 'job-queued-1',
+                userId: 1,
+                shelfId: 10,
+                status: 'queued',
+                notifyOnComplete: false,
+                notifyInAppOnComplete: false,
+            });
+            workflowQueueJobsQueries.setInAppOnlyCompletionNotice.mockResolvedValue({
+                jobId: 'job-queued-1',
+                userId: 1,
+                shelfId: 10,
+                status: 'queued',
+                notifyOnComplete: false,
+                notifyInAppOnComplete: true,
+            });
+
+            await shelvesController.setVisionBackground(req, res);
+
+            expect(workflowQueueJobsQueries.setInAppOnlyCompletionNotice).toHaveBeenCalledWith({
+                jobId: 'job-queued-1',
+            });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'job-queued-1',
+                status: 'queued',
+                notifyOnComplete: false,
+                notifyInAppOnComplete: true,
             }));
         });
     });

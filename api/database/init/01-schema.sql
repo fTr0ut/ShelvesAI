@@ -794,6 +794,7 @@ CREATE TABLE workflow_queue_jobs (
     dedupe_key TEXT,
     abort_requested BOOLEAN NOT NULL DEFAULT FALSE,
     notify_on_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    notify_in_app_on_complete BOOLEAN NOT NULL DEFAULT FALSE,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     result JSONB,
     error JSONB,

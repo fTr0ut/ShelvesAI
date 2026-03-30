@@ -317,6 +317,37 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
  */
 async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }, client = null) {
     const q = resolveQuery(client);
+    const hasUpdatableFields = (
+        format !== undefined && format !== null
+    ) || (
+        notes !== undefined && notes !== null
+    ) || (
+        rating !== undefined && rating !== null
+    );
+
+    if (!hasUpdatableFields) {
+        const inserted = await q(
+            `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, shelf_id, collectable_id) DO NOTHING
+         RETURNING *`,
+            [userId, shelfId, collectableId, format, notes, rating, position]
+        );
+        if (inserted.rows[0]) {
+            return rowToCamelCase(inserted.rows[0]);
+        }
+
+        const existing = await q(
+            `SELECT *
+             FROM user_collections
+             WHERE user_id = $1 AND shelf_id = $2 AND collectable_id = $3
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1`,
+            [userId, shelfId, collectableId],
+        );
+        return existing.rows[0] ? rowToCamelCase(existing.rows[0]) : null;
+    }
+
     const result = await q(
         `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -327,7 +358,7 @@ async function addCollectable({ userId, shelfId, collectableId, format, notes, r
      RETURNING *`,
         [userId, shelfId, collectableId, format, notes, rating, position]
     );
-    return rowToCamelCase(result.rows[0]);
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
 /**
@@ -519,11 +550,24 @@ async function addManualCollection({ userId, shelfId, manualId }, client = null)
             `INSERT INTO user_collections (user_id, shelf_id, manual_id)
              VALUES ($1, $2, $3)
              ON CONFLICT (user_id, shelf_id, manual_id) WHERE manual_id IS NOT NULL
-             DO UPDATE SET manual_id = EXCLUDED.manual_id
+             DO NOTHING
              RETURNING *`,
             [userId, shelfId, manualId],
         );
-        return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+        if (result.rows[0]) {
+            return rowToCamelCase(result.rows[0]);
+        }
+
+        const existing = await q(
+            `SELECT * FROM user_collections
+             WHERE user_id = $1 AND shelf_id = $2 AND manual_id = $3
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1`,
+            [userId, shelfId, manualId],
+        );
+        if (existing.rows[0]) {
+            return rowToCamelCase(existing.rows[0]);
+        }
     } catch (err) {
         // Fallback for environments that haven't applied the manual unique index yet.
         if (err?.code !== '42P10' && err?.code !== '23505') {

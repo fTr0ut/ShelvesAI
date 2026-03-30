@@ -112,6 +112,7 @@ router.get('/:shelfId/vision/scans/:scanPhotoId/image', shelfVisionScanIntParams
 router.get('/:shelfId/vision/scans/:scanPhotoId/regions', shelfVisionScanIntParams, ctrl.listVisionScanRegions);
 router.get('/:shelfId/vision/scans/:scanPhotoId/regions/:regionId/crop', shelfVisionRegionIntParams, ctrl.getVisionScanRegionCrop);
 router.get('/:shelfId/vision/:jobId/status', shelfIntParam, ctrl.getVisionStatus);
+router.post('/:shelfId/vision/:jobId/background', shelfIntParam, ctrl.setVisionBackground);
 router.delete('/:shelfId/vision/:jobId', shelfIntParam, ctrl.abortVision);
 router.post('/:shelfId/catalog-lookup', shelfIntParam, catalogIngressLimiter, catalogWorkflowContext, ctrl.processCatalogLookup);
 
@@ -122,5 +123,4 @@ router.delete('/:shelfId/review/:id', shelfReviewIntParams, ctrl.dismissReviewIt
 
 
 module.exports = router;
-
 

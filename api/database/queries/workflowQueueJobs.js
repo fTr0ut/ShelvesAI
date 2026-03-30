@@ -163,6 +163,7 @@ async function enqueueJob({
   payload = {},
   dedupeKey = null,
   notifyOnComplete = false,
+  notifyInAppOnComplete = false,
 }) {
   const result = await query(
     `INSERT INTO workflow_queue_jobs (
@@ -177,11 +178,12 @@ async function enqueueJob({
        payload,
        dedupe_key,
        notify_on_complete,
+       notify_in_app_on_complete,
        abort_requested,
        created_at,
        updated_at
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, 0, $7, $8::jsonb, $9, $10, FALSE, NOW(), NOW()
+       $1, $2, $3, $4, $5, $6, 0, $7, $8::jsonb, $9, $10, $11, FALSE, NOW(), NOW()
      )
      RETURNING *`,
     [
@@ -195,6 +197,7 @@ async function enqueueJob({
       toJson(payload || {}),
       dedupeKey,
       notifyOnComplete === true,
+      notifyInAppOnComplete === true,
     ]
   );
   return mapRow(result.rows[0]);
@@ -465,6 +468,31 @@ async function updateNotifyOnComplete({ jobId, notifyOnComplete }) {
   return mapRow(response.rows[0]);
 }
 
+async function updateNotifyInAppOnComplete({ jobId, notifyInAppOnComplete }) {
+  const response = await query(
+    `UPDATE workflow_queue_jobs
+     SET notify_in_app_on_complete = $2,
+         updated_at = NOW()
+     WHERE job_id = $1
+     RETURNING *`,
+    [jobId, notifyInAppOnComplete === true]
+  );
+  return mapRow(response.rows[0]);
+}
+
+async function setInAppOnlyCompletionNotice({ jobId }) {
+  const response = await query(
+    `UPDATE workflow_queue_jobs
+     SET notify_on_complete = FALSE,
+         notify_in_app_on_complete = TRUE,
+         updated_at = NOW()
+     WHERE job_id = $1
+     RETURNING *`,
+    [jobId]
+  );
+  return mapRow(response.rows[0]);
+}
+
 async function isAbortRequested(jobId) {
   const result = await query(
     `SELECT abort_requested
@@ -548,6 +576,8 @@ module.exports = {
   markFailedOrRequeue,
   requestAbort,
   updateNotifyOnComplete,
+  updateNotifyInAppOnComplete,
+  setInAppOnlyCompletionNotice,
   isAbortRequested,
   cleanupTerminalJobs,
   listAdminWorkfeed,

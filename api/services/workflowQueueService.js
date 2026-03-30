@@ -155,12 +155,17 @@ class WorkflowQueueService {
   }
 
   async maybeSendTerminalNotification({ job, type }) {
-    if (!job || job.notifyOnComplete !== true) return;
+    if (!job) return;
+    const wantsPush = job.notifyOnComplete === true;
+    const wantsInAppOnly = job.notifyInAppOnComplete === true;
+    if (!wantsPush && !wantsInAppOnly) return;
+    const suppressPush = wantsInAppOnly;
     const metadata = {
       workflowType: job.workflowType,
       shelfId: job.shelfId || null,
       status: job.status,
       summaryMessage: job.result?.summaryMessage || job.error?.message || null,
+      delivery: suppressPush ? 'in_app' : 'push',
     };
 
     try {
@@ -171,6 +176,7 @@ class WorkflowQueueService {
         entityId: job.jobId,
         entityType: 'workflow_job',
         metadata,
+        suppressPush,
       });
     } catch (err) {
       logger.warn('[WorkflowQueue] failed to create workflow notification', {

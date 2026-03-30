@@ -12,6 +12,7 @@ describe('visionItemRegionsQueries.upsertRegionsForScan', () => {
 
   it('deletes existing rows first when replaceExisting is true', async () => {
     query
+      .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 2 })
       .mockResolvedValueOnce({
         rows: [
@@ -42,14 +43,19 @@ describe('visionItemRegionsQueries.upsertRegionsForScan', () => {
       ],
     });
 
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(3);
     expect(query).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('DELETE FROM vision_item_regions'),
+      expect.stringContaining('WITH doomed_crops AS'),
       ['user-1', 20, 30],
     );
     expect(query).toHaveBeenNthCalledWith(
       2,
+      expect.stringContaining('DELETE FROM vision_item_regions'),
+      ['user-1', 20, 30],
+    );
+    expect(query).toHaveBeenNthCalledWith(
+      3,
       expect.stringContaining('INSERT INTO vision_item_regions'),
       expect.any(Array),
     );
@@ -62,7 +68,9 @@ describe('visionItemRegionsQueries.upsertRegionsForScan', () => {
   });
 
   it('still clears stale rows when replaceExisting is true and regions is empty', async () => {
-    query.mockResolvedValueOnce({ rowCount: 3 });
+    query
+      .mockResolvedValueOnce({ rowCount: 0 })
+      .mockResolvedValueOnce({ rowCount: 3 });
 
     const result = await visionItemRegionsQueries.upsertRegionsForScan({
       userId: 'user-1',
@@ -72,12 +80,62 @@ describe('visionItemRegionsQueries.upsertRegionsForScan', () => {
       regions: [],
     });
 
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query).toHaveBeenCalledWith(
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('WITH doomed_crops AS'),
+      ['user-1', 20, 30],
+    );
+    expect(query).toHaveBeenNthCalledWith(
+      2,
       expect.stringContaining('DELETE FROM vision_item_regions'),
       ['user-1', 20, 30],
     );
     expect(result).toEqual([]);
+  });
+
+  it('continues replaceExisting delete when crop/owner-photo schema pieces are unavailable', async () => {
+    const missingRelationErr = new Error('relation "vision_item_crops" does not exist');
+    missingRelationErr.code = '42P01';
+    query
+      .mockRejectedValueOnce(missingRelationErr)
+      .mockResolvedValueOnce({ rowCount: 2 })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 11,
+            user_id: 'user-1',
+            shelf_id: 20,
+            scan_photo_id: 30,
+            extraction_index: 0,
+            box_2d: [100, 200, 500, 800],
+          },
+        ],
+      });
+
+    const result = await visionItemRegionsQueries.upsertRegionsForScan({
+      userId: 'user-1',
+      shelfId: 20,
+      scanPhotoId: 30,
+      replaceExisting: true,
+      regions: [
+        {
+          extractionIndex: 0,
+          title: 'Test Item',
+          primaryCreator: 'Test Creator',
+          box2d: [100, 200, 500, 800],
+          confidence: 0.95,
+        },
+      ],
+    });
+
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('DELETE FROM vision_item_regions'),
+      ['user-1', 20, 30],
+    );
+    expect(result).toHaveLength(1);
   });
 });
 

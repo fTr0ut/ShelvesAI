@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } 
 import {
     ActivityIndicator,
     Alert,
+    AppState,
     FlatList,
     Image,
     InteractionManager,
@@ -27,7 +28,6 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/cove
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
-import { useVisionProcessing } from '../hooks/useVisionProcessing';
 import { normalizeSearchText } from '../utils/searchNormalization';
 
 const CAMERA_QUALITY = 0.6;
@@ -765,10 +765,42 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [visionStatus, setVisionStatus] = useState(null);
     const [currentJobId, setCurrentJobId] = useState(null);
     const pollIntervalRef = React.useRef(null);
+    const handledVisionTerminalJobsRef = React.useRef(new Set());
+    const activeVisionJobIdRef = React.useRef(null);
+    const appStateRef = React.useRef(AppState.currentState || 'active');
+    const conditionalInAppNoticeJobsRef = React.useRef(new Set());
+    const suppressForegroundCompletionAlertJobsRef = React.useRef(new Set());
 
     // Poll for vision job status
-    const pollVisionStatus = useCallback(async (jobId) => {
+    const pollVisionStatus = useCallback(async (jobId, options = {}) => {
+        if (!jobId) return;
+
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+        }
         setCurrentJobId(jobId);
+        activeVisionJobIdRef.current = jobId;
+        handledVisionTerminalJobsRef.current.delete(jobId);
+        if (options.notifyInAppOnComplete === true) {
+            conditionalInAppNoticeJobsRef.current.add(jobId);
+            if (appStateRef.current !== 'active') {
+                suppressForegroundCompletionAlertJobsRef.current.add(jobId);
+            }
+        }
+
+        let intervalId = null;
+        let stopped = false;
+        const stopPolling = () => {
+            if (stopped) return;
+            stopped = true;
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+            if (pollIntervalRef.current === intervalId) {
+                pollIntervalRef.current = null;
+            }
+        };
 
         const poll = async () => {
             try {
@@ -777,14 +809,31 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     path: `/api/shelves/${id}/vision/${jobId}/status`,
                     token,
                 });
+                const notifyInAppOnComplete = response?.notifyInAppOnComplete === true;
+                if (notifyInAppOnComplete) {
+                    conditionalInAppNoticeJobsRef.current.add(jobId);
+                    if (appStateRef.current !== 'active') {
+                        suppressForegroundCompletionAlertJobsRef.current.add(jobId);
+                    }
+                }
 
                 setVisionProgress(response.progress || 0);
                 setVisionMessage(response.message || '');
                 setVisionStatus(response.status);
 
+                if (activeVisionJobIdRef.current !== jobId) {
+                    stopPolling();
+                    return;
+                }
+
                 if (response.status === 'completed') {
-                    clearInterval(pollIntervalRef.current);
-                    pollIntervalRef.current = null;
+                    if (handledVisionTerminalJobsRef.current.has(jobId)) {
+                        stopPolling();
+                        return;
+                    }
+                    handledVisionTerminalJobsRef.current.add(jobId);
+                    stopPolling();
+                    activeVisionJobIdRef.current = null;
                     setVisionLoading(false);
 
                     // Reload items
@@ -808,6 +857,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
                             extractedCount,
                             cached: isCachedResult,
                         });
+                    const requiresConditionalDelivery =
+                        conditionalInAppNoticeJobsRef.current.has(jobId) || notifyInAppOnComplete;
+                    const shouldSuppressForegroundAlert =
+                        suppressForegroundCompletionAlertJobsRef.current.has(jobId)
+                        || appStateRef.current !== 'active';
+
+                    if (requiresConditionalDelivery && shouldSuppressForegroundAlert) {
+                        setVisionModalVisible(false);
+                        conditionalInAppNoticeJobsRef.current.delete(jobId);
+                        suppressForegroundCompletionAlertJobsRef.current.delete(jobId);
+                        return;
+                    }
 
                     if (needsReviewCount > 0) {
                         setTimeout(() => setVisionModalVisible(false), 1000);
@@ -825,11 +886,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         setTimeout(() => setVisionModalVisible(false), 1000);
                         Alert.alert('Scan Complete', summaryMessage);
                     }
+                    conditionalInAppNoticeJobsRef.current.delete(jobId);
+                    suppressForegroundCompletionAlertJobsRef.current.delete(jobId);
                 } else if (response.status === 'failed' || response.status === 'aborted') {
-                    clearInterval(pollIntervalRef.current);
-                    pollIntervalRef.current = null;
+                    if (handledVisionTerminalJobsRef.current.has(jobId)) {
+                        stopPolling();
+                        return;
+                    }
+                    handledVisionTerminalJobsRef.current.add(jobId);
+                    stopPolling();
+                    activeVisionJobIdRef.current = null;
                     setVisionLoading(false);
                     setVisionModalVisible(false);
+                    conditionalInAppNoticeJobsRef.current.delete(jobId);
+                    suppressForegroundCompletionAlertJobsRef.current.delete(jobId);
 
                     if (response.status !== 'aborted') {
                         Alert.alert('Error', response.message || 'Vision processing failed');
@@ -841,8 +911,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
         };
 
         // Start polling
-        poll();
-        pollIntervalRef.current = setInterval(poll, 2000);
+        await poll();
+        if (!stopped) {
+            intervalId = setInterval(poll, 2000);
+            pollIntervalRef.current = intervalId;
+        }
     }, [apiBase, id, token, navigation, loadShelf]);
 
     // Cancel vision processing
@@ -852,11 +925,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
             pollIntervalRef.current = null;
         }
 
-        if (currentJobId) {
+        const targetJobId = activeVisionJobIdRef.current || currentJobId;
+        if (targetJobId) {
             try {
                 await apiRequest({
                     apiBase,
-                    path: `/api/shelves/${id}/vision/${currentJobId}`,
+                    path: `/api/shelves/${id}/vision/${targetJobId}`,
                     method: 'DELETE',
                     token,
                 });
@@ -868,12 +942,31 @@ export default function ShelfDetailScreen({ route, navigation }) {
         setVisionLoading(false);
         setVisionModalVisible(false);
         setCurrentJobId(null);
+        activeVisionJobIdRef.current = null;
+        conditionalInAppNoticeJobsRef.current.delete(targetJobId);
+        suppressForegroundCompletionAlertJobsRef.current.delete(targetJobId);
     }, [apiBase, id, token, currentJobId]);
 
     // Hide modal but continue processing
-    const handleHideToBackground = useCallback(() => {
+    const handleHideToBackground = useCallback(async () => {
         setVisionModalVisible(false);
-    }, []);
+        const targetJobId = activeVisionJobIdRef.current || currentJobId;
+        if (!targetJobId) return;
+        conditionalInAppNoticeJobsRef.current.add(targetJobId);
+        try {
+            const response = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${id}/vision/${targetJobId}/background`,
+                method: 'POST',
+                token,
+            });
+            if (response?.notifyInAppOnComplete === true) {
+                conditionalInAppNoticeJobsRef.current.add(targetJobId);
+            }
+        } catch (err) {
+            console.warn('Failed to set in-app completion notice:', err);
+        }
+    }, [apiBase, id, token, currentJobId]);
 
     // Cleanup on unmount
     React.useEffect(() => {
@@ -881,6 +974,28 @@ export default function ShelfDetailScreen({ route, navigation }) {
             if (pollIntervalRef.current) {
                 clearInterval(pollIntervalRef.current);
             }
+            activeVisionJobIdRef.current = null;
+            conditionalInAppNoticeJobsRef.current.clear();
+            suppressForegroundCompletionAlertJobsRef.current.clear();
+        };
+    }, []);
+
+    React.useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextState) => {
+            appStateRef.current = nextState;
+            if (nextState !== 'active') {
+                const activeJobId = activeVisionJobIdRef.current;
+                if (
+                    activeJobId &&
+                    conditionalInAppNoticeJobsRef.current.has(activeJobId)
+                ) {
+                    suppressForegroundCompletionAlertJobsRef.current.add(activeJobId);
+                }
+            }
+        });
+
+        return () => {
+            subscription.remove();
         };
     }, []);
 
@@ -953,7 +1068,12 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 // If async mode, show modal and poll for status
                 if (data.jobId) {
                     setVisionModalVisible(true);
-                    pollVisionStatus(data.jobId);
+                    if (data.notifyInAppOnComplete === true) {
+                        conditionalInAppNoticeJobsRef.current.add(data.jobId);
+                    }
+                    pollVisionStatus(data.jobId, {
+                        notifyInAppOnComplete: data.notifyInAppOnComplete === true,
+                    });
                     return;
                 }
 

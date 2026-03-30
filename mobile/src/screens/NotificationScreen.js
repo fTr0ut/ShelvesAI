@@ -140,7 +140,7 @@ export default function NotificationScreen({ navigation }) {
         if (notification.entityType === 'workflow_job') {
             const shelfId = Number(notification?.metadata?.shelfId);
             if (Number.isFinite(shelfId) && shelfId > 0) {
-                navigation.navigate('ShelfDetail', { shelfId });
+                navigation.navigate('ShelfDetail', { id: shelfId });
                 return;
             }
             navigation.navigate('Main', { screen: 'Shelves' });
