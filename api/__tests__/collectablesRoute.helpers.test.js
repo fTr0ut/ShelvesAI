@@ -14,6 +14,8 @@ const {
   buildApiLookupInputs,
   resolveApiContainerForSearch,
   buildCollectableUpsertPayloadFromCandidate,
+  includeCastPayload,
+  buildCollectableResponsePayload,
 } = collectablesRoute._helpers;
 
 describe('collectables route helpers', () => {
@@ -171,6 +173,9 @@ describe('collectables route helpers', () => {
         primaryCreator: 'Frank Herbert',
         kind: 'books',
         provider: 'openlibrary',
+        castMembers: [
+          { id: 1, name: 'Timothee Chalamet', character: 'Paul Atreides', order: 0, profile_path: '/p.jpg' },
+        ],
       },
       'books',
     );
@@ -181,5 +186,60 @@ describe('collectables route helpers', () => {
     expect(payload.fingerprint).toBeTruthy();
     expect(payload.lightweightFingerprint).toBeTruthy();
     expect(payload.sources).toContain('openlibrary');
+    expect(payload.castMembers).toEqual([
+      {
+        personId: 1,
+        name: 'Timothee Chalamet',
+        nameNormalized: 'timothee chalamet',
+        character: 'Paul Atreides',
+        order: 0,
+        profilePath: '/p.jpg',
+      },
+    ]);
+  });
+
+  it('includes cast list in payload when cast members are provided', () => {
+    const payload = includeCastPayload({
+      id: 7,
+      title: 'Dune',
+      castMembers: [
+        { personId: 1, name: 'Timothee Chalamet', character: 'Paul', order: 0, profilePath: '/a.jpg' },
+        { personId: 2, name: 'Zendaya', character: 'Chani', order: 1, profilePath: '/b.jpg' },
+      ],
+    });
+
+    expect(payload.cast).toEqual(['Timothee Chalamet', 'Zendaya']);
+    expect(payload.castMembers).toEqual([
+      {
+        personId: 1,
+        name: 'Timothee Chalamet',
+        nameNormalized: 'timothee chalamet',
+        character: 'Paul',
+        order: 0,
+        profilePath: '/a.jpg',
+      },
+      {
+        personId: 2,
+        name: 'Zendaya',
+        nameNormalized: 'zendaya',
+        character: 'Chani',
+        order: 1,
+        profilePath: '/b.jpg',
+      },
+    ]);
+  });
+
+  it('builds response payload without market value sources and with normalized cast', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 8,
+      title: 'Inception',
+      marketValue: '$20',
+      marketValueSources: [{ url: 'https://example.com' }],
+      cast: [{ name: 'Leonardo DiCaprio' }, 'Joseph Gordon-Levitt', 'Joseph Gordon-Levitt'],
+    });
+
+    expect(payload.marketValueSources).toBeUndefined();
+    expect(payload.cast).toEqual(['Leonardo DiCaprio', 'Joseph Gordon-Levitt']);
+    expect(payload.castMembers).toEqual([]);
   });
 });

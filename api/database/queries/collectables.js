@@ -54,6 +54,58 @@ function normalizeString(value) {
     return String(value).trim();
 }
 
+function normalizeCastName(value) {
+    const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, ' ').trim();
+    return normalized;
+}
+
+function normalizeCastMembers(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const out = [];
+
+    for (const entry of source) {
+        let personId = null;
+        let name = '';
+        let character = null;
+        let order = null;
+        let profilePath = null;
+
+        if (typeof entry === 'string') {
+            name = normalizeString(entry);
+        } else if (entry && typeof entry === 'object') {
+            name = normalizeString(entry.name);
+            const personIdValue = entry.personId ?? entry.person_id ?? entry.id;
+            const parsedPersonId = Number.parseInt(personIdValue, 10);
+            personId = Number.isFinite(parsedPersonId) ? parsedPersonId : null;
+
+            character = normalizeString(entry.character || entry.role) || null;
+            const orderValue = entry.order ?? entry.castOrder ?? entry.cast_order;
+            const parsedOrder = Number.parseInt(orderValue, 10);
+            order = Number.isFinite(parsedOrder) ? parsedOrder : null;
+
+            profilePath = normalizeString(entry.profilePath || entry.profile_path) || null;
+        } else {
+            continue;
+        }
+
+        if (!name) continue;
+        const nameNormalized = normalizeCastName(name);
+        if (!nameNormalized) continue;
+
+        out.push({
+            personId,
+            name,
+            nameNormalized,
+            character,
+            order,
+            profilePath,
+        });
+    }
+
+    return out;
+}
+
 function normalizeStringArray(input) {
     if (input == null) return [];
     const source = Array.isArray(input) ? input : [input];
@@ -268,6 +320,8 @@ async function upsert(data, client = null) {
         coverImageSource = 'external',
         attribution = null,
         metascore = null,
+        castMembers: rawCastMembers = undefined,
+        cast_members: rawCastMembersSnake = undefined,
     } = data;
 
     const resolvedCoverUrl = pickCoverUrl(images, coverUrl);
@@ -283,6 +337,14 @@ async function upsert(data, client = null) {
             : Number.isFinite(Number(runtime))
                 ? Number(runtime)
                 : null;
+    const hasCastMembers = (
+        Object.prototype.hasOwnProperty.call(data, 'castMembers')
+        || Object.prototype.hasOwnProperty.call(data, 'cast_members')
+    );
+    const selectedRawCastMembers = rawCastMembers !== undefined ? rawCastMembers : rawCastMembersSnake;
+    const normalizedCastMembers = normalizeCastMembers(
+        hasCastMembers ? selectedRawCastMembers : null,
+    );
 
     const normalizedKind = normalizeCollectableKind(kind, 'item');
     const normalizedIdentifiers = identifiers && typeof identifiers === 'object' && !Array.isArray(identifiers)
@@ -296,6 +358,7 @@ async function upsert(data, client = null) {
     const fuzzyFingerprintsJson = ensureJsonParam(fuzzyFingerprints, 'fuzzyFingerprints');
     const attributionJson = attribution ? ensureJsonParam(attribution, 'attribution') : null;
     const metascoreJson = metascore ? ensureJsonParam(metascore, 'metascore') : null;
+    const castMembersJson = hasCastMembers ? ensureJsonParam(normalizedCastMembers, 'castMembers') : null;
     const q = resolveQuery(client);
     const result = await q(
         `INSERT INTO collectables (
@@ -303,8 +366,8 @@ async function upsert(data, client = null) {
        primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,
        market_value, market_value_sources,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
-       cover_image_url, cover_image_source, attribution, metascore
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+       cover_image_url, cover_image_source, attribution, metascore, cast_members
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -339,6 +402,7 @@ async function upsert(data, client = null) {
        cover_image_source = COALESCE(EXCLUDED.cover_image_source, collectables.cover_image_source),
        attribution = COALESCE(EXCLUDED.attribution, collectables.attribution),
        metascore = COALESCE(EXCLUDED.metascore, collectables.metascore),
+       cast_members = CASE WHEN $29::boolean THEN EXCLUDED.cast_members ELSE collectables.cast_members END,
        updated_at = NOW()
      RETURNING *`,
         [
@@ -347,7 +411,9 @@ async function upsert(data, client = null) {
             identifiersJson, normalizeString(marketValue) || null, marketValueSourcesJson, imagesJson, resolvedCoverUrl, sourcesJson, externalId,
             fuzzyFingerprintsJson, coverImageUrl, coverImageSource,
             attributionJson,
-            metascoreJson
+            metascoreJson,
+            castMembersJson,
+            hasCastMembers,
         ]
     );
     const collectable = rowToCamelCase(result.rows[0]);
@@ -422,6 +488,8 @@ async function upsert(data, client = null) {
  */
 async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
     const normalizedQuery = normalizeSearchText(q);
+    const normalizedCastMemberName = normalizeCastName(q);
+    const castMatchQueryJson = JSON.stringify([{ nameNormalized: normalizedCastMemberName }]);
     const normalizedTitleExpr = buildNormalizedSqlExpression('c.title');
     const normalizedCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
 
@@ -429,11 +497,13 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
     SELECT c.*, 
            similarity(c.title, $1) as title_sim,
            similarity(COALESCE(c.primary_creator, ''), $1) as creator_sim,
+           CASE WHEN c.cast_members @> $3::jsonb THEN 1 ELSE 0 END as cast_exact_match,
            GREATEST(
              similarity(c.title, $1),
              similarity(COALESCE(c.primary_creator, ''), $1),
              similarity(${normalizedTitleExpr}, $2),
-             similarity(${normalizedCreatorExpr}, $2)
+             similarity(${normalizedCreatorExpr}, $2),
+             CASE WHEN c.cast_members @> $3::jsonb THEN 1 ELSE 0 END
            ) as search_score,
            m.local_path as cover_media_path
     FROM collectables c
@@ -443,13 +513,14 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
       OR COALESCE(c.primary_creator, '') % $1
       OR ${normalizedTitleExpr} % $2
       OR ${normalizedCreatorExpr} % $2
+      OR c.cast_members @> $3::jsonb
     )
   `;
-    const params = [q, normalizedQuery];
+    const params = [q, normalizedQuery, castMatchQueryJson];
 
     const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
     if (normalizedKind) {
-        sql += ` AND c.kind = $${params.length + 1}`;
+        sql += ` AND c.kind = $4`;
         params.push(normalizedKind);
     }
 

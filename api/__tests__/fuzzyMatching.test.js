@@ -99,9 +99,10 @@ describe('collectablesQueries search normalization', () => {
         expect(sql).toContain('WHERE (');
         expect(sql).toContain('OR COALESCE(c.primary_creator, \'\') % $1');
         expect(sql).toContain('% $2');
-        expect(sql).toContain('AND c.kind = $3');
+        expect(sql).toContain('OR c.cast_members @> $3::jsonb');
+        expect(sql).toContain('AND c.kind = $4');
         expect(sql).toContain('ORDER BY search_score DESC');
-        expect(params).toEqual(['Pokemon', 'pokemon', 'books', 5, 2]);
+        expect(params).toEqual(['Pokemon', 'pokemon', '[{"nameNormalized":"pokemon"}]', 'books', 5, 2]);
     });
 
     it('searchGlobalWildcard should include normalized ILIKE branch', async () => {

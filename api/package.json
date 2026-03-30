@@ -14,6 +14,7 @@
         "upsert_collectables": "node -r dotenv/config scripts/upsert_collectables.js --file scripts/2024_2025.jsonl --collection collectables --batch 2000",
         "cache-covers": "node scripts/cache-collectable-covers.js",
         "backfill:cover-media": "node scripts/backfill-missing-cover-media.js",
+        "backfill:collectable-cast": "node scripts/backfill-collectable-cast-members.js",
         "test:tmdb": "node scripts/test-tmdb.js",
         "generate-token": "node scripts/generate-token.js",
         "init-db": "node scripts/init-db.js",

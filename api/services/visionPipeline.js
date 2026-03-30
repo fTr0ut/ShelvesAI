@@ -135,6 +135,51 @@ function normalizeIdentifiers(value) {
     return {};
 }
 
+function normalizeCastName(value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCastMembers(value) {
+    if (!value) return [];
+    const source = Array.isArray(value) ? value : [value];
+    const out = [];
+    for (const entry of source) {
+        let name = '';
+        let personId = null;
+        let character = null;
+        let order = null;
+        let profilePath = null;
+
+        if (typeof entry === 'string') {
+            name = normalizeString(entry);
+        } else if (entry && typeof entry === 'object') {
+            name = normalizeString(entry.name);
+            const parsedPersonId = parseInt(entry.personId ?? entry.person_id ?? entry.id, 10);
+            personId = Number.isFinite(parsedPersonId) ? parsedPersonId : null;
+            character = normalizeString(entry.character || entry.role) || null;
+            const parsedOrder = parseInt(entry.order ?? entry.castOrder ?? entry.cast_order, 10);
+            order = Number.isFinite(parsedOrder) ? parsedOrder : null;
+            profilePath = normalizeString(entry.profilePath || entry.profile_path) || null;
+        } else {
+            continue;
+        }
+
+        if (!name) continue;
+        const nameNormalized = normalizeCastName(name);
+        if (!nameNormalized) continue;
+
+        out.push({
+            personId,
+            name,
+            nameNormalized,
+            character,
+            order,
+            profilePath,
+        });
+    }
+    return out;
+}
+
 function normalizeExtractionIndex(value) {
     if (!Number.isInteger(value) || value < 0) return null;
     return value;
@@ -2127,6 +2172,13 @@ class VisionPipelineService {
                     const identifiers = normalizeIdentifiers(item.identifiers);
                     const images = normalizeArray(item.images);
                     const sources = normalizeArray(item.sources);
+                    const hasCastMembers = (
+                        Object.prototype.hasOwnProperty.call(item || {}, 'castMembers')
+                        || Object.prototype.hasOwnProperty.call(item || {}, 'cast_members')
+                    );
+                    const castMembers = hasCastMembers
+                        ? normalizeCastMembers(item.castMembers ?? item.cast_members)
+                        : undefined;
                     const systemName = normalizeString(
                         item.systemName ||
                         (Array.isArray(item.platforms) ? item.platforms[0] : item.platform),
@@ -2198,6 +2250,7 @@ class VisionPipelineService {
                         coverImageUrl: item.coverImageUrl || null,
                         coverImageSource: item.coverImageSource || null,
                         attribution: item.attribution || null,
+                        ...(hasCastMembers ? { castMembers } : {}),
                         // Metadata quality score (from MetadataScorer via CatalogRouter)
                         metascore: (item._metadataScore != null)
                             ? {

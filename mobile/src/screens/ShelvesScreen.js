@@ -290,6 +290,27 @@ export default function ShelvesScreen({ navigation }) {
 
         if (item.isGlobalResult && item.resultType !== 'shelf') {
             const itemUri = getResultItemImageUri(item);
+
+            const searchedSegments = searchQuery.toLowerCase().trim().split(/\s+/).filter(Boolean);
+            const castNames = Array.isArray(item.castMembers)
+                ? item.castMembers.map(c => c.name).filter(Boolean)
+                : [];
+            const itemTags = [...(item.genre || []), ...(item.tags || []), ...castNames];
+            let displayTags = [];
+            
+            if (searchedSegments.length > 0 && itemTags.length > 0) {
+                displayTags = itemTags.filter(t => {
+                    const tLower = t.toLowerCase();
+                    return searchedSegments.some(seg => tLower.includes(seg));
+                });
+            }
+            
+            if (displayTags.length === 0 && itemTags.length > 0) {
+                displayTags = itemTags.slice(0, 2); 
+            } else if (displayTags.length > 3) {
+                displayTags = displayTags.slice(0, 3);
+            }
+
             return (
                 <TouchableOpacity
                     style={styles.itemResultCard}
@@ -320,7 +341,21 @@ export default function ShelvesScreen({ navigation }) {
                                     <Text style={styles.badgeLabelAlt}>{item.format}</Text>
                                 </View>
                             )}
+                            {!!item.year && (
+                                <View style={[styles.badgeContainer, styles.badgeContainerAlt]}>
+                                    <Text style={styles.badgeLabelAlt}>{item.year}</Text>
+                                </View>
+                            )}
                         </View>
+                        {displayTags.length > 0 && (
+                            <View style={styles.tagsContainer}>
+                                {displayTags.map((tag, idx) => (
+                                    <View key={`tag-${idx}`} style={styles.tagBadge}>
+                                        <Text style={styles.tagText} numberOfLines={1}>{tag}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
                         <Text style={styles.itemShelfInfo} numberOfLines={1}>In shelf: {item.shelfName}</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
@@ -917,6 +952,27 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 11,
         fontWeight: '500',
         color: colors.textSecondary,
+    },
+    tagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: 4,
+        marginBottom: 4,
+    },
+    tagBadge: {
+        backgroundColor: colors.surfaceTop,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    tagText: {
+        fontSize: 10,
+        color: colors.textMuted,
+        fontFamily: typography.medium,
+        textTransform: 'uppercase',
     },
     itemShelfInfo: {
         fontSize: 12,

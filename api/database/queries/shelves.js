@@ -814,6 +814,7 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
 
     const sql = `
         SELECT result_type, id, shelf_id, collectable_id, manual_id, title, subtitle, kind, format, system_name, shelf_name,
+               year, genre, tags, cast_members,
                cover_url, cover_media_path,
                owner_photo_source, owner_photo_thumb_storage_provider, owner_photo_thumb_storage_key,
                owner_photo_thumb_updated_at, is_vision_linked
@@ -829,6 +830,10 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    NULL::text as format,
                    NULL::text as system_name,
                    NULL::text as shelf_name,
+                   NULL::text as year,
+                   NULL::text[] as genre,
+                   NULL::text[] as tags,
+                   NULL::jsonb as cast_members,
                    NULL::text as cover_url,
                    NULL::text as cover_media_path,
                    NULL::text as owner_photo_source,
@@ -861,6 +866,10 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    uc.format as format,
                    c.system_name as system_name,
                    s.name as shelf_name,
+                   c.year as year,
+                   c.genre as genre,
+                   c.tags as tags,
+                   c.cast_members as cast_members,
                    c.cover_url as cover_url,
                    m.local_path as cover_media_path,
                    uc.owner_photo_source,
@@ -886,7 +895,12 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                   c.primary_creator % $1 OR
                   ${normalizedCollectableTitleExpr} % $2 OR
                   ${normalizedCollectableCreatorExpr} % $2 OR
-                  c.title ILIKE '%' || $1 || '%'
+                  c.title ILIKE '%' || $1 || '%' OR
+                  c.primary_creator ILIKE '%' || $1 || '%' OR
+                  c.year ILIKE '%' || $1 || '%' OR
+                  array_to_string(c.genre, ' ') ILIKE '%' || $1 || '%' OR
+                  array_to_string(c.tags, ' ') ILIKE '%' || $1 || '%' OR
+                  c.cast_members::text ILIKE '%' || $1 || '%'
               )
               
             UNION ALL
@@ -902,6 +916,10 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    COALESCE(uc.format, um.format) as format,
                    NULL::text as system_name,
                    s.name as shelf_name,
+                   um.year as year,
+                   um.genre as genre,
+                   um.tags as tags,
+                   NULL::jsonb as cast_members,
                    NULL::text as cover_url,
                    um.cover_media_path as cover_media_path,
                    uc.owner_photo_source,
@@ -926,7 +944,11 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                   um.author % $1 OR
                   ${normalizedManualTitleExpr} % $2 OR
                   ${normalizedManualCreatorExpr} % $2 OR
-                  um.name ILIKE '%' || $1 || '%'
+                  um.name ILIKE '%' || $1 || '%' OR
+                  um.author ILIKE '%' || $1 || '%' OR
+                  um.year ILIKE '%' || $1 || '%' OR
+                  array_to_string(um.genre, ' ') ILIKE '%' || $1 || '%' OR
+                  array_to_string(um.tags, ' ') ILIKE '%' || $1 || '%'
               )
         ) results
         ORDER BY score DESC NULLS LAST, title ASC

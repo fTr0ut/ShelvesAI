@@ -26,6 +26,34 @@ function normalizeString(value) {
     return String(value).trim();
 }
 
+function normalizeCastName(value) {
+    return normalizeString(value).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function mapTmdbCastMembers(cast = []) {
+    if (!Array.isArray(cast)) return [];
+    const out = [];
+    for (const member of cast) {
+        const name = normalizeString(member?.name);
+        if (!name) continue;
+
+        const nameNormalized = normalizeCastName(name);
+        if (!nameNormalized) continue;
+
+        const parsedPersonId = Number.parseInt(member?.id, 10);
+        const parsedOrder = Number.parseInt(member?.order, 10);
+        out.push({
+            personId: Number.isFinite(parsedPersonId) ? parsedPersonId : null,
+            name,
+            nameNormalized,
+            character: normalizeString(member?.character) || null,
+            order: Number.isFinite(parsedOrder) ? parsedOrder : null,
+            profilePath: normalizeString(member?.profile_path) || null,
+        });
+    }
+    return out;
+}
+
 function normalizeCreatorList(input) {
     if (input == null) return [];
     const source = Array.isArray(input) ? input : [input];
@@ -189,6 +217,12 @@ class CollectableDiscoveryHook {
                 externalId: payload.externalId || externalId,
                 // TMDB/IGDB attribution (required by API terms)
                 attribution: payload.attribution || null,
+                ...(
+                    Object.prototype.hasOwnProperty.call(payload, 'castMembers')
+                    || Object.prototype.hasOwnProperty.call(payload, 'cast_members')
+                        ? { castMembers: payload.castMembers ?? payload.cast_members }
+                        : {}
+                ),
             });
 
             logger.info(`[CollectableDiscoveryHook] ✓ Created collectable: ${collectable.id} "${collectable.title}"`);
@@ -675,10 +709,9 @@ class CollectableDiscoveryHook {
             ? tmdbData.created_by.map(c => c.name).filter(Boolean)
             : [];
 
-        // Extract cast from credits
-        const cast = Array.isArray(tmdbData.credits?.cast)
-            ? tmdbData.credits.cast.slice(0, 6).map(c => c.name).filter(Boolean)
-            : [];
+        // Extract full cast from credits for JSONB persistence
+        const castMembers = mapTmdbCastMembers(tmdbData.credits?.cast);
+        const cast = castMembers.slice(0, 6).map((member) => member.name);
 
         const primaryCreator = createdBy[0] || cast[0] || null;
         const creators = [...new Set([...createdBy, ...cast])];
@@ -754,6 +787,7 @@ class CollectableDiscoveryHook {
             runtime: episodeRuntime,
             tags: genres,
             genre: genres,
+            castMembers,
             identifiers,
             images,
             coverUrl: posterPath ? `https://image.tmdb.org/t/p/w780${posterPath}` : null,

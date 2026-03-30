@@ -2,10 +2,15 @@ import React, { useCallback, useContext, useEffect, useMemo, useState } from 're
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   StatusBar,
@@ -18,6 +23,8 @@ import { usePush } from '../context/PushContext';
 import { apiRequest, clearToken } from '../services/api';
 import { useAsync } from '../hooks/useAsync';
 
+const FEEDBACK_MAX_LENGTH = 4000;
+
 export default function AccountScreen({ navigation }) {
   const { token, setToken, apiBase, setNeedsOnboarding, premiumEnabled, setPremiumEnabled, visionQuota, setVisionQuota } = useContext(AuthContext);
   const { colors, spacing, typography, shadows, radius, isDark, toggleTheme } = useTheme();
@@ -28,6 +35,9 @@ export default function AccountScreen({ navigation }) {
   const [privateSaving, setPrivateSaving] = useState(false);
   const [showPersonalPhotos, setShowPersonalPhotos] = useState(true);
   const [photosSaving, setPhotosSaving] = useState(false);
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
 
   const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -116,6 +126,42 @@ export default function AccountScreen({ navigation }) {
       setPhotosSaving(false);
     }
   }, [apiBase, token, showPersonalPhotos]);
+
+  const handleOpenFeedback = useCallback(() => {
+    setFeedbackModalVisible(true);
+  }, []);
+
+  const handleCloseFeedback = useCallback(() => {
+    if (feedbackSubmitting) return;
+    setFeedbackModalVisible(false);
+    setFeedbackMessage('');
+  }, [feedbackSubmitting]);
+
+  const handleSubmitFeedback = useCallback(async () => {
+    const message = feedbackMessage.trim();
+    if (!message) {
+      Alert.alert('Feedback required', 'Please enter feedback before submitting.');
+      return;
+    }
+
+    try {
+      setFeedbackSubmitting(true);
+      await apiRequest({
+        apiBase,
+        path: '/api/account/feedback',
+        method: 'POST',
+        token,
+        body: { message },
+      });
+      setFeedbackModalVisible(false);
+      setFeedbackMessage('');
+      Alert.alert('Feedback sent', 'Thanks. Your feedback has been sent to our support team.');
+    } catch (e) {
+      Alert.alert('Unable to submit feedback', e.message || 'Please try again later.');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }, [apiBase, feedbackMessage, token]);
 
   const handleLogout = useCallback(() => {
     Alert.alert('Log Out', 'Are you sure?', [
@@ -311,6 +357,20 @@ export default function AccountScreen({ navigation }) {
 
           <TouchableOpacity
             style={styles.settingsRow}
+            onPress={handleOpenFeedback}
+          >
+            <View style={styles.settingsLeft}>
+              <Ionicons name="chatbubble-ellipses" size={20} color={colors.text} />
+              <View>
+                <Text style={styles.settingsLabel}>Send Feedback</Text>
+                <Text style={styles.settingsHint}>Report bugs or suggest improvements</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsRow}
             onPress={() => navigation.navigate('About')}
           >
             <View style={styles.settingsLeft}>
@@ -320,6 +380,65 @@ export default function AccountScreen({ navigation }) {
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         </View>
+
+        <Modal
+          visible={feedbackModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={handleCloseFeedback}
+        >
+          <KeyboardAvoidingView
+            style={styles.feedbackModalRoot}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <Pressable style={styles.feedbackBackdrop} onPress={handleCloseFeedback} />
+            <View style={styles.feedbackCard}>
+              <Text style={styles.feedbackTitle}>Send Feedback</Text>
+              <Text style={styles.feedbackHint}>
+                Tell us what happened or what you want improved.
+              </Text>
+              <TextInput
+                value={feedbackMessage}
+                onChangeText={setFeedbackMessage}
+                style={styles.feedbackInput}
+                placeholder="Write your feedback..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                textAlignVertical="top"
+                maxLength={FEEDBACK_MAX_LENGTH}
+                editable={!feedbackSubmitting}
+                autoFocus
+              />
+              <Text style={styles.feedbackCharCount}>
+                {feedbackMessage.length}/{FEEDBACK_MAX_LENGTH}
+              </Text>
+              <View style={styles.feedbackActions}>
+                <TouchableOpacity
+                  style={[styles.feedbackButton, styles.feedbackCancelButton]}
+                  onPress={handleCloseFeedback}
+                  disabled={feedbackSubmitting}
+                >
+                  <Text style={styles.feedbackCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.feedbackButton,
+                    styles.feedbackSubmitButton,
+                    (!feedbackMessage.trim() || feedbackSubmitting) && styles.feedbackSubmitButtonDisabled,
+                  ]}
+                  onPress={handleSubmitFeedback}
+                  disabled={!feedbackMessage.trim() || feedbackSubmitting}
+                >
+                  {feedbackSubmitting ? (
+                    <ActivityIndicator size="small" color={colors.textInverted} />
+                  ) : (
+                    <Text style={styles.feedbackSubmitText}>Submit</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
 
         {/* Logout */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -472,6 +591,80 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     fontSize: 12,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  feedbackModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.md,
+  },
+  feedbackBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  feedbackCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    ...shadows.md,
+  },
+  feedbackTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  feedbackHint: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  feedbackInput: {
+    minHeight: 140,
+    maxHeight: 240,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+    padding: spacing.sm,
+    color: colors.text,
+    fontSize: 14,
+  },
+  feedbackCharCount: {
+    alignSelf: 'flex-end',
+    marginTop: spacing.xs,
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  feedbackActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  feedbackButton: {
+    minWidth: 92,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  feedbackCancelButton: {
+    backgroundColor: colors.surfaceElevated,
+  },
+  feedbackCancelText: {
+    color: colors.text,
+    fontWeight: '500',
+  },
+  feedbackSubmitButton: {
+    backgroundColor: colors.primary,
+  },
+  feedbackSubmitButtonDisabled: {
+    opacity: 0.6,
+  },
+  feedbackSubmitText: {
+    color: colors.textInverted,
+    fontWeight: '600',
   },
   logoutButton: {
     flexDirection: 'row',

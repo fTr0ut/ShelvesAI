@@ -96,6 +96,75 @@ function normalizeTextValue(value) {
   return trimmed || null;
 }
 
+function normalizeCastName(value) {
+  const normalized = String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ').trim();
+  return normalized;
+}
+
+function normalizeCastMembers(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  const out = [];
+  for (const entry of source) {
+    let name = '';
+    let personId = null;
+    let character = null;
+    let order = null;
+    let profilePath = null;
+
+    if (typeof entry === 'string') {
+      name = normalizeTextValue(entry) || '';
+    } else if (entry && typeof entry === 'object') {
+      name = normalizeTextValue(entry.name) || '';
+      const parsedPersonId = parseInt(entry.personId ?? entry.person_id ?? entry.id, 10);
+      personId = Number.isFinite(parsedPersonId) ? parsedPersonId : null;
+      character = normalizeTextValue(entry.character || entry.role);
+      const parsedOrder = parseInt(entry.order ?? entry.castOrder ?? entry.cast_order, 10);
+      order = Number.isFinite(parsedOrder) ? parsedOrder : null;
+      profilePath = normalizeTextValue(entry.profilePath || entry.profile_path);
+    } else {
+      continue;
+    }
+
+    if (!name) continue;
+    const nameNormalized = normalizeCastName(name);
+    if (!nameNormalized) continue;
+
+    out.push({
+      personId,
+      name,
+      nameNormalized,
+      character,
+      order,
+      profilePath,
+    });
+  }
+  return out;
+}
+
+function normalizeCastList(value) {
+  const source = normalizeArray(value);
+  const out = [];
+  const seen = new Set();
+
+  for (const entry of source) {
+    let name = null;
+    if (typeof entry === 'string') {
+      name = normalizeTextValue(entry);
+    } else if (entry && typeof entry === 'object') {
+      name = normalizeTextValue(entry.name);
+    }
+    if (!name) continue;
+
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+
+  return out;
+}
+
 function parseRuntime(value) {
   if (value == null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -239,7 +308,7 @@ async function fetchFallbackResultsWithCache({ queryText, resolvedContainer, fal
     const mapped = externalMatches.map((entry) => {
       const provider = String(entry?.provider || entry?._source || 'api').toLowerCase();
       return {
-        ...omitMarketValueSources(entry),
+        ...buildCollectableResponsePayload(entry),
         fromApi: true,
         source: provider,
         provider,
@@ -352,6 +421,13 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
   const images = normalizeArray(candidate?.images).filter(Boolean);
   const provider = normalizeTextValue(candidate?.provider || candidate?._source || candidate?.source);
   const sources = normalizeArray(candidate?.sources).filter(Boolean);
+  const hasCastMembers = (
+    Object.prototype.hasOwnProperty.call(candidate || {}, 'castMembers')
+    || Object.prototype.hasOwnProperty.call(candidate || {}, 'cast_members')
+  );
+  const castMembers = hasCastMembers
+    ? normalizeCastMembers(candidate?.castMembers ?? candidate?.cast_members)
+    : undefined;
   if (provider && !sources.some((entry) => String(entry).toLowerCase() === provider.toLowerCase())) {
     sources.push(provider);
   }
@@ -391,6 +467,7 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
     attribution: candidate?.attribution && typeof candidate.attribution === 'object' ? candidate.attribution : null,
     externalId,
     sources,
+    ...(hasCastMembers ? { castMembers } : {}),
   };
 }
 
@@ -430,6 +507,32 @@ function omitMarketValueSources(entity) {
   if (!entity || typeof entity !== 'object') return entity;
   const { marketValueSources, ...rest } = entity;
   return rest;
+}
+
+function includeCastPayload(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+
+  const hasCastMembers = (
+    Object.prototype.hasOwnProperty.call(entity, 'castMembers')
+    || Object.prototype.hasOwnProperty.call(entity, 'cast_members')
+  );
+  const castMembers = normalizeCastMembers(
+    hasCastMembers ? (entity.castMembers ?? entity.cast_members) : [],
+  );
+  const explicitCast = normalizeCastList(entity.cast);
+  const cast = explicitCast.length
+    ? explicitCast
+    : castMembers.map((member) => member.name).filter(Boolean);
+
+  return {
+    ...entity,
+    castMembers,
+    cast,
+  };
+}
+
+function buildCollectableResponsePayload(entity) {
+  return includeCastPayload(omitMarketValueSources(entity));
 }
 
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
@@ -524,7 +627,7 @@ router.post("/from-news", requireAdmin, async (req, res) => {
     // Try to find existing collectable by source ID
     const existing = await collectablesQueries.findBySourceId(externalId, sourceApi);
     if (existing) {
-      return res.json({ collectable: omitMarketValueSources(existing), source: 'existing' });
+      return res.json({ collectable: buildCollectableResponsePayload(existing), source: 'existing' });
     }
 
     // Create a minimal collectable
@@ -585,7 +688,7 @@ router.post("/from-news", requireAdmin, async (req, res) => {
       sources: parsedSource ? [parsedSource] : [],
     });
 
-    res.status(201).json({ collectable: omitMarketValueSources(created), source: 'created' });
+    res.status(201).json({ collectable: buildCollectableResponsePayload(created), source: 'created' });
   } catch (err) {
     logger.error('POST /collectables/from-news error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -622,7 +725,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       const total = parseInt(countResult.rows[0].total);
 
       return res.json({
-        results: result.rows.map(rowToCamelCase).map(omitMarketValueSources).map((entry) => ({
+        results: result.rows.map(rowToCamelCase).map(buildCollectableResponsePayload).map((entry) => ({
           ...entry,
           fromApi: false,
           source: 'local',
@@ -667,20 +770,22 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       // Default: trigram similarity search
       results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
       const normalizedQuery = normalizeSearchText(q);
+      const castContainmentJson = JSON.stringify([{ nameNormalized: normalizeCastName(q) }]);
       countSql = `SELECT COUNT(*) as total FROM collectables 
        WHERE (
          title % $1
          OR primary_creator % $1
          OR ${normalizedCollectableTitleExpr} % $2
          OR ${normalizedCollectableCreatorExpr} % $2
+         OR cast_members @> $3::jsonb
        )
-       ${type ? 'AND kind = $3' : ''}`;
-      countParams = type ? [q, normalizedQuery, type] : [q, normalizedQuery];
+       ${type ? 'AND kind = $4' : ''}`;
+      countParams = type ? [q, normalizedQuery, castContainmentJson, type] : [q, normalizedQuery, castContainmentJson];
     }
 
     const countResult = await query(countSql, countParams);
     const total = parseInt(countResult.rows[0].total, 10);
-    const localResults = results.map(omitMarketValueSources).map((entry) => ({
+    const localResults = results.map(buildCollectableResponsePayload).map((entry) => ({
       ...entry,
       fromApi: false,
       source: 'local',
@@ -807,7 +912,7 @@ router.post("/resolve-search-hit", async (req, res) => {
     const hydrated = saved?.id ? await collectablesQueries.findById(saved.id) : saved;
 
     return res.status(201).json({
-      collectable: omitMarketValueSources(hydrated || saved),
+      collectable: buildCollectableResponsePayload(hydrated || saved),
       resolvedContainer,
     });
   } catch (err) {
@@ -822,7 +927,7 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
     const collectable = await collectablesQueries.findById(parseInt(req.params.collectableId, 10));
     if (!collectable)
       return res.status(404).json({ error: "Collectable not found" });
-    res.json({ collectable: omitMarketValueSources(collectable) });
+    res.json({ collectable: buildCollectableResponsePayload(collectable) });
   } catch (err) {
     logger.error('GET /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -964,7 +1069,7 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
     }
 
     if (!updates.length) {
-      return res.json({ collectable: omitMarketValueSources(rowToCamelCase(existingResult.rows[0])) });
+      return res.json({ collectable: buildCollectableResponsePayload(rowToCamelCase(existingResult.rows[0])) });
     }
 
     values.push(collectableId);
@@ -975,7 +1080,7 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
 
     const updated = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
     const hydrated = updated ? await collectablesQueries.findById(updated.id) : null;
-    res.json({ collectable: omitMarketValueSources(hydrated || updated) });
+    res.json({ collectable: buildCollectableResponsePayload(hydrated || updated) });
   } catch (err) {
     logger.error('PUT /collectables/:id error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -992,4 +1097,6 @@ module.exports._helpers = {
   buildApiLookupInputs,
   resolveApiContainerForSearch,
   buildCollectableUpsertPayloadFromCandidate,
+  includeCastPayload,
+  buildCollectableResponsePayload,
 };

@@ -20,7 +20,7 @@
 -~~When shelf = 'other', the AI progress modal window only stays at 10% the entire process. Flesh out the progress status updates further to make the process seem less stale.~~ **DONE 3/25/26** - Added dedicated `other`-workflow progress stages in `visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`) and updated `VisionPipelineService` to use monotonic, `other`-specific status updates (including second-pass extraction), preventing long-running `other` scans from appearing stuck at 10%.
 
 
--Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.
+-~~Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.~~ **DONE 3/30/26** - Added authenticated `POST /api/account/feedback` endpoint, wired Resend delivery to `support@shelvesai.com` via `emailService.sendFeedbackEmail`, and implemented Account Settings `Send Feedback` prompt modal in `mobile/src/screens/AccountScreen.js`.
 
 
 

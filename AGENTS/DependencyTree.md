@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-29
+Last updated: 2026-03-30
 
 ---
 
@@ -49,6 +49,11 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-30 | account-feedback-submission | Implemented in-app Account Settings feedback submission flow. Mobile `AccountScreen` now includes a `Send Feedback` settings row opening a multiline prompt modal that submits to `POST /api/account/feedback`. API `routes/account.js` now exposes authenticated feedback endpoint with string-length validation; `controllers/accountController.submitFeedback` validates message + hydrates user contact details and calls new `services/emailService.sendFeedbackEmail(...)`. `emailService` now supports support-inbox feedback delivery via Resend (`SUPPORT_EMAIL` default `support@shelvesai.com`). Added coverage in `api/__tests__/accountController.feedback.test.js`.
+- 2026-03-29 | shelves-search-cast-members | Expanded the `searchUserCollection` SQL payload in `api/database/queries/shelves.js` to select the `cast_members` JSONB column from `collectables` (casting to `NULL::jsonb` for manuals and shelves). Extended the fuzzy string search logic with `c.cast_members::text ILIKE '%' || $1 || '%'` to enable finding collection items by their cast members natively. Updated UI in `mobile/src/screens/ShelvesScreen.js` to destructure `.name` from the parsed `castMembers` layout and push them into the dynamically matched tags pill rendering system alongside genres and tags.
+- 2026-03-29 | add-to-shelf-from-detail | Added "Add to shelf" feature for CollectableDetailScreen when item has no shelf context (search, favorites, deep link, social feed). API: removed `requireFields(['collectableId'])` from `POST /api/shelves/:shelfId/items` in `api/routes/shelves.js`; extended `shelvesController.addCollectable` to accept `manualId` as alternative to `collectableId` (validates ownership, uses existing `shelvesQueries.getManualById` and `shelvesQueries.addManualCollection`). Mobile: new `mobile/src/components/AddToShelfModal.js` shelf picker modal (fetches user shelves, client-side name filter, per-row adding spinner, Alert feedback) importing `ThemeContext` and `api.js`. Integrated into `mobile/src/screens/CollectableDetailScreen.js` with conditional "Add to shelf" button (shown when `!hasShelfItemContext && user?.id`), success checkmark state, and modal render.
+- 2026-03-29 | tmdb-full-cast-jsonb-and-indexed-search | Added end-to-end TMDB full cast persistence for movies/TV into `collectables.cast_members` JSONB. Updated TMDB movie/TV adapters to map full `credits.cast` with normalized entries (`personId`, `name`, `nameNormalized`, `character`, `order`, `profilePath`), extended `collectables.upsert` to persist/merge `cast_members` with provided-only overwrite semantics, and wired cast forwarding through `routes/collectables` resolve-upsert flow, `controllers/shelvesController` payload building, `services/visionPipeline` collectable payload saves, and `services/discovery/CollectableDiscoveryHook` upserts. Added exact cast-name search support via `cast_members @> '[{\"nameNormalized\":...}]'` in `database/queries/collectables.searchGlobal` plus `GET /api/collectables` default count query path. Added DB migration `20260329010000_add_collectables_cast_members` and mirrored schema/index in `database/init/01-schema.sql` with partial GIN index `idx_collectables_cast_members_gin` (`jsonb_path_ops`). Added backfill script `api/scripts/backfill-collectable-cast-members.js` + npm command `backfill:collectable-cast`. Expanded regression coverage in movie/tv catalog service tests, collectables upsert tests, fuzzy/search SQL tests, route helper payload tests, and added new backfill helper tests.
+- 2026-03-29 | shelves-search-extended-metadata | Expanded the shelves search payload in `api/database/queries/shelves.js` to include `year`, `genre`, and `tags` via UNION ALL. Injected explicit `ILIKE` clauses targeting `array_to_string` conversions for genres and tags to allow deep querying of categorical item data. Updated `mobile/src/screens/ShelvesScreen.js` to destructure tags and genres, cleanly matching the user's active search query to dynamically highlight searched tags in the UI below the item text, while injecting year badges alongside format indicators.
 - 2026-03-29 | item-search-manual-trigger-and-add-anyways-guidance | Updated `mobile/src/screens/ItemSearchScreen.js` shelf add/replace UX to remove automatic debounced searching and restore explicit user-triggered catalog search via `Search Catalog` button. Added post-search instructional copy under the search action explaining result tap-to-add and manual fallback usage. Added always-available shelf-mode fallback CTA at the bottom of searched results (`Add anyways...` / replacement variant) after a valid search run, preserving existing add/replace submission flows and advanced-from-friend mode behavior.
 - 2026-03-29 | item-search-unified-manual-fallback-and-50-cap | Refactored `mobile/src/screens/ItemSearchScreen.js` shelf add/replace flow into a single unified search surface: removed separate manual fallback section and manual suggestion modal (`POST /api/shelves/:shelfId/manual/search` path no longer used by this screen), added 500ms debounced shelf-mode catalog search with minimum 3-character threshold, enforced DB->API lookup before exposing manual fallback CTA, and reused primary search inputs for manual add/replace payloads when no matches are found. Shelf-mode search now requests 50-result pages/fallback while advanced-from-friend mode behavior remains unchanged. Updated `api/routes/collectables.js` fallback cap (`MAX_FALLBACK_LIMIT`) from 25 to 50 and adjusted `api/__tests__/collectablesRoute.helpers.test.js` expectations for new fallback-limit and computed fetch-limit behavior.
 - 2026-03-29 | shelves-search-expanded-collection | Expanded local "Search shelves..." bar in `ShelvesScreen` to search across both the user's shelves and their entire collection of items. Added `GET /api/shelves/search` endpoint backed by `searchUserCollection` (UNION ALL across `shelves`, `collectables`, `user_manuals`). Updated `ShelvesScreen.js` to use an async debounced search, caching state, and pagination. Replaced synchronous shelf filtering with a sectioned list view demonstrating shelf rows and mixed item cards detailing badges (movie, book, format) and shelf origin names. Enforced List view whenever a search is active.
@@ -439,14 +444,17 @@ controllers/profileController.js
 #### account
 ```
 routes/account.js
-  → controllers/accountController.js
-  → middleware/auth.js
+  -> controllers/accountController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
+  Endpoints: GET /api/account, PUT /api/account, POST /api/account/feedback
 
 controllers/accountController.js
-  → database/pg.js
-  → database/queries/utils.js
-  → database/queries/visionQuota.js
-  → services/mediaUrl.js
+  -> database/pg.js
+  -> database/queries/utils.js
+  -> database/queries/visionQuota.js
+  -> services/mediaUrl.js
+  -> services/emailService.js
   Allowed update fields: first_name, last_name, phone_number, country, city, state, is_private, is_premium, picture, show_personal_photos
   Guards: checks req.user.premiumLockedByAdmin before allowing is_premium update
 ```
@@ -845,7 +853,8 @@ services/hardcover.js
   → utils/RateLimiter.js
 
 services/emailService.js
-  (no internal imports — uses resend)
+  -> logger.js
+  (uses resend)
 
 services/pushNotificationService.js
   (no internal imports — uses expo-server-sdk)
@@ -1596,6 +1605,7 @@ news_items (SERIAL PK)
 - `shelves.visibility` ∈ {private, friends, public}
 - `users.email`: UNIQUE constraint
 - `collectables.title`: GIN pg_trgm index for fuzzy search
+- `collectables.cast_members`: partial GIN index (`idx_collectables_cast_members_gin`) for exact cast-name containment lookups
 
 ### Row Level Security (RLS)
 
@@ -1606,7 +1616,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (54 files, 2026-01-10 -> 2026-03-25)
+### Migration History (55 files, 2026-01-10 -> 2026-03-29)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1669,6 +1679,7 @@ news_items (SERIAL PK)
 | `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table |
 | `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default → TRUE (flips existing users), `user_collections.owner_photo_visible` default → TRUE |
 | `20260328000000_add_mention_notification_type` | Expand `notifications` type CHECK constraint to include `'mention'`, + `notification_preferences.push_mentions` (BOOLEAN DEFAULT TRUE) |
+| `20260329010000_add_collectables_cast_members` | + `collectables.cast_members` (JSONB) and partial GIN index `idx_collectables_cast_members_gin` for cast containment lookups |
 
 ---
 
@@ -1681,7 +1692,7 @@ news_items (SERIAL PK)
 | **Google Cloud Vision** | `@google-cloud/vision` | `services/googleCloudVision.js` (disabled) | `GOOGLE_APPLICATION_CREDENTIALS` |
 | **OpenAI** | `openai` | (not currently imported) | `OPENAI_API_KEY` |
 | **AWS S3** | `@aws-sdk/client-s3` | `services/s3.js` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `S3_PUBLIC_URL`, `AWS_REGION` |
-| **Resend** | `resend` | `services/emailService.js`, `routes/waitlist.js` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_AUDIENCE_ID` |
+| **Resend** | `resend` | `services/emailService.js`, `routes/waitlist.js`, `routes/account.js` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_AUDIENCE_ID`, `SUPPORT_EMAIL` |
 | **Expo Push** | `expo-server-sdk` | `services/pushNotificationService.js` | (uses Expo tokens) |
 | **TMDB** | `node-fetch` | `adapters/TmdbAdapter.js`, `TmdbTvAdapter.js`, `TmdbDiscoveryAdapter.js` | `TMDB_API_KEY` |
 | **IGDB** | `node-fetch` | `adapters/IgdbAdapter.js`, `IgdbDiscoveryAdapter.js` | `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` |
@@ -1732,3 +1743,4 @@ These files have the most dependents or are critical infrastructure:
 | `shared/theme/tokens.js` | 5 mobile UI components import it directly |
 | `admin-dashboard/src/api/client.js` | All admin API calls flow through it |
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
+

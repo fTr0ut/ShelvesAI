@@ -12,6 +12,10 @@ function normalizeCompare(value) {
   return normalizeString(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function normalizeCastName(value) {
+  return normalizeString(value).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 function uniqueStrings(values = []) {
   const seen = new Set();
   const out = [];
@@ -22,6 +26,30 @@ function uniqueStrings(values = []) {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(normalized);
+  }
+  return out;
+}
+
+function mapTmdbCastMembers(cast = []) {
+  if (!Array.isArray(cast)) return [];
+  const out = [];
+  for (const member of cast) {
+    const name = normalizeString(member?.name);
+    if (!name) continue;
+
+    const nameNormalized = normalizeCastName(name);
+    if (!nameNormalized) continue;
+
+    const parsedPersonId = Number.parseInt(member?.id, 10);
+    const parsedOrder = Number.parseInt(member?.order, 10);
+    out.push({
+      personId: Number.isFinite(parsedPersonId) ? parsedPersonId : null,
+      name,
+      nameNormalized,
+      character: normalizeString(member?.character) || null,
+      order: Number.isFinite(parsedOrder) ? parsedOrder : null,
+      profilePath: normalizeString(member?.profile_path) || null,
+    });
   }
   return out;
 }
@@ -75,6 +103,7 @@ function tmdbMovieToCollectable(movie, options = {}) {
 
   const cast = Array.isArray(movie.credits?.cast) ? movie.credits.cast : [];
   const castNames = uniqueStrings(cast.slice(0, 6).map((member) => member?.name));
+  const castMembers = mapTmdbCastMembers(cast);
 
   const primaryCreator = directorNames[0] || castNames[0] || null;
 
@@ -210,6 +239,7 @@ function tmdbMovieToCollectable(movie, options = {}) {
     description: movie.overview || null,
     primaryCreator,
     creators: uniqueStrings([...directorNames, ...castNames]),
+    castMembers,
     year: year || null,
     runtime: movie.runtime ?? null,
     publisher: productionCompanies[0] || null,

@@ -93,6 +93,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [reviewUpdatedAt, setReviewUpdatedAt] = useState(item?.reviewUpdatedAt || item?.reviewedEventUpdatedAt || null);
     const [userEstimate, setUserEstimate] = useState(null);
     const [shareBusy, setShareBusy] = useState(false);
+    const [isCastExpanded, setIsCastExpanded] = useState(false);
+    const [isTagsExpanded, setIsTagsExpanded] = useState(false);
 
     const notesShelfId = item?.shelfId || shelfId || null;
     const resolvedCollectableId = manualId
@@ -1328,9 +1330,67 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const title = source?.title || source?.name || 'Untitled';
     const subtitle = source?.author || source?.primaryCreator || source?.publisher || '';
-    const type = source?.type || 'Item';
+    const type = source?.type || source?.kind || 'Item';
+    const normalizedType = String(type).trim().toLowerCase();
+    const isMovieType = ['movie', 'movies', 'film', 'films'].includes(normalizedType);
     const description = normalizeDisplayText(source?.description) || normalizeDisplayText(source?.overview) || '';
     const personalNotes = normalizeDisplayText(collectionNotes) || '';
+    const tagValues = (() => {
+        const sourceTags = Array.isArray(source?.tags)
+            ? source.tags
+            : (source?.tags ? [source.tags] : []);
+        const out = [];
+        const seen = new Set();
+        for (const entry of sourceTags) {
+            const value = normalizeDisplayText(entry);
+            if (!value) continue;
+            const key = value.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(value);
+        }
+        return out;
+    })();
+    const castEntries = (() => {
+        const memberSource = Array.isArray(source?.castMembers)
+            ? source.castMembers
+            : (Array.isArray(source?.cast_members) ? source.cast_members : []);
+        const castSource = Array.isArray(source?.cast)
+            ? source.cast
+            : (source?.cast ? [source.cast] : []);
+        const out = [];
+        const seen = new Set();
+
+        const pushCastEntry = (nameValue, characterValue = null) => {
+            const name = normalizeDisplayText(nameValue);
+            if (!name) return;
+            const key = name.toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push({
+                name,
+                character: normalizeDisplayText(characterValue),
+            });
+        };
+
+        memberSource.forEach((entry) => {
+            if (entry && typeof entry === 'object') {
+                pushCastEntry(entry.name, entry.character || entry.role);
+                return;
+            }
+            pushCastEntry(entry);
+        });
+
+        castSource.forEach((entry) => {
+            if (entry && typeof entry === 'object') {
+                pushCastEntry(entry.name, entry.character || entry.role);
+                return;
+            }
+            pushCastEntry(entry);
+        });
+
+        return out;
+    })();
     const hasSavedNotes = !!personalNotes;
     const showNotesEditor = canEditNotes && (isEditingNotes || !hasSavedNotes);
     const normalizedOwnerUsername = String(ownerUsername || '').trim().replace(/^@+/, '');
@@ -1397,6 +1457,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'rawOcrFingerprint',
             '_raw',
             'raw',
+            'cast',
+            'castMembers',
+            'cast_members',
+            'tags',
             'urlCoverFront',
             'urlCoverBack',
             'coordinates',
@@ -1416,7 +1480,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
 
         const labelOverrides = {
-            primaryCreator: 'Creator',
+            primaryCreator: isMovieType ? 'Director' : 'Creator',
             creators: 'Creators',
             publisher: 'Publisher',
             publishers: 'Publishers',
@@ -1590,7 +1654,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'marketValue',
             'region',
             'genre',
-            'tags',
             'platforms',
             'creators',
         ];
@@ -2225,6 +2288,72 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     </View>
                 )}
 
+                {/* Cast */}
+                {castEntries.length > 0 && (
+                    <View style={styles.section}>
+                        <TouchableOpacity
+                            style={styles.collapsibleHeader}
+                            onPress={() => setIsCastExpanded((prev) => !prev)}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.collapsibleHeaderTitleWrap}>
+                                <Text style={styles.sectionTitleCompact}>Cast</Text>
+                                <Text style={styles.collapsibleHeaderCount}>{castEntries.length}</Text>
+                            </View>
+                            <Ionicons
+                                name={isCastExpanded ? 'chevron-up' : 'chevron-down'}
+                                size={18}
+                                color={colors.textMuted}
+                            />
+                        </TouchableOpacity>
+                        {isCastExpanded && (
+                            <View style={styles.collapsibleCard}>
+                                {castEntries.map((entry, index) => (
+                                    <View
+                                        key={`${entry.name}-${index}`}
+                                        style={[styles.collapsibleRow, index < castEntries.length - 1 && styles.collapsibleRowBorder]}
+                                    >
+                                        <Text style={styles.collapsiblePrimary}>{entry.name}</Text>
+                                        {entry.character ? (
+                                            <Text style={styles.collapsibleSecondary} numberOfLines={2}>{entry.character}</Text>
+                                        ) : null}
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                    </View>
+                )}
+
+                {/* Tags */}
+                {tagValues.length > 0 && (
+                    <View style={styles.section}>
+                        <TouchableOpacity
+                            style={styles.collapsibleHeader}
+                            onPress={() => setIsTagsExpanded((prev) => !prev)}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.collapsibleHeaderTitleWrap}>
+                                <Text style={styles.sectionTitleCompact}>Tags</Text>
+                                <Text style={styles.collapsibleHeaderCount}>{tagValues.length}</Text>
+                            </View>
+                            <Ionicons
+                                name={isTagsExpanded ? 'chevron-up' : 'chevron-down'}
+                                size={18}
+                                color={colors.textMuted}
+                            />
+                        </TouchableOpacity>
+                        {isTagsExpanded && (
+                            <View style={styles.tagsContainer}>
+                                {tagValues.map((tag, index) => (
+                                    <View key={`${tag}-${index}`} style={styles.tagPill}>
+                                        <Text style={styles.tagPillText}>{tag}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                    </View>
+                )}
+
                 {/* Description */}
                 {description ? (
                     <View style={styles.section}>
@@ -2812,6 +2941,77 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         maxWidth: '60%',
         justifyContent: 'flex-end',
+    },
+    sectionTitleCompact: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: colors.textMuted,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    collapsibleHeader: {
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        paddingVertical: spacing.sm,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    collapsibleHeaderTitleWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    collapsibleHeaderCount: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.textMuted,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        overflow: 'hidden',
+    },
+    collapsibleCard: {
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        marginTop: spacing.sm,
+        paddingHorizontal: spacing.md,
+        ...shadows.sm,
+    },
+    collapsibleRow: {
+        paddingVertical: spacing.sm,
+    },
+    collapsibleRowBorder: {
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    collapsiblePrimary: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    collapsibleSecondary: {
+        marginTop: 3,
+        fontSize: 13,
+        color: colors.textMuted,
+    },
+    tagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+        marginTop: spacing.sm,
+    },
+    tagPill: {
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: radius.md,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+    },
+    tagPillText: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: colors.textSecondary,
     },
     notesHeaderRow: {
         flexDirection: 'row',

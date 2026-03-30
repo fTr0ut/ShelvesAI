@@ -139,4 +139,58 @@ describe('collectables.upsert media sync transaction behavior', () => {
       }),
     );
   });
+
+  it('serializes cast_members payload and marks cast update as provided', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 41, title: 'Cast Book' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-41',
+        lightweightFingerprint: 'lwf-41',
+        kind: 'movies',
+        title: 'Cast Book',
+        castMembers: [
+          { id: 88, name: 'Actor Name', character: 'Lead', order: 0, profile_path: '/actor.jpg' },
+        ],
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[27]).toBe(JSON.stringify([
+      {
+        personId: 88,
+        name: 'Actor Name',
+        nameNormalized: 'actor name',
+        character: 'Lead',
+        order: 0,
+        profilePath: '/actor.jpg',
+      },
+    ]));
+    expect(params[28]).toBe(true);
+  });
+
+  it('does not force cast_members overwrite when cast payload is omitted', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 42, title: 'No Cast Update' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-42',
+        lightweightFingerprint: 'lwf-42',
+        kind: 'movies',
+        title: 'No Cast Update',
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[27]).toBeNull();
+    expect(params[28]).toBe(false);
+  });
 });

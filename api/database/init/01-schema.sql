@@ -142,6 +142,7 @@ CREATE TABLE collectables (
     cover_image_url TEXT,
     cover_image_source TEXT,  -- 'local' or 'external'
     attribution JSONB,  -- { linkUrl, linkText, logoPath, disclaimerText }
+    cast_members JSONB,
 
     -- Source tracking
     sources JSONB DEFAULT '[]',
@@ -162,6 +163,7 @@ CREATE INDEX idx_collectables_kind ON collectables(kind);
 CREATE INDEX idx_collectables_title_trgm ON collectables USING GIN (title gin_trgm_ops);
 CREATE INDEX idx_collectables_external_id ON collectables(external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX idx_collectables_cover_media ON collectables(cover_media_id);
+CREATE INDEX idx_collectables_cast_members_gin ON collectables USING GIN (cast_members jsonb_path_ops) WHERE cast_members IS NOT NULL;
 
 -- ============================================
 -- EDITIONS (Collectables variants)

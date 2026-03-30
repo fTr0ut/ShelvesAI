@@ -74,7 +74,21 @@ describe('MovieCatalogService', () => {
 
   it('maps TMDB payloads to Collectable documents', () => {
     const service = new MovieCatalogService({ apiKey: 'fake' });
-    const sampleMovie = buildSampleMovie();
+    const sampleMovie = buildSampleMovie({
+      credits: {
+        cast: Array.from({ length: 8 }, (_, index) => ({
+          id: 1000 + index,
+          name: `Actor ${index + 1}`,
+          character: `Role ${index + 1}`,
+          order: index,
+          profile_path: `/actor-${index + 1}.jpg`,
+        })),
+        crew: [
+          { job: 'Director', name: 'Christopher Nolan' },
+          { job: 'Producer', name: 'Emma Thomas' },
+        ],
+      },
+    });
     const entry = {
       status: 'resolved',
       enrichment: {
@@ -100,6 +114,15 @@ describe('MovieCatalogService', () => {
     expect(collectable.sources[0].provider).toBe('tmdb');
     expect(collectable.sources[0].ids.movie).toBe('123');
     expect(collectable.images.length).toBe(2);
+    expect(collectable.castMembers).toHaveLength(8);
+    expect(collectable.castMembers[0]).toEqual({
+      personId: 1000,
+      name: 'Actor 1',
+      nameNormalized: 'actor 1',
+      character: 'Role 1',
+      order: 0,
+      profilePath: '/actor-1.jpg',
+    });
     expect(collectable.extras.posterOriginalUrl).toContain('/poster.jpg');
     expect(collectable.physical.format).toBe('Blu-ray');
     expect(collectable.lightweightFingerprint).toBe(lightweightFingerprint);

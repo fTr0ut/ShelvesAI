@@ -4,6 +4,7 @@
  * Required env variables:
  *   RESEND_API_KEY - Resend API key
  *   RESEND_FROM_EMAIL - Verified sender email (e.g., noreply@yourapp.com)
+ *   SUPPORT_EMAIL - Optional support inbox for user feedback (defaults to support@shelvesai.com)
  *   RESET_PASSWORD_URL - Optional absolute URL for reset page (e.g., https://yourapp.com/reset-password)
  *   APP_NAME - Application name for email templates
  *   APP_URL - Base URL for reset links (e.g., https://yourapp.com)
@@ -14,12 +15,22 @@ const logger = require('../logger');
 
 const API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@shelvesai.com';
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'support@shelvesai.com';
 const APP_NAME = process.env.APP_NAME || 'ShelvesAI';
 const APP_URL = process.env.APP_URL || 'https://shelvesai.com';
 const RESET_PASSWORD_URL =
     process.env.RESET_PASSWORD_URL || `${APP_URL.replace(/\/+$/, '')}/reset-password`;
 
 const resend = API_KEY ? new Resend(API_KEY) : null;
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 /**
  * Send a password reset email with a reset link.
@@ -101,6 +112,111 @@ If you didn't request this, you can safely ignore this email.
     }
 }
 
+/**
+ * Send user-submitted in-app feedback to support.
+ * @param {object} payload
+ * @param {string} payload.message
+ * @param {string} payload.userId
+ * @param {string} payload.username
+ * @param {string|null} payload.email
+ * @param {string|null} payload.firstName
+ * @param {string|null} payload.lastName
+ */
+async function sendFeedbackEmail({
+    message,
+    userId,
+    username,
+    email = null,
+    firstName = null,
+    lastName = null,
+}) {
+    const normalizedMessage = String(message || '').trim();
+    if (!normalizedMessage) {
+        throw new Error('Feedback message is required');
+    }
+
+    if (!API_KEY) {
+        const env = String(process.env.NODE_ENV || '').toLowerCase();
+        const isDevLike = env === 'development' || env === 'test';
+
+        if (!isDevLike) {
+            logger.error('[EmailService] RESEND_API_KEY not configured - cannot send feedback email');
+            throw new Error('Email transport unavailable');
+        }
+
+        logger.warn('[EmailService] RESEND_API_KEY not configured - simulating feedback email');
+        return { success: true, simulated: true };
+    }
+
+    const displayName = [firstName, lastName].filter(Boolean).join(' ').trim() || 'N/A';
+    const submittedAt = new Date().toISOString();
+    const safeMessage = escapeHtml(normalizedMessage);
+    const safeDisplayName = escapeHtml(displayName);
+    const safeUsername = escapeHtml(username || 'unknown');
+    const safeEmail = escapeHtml(email || 'N/A');
+    const safeUserId = escapeHtml(userId || 'N/A');
+    const subjectUsername = username ? `@${username}` : 'unknown-user';
+
+    const msg = {
+        from: `${APP_NAME} <${FROM_EMAIL}>`,
+        to: SUPPORT_EMAIL,
+        subject: `[${APP_NAME}] Feedback from ${subjectUsername}`,
+        ...(email ? { replyTo: email } : {}),
+        text: `New in-app feedback submission
+
+Submitted at: ${submittedAt}
+User ID: ${userId || 'N/A'}
+Username: ${username || 'N/A'}
+Name: ${displayName}
+Email: ${email || 'N/A'}
+
+Message:
+${normalizedMessage}
+`,
+        html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #111827; margin: 0; padding: 24px; background-color: #f3f4f6;">
+    <div style="max-width: 700px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
+        <div style="padding: 18px 22px; background: #111827; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 18px;">${APP_NAME} User Feedback</h1>
+        </div>
+        <div style="padding: 20px 22px;">
+            <p style="margin: 0 0 16px 0; color: #374151;">A user submitted feedback from the in-app Account Settings screen.</p>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+                <tr><td style="padding: 6px 0; color: #6b7280; width: 130px;">Submitted</td><td style="padding: 6px 0; color: #111827;">${submittedAt}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">User ID</td><td style="padding: 6px 0; color: #111827; word-break: break-all;">${safeUserId}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Username</td><td style="padding: 6px 0; color: #111827;">${safeUsername}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Name</td><td style="padding: 6px 0; color: #111827;">${safeDisplayName}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Email</td><td style="padding: 6px 0; color: #111827;">${safeEmail}</td></tr>
+            </table>
+            <h2 style="margin: 0 0 10px 0; font-size: 15px; color: #111827;">Message</h2>
+            <pre style="white-space: pre-wrap; word-break: break-word; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 0; font-family: inherit; font-size: 14px; color: #111827;">${safeMessage}</pre>
+        </div>
+    </div>
+</body>
+</html>
+`,
+    };
+
+    try {
+        const response = await resend.emails.send(msg);
+        if (response?.error) {
+            throw new Error(response.error.message || 'Resend API error');
+        }
+        logger.info(`[EmailService] Feedback email sent for user ${userId || username || 'unknown'}`);
+        return { success: true };
+    } catch (error) {
+        logger.error('[EmailService] Failed to send feedback email:', error.message);
+        throw new Error('Failed to send feedback email');
+    }
+}
+
 module.exports = {
     sendPasswordResetEmail,
+    sendFeedbackEmail,
 };

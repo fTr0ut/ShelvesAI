@@ -2,6 +2,7 @@ const { query } = require('../database/pg');
 const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const { addMediaUrls } = require('../services/mediaUrl');
+const { sendFeedbackEmail } = require('../services/emailService');
 const logger = require('../logger');
 
 async function getAccount(req, res) {
@@ -78,4 +79,44 @@ async function updateAccount(req, res) {
   }
 }
 
-module.exports = { getAccount, updateAccount };
+async function submitFeedback(req, res) {
+  const message = String(req.body?.message || '').trim();
+  if (!message) {
+    return res.status(400).json({ error: 'Feedback message is required' });
+  }
+
+  if (message.length > 4000) {
+    return res.status(400).json({ error: 'Feedback message is too long (max 4000 characters)' });
+  }
+
+  try {
+    const userResult = await query(
+      `SELECT id, username, email, first_name, last_name
+       FROM users
+       WHERE id = $1`,
+      [req.user.id]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    await sendFeedbackEmail({
+      message,
+      userId: user.id,
+      username: user.username,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+    });
+
+    return res.status(201).json({ success: true });
+  } catch (err) {
+    logger.error('submitFeedback error:', err);
+    return res.status(502).json({ error: 'Unable to submit feedback right now' });
+  }
+}
+
+module.exports = { getAccount, updateAccount, submitFeedback };

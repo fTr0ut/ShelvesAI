@@ -109,6 +109,51 @@ function normalizeIdentifiers(value) {
   return value;
 }
 
+function normalizeCastName(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCastMembers(value) {
+  if (!value) return [];
+  const source = Array.isArray(value) ? value : [value];
+  const out = [];
+  for (const entry of source) {
+    let name = '';
+    let personId = null;
+    let character = null;
+    let order = null;
+    let profilePath = null;
+
+    if (typeof entry === 'string') {
+      name = normalizeString(entry);
+    } else if (entry && typeof entry === 'object') {
+      name = normalizeString(entry.name);
+      const parsedPersonId = parseInt(entry.personId ?? entry.person_id ?? entry.id, 10);
+      personId = Number.isFinite(parsedPersonId) ? parsedPersonId : null;
+      character = normalizeString(entry.character || entry.role) || null;
+      const parsedOrder = parseInt(entry.order ?? entry.castOrder ?? entry.cast_order, 10);
+      order = Number.isFinite(parsedOrder) ? parsedOrder : null;
+      profilePath = normalizeString(entry.profilePath || entry.profile_path) || null;
+    } else {
+      continue;
+    }
+
+    if (!name) continue;
+    const nameNormalized = normalizeCastName(name);
+    if (!nameNormalized) continue;
+
+    out.push({
+      personId,
+      name,
+      nameNormalized,
+      character,
+      order,
+      profilePath,
+    });
+  }
+  return out;
+}
+
 function isOtherShelfType(value) {
   return String(value || "").trim().toLowerCase() === OTHER_SHELF_TYPE;
 }
@@ -275,6 +320,13 @@ function buildCollectableUpsertPayload(input, shelfType) {
   const identifiers = normalizeIdentifiers(input?.identifiers);
   const images = normalizeArray(input?.images);
   const sources = normalizeArray(input?.sources);
+  const hasCastMembers = (
+    Object.prototype.hasOwnProperty.call(input || {}, 'castMembers')
+    || Object.prototype.hasOwnProperty.call(input || {}, 'cast_members')
+  );
+  const castMembers = hasCastMembers
+    ? normalizeCastMembers(input?.castMembers ?? input?.cast_members)
+    : undefined;
   const coverUrl = normalizeString(
     input?.coverUrl ||
     input?.coverImage ||
@@ -360,6 +412,7 @@ function buildCollectableUpsertPayload(input, shelfType) {
     coverImageUrl,
     coverImageSource,
     attribution,
+    ...(hasCastMembers ? { castMembers } : {}),
   };
 }
 

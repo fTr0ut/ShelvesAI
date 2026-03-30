@@ -81,7 +81,20 @@ describe('TvCatalogService', () => {
 
     it('maps TMDB TV payloads to Collectable documents', () => {
         const service = new TvCatalogService({ apiKey: 'fake' });
-        const sampleTv = buildSampleTvShow();
+        const sampleTv = buildSampleTvShow({
+            credits: {
+                cast: Array.from({ length: 9 }, (_, index) => ({
+                    id: 2000 + index,
+                    name: `Performer ${index + 1}`,
+                    character: `Character ${index + 1}`,
+                    order: index,
+                    profile_path: `/performer-${index + 1}.jpg`,
+                })),
+                crew: [
+                    { job: 'Producer', name: 'Vince Gilligan' },
+                ],
+            },
+        });
         const entry = {
             status: 'resolved',
             enrichment: {
@@ -106,6 +119,15 @@ describe('TvCatalogService', () => {
         expect(collectable.sources[0].provider).toBe('tmdb');
         expect(collectable.sources[0].ids.tv).toBe('1396');
         expect(collectable.images.length).toBe(2);
+        expect(collectable.castMembers).toHaveLength(9);
+        expect(collectable.castMembers[0]).toEqual({
+            personId: 2000,
+            name: 'Performer 1',
+            nameNormalized: 'performer 1',
+            character: 'Character 1',
+            order: 0,
+            profilePath: '/performer-1.jpg',
+        });
         expect(collectable.extras.numberOfSeasons).toBe(5);
         expect(collectable.extras.numberOfEpisodes).toBe(62);
         expect(collectable.extras.runtime).toBe(45);
