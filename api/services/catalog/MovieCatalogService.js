@@ -2,6 +2,8 @@ const fetch = require('node-fetch');
 const { makeCollectableFingerprint } = require('../collectables/fingerprint');
 const { tmdbMovieToCollectable } = require('../../adapters/tmdb.adapter');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
+const logger = require('../../logger');
+const { limitTmdb } = require('../outboundLimiterRegistry');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -79,7 +81,6 @@ class MovieCatalogService {
     // TMDB limit: 40 requests per second typically
     // We set a safe margin, e.g. 35 per 1s, or just use the 40.
     const RateLimiter = require('../../utils/RateLimiter');
-const logger = require('../../logger');
     this.limiter = new RateLimiter(35, 1);
   }
 
@@ -533,13 +534,13 @@ const logger = require('../../logger');
       ? setTimeout(() => controller.abort(), this.timeoutMs)
       : null;
     try {
-      const response = await this.limiter.acquire().then(() => this.fetch(url, {
+      const response = await limitTmdb(() => this.limiter.acquire().then(() => this.fetch(url, {
         signal: controller ? controller.signal : undefined,
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'User-Agent': 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)',
         },
-      }));
+      })));
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`TMDB request failed with ${response.status}: ${text.slice(0, 200)}`);

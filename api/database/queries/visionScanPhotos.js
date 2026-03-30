@@ -67,6 +67,11 @@ async function upsertFromBuffer({ userId, shelfId, imageSha256, buffer, contentT
     throw new Error('Invalid scan photo payload');
   }
 
+  const existing = await getByHash({ userId, shelfId, imageSha256 });
+  if (existing) {
+    return existing;
+  }
+
   const validated = await validateImageBuffer(buffer, {
     maxDimension: VISION_SCAN_MAX_DIMENSION,
     maxPixels: VISION_SCAN_MAX_PIXELS,

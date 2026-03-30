@@ -6,8 +6,8 @@
 ### Enhancements to prevent bugs
 -~~Enhance the workflow in the enrichment phase to reply back to the existing Gemini request to keep the context level high and provide more accurate results. Right now, a new/separate request is sent to Gemini to cleanup up noisy ocr. It's given the results of the previous conversation, but context could help provide higher quality cleanup.~~ **DONE 3/23/26** — Enrichment now continues the original Gemini chat session via `startChat({ history })` + `sendMessage()`. The model retains the shelf photo and its own extraction when enriching. Applies to all shelf types including "other" (search grounding). Falls back to standalone mode when vision/text models differ or MLKit provides raw items.
 
--Now that each request has a jobid, develop a work queue so we don't overload APIs. If a queue becomes long, keep the job in queue but notify the user that "we're working on it! We'll ping you when your request is complete". Send a notification to the user was the jobid reaches a pass/fail state.
-
+~~Now that each request has a jobid, develop a work queue so we don't overload APIs. If a queue becomes long, keep the job in queue but notify the user that "we're working on it! We'll ping you when your request is complete". Send a notification to the user was the jobid reaches a pass/fail state. Think about adding a Global Rate limiter for inbound requests, Outbound Task Queue, and Aggressive caching to save Supabase(Postgres) and AWS S3 costs.~~ **DONE 3/30/26** - Implemented durable Postgres queueing for vision workflows (`workflow_queue_jobs`) with claim-safe worker execution, per-user queued cap + dedupe (`user+shelf+image hash`) and queue-aware async response/status metadata (`queuePosition`, `estimatedWaitSeconds`, `notifyOnComplete`). Added queue/running abort semantics, route-level ingress throttles on `/vision` and `/catalog-lookup`, shared outbound limiter registry for Gemini/catalog/S3 calls, S3 duplicate-scan hash short-circuit, queue-pressure crop warmup capping, and queue-only terminal push/notification support (`workflow_complete`/`workflow_failed`, `workflow_job`, `push_workflow_jobs` mobile toggle + navigation handling).
+ 
 -~~Enhancement propose: A 'Replace' button should be used by the user when vision OCR erroneously matches OCR text and categorizes it as a high-confidence item, but is not actually what the user has or intended.~~ **DONE 3/25/26** - Implemented end-to-end replacement workflow: owner-only `CollectableDetailScreen` CTA (`Not the item you intended to add?`) for vision-linked items within 72h, `ShelfDetailScreen` delete interception modal for items within 24h (`Replace` / `Delete` / `Cancel`), `ItemSearchScreen` replacement mode (prefill + replace submit + return to shelf list), and backend trace/event plumbing via new `item_replacement_traces` table + RLS + query module with new endpoints `POST /api/shelves/:shelfId/items/:itemId/replacement-intent` and `POST /api/shelves/:shelfId/items/:itemId/replace` (intent/completion/failure tracking, transactional source->target swap, no notes/rating/photo transfer, no replacement feed events).
 
 -~~Replicate the "add new shelf" button to the top of the My Shelves list when the list grows past 6 shelves.~~ **DONE 3/25/26** - `ShelvesScreen` now renders an additional top-of-list "New Shelf" CTA when the user has more than 6 shelves (while preserving the existing in-list create card).
@@ -20,16 +20,20 @@
 -~~When shelf = 'other', the AI progress modal window only stays at 10% the entire process. Flesh out the progress status updates further to make the process seem less stale.~~ **DONE 3/25/26** - Added dedicated `other`-workflow progress stages in `visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`) and updated `VisionPipelineService` to use monotonic, `other`-specific status updates (including second-pass extraction), preventing long-running `other` scans from appearing stuck at 10%.
 
 
--~~Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.~~ **DONE 3/30/26** - Added authenticated `POST /api/account/feedback` endpoint, wired Resend delivery to `support@shelvesai.com` via `emailService.sendFeedbackEmail`, and implemented Account Settings `Send Feedback` prompt modal in `mobile/src/screens/AccountScreen.js`.
+-~~Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.~~ **DONE 3/25/26** 
+
+-Add a Terms of Service agreement page to the new user register workflow.
 
 
 
 ### General Enhancements
 -Behavior change: People will add all sorts of collectabls and manuals to a single shelf. Right now, if I add a movie that is classified as a shelf = 'book' type, the event card will say "Johnny added a new book to My First Shelf", even though the collectable is a movie. Adjust the event card to reference the collectable type first, fallback to shelf type when it's a manual add. iOS v1 build 3 3/29/26
 
---Add deep-linking to Wishlists and a Share button visible to owners of the wishlist. iOS v1 build 3 3/29/26
+-Add deep-linking to Wishlists and a Share button visible to owners of the wishlist. iOS v1 build 3 3/29/26
 
+-Add ability to login using email associated to username.
 
+-Add search by cast members as an option to GlobalSearch.
 
 ### Bugs/issues reported by users
 
@@ -61,7 +65,9 @@
 
 -Platform doesn't seem to be mapped to a collectable field from the Games upsert. iOS v1 build 3 3/29/26
 
+-GlobalSearch doesn't appear to recongize TV API for searching. iOS v1 build 3 3/29/26
 
+-
 
 
 
@@ -76,3 +82,4 @@
 -Vinyl enrichment prompt fix (3/24/26): corrected Gemini enrichment category resolution so `vinyl` shelves map to music-specific enrichment instructions instead of falling back to book defaults; also updated schema hint text to use category-aware identifier/format examples (e.g., UPC/Discogs/MusicBrainz + Vinyl LP terms).
 -Implemented rollback-friendly persistent footer navigation for Shelves detail flows. **DONE 3/26/26** - `BottomTabNavigator` now supports `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER` (single-line kill switch) and, when enabled, mounts a nested Shelves stack (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) so the tab footer stays visible through shelf/detail routes opened from the Shelves tab. Add-FAB now routes to nested `Shelves -> ShelfSelect` in this mode, while legacy root routing remains when disabled. Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so content/FABs clear the persistent footer.
 -Feed added-event visual refresh. **DONE 3/26/26** - Reworked posting visuals across `SocialFeedScreen`, `ProfileScreen`, and `FeedDetailScreen` so added-event headers now use shelf-type dynamic grammar (no item title in header), shelf description is removed from added-event card bodies, single-item events show thumbnail + name/creator/year, and multi-item events keep thumbnail stacking. Added shared helper `mobile/src/utils/feedAddedEvent.js` and owner-photo thumbnail support for `other` shelves with placeholder fallback when personal-photo thumbs are unavailable. Backend now standardizes add-event payloads (`item.collectable_added` / `item.manual_added`) across shelf/manual/review/vision emitters and exposes normalized `title`/`creator`/`year` in feed item mapping (`GET /api/feed`, `GET /api/feed/:id`), including collectable year in feed-detail hydration.
+-Admin dashboard workfeed monitor. **DONE 3/30/26** - Added live queue workfeed to admin Jobs area with default Workfeed tab (`queued` + `processing` active-first), 5s polling/refresh controls, and read-only detail modal for queue payload/result/error/progress. Backend now exposes `GET /api/admin/workfeed` and `GET /api/admin/workfeed/:jobId` with filtering, pagination, queue-position derivation, queued-time derivation, and in-memory progress snapshot enrichment for single-instance visibility.

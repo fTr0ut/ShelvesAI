@@ -5,6 +5,7 @@ const visionResultCacheQueries = require('../database/queries/visionResultCache'
 const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
+const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
 const manualMediaQueries = require('../database/queries/manualMedia');
 const { extractRegionCrop } = require('../services/visionCropper');
@@ -14,6 +15,9 @@ const feedQueries = require('../database/queries/feed');
 const ratingsQueries = require('../database/queries/ratings');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
 const { query } = require('../database/pg');
+const { getWorkflowQueueService } = require('../services/workflowQueueService');
+const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
+const processingStatus = require('../services/processingStatus');
 
 jest.mock('../services/visionPipeline');
 jest.mock('../database/queries/shelves');
@@ -37,6 +41,35 @@ jest.mock('../database/queries/visionItemCrops', () => ({
     listForScan: jest.fn().mockResolvedValue([]),
     upsertFromBuffer: jest.fn().mockResolvedValue(null),
     loadImageBuffer: jest.fn(),
+}));
+jest.mock('../database/queries/workflowQueueJobs', () => ({
+    enqueueJob: jest.fn().mockResolvedValue(null),
+    findActiveByDedupeKey: jest.fn().mockResolvedValue(null),
+    getByJobIdForUser: jest.fn().mockResolvedValue(null),
+    getQueuePosition: jest.fn().mockResolvedValue(null),
+    countQueuedForUser: jest.fn().mockResolvedValue(0),
+    countQueued: jest.fn().mockResolvedValue(0),
+    countRunning: jest.fn().mockResolvedValue(0),
+    requestAbort: jest.fn().mockResolvedValue(null),
+    updateNotifyOnComplete: jest.fn().mockResolvedValue(null),
+    isAbortRequested: jest.fn().mockResolvedValue(false),
+}));
+jest.mock('../services/workflowQueueService', () => ({
+    getWorkflowQueueService: jest.fn(() => ({
+        registerHandler: jest.fn(),
+        tick: jest.fn().mockResolvedValue(undefined),
+    })),
+}));
+jest.mock('../services/workflow/workflowSettings', () => ({
+    getWorkflowQueueSettings: jest.fn().mockResolvedValue({
+        workflowQueueMaxRunning: 2,
+        workflowQueueMaxRunningPerUser: 1,
+        workflowQueueMaxQueuedPerUser: 4,
+        workflowQueueLongThresholdPosition: 3,
+        workflowQueueNotifyMinWaitMs: 20000,
+        workflowQueueRetryMaxAttempts: 1,
+        workflowQueueTerminalRetentionMs: 24 * 60 * 60 * 1000,
+    }),
 }));
 jest.mock('../database/queries/userCollectionPhotos', () => ({
     getByCollectionItem: jest.fn().mockResolvedValue(null),
@@ -68,6 +101,7 @@ jest.mock('../database/queries/ratings', () => ({
 jest.mock('../services/processingStatus', () => ({
     generateJobId: jest.fn(() => 'test-job-id'),
     createJob: jest.fn(),
+    setJob: jest.fn(),
     updateJob: jest.fn(),
     completeJob: jest.fn(),
     failJob: jest.fn(),
@@ -147,6 +181,16 @@ describe('shelvesController', () => {
         visionScanPhotosQueries.upsertFromBuffer.mockReset();
         visionScanPhotosQueries.getByIdForUser.mockReset();
         visionScanPhotosQueries.loadImageBuffer.mockReset();
+        workflowQueueJobsQueries.enqueueJob.mockReset();
+        workflowQueueJobsQueries.findActiveByDedupeKey.mockReset();
+        workflowQueueJobsQueries.getByJobIdForUser.mockReset();
+        workflowQueueJobsQueries.getQueuePosition.mockReset();
+        workflowQueueJobsQueries.countQueuedForUser.mockReset();
+        workflowQueueJobsQueries.countQueued.mockReset();
+        workflowQueueJobsQueries.countRunning.mockReset();
+        workflowQueueJobsQueries.requestAbort.mockReset();
+        workflowQueueJobsQueries.updateNotifyOnComplete.mockReset();
+        workflowQueueJobsQueries.isAbortRequested.mockReset();
         userCollectionPhotosQueries.getByCollectionItem.mockReset();
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
@@ -163,6 +207,35 @@ describe('shelvesController', () => {
         shelvesQueries.getItems.mockResolvedValue([]);
         visionResultCacheQueries.getValid.mockResolvedValue(null);
         visionScanPhotosQueries.upsertFromBuffer.mockResolvedValue({ id: 77 });
+        workflowQueueJobsQueries.enqueueJob.mockResolvedValue({
+            jobId: 'test-job-id',
+            status: 'queued',
+            notifyOnComplete: false,
+            payload: { scanPhotoId: 77 },
+        });
+        workflowQueueJobsQueries.findActiveByDedupeKey.mockResolvedValue(null);
+        workflowQueueJobsQueries.getByJobIdForUser.mockResolvedValue(null);
+        workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(1);
+        workflowQueueJobsQueries.countQueuedForUser.mockResolvedValue(0);
+        workflowQueueJobsQueries.countQueued.mockResolvedValue(0);
+        workflowQueueJobsQueries.countRunning.mockResolvedValue(0);
+        workflowQueueJobsQueries.requestAbort.mockResolvedValue(null);
+        workflowQueueJobsQueries.updateNotifyOnComplete.mockResolvedValue({
+            jobId: 'test-job-id',
+            status: 'queued',
+            notifyOnComplete: true,
+            payload: { scanPhotoId: 77 },
+        });
+        workflowQueueJobsQueries.isAbortRequested.mockResolvedValue(false);
+        getWorkflowQueueSettings.mockResolvedValue({
+            workflowQueueMaxRunning: 2,
+            workflowQueueMaxRunningPerUser: 1,
+            workflowQueueMaxQueuedPerUser: 4,
+            workflowQueueLongThresholdPosition: 3,
+            workflowQueueNotifyMinWaitMs: 20000,
+            workflowQueueRetryMaxAttempts: 1,
+            workflowQueueTerminalRetentionMs: 24 * 60 * 60 * 1000,
+        });
         needsReviewQueries.getById.mockResolvedValue(null);
         needsReviewQueries.markCompleted.mockResolvedValue(true);
         ratingsQueries.getRating.mockResolvedValue({ rating: null });
@@ -1006,6 +1079,134 @@ describe('shelvesController', () => {
                 existingCount: 2,
                 summaryMessage: 'Same photo detected: this image was already scanned in the last 24 hours. Previous result: no new items added; 2 items already on this shelf.',
                 scanPhotoId: 77,
+            }));
+        });
+
+        it('enqueues uncached async vision jobs and returns queue metadata', async () => {
+            req.body.async = true;
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(workflowQueueJobsQueries.enqueueJob).toHaveBeenCalledWith(expect.objectContaining({
+                workflowType: 'vision',
+                userId: 1,
+                shelfId: 10,
+                status: 'queued',
+            }));
+            expect(mockPipelineInstance.processImage).not.toHaveBeenCalled();
+            expect(res.status).toHaveBeenCalledWith(202);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'test-job-id',
+                status: 'queued',
+                queuePosition: 1,
+                estimatedWaitSeconds: 0,
+                notifyOnComplete: false,
+                scanPhotoId: 77,
+            }));
+        });
+
+        it('returns existing queued/processing job for duplicate in-flight image', async () => {
+            req.body.async = true;
+            workflowQueueJobsQueries.findActiveByDedupeKey.mockResolvedValue({
+                jobId: 'dup-job-1',
+                status: 'processing',
+                notifyOnComplete: true,
+                payload: { scanPhotoId: 88 },
+            });
+            workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(0);
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(workflowQueueJobsQueries.enqueueJob).not.toHaveBeenCalled();
+            expect(res.status).toHaveBeenCalledWith(202);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'dup-job-1',
+                status: 'processing',
+                notifyOnComplete: true,
+                scanPhotoId: 88,
+            }));
+        });
+
+        it('returns 429 when per-user queued cap is reached', async () => {
+            req.body.async = true;
+            workflowQueueJobsQueries.countQueuedForUser.mockResolvedValue(4);
+            getWorkflowQueueSettings.mockResolvedValue({
+                workflowQueueMaxRunning: 2,
+                workflowQueueMaxRunningPerUser: 1,
+                workflowQueueMaxQueuedPerUser: 4,
+                workflowQueueLongThresholdPosition: 3,
+                workflowQueueNotifyMinWaitMs: 20000,
+                workflowQueueRetryMaxAttempts: 1,
+                workflowQueueTerminalRetentionMs: 24 * 60 * 60 * 1000,
+            });
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(429);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                code: 'workflow_queue_user_cap_exceeded',
+            }));
+        });
+    });
+
+    describe('vision status + abort', () => {
+        beforeEach(() => {
+            req.params = { shelfId: '10', jobId: 'job-queued-1' };
+            processingStatus.getJob.mockReset();
+            processingStatus.setJob.mockReset();
+            processingStatus.abortJob.mockReset();
+            processingStatus.getJob.mockReturnValue(null);
+        });
+
+        it('returns queue metadata from DB fallback when in-memory status is missing', async () => {
+            workflowQueueJobsQueries.getByJobIdForUser.mockResolvedValue({
+                jobId: 'job-queued-1',
+                userId: 1,
+                shelfId: 10,
+                status: 'queued',
+                createdAt: new Date().toISOString(),
+                notifyOnComplete: true,
+                result: null,
+            });
+            workflowQueueJobsQueries.getQueuePosition.mockResolvedValue(2);
+
+            await shelvesController.getVisionStatus(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'job-queued-1',
+                status: 'queued',
+                queuePosition: 2,
+                notifyOnComplete: true,
+                queuedMs: expect.any(Number),
+            }));
+            expect(processingStatus.setJob).toHaveBeenCalled();
+        });
+
+        it('aborts queued DB-backed jobs', async () => {
+            workflowQueueJobsQueries.getByJobIdForUser.mockResolvedValue({
+                jobId: 'job-queued-1',
+                userId: 1,
+                shelfId: 10,
+                status: 'queued',
+                notifyOnComplete: false,
+            });
+            workflowQueueJobsQueries.requestAbort.mockResolvedValue({
+                jobId: 'job-queued-1',
+                userId: 1,
+                shelfId: 10,
+                status: 'aborted',
+            });
+
+            await shelvesController.abortVision(req, res);
+
+            expect(workflowQueueJobsQueries.requestAbort).toHaveBeenCalledWith({
+                jobId: 'job-queued-1',
+                userId: 1,
+            });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                jobId: 'job-queued-1',
+                aborted: true,
+                status: 'aborted',
             }));
         });
     });

@@ -6,6 +6,7 @@ const logger = require('./logger');
 const { pool } = require('./database/pg');
 const { startNewsCacheScheduler } = require('./services/newsCacheScheduler');
 const { startNewsSeenCleanupScheduler } = require('./services/newsSeenCleanupScheduler');
+const { getWorkflowQueueService } = require('./services/workflowQueueService');
 
 const PORT = process.env.PORT || 5001;
 
@@ -18,6 +19,7 @@ pool.query('SELECT NOW()')
             logger.info(`API listening on http://localhost:${PORT}`);
             startNewsCacheScheduler();
             startNewsSeenCleanupScheduler();
+            getWorkflowQueueService().start();
         });
     })
     .catch((err) => {

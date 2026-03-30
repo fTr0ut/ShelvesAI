@@ -8,6 +8,7 @@ const DEFAULT_PREFERENCES = {
     pushFriendRequests: true,
     pushFriendAccepts: true,
     pushMentions: true,
+    pushWorkflowJobs: true,
 };
 
 /**
@@ -59,6 +60,7 @@ async function updatePreferences(userId, updates) {
         'push_friend_requests',
         'push_friend_accepts',
         'push_mentions',
+        'push_workflow_jobs',
     ];
 
     // Convert camelCase to snake_case and filter allowed fields
@@ -69,6 +71,7 @@ async function updatePreferences(userId, updates) {
         pushFriendRequests: 'push_friend_requests',
         pushFriendAccepts: 'push_friend_accepts',
         pushMentions: 'push_mentions',
+        pushWorkflowJobs: 'push_workflow_jobs',
     };
 
     const setClauses = [];
@@ -103,6 +106,7 @@ async function updatePreferences(userId, updates) {
             updates.pushFriendRequests ?? true,
             updates.pushFriendAccepts ?? true,
             updates.pushMentions ?? true,
+            updates.pushWorkflowJobs ?? true,
         ]
     );
 
@@ -125,6 +129,8 @@ async function isTypeEnabled(userId, type) {
         friend_request: prefs.pushFriendRequests,
         friend_accept: prefs.pushFriendAccepts,
         mention: prefs.pushMentions,
+        workflow_complete: prefs.pushWorkflowJobs,
+        workflow_failed: prefs.pushWorkflowJobs,
     };
 
     return typeMap[type] ?? false;

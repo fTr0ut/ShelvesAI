@@ -68,6 +68,7 @@ async function getNotificationPreferences(req, res) {
                 pushFriendRequests: preferences.pushFriendRequests,
                 pushFriendAccepts: preferences.pushFriendAccepts,
                 pushMentions: preferences.pushMentions,
+                pushWorkflowJobs: preferences.pushWorkflowJobs,
             },
         });
     } catch (err) {
@@ -85,7 +86,15 @@ async function updateNotificationPreferences(req, res) {
         const updates = req.body;
 
         // Validate that only boolean values are provided for allowed fields
-        const allowedFields = ['pushEnabled', 'pushLikes', 'pushComments', 'pushFriendRequests', 'pushFriendAccepts', 'pushMentions'];
+        const allowedFields = [
+            'pushEnabled',
+            'pushLikes',
+            'pushComments',
+            'pushFriendRequests',
+            'pushFriendAccepts',
+            'pushMentions',
+            'pushWorkflowJobs',
+        ];
         const filteredUpdates = {};
 
         for (const field of allowedFields) {
@@ -111,6 +120,7 @@ async function updateNotificationPreferences(req, res) {
                 pushFriendRequests: preferences.pushFriendRequests,
                 pushFriendAccepts: preferences.pushFriendAccepts,
                 pushMentions: preferences.pushMentions,
+                pushWorkflowJobs: preferences.pushWorkflowJobs,
             },
         });
     } catch (err) {

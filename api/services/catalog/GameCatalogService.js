@@ -5,6 +5,7 @@ const {
 } = require('../collectables/fingerprint');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 const logger = require('../../logger');
+const { limitIgdb } = require('../outboundLimiterRegistry');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -1600,7 +1601,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
       : null;
 
     try {
-      const res = await this._withRateLimit(() =>
+      const res = await limitIgdb(() => this._withRateLimit(() =>
         this.fetch(url, {
           method: 'POST',
           headers: {
@@ -1612,7 +1613,7 @@ ${JSON.stringify(payloadForPrompt, null, 2)}`,
           body: query,
           signal: controller ? controller.signal : undefined,
         }),
-      );
+      ));
 
       if (res.status === 401) {
         this._token = null;

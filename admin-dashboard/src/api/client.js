@@ -123,6 +123,13 @@ export const getJobs = (params = {}) =>
 export const getJob = (jobId) =>
   client.get(`/admin/jobs/${jobId}`);
 
+// Workflow queue workfeed
+export const getWorkfeed = (params = {}) =>
+  client.get('/admin/workfeed', { params });
+
+export const getWorkfeedJob = (jobId) =>
+  client.get(`/admin/workfeed/${jobId}`);
+
 // Audit logs
 export const getAuditLogs = (params = {}) =>
   client.get('/admin/audit-logs', { params });

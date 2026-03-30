@@ -635,9 +635,9 @@ CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'friend_request', 'friend_accept', 'mention')),
+    type TEXT NOT NULL CHECK (type IN ('like', 'comment', 'friend_request', 'friend_accept', 'mention', 'workflow_complete', 'workflow_failed')),
     entity_id TEXT NOT NULL,
-    entity_type TEXT NOT NULL CHECK (entity_type IN ('event', 'friendship')),
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('event', 'friendship', 'workflow_job')),
     metadata JSONB DEFAULT '{}' NOT NULL,
     is_read BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -678,6 +678,7 @@ CREATE TABLE notification_preferences (
     push_friend_requests BOOLEAN DEFAULT TRUE NOT NULL,
     push_friend_accepts BOOLEAN DEFAULT TRUE NOT NULL,
     push_mentions BOOLEAN DEFAULT TRUE NOT NULL,
+    push_workflow_jobs BOOLEAN DEFAULT TRUE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -776,6 +777,42 @@ CREATE TABLE job_events (
 CREATE INDEX idx_job_events_job_time ON job_events(job_id, created_at);
 CREATE INDEX idx_job_events_level ON job_events(level);
 CREATE INDEX idx_job_events_created_at ON job_events(created_at);
+
+-- ============================================
+-- WORKFLOW QUEUE (Durable async jobs)
+-- ============================================
+CREATE TABLE workflow_queue_jobs (
+    job_id TEXT PRIMARY KEY,
+    workflow_type TEXT NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shelf_id INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'aborted')),
+    priority INTEGER NOT NULL DEFAULT 100,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 1,
+    dedupe_key TEXT,
+    abort_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    notify_on_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result JSONB,
+    error JSONB,
+    claimed_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT chk_workflow_queue_jobs_attempts CHECK (attempt_count >= 0 AND max_attempts >= 1)
+);
+
+CREATE INDEX idx_workflow_queue_claim_order ON workflow_queue_jobs(workflow_type, status, priority, created_at)
+    WHERE status = 'queued';
+CREATE INDEX idx_workflow_queue_user_status ON workflow_queue_jobs(user_id, workflow_type, status, created_at)
+    WHERE status IN ('queued', 'processing');
+CREATE INDEX idx_workflow_queue_status_updated ON workflow_queue_jobs(status, updated_at);
+CREATE UNIQUE INDEX uq_workflow_queue_dedupe_active
+    ON workflow_queue_jobs(workflow_type, dedupe_key)
+    WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'processing');
 
 -- ============================================
 -- NEWS ITEMS (Trending/Upcoming from APIs)
@@ -952,4 +989,8 @@ CREATE TRIGGER update_user_ratings_updated_at
 
 CREATE TRIGGER update_job_runs_updated_at
     BEFORE UPDATE ON job_runs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_workflow_queue_jobs_updated_at
+    BEFORE UPDATE ON workflow_queue_jobs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

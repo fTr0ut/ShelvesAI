@@ -178,5 +178,6 @@ export function parseNotificationData(notification) {
     entityId: data.entityId,
     entityType: data.entityType,
     notificationId: data.notificationId,
+    metadata: data.metadata || null,
   }
 }

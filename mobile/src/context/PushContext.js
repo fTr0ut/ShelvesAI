@@ -37,7 +37,7 @@ export function PushProvider({ children, navigationRef }) {
   const handleNotificationNavigation = useCallback((data) => {
     if (!navigationRef?.current || !data) return
 
-    const { type, entityId, entityType } = data
+    const { type, entityId, entityType, metadata } = data
 
     // Navigate based on notification type
     if (type === 'like' || type === 'comment' || type === 'mention') {
@@ -48,6 +48,13 @@ export function PushProvider({ children, navigationRef }) {
     } else if (type === 'friend_request' || type === 'friend_accept') {
       // Navigate to notifications screen for friend-related notifications
       navigationRef.current.navigate('Notifications')
+    } else if (type === 'workflow_complete' || type === 'workflow_failed') {
+      const shelfId = Number(metadata?.shelfId)
+      if (Number.isFinite(shelfId) && shelfId > 0) {
+        navigationRef.current.navigate('ShelfDetail', { shelfId })
+      } else {
+        navigationRef.current.navigate('Main', { screen: 'Shelves' })
+      }
     }
   }, [navigationRef])
 

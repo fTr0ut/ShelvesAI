@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
 const RateLimiter = require('../utils/RateLimiter');
 const logger = require('../logger');
+const { limitHardcover } = require('./outboundLimiterRegistry');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -597,12 +598,12 @@ class HardcoverClient {
             maxRetries: this.maxRetries,
           });
         }
-        const response = await this.fetch(this.baseUrl, {
+        const response = await limitHardcover(() => this.fetch(this.baseUrl, {
           method: 'POST',
           headers,
           body: requestBody,
           signal: controller ? controller.signal : undefined,
-        });
+        }));
 
         if (!response.ok) {
           const text = await response.text();

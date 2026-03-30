@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { auth } = require('../middleware/auth');
 const { requireFields, validateIntParam, validateStringLengths } = require('../middleware/validate');
 const { createWorkflowJobContext } = require('../middleware/workflowJobContext');
@@ -34,6 +35,38 @@ const shelfVisionScanIntParams = validateIntParam(['shelfId', 'scanPhotoId']);
 const shelfVisionRegionIntParams = validateIntParam(['shelfId', 'scanPhotoId', 'regionId']);
 const visionWorkflowContext = createWorkflowJobContext('vision');
 const catalogWorkflowContext = createWorkflowJobContext('catalog_lookup');
+
+const VISION_INGRESS_WINDOW_MS = Number.parseInt(process.env.VISION_INGRESS_WINDOW_MS || '60000', 10);
+const VISION_INGRESS_MAX = Number.parseInt(process.env.VISION_INGRESS_MAX || '10', 10);
+const CATALOG_INGRESS_WINDOW_MS = Number.parseInt(process.env.CATALOG_INGRESS_WINDOW_MS || '60000', 10);
+const CATALOG_INGRESS_MAX = Number.parseInt(process.env.CATALOG_INGRESS_MAX || '20', 10);
+
+function createWorkflowLimiter({ windowMs, max, message }) {
+    return rateLimit({
+        windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 60000,
+        max: Number.isFinite(max) && max > 0 ? max : 10,
+        standardHeaders: true,
+        legacyHeaders: false,
+        keyGenerator: (req) => req.user?.id || req.ip,
+        handler: (_req, res) => {
+            res.status(429).json({
+                error: message,
+                code: 'workflow_ingress_rate_limited',
+            });
+        },
+    });
+}
+
+const visionIngressLimiter = createWorkflowLimiter({
+    windowMs: VISION_INGRESS_WINDOW_MS,
+    max: VISION_INGRESS_MAX,
+    message: 'Too many vision requests. Please wait and try again.',
+});
+const catalogIngressLimiter = createWorkflowLimiter({
+    windowMs: CATALOG_INGRESS_WINDOW_MS,
+    max: CATALOG_INGRESS_MAX,
+    message: 'Too many catalog lookup requests. Please wait and try again.',
+});
 
 function requireVisionPayload(req, res, next) {
     const { imageBase64, rawItems } = req.body ?? {};
@@ -73,14 +106,14 @@ router.post('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams,
 router.delete('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams, ctrl.deleteShelfItemOwnerPhoto);
 
 router.get('/:shelfId/search', shelfIntParam, ctrl.searchCollectablesForShelf);
-router.post('/:shelfId/vision', shelfIntParam, visionWorkflowContext, requireVisionPayload, ctrl.processShelfVision);
+router.post('/:shelfId/vision', shelfIntParam, visionIngressLimiter, visionWorkflowContext, requireVisionPayload, ctrl.processShelfVision);
 router.get('/:shelfId/vision/scans/:scanPhotoId', shelfVisionScanIntParams, ctrl.getVisionScanPhoto);
 router.get('/:shelfId/vision/scans/:scanPhotoId/image', shelfVisionScanIntParams, ctrl.getVisionScanPhotoImage);
 router.get('/:shelfId/vision/scans/:scanPhotoId/regions', shelfVisionScanIntParams, ctrl.listVisionScanRegions);
 router.get('/:shelfId/vision/scans/:scanPhotoId/regions/:regionId/crop', shelfVisionRegionIntParams, ctrl.getVisionScanRegionCrop);
 router.get('/:shelfId/vision/:jobId/status', shelfIntParam, ctrl.getVisionStatus);
 router.delete('/:shelfId/vision/:jobId', shelfIntParam, ctrl.abortVision);
-router.post('/:shelfId/catalog-lookup', shelfIntParam, catalogWorkflowContext, ctrl.processCatalogLookup);
+router.post('/:shelfId/catalog-lookup', shelfIntParam, catalogIngressLimiter, catalogWorkflowContext, ctrl.processCatalogLookup);
 
 // Review Queue
 router.get('/:shelfId/review', shelfIntParam, ctrl.listReviewItems);
@@ -89,6 +122,5 @@ router.delete('/:shelfId/review/:id', shelfReviewIntParams, ctrl.dismissReviewIt
 
 
 module.exports = router;
-
 
 

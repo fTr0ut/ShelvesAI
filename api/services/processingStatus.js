@@ -8,8 +8,11 @@
 // Job status storage: jobId -> { status, step, progress, message, aborted, result, createdAt }
 const jobs = new Map();
 
-// Auto-expire jobs after 5 minutes
-const JOB_TTL_MS = 5 * 60 * 1000;
+// Keep terminal statuses for at least 24h by default; configurable for ops tuning.
+const parsedTtl = Number.parseInt(process.env.PROCESSING_STATUS_TTL_MS || '', 10);
+const JOB_TTL_MS = Number.isFinite(parsedTtl) && parsedTtl > 0
+    ? parsedTtl
+    : 24 * 60 * 60 * 1000;
 
 /**
  * Create a new job entry
@@ -18,18 +21,19 @@ const JOB_TTL_MS = 5 * 60 * 1000;
  * @param {number} shelfId - Target shelf ID
  * @returns {object} Initial job state
  */
-function createJob(jobId, userId, shelfId) {
+function createJob(jobId, userId, shelfId, options = {}) {
     const job = {
         jobId,
         userId,
         shelfId,
-        status: 'pending',
-        step: 'initializing',
-        progress: 0,
-        message: 'Starting vision processing...',
-        aborted: false,
-        result: null,
+        status: options.status || 'pending',
+        step: options.step || 'initializing',
+        progress: Number.isFinite(Number(options.progress)) ? Number(options.progress) : 0,
+        message: options.message || 'Starting vision processing...',
+        aborted: options.aborted === true,
+        result: options.result || null,
         createdAt: Date.now(),
+        updatedAt: Date.now(),
     };
     jobs.set(jobId, job);
     scheduleCleanup(jobId);
@@ -46,6 +50,7 @@ function updateJob(jobId, updates) {
     if (!job) return null;
 
     Object.assign(job, updates);
+    job.updatedAt = Date.now();
     return job;
 }
 
@@ -63,13 +68,16 @@ function getJob(jobId) {
  * @param {string} jobId 
  * @returns {boolean} True if job was found and marked
  */
-function abortJob(jobId) {
+function abortJob(jobId, options = {}) {
     const job = jobs.get(jobId);
     if (!job) return false;
 
     job.aborted = true;
-    job.status = 'aborted';
-    job.message = 'Processing cancelled by user';
+    if (options.preserveStatus !== true) {
+        job.status = 'aborted';
+        job.message = options.message || 'Processing cancelled by user';
+    }
+    job.updatedAt = Date.now();
     return true;
 }
 
@@ -96,6 +104,7 @@ function completeJob(jobId, result) {
     job.progress = 100;
     job.message = 'Processing complete';
     job.result = result;
+    job.updatedAt = Date.now();
     return job;
 }
 
@@ -110,7 +119,30 @@ function failJob(jobId, error) {
 
     job.status = 'failed';
     job.message = error || 'Processing failed';
+    job.updatedAt = Date.now();
     return job;
+}
+
+/**
+ * Hydrate/replace an in-memory job snapshot from an external source (DB fallback).
+ * @param {string} jobId
+ * @param {object} snapshot
+ * @returns {object}
+ */
+function setJob(jobId, snapshot = {}) {
+    const existing = jobs.get(jobId) || {};
+    const merged = {
+        ...existing,
+        ...snapshot,
+        jobId,
+        updatedAt: Date.now(),
+    };
+    if (!merged.createdAt) {
+        merged.createdAt = Date.now();
+    }
+    jobs.set(jobId, merged);
+    scheduleCleanup(jobId);
+    return merged;
 }
 
 /**
@@ -142,5 +174,6 @@ module.exports = {
     isAborted,
     completeJob,
     failJob,
+    setJob,
     generateJobId,
 };

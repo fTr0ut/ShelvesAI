@@ -4,10 +4,12 @@ const { parsePagination } = require('../database/queries/utils');
 const { clearAdminAuthCookies, ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
 const systemSettingsQueries = require('../database/queries/systemSettings');
 const jobRunsQueries = require('../database/queries/jobRuns');
+const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const adminContentQueries = require('../database/queries/adminContent');
+const processingStatus = require('../services/processingStatus');
 const logger = require('../logger');
 
 const normalizeIp = (ip) => {
@@ -43,6 +45,33 @@ function getAdminContext(req) {
   return {
     ipAddress: getClientIp(req) || null,
     userAgent: req.get('user-agent') || null,
+  };
+}
+
+function toNumericOrNull(value) {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function hydrateWorkfeedProgress(job) {
+  if (!job || !job.jobId) return job;
+  const snapshot = processingStatus.getJob(job.jobId);
+
+  const queuePositionNumeric = toNumericOrNull(job.queuePosition);
+  const queuedMsNumeric = toNumericOrNull(job.queuedMs);
+  const attemptsNumeric = toNumericOrNull(job.attemptCount);
+  const maxAttemptsNumeric = toNumericOrNull(job.maxAttempts);
+
+  return {
+    ...job,
+    queuePosition: queuePositionNumeric == null ? null : queuePositionNumeric,
+    queuedMs: queuedMsNumeric == null ? null : queuedMsNumeric,
+    attemptCount: attemptsNumeric == null ? 0 : attemptsNumeric,
+    maxAttempts: maxAttemptsNumeric == null ? null : maxAttemptsNumeric,
+    step: snapshot?.step || null,
+    progress: toNumericOrNull(snapshot?.progress),
+    message: snapshot?.message || null,
   };
 }
 
@@ -301,6 +330,79 @@ async function listJobs(req, res) {
     });
   } catch (err) {
     logger.error('Admin listJobs error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/workfeed
+ * List workflow queue jobs for live admin monitoring
+ */
+async function listWorkfeed(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+
+    const shelfIdRaw = req.query.shelfId;
+    let shelfId = null;
+    if (shelfIdRaw !== undefined && shelfIdRaw !== null && shelfIdRaw !== '') {
+      const parsedShelfId = Number.parseInt(String(shelfIdRaw), 10);
+      if (!Number.isInteger(parsedShelfId) || parsedShelfId <= 0) {
+        return res.status(400).json({ error: 'Invalid shelfId' });
+      }
+      shelfId = parsedShelfId;
+    }
+
+    const jobId = req.query.jobId ? String(req.query.jobId).trim() : null;
+    if (jobId && jobId.length > 255) {
+      return res.status(400).json({ error: 'Invalid jobId' });
+    }
+
+    const result = await workflowQueueJobsQueries.listAdminWorkfeed({
+      limit,
+      offset,
+      status: req.query.status || null,
+      workflowType: req.query.workflowType || null,
+      userId: req.query.userId || null,
+      shelfId,
+      jobId,
+    });
+
+    const jobs = result.jobs.map(hydrateWorkfeedProgress);
+
+    res.json({
+      jobs,
+      pagination: {
+        limit,
+        offset,
+        total: result.total,
+        hasMore: result.hasMore,
+      },
+    });
+  } catch (err) {
+    logger.error('Admin listWorkfeed error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * GET /api/admin/workfeed/:jobId
+ * Get workflow queue job detail for admin monitoring
+ */
+async function getWorkfeedJob(req, res) {
+  try {
+    const { jobId } = req.params;
+    if (!jobId || String(jobId).length > 255) {
+      return res.status(400).json({ error: 'Invalid jobId' });
+    }
+
+    const job = await workflowQueueJobsQueries.getAdminWorkfeedJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.json({ job: hydrateWorkfeedProgress(job) });
+  } catch (err) {
+    logger.error('Admin getWorkfeedJob error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -754,6 +856,8 @@ module.exports = {
   getAdminSocialFeed,
   getAdminEventComments,
   deleteEvent,
+  listWorkfeed,
+  getWorkfeedJob,
   listJobs,
   getJob,
   getSystemInfo,

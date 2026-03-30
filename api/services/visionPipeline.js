@@ -33,11 +33,7 @@ const {
     expandVisionBox2dByPixels,
 } = require('../utils/visionBox2d');
 
-// Catalog Services
-const { BookCatalogService } = require('./catalog/BookCatalogService');
-const { GameCatalogService } = require('./catalog/GameCatalogService');
-const { MovieCatalogService } = require('./catalog/MovieCatalogService');
-const { MusicCatalogService } = require('./catalog/MusicCatalogService');
+const { getSharedCatalogServices } = require('./catalog/sharedCatalogServices');
 const logger = require('../logger');
 
 // Load progress messages config
@@ -524,13 +520,8 @@ class VisionPipelineService {
         this.collectionItemRegionLinkAvailable = true;
         this.hooks = options.hooks || null;
 
-        // Initialize catalogs
-        this.catalogs = options.catalogs || {
-            book: new BookCatalogService(),
-            game: new GameCatalogService(),
-            movie: new MovieCatalogService(),
-            music: new MusicCatalogService(),
-        };
+        // Reuse shared catalog service instances so rate limiting is process-wide.
+        this.catalogs = options.catalogs || getSharedCatalogServices();
     }
 
     async executeHook(hookType, context) {
@@ -583,6 +574,9 @@ class VisionPipelineService {
             ? resolvedOptions.scanPhotoId
             : null;
         const scanPhotoDimensions = resolveScanDimensions(resolvedOptions.scanPhotoDimensions);
+        const abortCheck = typeof resolvedOptions.abortCheck === 'function'
+            ? resolvedOptions.abortCheck
+            : null;
 
         // Helper to update progress if jobId is provided (uses config for messaging)
         const updateProgress = (key, vars = {}) => {
@@ -593,9 +587,28 @@ class VisionPipelineService {
         };
 
         // Helper to check if job was aborted
-        const checkAborted = () => {
+        const checkAborted = async () => {
+            let aborted = false;
             if (jobId && processingStatus.isAborted(jobId)) {
-                throw new Error('Processing cancelled by user');
+                aborted = true;
+            }
+            if (!aborted && abortCheck) {
+                try {
+                    aborted = (await abortCheck()) === true;
+                } catch (err) {
+                    logger.warn('[VisionPipeline] abort check failed; continuing', {
+                        jobId,
+                        message: err?.message || String(err),
+                    });
+                }
+            }
+            if (aborted) {
+                if (jobId) {
+                    processingStatus.abortJob(jobId, { preserveStatus: true });
+                }
+                const abortErr = new Error('Processing cancelled by user');
+                abortErr.code = 'WORKFLOW_ABORTED';
+                throw abortErr;
             }
         };
 
@@ -631,7 +644,7 @@ class VisionPipelineService {
         };
 
         // Step 1: Extract items from image
-        checkAborted();
+        await checkAborted();
         updateProgress('extracting');
         logger.info('[VisionPipeline] Step 1: Extracting items from image via vision OCR...');
         let rawItems = [];
@@ -678,7 +691,7 @@ class VisionPipelineService {
         }
 
         // Step 1b: Categorize into three tiers using per-type thresholds
-        checkAborted();
+        await checkAborted();
         updateProgress('categorizing', { count: normalizedItems.length });
         logger.info('[VisionPipeline] Step 1b: Categorizing by confidence tiers...');
         let { highConfidence, mediumConfidence, lowConfidence } = this.categorizeByConfidence(
@@ -700,7 +713,7 @@ class VisionPipelineService {
             && lowConfidence.length > 0;
 
         if (canRunOtherSecondPass) {
-            checkAborted();
+            await checkAborted();
             updateProgress('extractingSecondPass', { count: lowConfidence.length });
             logger.info('[VisionPipeline] Step 1c: Running other-shelf low-confidence second pass...', {
                 firstPassLowConfidence: lowConfidence.length,
@@ -799,7 +812,7 @@ class VisionPipelineService {
         }
 
         if (isOtherShelf) {
-            checkAborted();
+            await checkAborted();
             updateProgress('matchingOther', { count: highConfidence.length + mediumConfidence.length });
             const candidates = [...highConfidence, ...mediumConfidence]
                 .map((item) => ({
@@ -856,7 +869,7 @@ class VisionPipelineService {
                 });
             }
 
-            checkAborted();
+            await checkAborted();
             updateProgress('preparingOther', { count: itemsToSave.length });
             logger.info('[VisionPipeline] Saving', itemsToSave.length, 'other items to shelf...');
             updateProgress('saving', { count: itemsToSave.length });
@@ -961,13 +974,13 @@ class VisionPipelineService {
 
         // ===== HIGH CONFIDENCE WORKFLOW (≥ max threshold) =====
         // Step 2: Fingerprint lookup for high confidence items
-        checkAborted();
+        await checkAborted();
         updateProgress('matching', { count: highConfidence.length });
         logger.info('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
         const matched = [];
         const unmatchedHigh = [];
         for (const item of highConfidence) {
-            checkAborted();
+            await checkAborted();
             const collectable = await this.matchCollectable(item, shelf.type);
             if (collectable) {
                 matched.push({ ...item, collectable, source: 'database-match' });
@@ -985,7 +998,7 @@ class VisionPipelineService {
         });
 
         // Step 3: Catalog lookup for unmatched HIGH confidence items only
-        checkAborted();
+        await checkAborted();
         updateProgress('catalog', { count: unmatchedHigh.length });
         let catalogResults = { resolved: [], unresolved: unmatchedHigh };
         if (unmatchedHigh.length > 0) {
@@ -1007,7 +1020,7 @@ class VisionPipelineService {
         });
 
         // Step 4a: Standard enrichment for high-confidence items that failed both fingerprint AND catalog
-        checkAborted();
+        await checkAborted();
         updateProgress('enriching', { count: catalogResults.unresolved.length });
         let enrichedHighConf = [];
         let unresolvedHighForReview = [];
@@ -1089,7 +1102,7 @@ class VisionPipelineService {
 
         // ===== MEDIUM CONFIDENCE WORKFLOW (between min and max) =====
         // Fingerprint lookup, then catalog, then enrichment for unmatched
-        checkAborted();
+        await checkAborted();
         updateProgress('matching', { count: mediumConfidence.length });
         const mediumMatched = [];
         const mediumUnmatched = [];
@@ -1117,7 +1130,7 @@ class VisionPipelineService {
         });
 
         // Step 4c: Catalog lookup for medium-confidence unmatched items
-        checkAborted();
+        await checkAborted();
         let mediumCatalogResults = { resolved: [], unresolved: mediumUnmatched };
         if (mediumUnmatched.length > 0) {
             if (this.catalogEnabled) {
@@ -1140,7 +1153,7 @@ class VisionPipelineService {
         });
 
         // Step 4d: Enrichment for medium-confidence items that failed both fingerprint AND catalog
-        checkAborted();
+        await checkAborted();
         let enrichedMediumConf = [];
         let unresolvedMediumForManual = [];
         if (mediumCatalogResults.unresolved.length > 0) {
@@ -1249,7 +1262,7 @@ class VisionPipelineService {
         let mediumAddedCollectables = [];
         let mediumSaveFailures = [];
         if (mediumItemsToSave.length > 0) {
-            checkAborted();
+            await checkAborted();
             updateProgress('saving', { count: mediumItemsToSave.length });
             const mediumSaveResult = await this.saveToShelf(
                 mediumItemsToSave,
@@ -1267,7 +1280,7 @@ class VisionPipelineService {
         let manualMatched = [];
         let manualSkipped = [];
         if (mediumItemsToManual.length > 0) {
-            checkAborted();
+            await checkAborted();
             updateProgress('saving', { count: mediumItemsToManual.length });
             const manualResult = await this.saveManualToShelf(mediumItemsToManual, userId, shelf.id, shelf.type, {
                 requireCreator: false,
@@ -1357,7 +1370,7 @@ class VisionPipelineService {
                 droppedCount: collectableResolvedItemsResult.droppedCount,
             });
         }
-        checkAborted();
+        await checkAborted();
         updateProgress('saving', { count: collectableResolvedItems.length });
         const collectableSaveResult = await this.saveToShelf(
             collectableResolvedItems,

@@ -6,6 +6,7 @@ const { normalizeCollectableKind } = require('./collectables/kind');
 const { withTimeout } = require('../utils/withTimeout');
 const { normalizeVisionBox2d } = require('../utils/visionBox2d');
 const logger = require('../logger');
+const { limitGemini } = require('./outboundLimiterRegistry');
 
 const DEFAULT_VISION_CONFIDENCE = 0.7;
 const MAX_VISION_ITEMS = 50;
@@ -384,7 +385,7 @@ ${hintLines}`;
             if (tools) chatParams.tools = tools;
             const chat = this.textModel.startChat(chatParams);
             const result = await withTimeout(
-                () => chat.sendMessage(prompt),
+                () => limitGemini(() => chat.sendMessage(prompt)),
                 this.requestTimeoutMs,
                 `Gemini chat ${label}`,
             );
@@ -403,7 +404,7 @@ ${hintLines}`;
         };
         if (tools) contentRequest.tools = tools;
         const result = await withTimeout(
-            () => this.textModel.generateContent(contentRequest),
+            () => limitGemini(() => this.textModel.generateContent(contentRequest)),
             this.requestTimeoutMs,
             `Gemini standalone ${label}`,
         );
@@ -979,13 +980,13 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                         }
                         const chat = this.visionModel.startChat(chatParams);
                         visionResult = await withTimeout(
-                            () => chat.sendMessage(visionPrompt),
+                            () => limitGemini(() => chat.sendMessage(visionPrompt)),
                             this.requestTimeoutMs,
                             `Gemini vision extraction chat request (attempt ${attempt})`,
                         );
                     } else {
                         visionResult = await withTimeout(
-                            () => this.visionModel.generateContent(generateOptions),
+                            () => limitGemini(() => this.visionModel.generateContent(generateOptions)),
                             this.requestTimeoutMs,
                             `Gemini vision extraction request (attempt ${attempt})`,
                         );
@@ -1107,7 +1108,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                         },
                     });
                     const patchResult = await withTimeout(
-                        () => patchChat.sendMessage(buildConfidencePatchPrompt(missingItems)),
+                        () => limitGemini(() => patchChat.sendMessage(buildConfidencePatchPrompt(missingItems))),
                         this.requestTimeoutMs,
                         'Gemini vision confidence patch request',
                     );

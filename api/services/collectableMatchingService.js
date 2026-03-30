@@ -10,10 +10,7 @@
 
 const collectablesQueries = require('../database/queries/collectables');
 const { makeLightweightFingerprint, makeVisionOcrFingerprint } = require('./collectables/fingerprint');
-const { BookCatalogService } = require('./catalog/BookCatalogService');
-const { GameCatalogService } = require('./catalog/GameCatalogService');
-const { MovieCatalogService } = require('./catalog/MovieCatalogService');
-const { MusicCatalogService } = require('./catalog/MusicCatalogService');
+const { getSharedCatalogServices } = require('./catalog/sharedCatalogServices');
 const { getMetadataScorer } = require('./catalog/MetadataScorer');
 const { getApiContainerKey } = require('./config/shelfTypeResolver');
 const logger = require('../logger');
@@ -99,10 +96,11 @@ function isCollectablePayload(candidate, shelfType) {
 
 class CollectableMatchingService {
     constructor() {
-        this.bookCatalogService = new BookCatalogService();
-        this.gameCatalogService = new GameCatalogService();
-        this.movieCatalogService = new MovieCatalogService();
-        this.musicCatalogService = new MusicCatalogService();
+        const shared = getSharedCatalogServices();
+        this.bookCatalogService = shared.book;
+        this.gameCatalogService = shared.game;
+        this.movieCatalogService = shared.movie;
+        this.musicCatalogService = shared.music;
         this.catalogServices = [
             this.gameCatalogService,
             this.movieCatalogService,

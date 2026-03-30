@@ -10,6 +10,7 @@ const {
   GetObjectCommand,
 } = require('@aws-sdk/client-s3');
 const logger = require('../logger');
+const { limitS3Write, limitS3Read } = require('./outboundLimiterRegistry');
 
 // Lazy-initialize client to allow graceful fallback when credentials missing
 let client = null;
@@ -68,7 +69,7 @@ async function uploadBuffer(buffer, key, contentType) {
   // Normalize key to use forward slashes (S3 standard)
   const normalizedKey = key.replace(/\\/g, '/');
 
-  await s3Client.send(
+  await limitS3Write(() => s3Client.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: normalizedKey,
@@ -76,7 +77,7 @@ async function uploadBuffer(buffer, key, contentType) {
       ContentType: contentType || 'application/octet-stream',
       CacheControl: 'public, max-age=31536000, immutable',
     })
-  );
+  ));
 
   return normalizedKey;
 }
@@ -102,7 +103,7 @@ async function uploadPrivateBuffer(buffer, key, contentType) {
 
   const normalizedKey = key.replace(/\\/g, '/');
 
-  await s3Client.send(
+  await limitS3Write(() => s3Client.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: normalizedKey,
@@ -110,7 +111,7 @@ async function uploadPrivateBuffer(buffer, key, contentType) {
       ContentType: contentType || 'application/octet-stream',
       CacheControl: 'private, max-age=0, no-cache',
     })
-  );
+  ));
 
   return normalizedKey;
 }
@@ -164,12 +165,12 @@ async function deleteObject(key) {
   const normalizedKey = key.replace(/\\/g, '/');
 
   try {
-    await s3Client.send(
+    await limitS3Write(() => s3Client.send(
       new DeleteObjectCommand({
         Bucket: bucket,
         Key: normalizedKey,
       })
-    );
+    ));
   } catch (err) {
     logger.warn('[s3] Failed to delete object:', normalizedKey, err.message);
   }
@@ -192,12 +193,12 @@ async function getObjectBuffer(key) {
   }
 
   const normalizedKey = key.replace(/\\/g, '/');
-  const result = await s3Client.send(
+  const result = await limitS3Read(() => s3Client.send(
     new GetObjectCommand({
       Bucket: bucket,
       Key: normalizedKey,
     })
-  );
+  ));
 
   const body = result.Body;
   if (!body) {

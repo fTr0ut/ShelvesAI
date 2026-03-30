@@ -11,6 +11,7 @@ const { makeCollectableFingerprint, makeLightweightFingerprint } = require('./co
 const fetch = require('node-fetch');
 const logger = require('../logger');
 const AbortController = (globalThis && globalThis.AbortController) || fetch.AbortController || null;
+const { limitOpenLibrary } = require('./outboundLimiterRegistry');
 
 const DEFAULT_BASE_URL = 'https://openlibrary.org';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -74,12 +75,12 @@ async function fetchJson(url) {
   try {
     const USER_AGENT = 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)';
 
-    const response = await fetch(url, {
+    const response = await limitOpenLibrary(() => fetch(url, {
       signal: controller ? controller.signal : undefined,
       headers: {
         'User-Agent': USER_AGENT,
       },
-    });
+    }));
     if (!response.ok) {
       throw new Error(`OpenLibrary request failed with ${response.status}`);
     }

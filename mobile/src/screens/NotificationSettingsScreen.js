@@ -30,6 +30,7 @@ export default function NotificationSettingsScreen({ navigation }) {
     pushLikes: true,
     pushComments: true,
     pushMentions: true,
+    pushWorkflowJobs: true,
     pushFriendRequests: true,
     pushFriendAccepts: true,
   })
@@ -180,6 +181,22 @@ export default function NotificationSettingsScreen({ navigation }) {
               trackColor={{ false: colors.border, true: colors.primary + '80' }}
               thumbColor={
                 preferences.pushMentions ? colors.primary : colors.surfaceElevated
+              }
+            />
+          </View>
+
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsLeft}>
+              <Ionicons name="scan" size={20} color={colors.text} />
+              <Text style={styles.settingsLabel}>Workflow Jobs</Text>
+            </View>
+            <Switch
+              value={preferences.pushWorkflowJobs}
+              onValueChange={(value) => handleToggle('pushWorkflowJobs', value)}
+              disabled={saving || !preferences.pushEnabled}
+              trackColor={{ false: colors.border, true: colors.primary + '80' }}
+              thumbColor={
+                preferences.pushWorkflowJobs ? colors.primary : colors.surfaceElevated
               }
             />
           </View>

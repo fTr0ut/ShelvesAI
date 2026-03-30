@@ -28,9 +28,12 @@ const manualMediaQueries = require('../database/queries/manualMedia');
 const visionScanPhotosQueries = require('../database/queries/visionScanPhotos');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
+const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
+const { getWorkflowQueueService } = require('../services/workflowQueueService');
+const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
 const { extractRegionCrop } = require('../services/visionCropper');
 const { validateImageBuffer } = require('../utils/imageValidation');
 const {
@@ -248,9 +251,30 @@ function isWithinHoursWindow(value, hours) {
 
 const VISION_CROP_WARMUP_ENABLED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_ENABLED, true);
 const VISION_CROP_WARMUP_MAX_REGIONS = parsePositiveInt(process.env.VISION_CROP_WARMUP_MAX_REGIONS, 50);
+const VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS = parsePositiveInt(
+  process.env.VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS,
+  10,
+);
+const VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH = parsePositiveInt(
+  process.env.VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH,
+  12,
+);
 const OWNER_PHOTO_DEBUG_ENABLED = parseBooleanFlag(process.env.OWNER_PHOTO_DEBUG_ENABLED, false);
 const OWNER_PHOTO_DEBUG_ITEM_ID = parsePositiveInt(process.env.OWNER_PHOTO_DEBUG_ITEM_ID, null);
 const FEED_MICRO_DEBUG_ENABLED = parseBooleanFlag(process.env.FEED_MICRO_DEBUG_ENABLED, false);
+const WORKFLOW_TYPE_VISION = 'vision';
+const WORKFLOW_QUEUE_WAIT_SECONDS_PER_JOB = parsePositiveInt(
+  process.env.WORKFLOW_QUEUE_WAIT_SECONDS_PER_JOB,
+  15,
+);
+const WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION = parsePositiveInt(
+  process.env.WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION,
+  3,
+);
+const WORKFLOW_QUEUE_NOTIFY_FORCE_MIN_WAIT_MS = parsePositiveInt(
+  process.env.WORKFLOW_QUEUE_NOTIFY_FORCE_MIN_WAIT_MS,
+  20000,
+);
 
 function shouldLogOwnerPhotoDebug(itemId = null) {
   if (!OWNER_PHOTO_DEBUG_ENABLED) return false;
@@ -303,6 +327,46 @@ function buildVisionCounts(result = {}, options = {}) {
     extractedCount,
     summaryMessage,
   };
+}
+
+function buildVisionQueueDedupeKey({ userId, shelfId, imageSha256 }) {
+  if (!userId || !shelfId || !imageSha256) return null;
+  return `vision:${userId}:${shelfId}:${imageSha256}`;
+}
+
+function estimateQueueWaitSeconds(position) {
+  if (!Number.isFinite(Number(position)) || Number(position) <= 1) return 0;
+  return Math.max(0, (Number(position) - 1) * WORKFLOW_QUEUE_WAIT_SECONDS_PER_JOB);
+}
+
+function getQueuedMs(createdAt) {
+  if (!createdAt) return 0;
+  const ts = Date.parse(String(createdAt));
+  if (!Number.isFinite(ts)) return 0;
+  return Math.max(0, Date.now() - ts);
+}
+
+async function getQueueMetadata(jobId) {
+  const queuePosition = await workflowQueueJobsQueries.getQueuePosition(jobId);
+  const estimatedWaitSeconds = estimateQueueWaitSeconds(queuePosition);
+  return {
+    queuePosition,
+    estimatedWaitSeconds,
+  };
+}
+
+async function shouldEnableQueueNotification({ queuePosition, estimatedWaitSeconds }) {
+  const settings = await getWorkflowQueueSettings();
+  const positionThreshold = Math.max(
+    WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION,
+    settings.workflowQueueLongThresholdPosition,
+  );
+  const waitThresholdMs = Math.max(
+    WORKFLOW_QUEUE_NOTIFY_FORCE_MIN_WAIT_MS,
+    settings.workflowQueueNotifyMinWaitMs,
+  );
+  const waitMs = Math.max(0, (Number(estimatedWaitSeconds) || 0) * 1000);
+  return (Number(queuePosition) || 0) >= positionThreshold || waitMs >= waitThresholdMs;
 }
 
 function buildCollectableUpsertPayload(input, shelfType) {
@@ -2557,9 +2621,39 @@ async function warmVisionScanCrops({ userId, shelfId, shelfType = null, scanPhot
     }
 
     const existingByRegion = new Set(existingCrops.map((crop) => crop.regionId));
-    const warmupTargets = regions
-      .filter((region) => !existingByRegion.has(region.id))
-      .slice(0, VISION_CROP_WARMUP_MAX_REGIONS);
+    const uncroppedTargets = regions.filter((region) => !existingByRegion.has(region.id));
+    if (!uncroppedTargets.length) return;
+
+    let warmupLimit = VISION_CROP_WARMUP_MAX_REGIONS;
+    try {
+      const [queueDepth, queueSettings] = await Promise.all([
+        workflowQueueJobsQueries.countQueued({ workflowType: WORKFLOW_TYPE_VISION }),
+        getWorkflowQueueSettings(),
+      ]);
+      const pressureThreshold = Math.max(
+        queueSettings.workflowQueueLongThresholdPosition,
+        WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION,
+      );
+      if (queueDepth >= pressureThreshold) {
+        warmupLimit = Math.min(warmupLimit, VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS);
+      }
+      if (queueDepth >= VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH) {
+        logger.info('[Vision] Skipping crop warmup under queue pressure', {
+          shelfId,
+          scanPhotoId: scanPhoto.id,
+          queueDepth,
+          threshold: VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH,
+          jobId,
+        });
+        return;
+      }
+    } catch (pressureErr) {
+      logger.warn('[Vision] Failed to evaluate queue pressure for crop warmup', {
+        message: pressureErr?.message || String(pressureErr),
+      });
+    }
+
+    const warmupTargets = uncroppedTargets.slice(0, warmupLimit);
     if (!warmupTargets.length) return;
 
     let generated = 0;
@@ -2627,8 +2721,166 @@ function queueVisionCropWarmup({ userId, shelfId, shelfType = null, scanPhotoId,
   });
 }
 
-// Vision processing (simplified - preserves core logic)
-// Vision processing (using VisionPipelineService with async job tracking)
+function buildPipelineOptions({ rawItems, scanPhotoId, scanPhotoDimensions, abortCheck = null }) {
+  const options = {};
+  if (Array.isArray(rawItems) && rawItems.length > 0) {
+    options.rawItems = rawItems;
+    options.ocrProvider = 'mlkit';
+  }
+  if (scanPhotoId) {
+    options.scanPhotoId = scanPhotoId;
+    if (scanPhotoDimensions) {
+      options.scanPhotoDimensions = scanPhotoDimensions;
+    }
+  }
+  if (typeof abortCheck === 'function') {
+    options.abortCheck = abortCheck;
+  }
+  return Object.keys(options).length > 0 ? options : null;
+}
+
+async function runVisionPipelineJob({
+  jobId,
+  userId,
+  shelf,
+  imageBase64,
+  rawItems,
+  isCloudVision,
+  imageSha256 = null,
+  scanPhotoId = null,
+  scanPhotoDimensions = null,
+  abortCheck = null,
+}) {
+  const hooks = getVisionPipelineHooks();
+  const pipeline = new VisionPipelineService({ hooks });
+  const resolvedPipelineOptions = buildPipelineOptions({
+    rawItems,
+    scanPhotoId,
+    scanPhotoDimensions,
+    abortCheck,
+  });
+
+  const result = await pipeline.processImage(
+    imageBase64,
+    shelf,
+    userId,
+    jobId,
+    resolvedPipelineOptions,
+  );
+  const counts = buildVisionCounts(result);
+
+  if (isCloudVision) {
+    try {
+      await visionQuotaQueries.incrementUsage(userId);
+    } catch (quotaErr) {
+      logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
+    }
+  }
+
+  if (isCloudVision && imageSha256) {
+    try {
+      await visionResultCacheQueries.set({
+        userId,
+        shelfId: shelf.id,
+        imageSha256,
+        resultJson: {
+          analysis: result.analysis,
+          results: result.results,
+          addedItems: result.addedItems,
+          needsReview: result.needsReview,
+          warnings: result.warnings,
+        },
+      });
+    } catch (cacheWriteErr) {
+      if (cacheWriteErr?.code !== '42P01') {
+        logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
+      }
+    }
+  }
+
+  if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
+    processingStatus.updateJob(jobId, {
+      step: 'generating-photos',
+      progress: 95,
+      message: 'Generating item photos...',
+      status: 'processing',
+    });
+    await warmVisionScanCrops({
+      userId,
+      shelfId: shelf.id,
+      shelfType: shelf.type,
+      scanPhotoId,
+      jobId,
+    });
+  }
+
+  const output = {
+    analysis: result.analysis,
+    results: result.results,
+    addedItems: result.addedItems,
+    needsReview: result.needsReview,
+    ...counts,
+    warnings: result.warnings,
+    scanPhotoId,
+  };
+  processingStatus.completeJob(jobId, output);
+  return output;
+}
+
+async function processQueuedVisionWorkflowJob(job, { shouldAbort }) {
+  const payload = job?.payload && typeof job.payload === 'object' ? job.payload : {};
+  const shelfId = Number(payload.shelfId || job.shelfId);
+  const userId = payload.userId || job.userId;
+  const shelf = await loadShelfForUser(userId, shelfId);
+  if (!shelf) {
+    const err = new Error('Shelf not found');
+    err.status = 404;
+    throw err;
+  }
+  if (isOtherShelfType(shelf.type) && !hasShelfDescription(shelf.description)) {
+    throw new Error(OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR);
+  }
+
+  processingStatus.setJob(job.jobId, {
+    jobId: job.jobId,
+    userId,
+    shelfId: shelf.id,
+    status: 'processing',
+    step: 'initializing',
+    progress: 1,
+    message: 'Processing queued vision job...',
+    aborted: false,
+    result: null,
+  });
+
+  return runVisionPipelineJob({
+    jobId: job.jobId,
+    userId,
+    shelf,
+    imageBase64: payload.imageBase64 || null,
+    rawItems: Array.isArray(payload.rawItems) ? payload.rawItems : null,
+    isCloudVision: payload.isCloudVision !== false,
+    imageSha256: payload.imageSha256 || null,
+    scanPhotoId: Number(payload.scanPhotoId) || null,
+    scanPhotoDimensions: payload.scanPhotoDimensions || null,
+    abortCheck: async () => {
+      if (typeof shouldAbort === 'function') {
+        return (await shouldAbort()) === true;
+      }
+      return false;
+    },
+  });
+}
+
+let queueHandlerRegistered = false;
+function ensureQueueHandlerRegistered() {
+  if (queueHandlerRegistered) return;
+  getWorkflowQueueService().registerHandler(WORKFLOW_TYPE_VISION, processQueuedVisionWorkflowJob);
+  queueHandlerRegistered = true;
+}
+ensureQueueHandlerRegistered();
+
+// Vision processing (using durable queue + async job tracking)
 async function processShelfVision(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
@@ -2642,7 +2894,6 @@ async function processShelfVision(req, res) {
       return res.status(400).json({ error: "imageBase64 or rawItems are required" });
     }
 
-    // Premium Check
     if (!req.user.isPremium) {
       return res.status(403).json({
         error: "Vision features are premium only.",
@@ -2650,13 +2901,12 @@ async function processShelfVision(req, res) {
       });
     }
 
-    // Quota applies only to uncached cloud-vision processing.
     const isCloudVision = !rawItems || rawItems.length === 0;
-
     let imageSha256 = null;
     let cachedVision = null;
     let scanPhotoId = null;
     let scanPhotoDimensions = null;
+
     if (isCloudVision && imageBase64) {
       imageSha256 = computeImageSha256(imageBase64);
       try {
@@ -2681,6 +2931,7 @@ async function processShelfVision(req, res) {
         const statusCode = /image|base64|unsupported|dimensions|payload/i.test(message) ? 400 : 500;
         return res.status(statusCode).json({ error: scanPhotoErr?.message || 'Failed to persist scan photo' });
       }
+
       try {
         cachedVision = await visionResultCacheQueries.getValid({
           userId: req.user.id,
@@ -2699,9 +2950,6 @@ async function processShelfVision(req, res) {
       });
     }
 
-    logger.info(`[Vision] Processing image for shelf ${shelf.id} (${shelf.type})`);
-
-    // Generate job ID and create job entry
     const jobId = processingStatus.generateJobId(req.user.id, shelf.id);
     processingStatus.createJob(jobId, req.user.id, shelf.id);
 
@@ -2721,6 +2969,9 @@ async function processShelfVision(req, res) {
         return res.status(202).json({
           jobId,
           status: 'completed',
+          queuePosition: 0,
+          estimatedWaitSeconds: 0,
+          notifyOnComplete: false,
           message: 'Same photo detected. Using previous scan result.',
           metadata: requestMetadata,
           cached: true,
@@ -2761,187 +3012,177 @@ async function processShelfVision(req, res) {
       }
     }
 
-    // Instantiate new Pipeline
-    const hooks = getVisionPipelineHooks();
-    const pipeline = new VisionPipelineService({ hooks });
-    const pipelineOptions = {};
-    if (Array.isArray(rawItems) && rawItems.length > 0) {
-      pipelineOptions.rawItems = rawItems;
-      pipelineOptions.ocrProvider = 'mlkit';
-    }
-    if (scanPhotoId) {
-      pipelineOptions.scanPhotoId = scanPhotoId;
-      if (scanPhotoDimensions) {
-        pipelineOptions.scanPhotoDimensions = scanPhotoDimensions;
-      }
-    }
-    const resolvedPipelineOptions = Object.keys(pipelineOptions).length > 0
-      ? pipelineOptions
-      : null;
-
-    // If async mode (default), return immediately with jobId
     if (asyncMode) {
-      // Capture userId for background task
-      const userId = req.user.id;
-      // Start processing in background
-      (async () => {
-        try {
-          const result = await pipeline.processImage(imageBase64, shelf, userId, jobId, resolvedPipelineOptions);
-          const counts = buildVisionCounts(result);
-
-          // Increment quota on successful cloud vision processing
-          if (isCloudVision) {
-            try {
-              await visionQuotaQueries.incrementUsage(userId);
-            } catch (quotaErr) {
-              logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
-            }
-          }
-
-          if (isCloudVision && imageSha256) {
-            try {
-              await visionResultCacheQueries.set({
-                userId,
-                shelfId: shelf.id,
-                imageSha256,
-                resultJson: {
-                  analysis: result.analysis,
-                  results: result.results,
-                  addedItems: result.addedItems,
-                  needsReview: result.needsReview,
-                  warnings: result.warnings,
-                },
-              });
-            } catch (cacheWriteErr) {
-              if (cacheWriteErr?.code !== '42P01') {
-                logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
-              }
-            }
-          }
-
-          // Generate crop photos before marking job complete so the mobile
-          // client doesn't refresh until owner-photo attachments are ready.
-          if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
-            processingStatus.updateJob(jobId, {
-              step: 'generating-photos',
-              progress: 95,
-              message: 'Generating item photos...',
-              status: 'processing',
-            });
-            await warmVisionScanCrops({
-              userId,
-              shelfId: shelf.id,
-              shelfType: shelf.type,
-              scanPhotoId,
-              jobId,
-            });
-          }
-
-          // Mark job complete with result
-          processingStatus.completeJob(jobId, {
-            analysis: result.analysis,
-            results: result.results,
-            ...counts,
-            warnings: result.warnings,
-            scanPhotoId,
-          });
-        } catch (err) {
-          if (err.message === 'Processing cancelled by user') {
-            // Already marked as aborted
-            logger.info(`[Vision] Job ${jobId} was cancelled by user`);
-          } else {
-            logger.error(`[Vision] Job ${jobId} failed:`, err);
-            processingStatus.failJob(jobId, err.message || 'Processing failed');
-          }
-        }
-      })();
-
-      // Return immediately with job ID for polling
-      return res.status(202).json({
-        jobId,
-        status: 'processing',
-        message: 'Vision processing started. Poll /vision/:jobId/status for updates.',
-        metadata: requestMetadata,
-        scanPhotoId,
+      const queueSettings = await getWorkflowQueueSettings();
+      const queuedCountForUser = await workflowQueueJobsQueries.countQueuedForUser({
+        workflowType: WORKFLOW_TYPE_VISION,
+        userId: req.user.id,
       });
-    }
-
-    // Synchronous mode (for backwards compatibility)
-    const result = await pipeline.processImage(imageBase64, shelf, req.user.id, jobId, resolvedPipelineOptions);
-
-    // Increment quota on successful cloud vision processing
-    if (isCloudVision) {
-      try {
-        await visionQuotaQueries.incrementUsage(req.user.id);
-      } catch (quotaErr) {
-        logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
+      if (queuedCountForUser >= queueSettings.workflowQueueMaxQueuedPerUser) {
+        return res.status(429).json({
+          error: 'Too many queued workflows for this user',
+          code: 'workflow_queue_user_cap_exceeded',
+          maxQueuedPerUser: queueSettings.workflowQueueMaxQueuedPerUser,
+        });
       }
-    }
 
-    if (isCloudVision && imageSha256) {
-      try {
-        await visionResultCacheQueries.set({
+      const dedupeKey = (isCloudVision && imageSha256)
+        ? buildVisionQueueDedupeKey({
           userId: req.user.id,
           shelfId: shelf.id,
           imageSha256,
-          resultJson: {
-            analysis: result.analysis,
-            results: result.results,
-            addedItems: result.addedItems,
-            needsReview: result.needsReview,
-            warnings: result.warnings,
-          },
+        })
+        : null;
+
+      if (dedupeKey) {
+        const activeDuplicate = await workflowQueueJobsQueries.findActiveByDedupeKey({
+          workflowType: WORKFLOW_TYPE_VISION,
+          dedupeKey,
         });
-      } catch (cacheWriteErr) {
-        if (cacheWriteErr?.code !== '42P01') {
-          logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
+        if (activeDuplicate) {
+          const queueMeta = await getQueueMetadata(activeDuplicate.jobId);
+          return res.status(202).json({
+            jobId: activeDuplicate.jobId,
+            status: activeDuplicate.status === 'processing' ? 'processing' : 'queued',
+            queuePosition: queueMeta.queuePosition,
+            estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
+            notifyOnComplete: activeDuplicate.notifyOnComplete === true,
+            message: 'Duplicate scan already in progress. Returning existing job.',
+            metadata: requestMetadata,
+            cached: false,
+            scanPhotoId: Number(activeDuplicate?.payload?.scanPhotoId || scanPhotoId || 0) || null,
+          });
         }
       }
-    }
 
-    const counts = buildVisionCounts(result);
-
-    // Generate crop photos before marking job complete so the response
-    // includes shelf items with owner-photo attachments already ready.
-    if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
-      processingStatus.updateJob(jobId, {
-        step: 'generating-photos',
-        progress: 95,
-        message: 'Generating item photos...',
-        status: 'processing',
-      });
-      await warmVisionScanCrops({
+      const payload = {
         userId: req.user.id,
         shelfId: shelf.id,
-        shelfType: shelf.type,
+        imageBase64: imageBase64 || null,
+        rawItems: Array.isArray(rawItems) ? rawItems : null,
+        isCloudVision,
+        imageSha256,
         scanPhotoId,
+        scanPhotoDimensions,
+        metadata: requestMetadata,
+      };
+
+      let queuedJob = null;
+      try {
+        queuedJob = await workflowQueueJobsQueries.enqueueJob({
+          jobId,
+          workflowType: WORKFLOW_TYPE_VISION,
+          userId: req.user.id,
+          shelfId: shelf.id,
+          status: 'queued',
+          priority: 100,
+          maxAttempts: queueSettings.workflowQueueRetryMaxAttempts,
+          payload,
+          dedupeKey,
+          notifyOnComplete: false,
+        });
+      } catch (enqueueErr) {
+        if (enqueueErr?.code === '23505' && dedupeKey) {
+          const activeDuplicate = await workflowQueueJobsQueries.findActiveByDedupeKey({
+            workflowType: WORKFLOW_TYPE_VISION,
+            dedupeKey,
+          });
+          if (activeDuplicate) {
+            const queueMeta = await getQueueMetadata(activeDuplicate.jobId);
+            return res.status(202).json({
+              jobId: activeDuplicate.jobId,
+              status: activeDuplicate.status === 'processing' ? 'processing' : 'queued',
+              queuePosition: queueMeta.queuePosition,
+              estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
+              notifyOnComplete: activeDuplicate.notifyOnComplete === true,
+              message: 'Duplicate scan already in progress. Returning existing job.',
+              metadata: requestMetadata,
+              cached: false,
+              scanPhotoId: Number(activeDuplicate?.payload?.scanPhotoId || scanPhotoId || 0) || null,
+            });
+          }
+        }
+        throw enqueueErr;
+      }
+
+      processingStatus.setJob(jobId, {
         jobId,
+        userId: req.user.id,
+        shelfId: shelf.id,
+        status: 'queued',
+        step: 'queued',
+        progress: 0,
+        message: 'Queued for processing',
+        aborted: false,
+        result: null,
+      });
+
+      const queueMeta = await getQueueMetadata(queuedJob.jobId);
+      let notifyOnComplete = queuedJob.notifyOnComplete === true;
+      if (!notifyOnComplete) {
+        notifyOnComplete = await shouldEnableQueueNotification(queueMeta);
+        if (notifyOnComplete) {
+          const updated = await workflowQueueJobsQueries.updateNotifyOnComplete({
+            jobId: queuedJob.jobId,
+            notifyOnComplete: true,
+          });
+          if (updated) queuedJob = updated;
+        }
+      }
+
+      getWorkflowQueueService().tick().catch((err) => {
+        logger.warn('[Vision] failed to trigger queue tick after enqueue', {
+          message: err?.message || String(err),
+        });
+      });
+
+      return res.status(202).json({
+        jobId: queuedJob.jobId,
+        status: 'queued',
+        queuePosition: queueMeta.queuePosition,
+        estimatedWaitSeconds: queueMeta.estimatedWaitSeconds,
+        notifyOnComplete,
+        message: 'Vision processing queued. Poll /vision/:jobId/status for updates.',
+        metadata: requestMetadata,
+        cached: false,
+        scanPhotoId,
       });
     }
 
-    processingStatus.completeJob(jobId, { ...result, ...counts, scanPhotoId });
-
-    // Get updated shelf items
-    const items = await hydrateShelfItems(req.user.id, shelf.id);
-
-    res.json({
+    const output = await runVisionPipelineJob({
       jobId,
-      analysis: omitMarketValueSourcesDeep(result.analysis),
-      results: result.results,
-      addedItems: omitMarketValueSourcesDeep(result.addedItems),
-      needsReview: omitMarketValueSourcesDeep(result.needsReview),
-      ...counts,
+      userId: req.user.id,
+      shelf,
+      imageBase64,
+      rawItems,
+      isCloudVision,
+      imageSha256,
+      scanPhotoId,
+      scanPhotoDimensions,
+    });
+
+    const items = await hydrateShelfItems(req.user.id, shelf.id);
+    return res.json({
+      jobId,
+      analysis: omitMarketValueSourcesDeep(output.analysis),
+      results: output.results,
+      addedItems: omitMarketValueSourcesDeep(output.addedItems),
+      needsReview: omitMarketValueSourcesDeep(output.needsReview),
+      addedCount: output.addedCount,
+      needsReviewCount: output.needsReviewCount,
+      existingCount: output.existingCount,
+      extractedCount: output.extractedCount,
+      summaryMessage: output.summaryMessage,
       items,
       visionStatus: { status: 'completed', provider: 'google-vision-gemini-pipeline' },
       metadata: requestMetadata,
-      warnings: result.warnings,
+      warnings: output.warnings,
       cached: false,
       scanPhotoId,
     });
-
   } catch (err) {
     logger.error("Vision analysis failed", err);
-    res.status(502).json({ error: "Vision analysis failed" });
+    return res.status(502).json({ error: "Vision analysis failed" });
   }
 }
 
@@ -3145,30 +3386,79 @@ async function getVisionScanRegionCrop(req, res) {
 async function getVisionStatus(req, res) {
   try {
     const { jobId } = req.params;
-    const job = processingStatus.getJob(jobId);
+    const inMemory = processingStatus.getJob(jobId);
+    const queueJob = await workflowQueueJobsQueries.getByJobIdForUser({
+      jobId,
+      userId: req.user.id,
+    });
 
-    if (!job) {
+    if (!inMemory && !queueJob) {
       return res.status(404).json({ error: 'Job not found or expired' });
     }
-
-    // Verify job belongs to this user
-    if (job.userId !== req.user.id) {
+    if (inMemory && inMemory.userId !== req.user.id && !queueJob) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // If completed, also return shelf items
+    const status = queueJob?.status || inMemory?.status || 'queued';
+    const shelfId = Number(inMemory?.shelfId || queueJob?.shelfId || req.params.shelfId || 0) || null;
+    const canUseMemoryFields = inMemory && inMemory.status === status;
+    const step = (canUseMemoryFields ? inMemory?.step : null)
+      || (status === 'queued' ? 'queued' : status === 'processing' ? 'processing' : 'completed');
+    const progress = canUseMemoryFields && Number.isFinite(Number(inMemory?.progress))
+      ? Number(inMemory.progress)
+      : (status === 'queued' ? 0 : status === 'processing' ? 5 : status === 'completed' ? 100 : 0);
+    const message = (canUseMemoryFields ? inMemory?.message : null)
+      || (status === 'queued'
+        ? 'Queued for processing'
+        : status === 'processing'
+          ? 'Processing in progress'
+          : status === 'completed'
+            ? 'Processing complete'
+            : status === 'aborted'
+              ? 'Processing cancelled by user'
+              : queueJob?.error?.message
+                || 'Processing failed');
+    const result = inMemory?.result || queueJob?.result || null;
+
+    let queuePosition = null;
+    let queuedMs = 0;
+    let estimatedWaitSeconds = 0;
+    if (queueJob?.status === 'queued') {
+      queuePosition = await workflowQueueJobsQueries.getQueuePosition(jobId);
+      queuedMs = getQueuedMs(queueJob.createdAt);
+      estimatedWaitSeconds = estimateQueueWaitSeconds(queuePosition);
+    }
+
     let items = null;
-    if (job.status === 'completed' && job.shelfId) {
-      items = await hydrateShelfItems(req.user.id, job.shelfId);
+    if (status === 'completed' && shelfId) {
+      items = await hydrateShelfItems(req.user.id, shelfId);
+    }
+
+    if (!inMemory && queueJob) {
+      processingStatus.setJob(jobId, {
+        jobId,
+        userId: req.user.id,
+        shelfId,
+        status,
+        step,
+        progress,
+        message,
+        result,
+        aborted: status === 'aborted',
+      });
     }
 
     res.json({
-      jobId: job.jobId,
-      status: job.status,
-      step: job.step,
-      progress: job.progress,
-      message: job.message,
-      result: omitMarketValueSourcesDeep(job.result),
+      jobId,
+      status,
+      step,
+      progress,
+      message,
+      queuePosition,
+      queuedMs,
+      estimatedWaitSeconds,
+      notifyOnComplete: queueJob?.notifyOnComplete === true,
+      result: omitMarketValueSourcesDeep(result),
       items,
     });
   } catch (err) {
@@ -3183,24 +3473,61 @@ async function getVisionStatus(req, res) {
 async function abortVision(req, res) {
   try {
     const { jobId } = req.params;
-    const job = processingStatus.getJob(jobId);
+    const inMemory = processingStatus.getJob(jobId);
+    const queueJob = await workflowQueueJobsQueries.getByJobIdForUser({
+      jobId,
+      userId: req.user.id,
+    });
 
-    if (!job) {
+    if (!inMemory && !queueJob) {
       return res.status(404).json({ error: 'Job not found or expired' });
     }
-
-    // Verify job belongs to this user
-    if (job.userId !== req.user.id) {
+    if (inMemory && inMemory.userId !== req.user.id && !queueJob) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Mark as aborted
-    const aborted = processingStatus.abortJob(jobId);
+    if (!queueJob) {
+      const aborted = processingStatus.abortJob(jobId);
+      return res.json({
+        jobId,
+        aborted,
+        status: aborted ? 'aborted' : null,
+        message: aborted ? 'Job abort requested' : 'Job could not be aborted',
+      });
+    }
+
+    const updated = await workflowQueueJobsQueries.requestAbort({
+      jobId,
+      userId: req.user.id,
+    });
+    if (!updated) {
+      return res.status(404).json({ error: 'Job not found or expired' });
+    }
+
+    const preserveStatus = updated.status === 'processing';
+    if (inMemory && inMemory.userId === req.user.id) {
+      processingStatus.abortJob(jobId, { preserveStatus });
+    } else if (updated.status === 'aborted') {
+      processingStatus.setJob(jobId, {
+        jobId,
+        userId: req.user.id,
+        shelfId: updated.shelfId || null,
+        status: 'aborted',
+        step: 'aborted',
+        progress: 0,
+        message: 'Processing cancelled by user',
+        aborted: true,
+        result: null,
+      });
+    }
 
     res.json({
       jobId,
-      aborted,
-      message: aborted ? 'Job abort requested' : 'Job could not be aborted',
+      aborted: true,
+      status: updated.status,
+      message: updated.status === 'aborted'
+        ? 'Queued job removed'
+        : 'Abort requested for running job',
     });
   } catch (err) {
     logger.error('abortVision error:', err);

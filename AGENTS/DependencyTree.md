@@ -50,6 +50,8 @@ ShelvesAI/
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
 - 2026-03-30 | account-feedback-submission | Implemented in-app Account Settings feedback submission flow. Mobile `AccountScreen` now includes a `Send Feedback` settings row opening a multiline prompt modal that submits to `POST /api/account/feedback`. API `routes/account.js` now exposes authenticated feedback endpoint with string-length validation; `controllers/accountController.submitFeedback` validates message + hydrates user contact details and calls new `services/emailService.sendFeedbackEmail(...)`. `emailService` now supports support-inbox feedback delivery via Resend (`SUPPORT_EMAIL` default `support@shelvesai.com`). Added coverage in `api/__tests__/accountController.feedback.test.js`.
+- 2026-03-30 | admin-workfeed-live-queue-monitoring | Added admin-facing live workflow queue monitoring in existing Jobs area. API adds read-only admin endpoints `GET /api/admin/workfeed` and `GET /api/admin/workfeed/:jobId` (wired in `routes/admin.js`, implemented in `controllers/adminController.js`) backed by new query helpers in `database/queries/workflowQueueJobs.js` for filtered/paginated queue listing, active-default ordering (`processing` then `queued` by queue order), and derived `queuePosition`/`queuedMs`. Responses are enriched with single-instance in-memory progress (`step/progress/message`) via `services/processingStatus`. Admin dashboard adds `getWorkfeed`/`getWorkfeedJob` client APIs, introduces Workfeed-first tabbed Jobs UI with 5s polling + race-safe refresh in `pages/Jobs.jsx`, and adds read-only queue detail modal `components/WorkfeedDetailModal.jsx`. Added backend coverage in `__tests__/adminWorkfeedController.test.js` and `database/queries/workflowQueueJobs.admin.test.js`.
+- 2026-03-30 | vision-workflow-queue-and-outbound-throttling | Implemented durable Postgres-backed workflow queueing for vision requests with claim-safe worker execution (`FOR UPDATE SKIP LOCKED`) via new `workflow_queue_jobs` table/query module/service (`database/queries/workflowQueueJobs.js`, `services/workflowQueueService.js`, `services/workflow/workflowSettings.js`). `POST /api/shelves/:shelfId/vision` now enqueues uncached async jobs and returns queue metadata (`status`, `queuePosition`, `estimatedWaitSeconds`, `notifyOnComplete`), `GET /api/shelves/:shelfId/vision/:jobId/status` now returns queue metadata + DB fallback hydration, and `DELETE /api/shelves/:shelfId/vision/:jobId` now supports queued and running abort semantics. Added route-level ingress rate limiting on `/vision` and `/catalog-lookup`, per-user queued cap protection, queue-depth-aware crop warmup capping, in-flight dedupe (`user+shelf+image_sha256`) and hash short-circuit for duplicate scan uploads. Added shared outbound limiter registry for Gemini/provider/S3 calls (`services/outboundLimiterRegistry.js`) and shared catalog service singletons (`services/catalog/sharedCatalogServices.js`) to prevent per-request limiter resets. Added queue-only workflow notifications (`workflow_complete`/`workflow_failed`, `entity_type=workflow_job`) plus `notification_preferences.push_workflow_jobs` support in API and mobile notification settings/tap routing.
 - 2026-03-29 | shelves-search-cast-members | Expanded the `searchUserCollection` SQL payload in `api/database/queries/shelves.js` to select the `cast_members` JSONB column from `collectables` (casting to `NULL::jsonb` for manuals and shelves). Extended the fuzzy string search logic with `c.cast_members::text ILIKE '%' || $1 || '%'` to enable finding collection items by their cast members natively. Updated UI in `mobile/src/screens/ShelvesScreen.js` to destructure `.name` from the parsed `castMembers` layout and push them into the dynamically matched tags pill rendering system alongside genres and tags.
 - 2026-03-29 | add-to-shelf-from-detail | Added "Add to shelf" feature for CollectableDetailScreen when item has no shelf context (search, favorites, deep link, social feed). API: removed `requireFields(['collectableId'])` from `POST /api/shelves/:shelfId/items` in `api/routes/shelves.js`; extended `shelvesController.addCollectable` to accept `manualId` as alternative to `collectableId` (validates ownership, uses existing `shelvesQueries.getManualById` and `shelvesQueries.addManualCollection`). Mobile: new `mobile/src/components/AddToShelfModal.js` shelf picker modal (fetches user shelves, client-side name filter, per-row adding spinner, Alert feedback) importing `ThemeContext` and `api.js`. Integrated into `mobile/src/screens/CollectableDetailScreen.js` with conditional "Add to shelf" button (shown when `!hasShelfItemContext && user?.id`), success checkmark state, and modal render.
 - 2026-03-29 | tmdb-full-cast-jsonb-and-indexed-search | Added end-to-end TMDB full cast persistence for movies/TV into `collectables.cast_members` JSONB. Updated TMDB movie/TV adapters to map full `credits.cast` with normalized entries (`personId`, `name`, `nameNormalized`, `character`, `order`, `profilePath`), extended `collectables.upsert` to persist/merge `cast_members` with provided-only overwrite semantics, and wired cast forwarding through `routes/collectables` resolve-upsert flow, `controllers/shelvesController` payload building, `services/visionPipeline` collectable payload saves, and `services/discovery/CollectableDiscoveryHook` upserts. Added exact cast-name search support via `cast_members @> '[{\"nameNormalized\":...}]'` in `database/queries/collectables.searchGlobal` plus `GET /api/collectables` default count query path. Added DB migration `20260329010000_add_collectables_cast_members` and mirrored schema/index in `database/init/01-schema.sql` with partial GIN index `idx_collectables_cast_members_gin` (`jsonb_path_ops`). Added backfill script `api/scripts/backfill-collectable-cast-members.js` + npm command `backfill:collectable-cast`. Expanded regression coverage in movie/tv catalog service tests, collectables upsert tests, fuzzy/search SQL tests, route helper payload tests, and added new backfill helper tests.
@@ -197,14 +199,23 @@ ShelvesAI/
 
 #### Vision Workflow Completion Contract (`mobile` <- `api`)
 
-- `POST /api/shelves/:shelfId/vision` (sync complete path) now includes:
+- `POST /api/shelves/:shelfId/vision` (sync complete path) includes:
   - `addedCount`
   - `needsReviewCount`
   - `existingCount`
   - `extractedCount`
   - `summaryMessage`
   - optional `cached` boolean (true when same-photo idempotency served a cached result)
-- `GET /api/shelves/:shelfId/vision/:jobId/status` (async complete path, `result`) now includes:
+- `POST /api/shelves/:shelfId/vision` (async path) now returns:
+  - `status` in `{queued, processing, completed}`
+  - `queuePosition` (nullable integer)
+  - `estimatedWaitSeconds` (nullable integer)
+  - `notifyOnComplete` (boolean)
+  - existing async payload fields (`jobId`, `scanPhotoId`, `queued`, `message`)
+- `GET /api/shelves/:shelfId/vision/:jobId/status` now includes:
+  - queue metadata (`queuePosition`, `queuedMs`, `estimatedWaitSeconds`, `notifyOnComplete`)
+  - progress payload (`status`, `step`, `progress`, `message`)
+  - terminal payload (`result`) including:
   - `addedCount`
   - `needsReviewCount`
   - `existingCount`
@@ -216,6 +227,18 @@ ShelvesAI/
 - Consumer paths:
   - `mobile/src/screens/ShelfDetailScreen.js` uses these fields to render non-ambiguous completion alerts.
   - `mobile/src/hooks/useVisionProcessing.js` uses these fields for background toast messaging and completion callbacks.
+
+#### Push Notification Contract (`mobile` <- `api`)
+
+- `GET /api/push/preferences` and `PATCH /api/push/preferences` now include `pushWorkflowJobs`.
+- `GET /api/notifications` may return workflow queue terminal types:
+  - `type` in `{workflow_complete, workflow_failed}`
+  - `entityType = workflow_job`
+  - metadata includes `workflowType`, `shelfId`, `summaryMessage`.
+- Consumer paths:
+  - `mobile/src/screens/NotificationSettingsScreen.js` exposes `Workflow Jobs` toggle.
+  - `mobile/src/screens/NotificationScreen.js` renders workflow-specific notification copy.
+  - `mobile/src/context/PushContext.js` routes workflow notifications to `ShelfDetail` when `metadata.shelfId` exists.
 
 ### API ↔ Admin Dashboard Contract
 
@@ -239,6 +262,8 @@ ShelvesAI/
 | `getRecentFeed(params)` | `GET /api/admin/feed/recent` | Cookie |
 | `getJobs(params)` | `GET /api/admin/jobs` | Cookie |
 | `getJob(jobId)` | `GET /api/admin/jobs/:jobId` | Cookie |
+| `getWorkfeed(params)` | `GET /api/admin/workfeed` | Cookie |
+| `getWorkfeedJob(jobId)` | `GET /api/admin/workfeed/:jobId` | Cookie |
 | `getAuditLogs(params)` | `GET /api/admin/audit-logs` | Cookie |
 | `getSettings()` | `GET /api/admin/settings` | Cookie |
 | `updateSetting(key, value, desc)` | `PUT /api/admin/settings/:key` | Cookie + CSRF |
@@ -343,10 +368,12 @@ controllers/authController.js
 ```
 routes/shelves.js
   -> includes POST /:shelfId/items/:itemId/replacement-intent and POST /:shelfId/items/:itemId/replace
+  -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
   → controllers/shelvesController.js
   → middleware/auth.js
   → middleware/validate.js
   -> middleware/workflowJobContext.js (vision/catalog workflow routes only)
+  -> express-rate-limit
   → utils/imageValidation.js
 
 controllers/shelvesController.js
@@ -364,6 +391,7 @@ controllers/shelvesController.js
   -> database/queries/visionScanPhotos.js
   -> database/queries/visionItemRegions.js
   -> database/queries/visionItemCrops.js
+  -> database/queries/workflowQueueJobs.js
   → services/collectables/fingerprint.js
   → services/collectableMatchingService.js
   → services/catalog/BookCatalogService.js
@@ -373,6 +401,8 @@ controllers/shelvesController.js
   → services/visionPipelineHooks.js
   -> services/visionCropper.js
   → services/processingStatus.js
+  -> services/workflowQueueService.js
+  -> services/workflow/workflowSettings.js
   → services/mediaUrl.js
   → services/manuals/otherManual.js
   → utils/imageValidation.js
@@ -632,6 +662,7 @@ routes/admin.js
   → middleware/validate.js
   Routes (read, before CSRF):
     GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
+    GET  /workfeed, /workfeed/:jobId
     GET  /settings, /users/:userId/vision-quota, /audit-logs
     GET  /shelves, /shelves/:shelfId, /shelves/:shelfId/items
   Routes (write, after CSRF):
@@ -642,9 +673,11 @@ routes/admin.js
 controllers/adminController.js
   → database/queries/admin.js
   → database/queries/jobRuns.js
+  -> database/queries/workflowQueueJobs.js
   → database/queries/systemSettings.js
   → database/queries/visionQuota.js
   → database/queries/adminContent.js
+  -> services/processingStatus.js
   → services/config/SystemSettingsCache.js
   → database/queries/utils.js
   → utils/adminAuth.js
@@ -713,11 +746,7 @@ services/visionPipeline.js
   → services/visionPipelineHooks.js
   → services/collectables/fingerprint.js
   → services/collectables/kind.js
-  → services/catalog/BookCatalogService.js
-  → services/catalog/MovieCatalogService.js
-  → services/catalog/GameCatalogService.js
-  → services/catalog/TvCatalogService.js
-  → services/catalog/MusicCatalogService.js
+  -> services/catalog/sharedCatalogServices.js
   → services/manuals/otherManual.js
   → database/pg.js
   → database/queries/collectables.js
@@ -742,6 +771,7 @@ services/processingStatus.js
 
 services/googleGemini.js
   → config/visionSettings.json
+  -> services/outboundLimiterRegistry.js
   -> utils/visionBox2d.js
   Methods: detectShelfItemsFromImage() -> { items, conversationHistory, warning }
              "other" shelves: single call with tools: [{ googleSearch: {} }] for search grounding
@@ -764,11 +794,9 @@ services/visionCropper.js
 services/collectableMatchingService.js
   → database/queries/collectables.js
   → services/collectables/fingerprint.js
-  → services/catalog/BookCatalogService.js
-  → services/catalog/MovieCatalogService.js
-  → services/catalog/GameCatalogService.js
-  → services/catalog/TvCatalogService.js
-  → services/catalog/MusicCatalogService.js
+  -> services/catalog/sharedCatalogServices.js
+  -> services/catalog/MetadataScorer.js
+  -> services/config/shelfTypeResolver.js
 
 services/collectables/fingerprint.js
   (no internal imports — crypto hashing)
@@ -789,14 +817,17 @@ services/catalog/BookCatalogService.js
 services/catalog/MovieCatalogService.js
   → services/catalog/CatalogRouter.js
   → services/catalog/adapters/TmdbAdapter.js
+  -> services/outboundLimiterRegistry.js
 
 services/catalog/GameCatalogService.js
   → services/catalog/CatalogRouter.js
   → services/catalog/adapters/IgdbAdapter.js
+  -> services/outboundLimiterRegistry.js
 
 services/catalog/TvCatalogService.js
   → services/catalog/CatalogRouter.js
   → services/catalog/adapters/TmdbTvAdapter.js
+  -> services/outboundLimiterRegistry.js
 
 services/catalog/MusicCatalogService.js
   → services/collectables/fingerprint.js
@@ -807,6 +838,13 @@ services/catalog/MusicCatalogService.js
 
 services/catalog/MusicBrainzRequestQueue.js
   (no internal imports — FIFO request queue)
+
+services/catalog/sharedCatalogServices.js
+  -> services/catalog/BookCatalogService.js
+  -> services/catalog/MovieCatalogService.js
+  -> services/catalog/GameCatalogService.js
+  -> services/catalog/TvCatalogService.js
+  -> services/catalog/MusicCatalogService.js
 
 services/catalog/CoverArtBackfillHook.js
   → services/visionPipelineHooks.js (lazy require in register())
@@ -847,9 +885,10 @@ services/catalog/adapters/DiscogsAdapter.js
   → utils/RateLimiter.js
 
 services/openLibrary.js
-  → utils/RateLimiter.js
+  -> services/outboundLimiterRegistry.js
 
 services/hardcover.js
+  -> services/outboundLimiterRegistry.js
   → utils/RateLimiter.js
 
 services/emailService.js
@@ -860,7 +899,21 @@ services/pushNotificationService.js
   (no internal imports — uses expo-server-sdk)
 
 services/s3.js
-  (no internal imports — uses @aws-sdk/client-s3)
+  -> services/outboundLimiterRegistry.js
+  (uses @aws-sdk/client-s3)
+
+services/outboundLimiterRegistry.js
+  -> logger.js
+
+services/workflowQueueService.js
+  -> database/queries/workflowQueueJobs.js
+  -> database/queries/notifications.js
+  -> services/workflow/workflowSettings.js
+  -> services/processingStatus.js
+  -> logger.js
+
+services/workflow/workflowSettings.js
+  -> services/config/SystemSettingsCache.js
 
 services/mediaUrl.js
   (no internal imports)
@@ -976,6 +1029,7 @@ database/queries/passwordReset.js → database/pg.js
 database/queries/visionQuota.js → database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
 database/queries/pushDeviceTokens.js → database/pg.js, database/queries/utils.js
 database/queries/notificationPreferences.js → database/pg.js, database/queries/utils.js
+database/queries/workflowQueueJobs.js -> database/pg.js, database/queries/utils.js
 database/queries/systemSettings.js → database/pg.js, database/queries/utils.js
 database/queries/newsSeen.js → database/pg.js
 database/queries/newsDismissed.js → database/pg.js
@@ -1525,6 +1579,7 @@ users (UUID PK)
   ├─< push_device_tokens (user_id FK)
   ├── notification_preferences (user_id PK)
   ├── user_vision_quota (user_id PK)
+  â”œâ”€< workflow_queue_jobs (user_id FK, shelf_id FK nullable)
   ├─< password_reset_tokens (user_id FK)
   ├─< wishlists (user_id FK)
   │     └─< wishlist_items (wishlist_id FK)
@@ -1554,6 +1609,17 @@ vision_result_cache (PK: user_id + shelf_id + image_sha256)
   -> shelf_id (FK -> shelves.id)
   -> result_json (JSONB cached pipeline result)
   -> created_at, expires_at (TTL)
+
+workflow_queue_jobs (job_id TEXT PK)
+  -> workflow_type (text, current primary type: vision)
+  -> user_id (FK -> users.id)
+  -> shelf_id (FK -> shelves.id, nullable)
+  -> status in {queued, processing, completed, failed, aborted}
+  -> priority, attempt_count, max_attempts
+  -> dedupe_key, abort_requested, notify_on_complete
+  -> payload/result/error JSONB
+  -> claimed_at, started_at, finished_at, created_at, updated_at
+
 
 item_replacement_traces (BIGSERIAL PK)
   -> user_id (FK -> users.id)
@@ -1606,6 +1672,8 @@ news_items (SERIAL PK)
 - `users.email`: UNIQUE constraint
 - `collectables.title`: GIN pg_trgm index for fuzzy search
 - `collectables.cast_members`: partial GIN index (`idx_collectables_cast_members_gin`) for exact cast-name containment lookups
+- `workflow_queue_jobs.status`: CHECK constraint (`queued|processing|completed|failed|aborted`)
+- `workflow_queue_jobs`: active dedupe UNIQUE partial index `uq_workflow_queue_dedupe_active (workflow_type, dedupe_key)` for queued/processing rows
 
 ### Row Level Security (RLS)
 
@@ -1616,7 +1684,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (55 files, 2026-01-10 -> 2026-03-29)
+### Migration History (57 files, 2026-01-10 -> 2026-03-30)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1680,6 +1748,8 @@ news_items (SERIAL PK)
 | `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default → TRUE (flips existing users), `user_collections.owner_photo_visible` default → TRUE |
 | `20260328000000_add_mention_notification_type` | Expand `notifications` type CHECK constraint to include `'mention'`, + `notification_preferences.push_mentions` (BOOLEAN DEFAULT TRUE) |
 | `20260329010000_add_collectables_cast_members` | + `collectables.cast_members` (JSONB) and partial GIN index `idx_collectables_cast_members_gin` for cast containment lookups |
+| `20260330010000_create_workflow_queue_jobs` | + `workflow_queue_jobs` (durable workflow queue table, claim/active-dedupe indexes, status/attempt constraints, updated_at trigger) |
+| `20260330010010_add_workflow_job_notifications` | expand `notifications` type/entity CHECK constraints for workflow jobs (`workflow_complete`, `workflow_failed`, `workflow_job`) and + `notification_preferences.push_workflow_jobs` |
 
 ---
 
@@ -1743,4 +1813,5 @@ These files have the most dependents or are critical infrastructure:
 | `shared/theme/tokens.js` | 5 mobile UI components import it directly |
 | `admin-dashboard/src/api/client.js` | All admin API calls flow through it |
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
+
 

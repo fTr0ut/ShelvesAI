@@ -15,6 +15,8 @@ function buildPushContent(type, actorName, metadata = {}) {
         friend_request: 'Friend Request',
         friend_accept: 'Friend Accepted',
         mention: 'You were mentioned',
+        workflow_complete: 'Scan Complete',
+        workflow_failed: 'Scan Failed',
     };
 
     const bodyMap = {
@@ -23,6 +25,8 @@ function buildPushContent(type, actorName, metadata = {}) {
         friend_request: `${actorName} sent you a friend request`,
         friend_accept: `${actorName} accepted your friend request`,
         mention: `${actorName} mentioned you in a comment: "${truncate(metadata.preview || '', 50)}"`,
+        workflow_complete: truncate(metadata.summaryMessage || "Your queued workflow finished successfully.", 120),
+        workflow_failed: truncate(metadata.summaryMessage || "Your queued workflow failed. Open the app to retry.", 120),
     };
 
     return {
@@ -92,6 +96,7 @@ async function sendPushNotification({ id, userId, type, actorName, metadata = {}
                     entityId: String(entityId),
                     entityType,
                     notificationId: id,
+                    metadata,
                 },
                 badge: 1,
             });

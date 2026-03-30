@@ -58,6 +58,8 @@ router.get('/settings/:key', adminController.getSetting);
 router.get('/feed/recent', adminController.getRecentFeed);
 router.get('/feed/social', adminController.getAdminSocialFeed);
 router.get('/feed/events/:eventId/comments', adminController.getAdminEventComments);
+router.get('/workfeed', adminController.listWorkfeed);
+router.get('/workfeed/:jobId', adminController.getWorkfeedJob);
 router.get('/jobs', adminController.listJobs);
 router.get('/jobs/:jobId', adminController.getJob);
 

@@ -53,6 +53,10 @@ function buildNotificationText(notification) {
             return `${actorName} sent you a friend request`;
         case 'friend_accept':
             return `${actorName} accepted your friend request`;
+        case 'workflow_complete':
+            return notification?.metadata?.summaryMessage || 'Your queued workflow completed successfully';
+        case 'workflow_failed':
+            return notification?.metadata?.summaryMessage || 'Your queued workflow failed';
         default:
             return `${actorName} sent you a notification`;
     }
@@ -133,6 +137,16 @@ export default function NotificationScreen({ navigation }) {
             return;
         }
 
+        if (notification.entityType === 'workflow_job') {
+            const shelfId = Number(notification?.metadata?.shelfId);
+            if (Number.isFinite(shelfId) && shelfId > 0) {
+                navigation.navigate('ShelfDetail', { shelfId });
+                return;
+            }
+            navigation.navigate('Main', { screen: 'Shelves' });
+            return;
+        }
+
         const username = notification?.actor?.username;
         if (username) {
             navigation.navigate('Profile', { username });
@@ -184,7 +198,7 @@ export default function NotificationScreen({ navigation }) {
             <View style={styles.emptyState}>
                 <Ionicons name="notifications-outline" size={48} color={colors.textMuted} />
                 <Text style={styles.emptyTitle}>No notifications</Text>
-                <Text style={styles.emptyText}>Likes, comments, and friend updates will appear here.</Text>
+                <Text style={styles.emptyText}>Likes, comments, friend updates, and workflow alerts will appear here.</Text>
             </View>
         );
     };
