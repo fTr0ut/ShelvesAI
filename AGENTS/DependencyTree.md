@@ -1,4 +1,4 @@
-# ShelvesAI Dependency Tree
+﻿# ShelvesAI Dependency Tree
 
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
@@ -50,6 +50,9 @@ ShelvesAI/
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
 - 2026-03-31 | owned-platform-format-required-and-row-badge | Tightened game-owned-platform editing contract. `mobile/src/screens/CollectableDetailScreen.js` now blocks save until ownership format is selected (`Physical`/`Digital`), shows a required prompt when unset, and renders ownership format badges in each Owned Platforms row after save. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now requires `format` for game collectables and returns 400 when missing/empty/invalid. Extended coverage in `api/__tests__/shelvesController.test.js` with missing-format rejection and required-format success assertions.
+- 2026-03-31 | metadata-score-persistence-and-igdb-rating-separation | Fixed metadata score persistence so DB `collectables.metascore` now stores only metadata-quality scoring payloads (`score/maxScore/missing/scoredAt`) and no longer accepts IGDB rating objects. `api/services/catalog/GameCatalogService.mapIgdbGameToCollectable()` no longer maps IGDB ratings into `metascore`; ratings remain under `extras.igdb.ratings`. `api/services/visionPipeline.saveToShelf()` now computes metadata scores via `MetadataScorer` for new scan saves, merges with carried `_metadata*` values, and persists the highest score. `api/routes/collectables.buildCollectableUpsertPayloadFromCandidate()` and `api/controllers/shelvesController.buildCollectableUpsertPayload()` now prioritize scorer-derived `_metadata*` fields and reject non-metadata-shaped `metascore` payloads. `CatalogRouter`/`CollectableMatchingService` now propagate `_metadataMaxScore` and `_metadataScoredAt` alongside `_metadataScore`/`_metadataMissing`. Added/updated tests in `api/services/catalog/GameCatalogService.test.js`, `api/__tests__/collectablesRoute.helpers.test.js`, and `api/__tests__/visionPipeline.test.js`.
+- 2026-03-31 | platform-missing-insert-default-fix | Fixed `user_collections.platform_missing` NOT NULL insert failures for non-game add flows (including vision bulk saves) by updating `api/database/queries/shelves.addCollectable` to persist `FALSE` when platform missing is omitted and to only mutate `platform_missing` on conflict updates when explicitly provided. Added query regression coverage in `api/database/queries/shelves.test.js`.
+- 2026-03-31 | games-shelf-defaults-mismatch-guard-and-platform-missing | Implemented games-shelf default platform/format inheritance with mismatch guarding across add/review/replace/vision/catalog save paths. Added `api/services/gameShelfDefaults.js` shared resolver, `shelves.game_defaults` JSONB and `user_collections.platform_missing` BOOLEAN via migration `20260331190000_add_shelf_game_defaults_and_platform_missing`, and wired shelf create/update/list/get payload contracts to round-trip normalized `gameDefaults` plus item-level `platformMissing`. `PUT /api/shelves/:shelfId` now propagates changed games defaults to existing shelf items with overwrite semantics (owned platforms + format + missing state). Mobile `ShelfCreateScreen`/`ShelfEditScreen` now expose optional games defaults UI (with overwrite warning on edit), and `ShelfDetailScreen` + `CollectableDetailScreen` render a `Platform missing` badge/chip when flagged.
 - 2026-03-31 | collectable-detail-game-format-and-rating-visibility | Updated game detail UX and owned-platform save contract. `mobile/src/screens/CollectableDetailScreen.js` now relabels game `maxPlayers` as `# of Players`, hides `IGDB Rating` when numeric value is `0.0`, and adds Owned Platforms edit-time format selection (`Physical`/`Digital`) included in `PUT /api/shelves/:shelfId/items/:itemId/platforms` payload. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now validates optional `format` (`physical|digital`) and persists it via new helper `api/database/queries/collectables.updateFormat`; response now includes updated `item.collectable.format` when format is provided. Added migration `api/database/migrations/20260331143000_restore_collectables_format_column.js` to ensure `collectables.format` exists before writes. Added/updated controller tests in `api/__tests__/shelvesController.test.js`.
 - 2026-03-31 | igdb-platform-backfill-max-players-and-env-local-override | Updated `api/scripts/backfill-collectable-platform-data.js` to also backfill `collectables.max_players` alongside `platform_data`/`igdb_payload` using IGDB multiplayer mapping (`mapped.maxPlayers` fallback extraction). The script’s `ONLY_MISSING` mode now includes rows where `max_players IS NULL`, and env loading is explicit `.env` first with `.env.local` override when present for local testing.
 - 2026-03-31 | collectables-max-players-persistence | Added dedicated game-player-cap persistence on collectables. New migration `20260331130000_add_collectables_max_players` adds `collectables.max_players` (INTEGER, nullable) and init schema now includes the same column. `database/queries/collectables.upsert` now binds/writes `max_players`, and `routes/collectables.buildCollectableUpsertPayloadFromCandidate()` now forwards `maxPlayers` from API candidates into upsert payloads so game imports persist explicit player caps for downstream detail/search rendering.
@@ -431,6 +434,7 @@ controllers/shelvesController.js
   → services/catalog/BookCatalogService.js
   → services/catalog/MovieCatalogService.js
   → services/catalog/GameCatalogService.js
+  -> services/gameShelfDefaults.js
   → services/visionPipeline.js
   → services/visionPipelineHooks.js
   -> services/visionCropper.js
@@ -779,6 +783,7 @@ services/visionPipeline.js
   → services/googleGemini.js
   → services/processingStatus.js
   → services/visionPipelineHooks.js
+  -> services/gameShelfDefaults.js
   → services/collectables/fingerprint.js
   → services/collectables/kind.js
   -> services/catalog/sharedCatalogServices.js
@@ -797,6 +802,9 @@ services/visionPipeline.js
              processImage() appends extraction warning to `warnings` payload when present
              processImage(options.scanPhotoDimensions) normalizes/repairs bbox before persistence
              persistVisionRegions(...) uses replaceExisting snapshot semantics per scanPhotoId
+
+services/gameShelfDefaults.js
+  (no internal imports — shared games defaults validation/normalization + mismatch resolver)
 
 services/visionPipelineHooks.js
   (no internal imports — hook registry)
@@ -1602,10 +1610,12 @@ src/utils/errorUtils.js          (leaf — no internal imports)
 ```
 users (UUID PK)
   ├─< shelves (user_id FK)
+  │     ├── game_defaults (JSONB, nullable; games shelf platform/format defaults)
   │     ├─< user_collections (shelf_id FK)
   │     │     ├── collectables (collectable_id FK) ──> collectables table
   │     │     └── user_manuals (manual_id FK) ──> user_manuals table
   │     │         (CHECK: exactly one of collectable_id or manual_id)
+  │     │         (platform_missing BOOLEAN NOT NULL DEFAULT FALSE)
   │     └─< needs_review (shelf_id FK)
   ├─< user_manuals (user_id FK)
   │     └── cover_media_path (S3/local)
@@ -1716,12 +1726,14 @@ news_items (SERIAL PK)
 ### Key Constraints
 
 - `user_collections`: CHECK ensures exactly one of `collectable_id` or `manual_id` is set
+- `user_collections.platform_missing`: BOOLEAN NOT NULL DEFAULT FALSE; set when games default platform mismatches available item evidence
 - `user_collections`: UNIQUE partial index on `(user_id, shelf_id, manual_id)` when `manual_id IS NOT NULL` (prevents duplicate manual links on one shelf)
 - `user_collection_platforms`: UNIQUE index on `(collection_item_id, lower(platform_name))` (prevents duplicate owned-platform chips per shelf item)
 - `user_manuals`: UNIQUE partial index on `(user_id, shelf_id, manual_fingerprint)` when `manual_fingerprint IS NOT NULL` (prevents duplicate manual rows per shelf fingerprint)
 - `friendships`: CHECK prevents self-friendship; status ∈ {pending, accepted, blocked}
 - `shelves.type` ∈ {books, movies, games, vinyl, tv, other}
 - `shelves.visibility` ∈ {private, friends, public}
+- `shelves.game_defaults`: nullable JSONB contract for games shelf defaults (`platformType/customPlatformText/format`)
 - `users.email`: UNIQUE constraint
 - `collectables.title`: GIN pg_trgm index for fuzzy search
 - `collectables.cast_members`: partial GIN index (`idx_collectables_cast_members_gin`) for exact cast-name containment lookups
@@ -1737,7 +1749,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (62 files, 2026-01-10 -> 2026-03-31)
+### Migration History (63 files, 2026-01-10 -> 2026-03-31)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1808,7 +1820,7 @@ news_items (SERIAL PK)
 | `20260331101000_create_user_collection_platforms` | + `user_collection_platforms` (per-shelf-item owned platforms with case-insensitive uniqueness and lookup indexes) |
 | `20260331120000_add_collectables_igdb_payload` | + `collectables.igdb_payload` (JSONB) |
 | `20260331130000_add_collectables_max_players` | + `collectables.max_players` (INTEGER) |
-
+| `20260331190000_add_shelf_game_defaults_and_platform_missing` | + `shelves.game_defaults` (JSONB, nullable) and + `user_collections.platform_missing` (BOOLEAN NOT NULL DEFAULT FALSE) |
 ---
 
 ## External Service Integrations
@@ -1873,3 +1885,5 @@ These files have the most dependents or are critical infrastructure:
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
 
 ---
+
+

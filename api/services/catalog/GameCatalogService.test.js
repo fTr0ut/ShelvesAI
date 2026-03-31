@@ -347,8 +347,8 @@ describe('GameCatalogService.safeLookup', () => {
         releaseRegionName: 'North America',
       }),
     ]);
-    expect(mapped.metascore).toEqual(expect.objectContaining({
-      provider: 'igdb',
+    expect(mapped.metascore).toBeUndefined();
+    expect(mapped.extras?.igdb?.ratings).toEqual(expect.objectContaining({
       rating: 84.6,
       ratingCount: 1200,
       aggregatedRating: 87.2,

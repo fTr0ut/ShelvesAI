@@ -9,7 +9,7 @@ const { rowToCamelCase, parsePagination } = require("../database/queries/utils")
 const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../services/collectables/fingerprint");
 const { normalizeCollectableKind } = require("../services/collectables/kind");
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
-const { resolveShelfType } = require('../services/config/shelfTypeResolver');
+const { resolveShelfType, getApiContainerKey } = require('../services/config/shelfTypeResolver');
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
 const logger = require('../logger');
 const {
@@ -94,6 +94,78 @@ function normalizeTextValue(value) {
   if (value == null) return null;
   const trimmed = String(value).trim();
   return trimmed || null;
+}
+
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeMetadataMissing(value) {
+  if (!Array.isArray(value)) return [];
+  const out = value
+    .map((entry) => normalizeTextValue(entry))
+    .filter(Boolean);
+  return Array.from(new Set(out));
+}
+
+function normalizeMetadataScoredAt(value) {
+  const normalized = normalizeTextValue(value);
+  if (!normalized) return new Date().toISOString();
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
+function normalizeMetadataScoreShape(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const hasMetadataKeys = (
+    Object.prototype.hasOwnProperty.call(value, 'score')
+    || Object.prototype.hasOwnProperty.call(value, 'maxScore')
+    || Object.prototype.hasOwnProperty.call(value, 'missing')
+    || Object.prototype.hasOwnProperty.call(value, 'scoredAt')
+  );
+  if (!hasMetadataKeys) return null;
+
+  return {
+    score: toFiniteNumberOrNull(value.score),
+    maxScore: toFiniteNumberOrNull(value.maxScore),
+    missing: normalizeMetadataMissing(value.missing),
+    scoredAt: normalizeMetadataScoredAt(value.scoredAt),
+  };
+}
+
+function metadataScoreFromScoringFields(candidate, containerType = null) {
+  const hasScoreFields = (
+    Object.prototype.hasOwnProperty.call(candidate || {}, '_metadataScore')
+    || Object.prototype.hasOwnProperty.call(candidate || {}, '_metadataMaxScore')
+    || Object.prototype.hasOwnProperty.call(candidate || {}, '_metadataMissing')
+    || Object.prototype.hasOwnProperty.call(candidate || {}, '_metadataScoredAt')
+  );
+  if (!hasScoreFields) return null;
+
+  const score = toFiniteNumberOrNull(candidate?._metadataScore);
+  const maxScoreFromCandidate = toFiniteNumberOrNull(candidate?._metadataMaxScore);
+  const fallbackMaxScore = containerType ? 100 : null;
+
+  return {
+    score,
+    maxScore: maxScoreFromCandidate ?? fallbackMaxScore,
+    missing: normalizeMetadataMissing(candidate?._metadataMissing),
+    scoredAt: normalizeMetadataScoredAt(candidate?._metadataScoredAt),
+  };
+}
+
+function pickHigherMetadataScore(primary, secondary) {
+  if (!primary) return secondary || null;
+  if (!secondary) return primary;
+  const primaryScore = toFiniteNumberOrNull(primary.score);
+  const secondaryScore = toFiniteNumberOrNull(secondary.score);
+  if (primaryScore == null && secondaryScore == null) return primary;
+  if (primaryScore == null) return secondary;
+  if (secondaryScore == null) return primary;
+  return secondaryScore > primaryScore ? secondary : primary;
 }
 
 function normalizeCastName(value) {
@@ -531,13 +603,10 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
   const identifiers = candidate?.identifiers && typeof candidate.identifiers === 'object' && !Array.isArray(candidate.identifiers)
     ? candidate.identifiers
     : {};
-  const metascore = (
-    candidate?.metascore
-    && typeof candidate.metascore === 'object'
-    && !Array.isArray(candidate.metascore)
-  )
-    ? candidate.metascore
-    : null;
+  const containerType = getApiContainerKey(kind || fallbackKind || DEFAULT_API_CONTAINER_TYPE);
+  const scoreFromScoringFields = metadataScoreFromScoringFields(candidate, containerType);
+  const scoreFromCandidate = normalizeMetadataScoreShape(candidate?.metascore);
+  const metascore = pickHigherMetadataScore(scoreFromScoringFields, scoreFromCandidate);
   const images = normalizeArray(candidate?.images).filter(Boolean);
   const provider = normalizeTextValue(candidate?.provider || candidate?._source || candidate?.source);
   const sources = normalizeArray(candidate?.sources).filter(Boolean);

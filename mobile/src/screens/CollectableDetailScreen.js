@@ -176,6 +176,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [platformDraft, setPlatformDraft] = useState('');
     const [isEditingOwnedPlatforms, setIsEditingOwnedPlatforms] = useState(false);
     const [ownedPlatformsSaving, setOwnedPlatformsSaving] = useState(false);
+    const [platformMissing, setPlatformMissing] = useState(!!item?.platformMissing);
     const [ownedPlatformFormat, setOwnedPlatformFormat] = useState(() => normalizeOwnedGameFormat(
         item?.collectable?.format || item?.collectableSnapshot?.format || item?.format,
     ));
@@ -235,6 +236,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
         return false;
     }, [navigation]);
     const bottomFooterSpacer = isInsideBottomTab ? PERSISTENT_TAB_FOOTER_SPACER : 0;
+
+    useEffect(() => {
+        setPlatformMissing(!!item?.platformMissing);
+    }, [item?.id, item?.platformMissing]);
 
     // Fetch wishlists
     const fetchWishlists = async () => {
@@ -1028,6 +1033,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             );
             setOwnedPlatforms(nextOwned);
             setOwnedPlatformFormat(nextFormat);
+            setPlatformMissing(!!data?.item?.platformMissing);
             setIsEditingOwnedPlatforms(false);
             setPlatformDraft('');
         } catch (err) {
@@ -2336,6 +2342,11 @@ export default function CollectableDetailScreen({ route, navigation }) {
                     )}
                     <Text style={styles.title}>{title}</Text>
                     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+                    {platformMissing ? (
+                        <View style={styles.platformMissingBadge}>
+                            <Text style={styles.platformMissingBadgeText}>Platform missing</Text>
+                        </View>
+                    ) : null}
                     {showOwnerPhotoInHeroForCollectable && renderOwnerPhotoCard([
                         styles.heroOwnerPhotoCard,
                         styles.ownerPhotoUnderSubtitle,
@@ -3070,6 +3081,21 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textSecondary,
         marginTop: 4,
         textAlign: 'center',
+    },
+    platformMissingBadge: {
+        marginTop: spacing.sm,
+        alignSelf: 'center',
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 4,
+        borderRadius: radius.full,
+        backgroundColor: colors.error + '20',
+        borderWidth: 1,
+        borderColor: colors.error + '55',
+    },
+    platformMissingBadgeText: {
+        fontSize: 12,
+        color: colors.error,
+        fontWeight: '700',
     },
     actionsRow: {
         flexDirection: 'row',

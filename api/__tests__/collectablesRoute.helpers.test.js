@@ -205,6 +205,10 @@ describe('collectables route helpers', () => {
         kind: 'games',
         systemName: 'Xbox Series X',
         maxPlayers: 16,
+        _metadataScore: 72,
+        _metadataMaxScore: 100,
+        _metadataMissing: ['description'],
+        _metadataScoredAt: '2026-03-31T00:00:00.000Z',
         metascore: { provider: 'igdb', rating: 88.1, ratingCount: 1000 },
         igdbPayload: {
           fetchedAt: '2026-03-31T00:00:00.000Z',
@@ -224,12 +228,30 @@ describe('collectables route helpers', () => {
       expect.objectContaining({ igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' }),
       expect.objectContaining({ igdbPlatformId: 6, name: 'PC (Microsoft Windows)', abbreviation: 'PC' }),
     ]);
-    expect(payload.metascore).toEqual({ provider: 'igdb', rating: 88.1, ratingCount: 1000 });
+    expect(payload.metascore).toEqual({
+      score: 72,
+      maxScore: 100,
+      missing: ['description'],
+      scoredAt: '2026-03-31T00:00:00.000Z',
+    });
     expect(payload.maxPlayers).toBe(16);
     expect(payload.igdbPayload).toEqual(expect.objectContaining({
       score: 321,
       game: expect.objectContaining({ id: 99, name: 'Halo Infinite' }),
     }));
+  });
+
+  it('ignores provider ratings when candidate metascore is not metadata-score shaped', () => {
+    const payload = buildCollectableUpsertPayloadFromCandidate(
+      {
+        title: 'Halo Infinite',
+        kind: 'games',
+        metascore: { provider: 'igdb', rating: 88.1, ratingCount: 1000 },
+      },
+      'games',
+    );
+
+    expect(payload.metascore).toBeNull();
   });
 
   it('includes cast list in payload when cast members are provided', () => {

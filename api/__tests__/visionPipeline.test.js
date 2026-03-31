@@ -6,6 +6,7 @@ const shelvesQueries = require('../database/queries/shelves');
 const visionItemRegionsQueries = require('../database/queries/visionItemRegions');
 const pg = require('../database/pg');
 const processingStatus = require('../services/processingStatus');
+const { getMetadataScorer } = require('../services/catalog/MetadataScorer');
 
 jest.mock('../services/googleGemini');
 jest.mock('../database/queries/collectables');
@@ -26,6 +27,9 @@ jest.mock('../services/collectables/fingerprint', () => ({
     makeManualFingerprint: jest.fn(() => 'manual-fingerprint'),
 }));
 jest.mock('../services/catalog/BookCatalogService');
+jest.mock('../services/catalog/MetadataScorer', () => ({
+    getMetadataScorer: jest.fn(),
+}));
 
 describe('VisionPipelineService', () => {
     let service;
@@ -34,6 +38,14 @@ describe('VisionPipelineService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         getVisionSettingsForType.mockReturnValue({});
+        getMetadataScorer.mockReturnValue({
+            scoreAsync: jest.fn().mockResolvedValue({
+                score: 65,
+                maxScore: 100,
+                missing: ['description'],
+                scoredAt: '2026-03-31T12:00:00.000Z',
+            }),
+        });
         service = new VisionPipelineService();
         mockGemini = GoogleGeminiService.mock.instances[0];
         mockGemini.detectShelfItemsFromImage = jest.fn();
@@ -100,6 +112,82 @@ describe('VisionPipelineService', () => {
         expect(result.results.added).toBe(1);
         // Should have come from catalog (mocked logic in pipeline sets confidence 1.0)
         expect(result.addedItems[0].source).toBe('catalog-match');
+    });
+
+    it('persists the highest metadata score when saving a new collectable', async () => {
+        collectablesQueries.findByFingerprint.mockResolvedValue(null);
+        collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+        collectablesQueries.findByFuzzyFingerprint.mockResolvedValue(null);
+        collectablesQueries.upsert.mockResolvedValue({ id: 124, title: 'Known Book', kind: 'book' });
+        shelvesQueries.addCollectable.mockResolvedValue({ id: 999 });
+
+        await service.saveToShelf(
+            [{
+                title: 'Known Book',
+                kind: 'book',
+                _metadataScore: 55,
+                _metadataMaxScore: 100,
+                _metadataMissing: ['publisher'],
+                metascore: {
+                    score: 60,
+                    maxScore: 100,
+                    missing: ['year'],
+                    scoredAt: '2026-03-31T01:00:00.000Z',
+                },
+            }],
+            1,
+            10,
+            'book',
+        );
+
+        expect(collectablesQueries.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+                metascore: expect.objectContaining({
+                    score: 65,
+                    maxScore: 100,
+                }),
+            }),
+            expect.any(Object),
+        );
+    });
+
+    it('marks platformMissing on games shelf default mismatch while still saving item', async () => {
+        shelvesQueries.addCollectable.mockResolvedValue({ id: 88 });
+        shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue([]);
+        shelvesQueries.updateCollectionItemGameDefaults.mockResolvedValue({ id: 88, format: null, platformMissing: true });
+
+        const result = await service.saveToShelf(
+            [
+                {
+                    title: 'Halo Infinite',
+                    collectable: {
+                        id: 501,
+                        title: 'Halo Infinite',
+                        kind: 'games',
+                        systemName: 'Xbox Series X|S',
+                        platformData: [{ name: 'Xbox Series X|S' }],
+                    },
+                },
+            ],
+            1,
+            10,
+            'games',
+            { shelfGameDefaults: { platformType: 'playstation', format: 'physical' } },
+        );
+
+        expect(shelvesQueries.addCollectable).toHaveBeenCalledWith(expect.objectContaining({
+            collectableId: 501,
+            format: null,
+            platformMissing: true,
+        }));
+        expect(shelvesQueries.updateCollectionItemGameDefaults).toHaveBeenCalledWith({
+            collectionItemId: 88,
+            userId: 1,
+            shelfId: 10,
+            format: null,
+            platformMissing: true,
+        }, null);
+        expect(result.added).toHaveLength(1);
     });
 
     it('preserves extractionIndex and box2d when catalog resolves an item', async () => {

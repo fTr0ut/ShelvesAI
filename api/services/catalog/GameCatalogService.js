@@ -1234,12 +1234,6 @@ class GameCatalogService {
           multiplayer: multiplayerData,
         },
       },
-      metascore: ratingData
-        ? {
-          provider: 'igdb',
-          ...ratingData,
-        }
-        : null,
       igdbPayload,
       lightweightFingerprint: lwf || null,
       fingerprint,

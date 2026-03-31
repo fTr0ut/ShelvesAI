@@ -89,6 +89,7 @@ CREATE TABLE shelves (
     name TEXT NOT NULL,
     type TEXT NOT NULL,  -- 'books', 'movies', 'games', 'vinyl', 'other'
     description TEXT,
+    game_defaults JSONB,
 
     visibility TEXT DEFAULT 'private'
         CHECK (visibility IN ('private', 'friends', 'public')),
@@ -271,6 +272,7 @@ CREATE TABLE user_collections (
     -- User-specific metadata
     position INTEGER,
     format TEXT,
+    platform_missing BOOLEAN NOT NULL DEFAULT FALSE,
     notes TEXT,
     rating DECIMAL(2,1) CHECK (rating >= 0 AND rating <= 5),
     owner_photo_source TEXT,

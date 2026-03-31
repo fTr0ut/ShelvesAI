@@ -116,12 +116,19 @@ async function getForViewing(shelfId, viewerId) {
 /**
  * Create a new shelf
  */
-async function create({ userId, name, type, description, visibility = 'private' }) {
+async function create({
+    userId,
+    name,
+    type,
+    description,
+    visibility = 'private',
+    gameDefaults = null,
+}) {
     const result = await query(
-        `INSERT INTO shelves (owner_id, name, type, description, visibility)
-     VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO shelves (owner_id, name, type, description, visibility, game_defaults)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING *`,
-        [userId, name, type, description, visibility]
+        [userId, name, type, description, visibility, gameDefaults ? JSON.stringify(gameDefaults) : null]
     );
     return rowToCamelCase(result.rows[0]);
 }
@@ -129,16 +136,22 @@ async function create({ userId, name, type, description, visibility = 'private' 
 /**
  * Update a shelf
  */
-async function update(shelfId, userId, updates) {
-    const allowedFields = ['name', 'description', 'visibility'];
+async function update(shelfId, userId, updates, client = null) {
+    const q = resolveQuery(client);
+    const allowedFields = ['name', 'description', 'visibility', 'game_defaults'];
     const fields = [];
     const values = [];
     let paramIndex = 1;
 
     for (const [key, value] of Object.entries(updates)) {
         if (allowedFields.includes(key)) {
-            fields.push(`${key} = $${paramIndex}`);
-            values.push(value);
+            if (key === 'game_defaults') {
+                fields.push(`${key} = $${paramIndex}::jsonb`);
+                values.push(value ? JSON.stringify(value) : null);
+            } else {
+                fields.push(`${key} = $${paramIndex}`);
+                values.push(value);
+            }
             paramIndex++;
         }
     }
@@ -148,7 +161,7 @@ async function update(shelfId, userId, updates) {
     }
 
     values.push(shelfId, userId);
-    const result = await query(
+    const result = await q(
         `UPDATE shelves SET ${fields.join(', ')} 
      WHERE id = $${paramIndex} AND owner_id = $${paramIndex + 1}
      RETURNING *`,
@@ -176,7 +189,7 @@ async function remove(shelfId, userId) {
 async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
-            uc.position, uc.format, uc.notes, uc.created_at,
+            uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
             uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
             EXISTS (
                 SELECT 1
@@ -261,7 +274,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
 async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
-            uc.position, uc.format, uc.notes, uc.created_at,
+            uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
             uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
             EXISTS (
                 SELECT 1
@@ -345,10 +358,23 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
  * @param {object} params
  * @param {import('pg').PoolClient|null} [client] - Optional transaction client
  */
-async function addCollectable({ userId, shelfId, collectableId, format, notes, rating, position }, client = null) {
+async function addCollectable({
+    userId,
+    shelfId,
+    collectableId,
+    format,
+    platformMissing,
+    notes,
+    rating,
+    position,
+}, client = null) {
     const q = resolveQuery(client);
+    const hasPlatformMissing = platformMissing === true || platformMissing === false;
+    const platformMissingValue = hasPlatformMissing ? platformMissing : false;
     const hasUpdatableFields = (
         format !== undefined && format !== null
+    ) || (
+        hasPlatformMissing
     ) || (
         notes !== undefined && notes !== null
     ) || (
@@ -357,11 +383,11 @@ async function addCollectable({ userId, shelfId, collectableId, format, notes, r
 
     if (!hasUpdatableFields) {
         const inserted = await q(
-            `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, platform_missing, notes, rating, position)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (user_id, shelf_id, collectable_id) DO NOTHING
          RETURNING *`,
-            [userId, shelfId, collectableId, format, notes, rating, position]
+            [userId, shelfId, collectableId, format, platformMissingValue, notes, rating, position]
         );
         if (inserted.rows[0]) {
             return rowToCamelCase(inserted.rows[0]);
@@ -379,14 +405,18 @@ async function addCollectable({ userId, shelfId, collectableId, format, notes, r
     }
 
     const result = await q(
-        `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, notes, rating, position)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO user_collections (user_id, shelf_id, collectable_id, format, platform_missing, notes, rating, position)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (user_id, shelf_id, collectable_id) DO UPDATE
      SET format = COALESCE(EXCLUDED.format, user_collections.format),
+         platform_missing = CASE
+             WHEN $9::boolean THEN EXCLUDED.platform_missing
+             ELSE user_collections.platform_missing
+         END,
          notes = COALESCE(EXCLUDED.notes, user_collections.notes),
          rating = COALESCE(EXCLUDED.rating, user_collections.rating)
      RETURNING *`,
-        [userId, shelfId, collectableId, format, notes, rating, position]
+        [userId, shelfId, collectableId, format, platformMissingValue, notes, rating, position, hasPlatformMissing]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
@@ -955,6 +985,47 @@ async function ensureOwnedPlatformsForCollectionItem({
     return getOwnedPlatformsByCollectionItemId(collectionItemId, client);
 }
 
+async function updateCollectionItemGameDefaults({
+    collectionItemId,
+    userId,
+    shelfId,
+    format = null,
+    platformMissing = false,
+}, client = null) {
+    const q = resolveQuery(client);
+    const result = await q(
+        `UPDATE user_collections
+         SET format = $1,
+             platform_missing = $2
+         WHERE id = $3
+           AND user_id = $4
+           AND shelf_id = $5
+         RETURNING *`,
+        [format, platformMissing === true, collectionItemId, userId, shelfId],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function listCollectionItemsForDefaults({ userId, shelfId }, client = null) {
+    const q = resolveQuery(client);
+    const result = await q(
+        `SELECT uc.id,
+                uc.user_id,
+                uc.shelf_id,
+                uc.collectable_id,
+                uc.manual_id,
+                c.kind AS collectable_kind,
+                c.system_name AS collectable_system_name,
+                c.platform_data AS collectable_platform_data
+         FROM user_collections uc
+         LEFT JOIN collectables c ON c.id = uc.collectable_id
+         WHERE uc.user_id = $1
+           AND uc.shelf_id = $2`,
+        [userId, shelfId],
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
 /**
  * Search across a user's shelves, collectables, and manual entries
  */
@@ -1152,5 +1223,7 @@ module.exports = {
     getOwnedPlatformsByCollectionItemId,
     replaceOwnedPlatformsForCollectionItem,
     ensureOwnedPlatformsForCollectionItem,
+    updateCollectionItemGameDefaults,
+    listCollectionItemsForDefaults,
     searchUserCollection,
 };

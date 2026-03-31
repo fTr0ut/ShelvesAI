@@ -72,6 +72,43 @@ describe('shelves queries write guards', () => {
             expect(query).toHaveBeenCalledTimes(1);
             expect(query.mock.calls[0][0]).toContain('DO UPDATE');
         });
+
+        it('defaults platform_missing to false when not provided', async () => {
+            query.mockResolvedValueOnce({
+                rows: [{ id: 104 }],
+                rowCount: 1,
+            });
+
+            await addCollectable({
+                userId: 'user-1',
+                shelfId: 9,
+                collectableId: 88,
+                notes: 'only-notes',
+            });
+
+            expect(query).toHaveBeenCalledTimes(1);
+            expect(query.mock.calls[0][0]).toContain('WHEN $9::boolean THEN EXCLUDED.platform_missing');
+            expect(query.mock.calls[0][1][4]).toBe(false);
+            expect(query.mock.calls[0][1][8]).toBe(false);
+        });
+
+        it('updates platform_missing when explicitly provided', async () => {
+            query.mockResolvedValueOnce({
+                rows: [{ id: 105, platform_missing: true }],
+                rowCount: 1,
+            });
+
+            await addCollectable({
+                userId: 'user-1',
+                shelfId: 9,
+                collectableId: 88,
+                platformMissing: true,
+            });
+
+            expect(query).toHaveBeenCalledTimes(1);
+            expect(query.mock.calls[0][1][4]).toBe(true);
+            expect(query.mock.calls[0][1][8]).toBe(true);
+        });
     });
 
     describe('addManualCollection', () => {
@@ -96,4 +133,3 @@ describe('shelves queries write guards', () => {
         });
     });
 });
-

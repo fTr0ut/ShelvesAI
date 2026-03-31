@@ -161,11 +161,14 @@ describe('shelvesController', () => {
         shelvesQueries.getItemById.mockReset();
         shelvesQueries.removeItem.mockReset();
         shelvesQueries.addCollectable.mockReset();
-        if (shelvesQueries.ensureOwnedPlatformsForCollectionItem) {
-            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockReset();
-        }
         if (shelvesQueries.replaceOwnedPlatformsForCollectionItem) {
             shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockReset();
+        }
+        if (shelvesQueries.updateCollectionItemGameDefaults) {
+            shelvesQueries.updateCollectionItemGameDefaults.mockReset();
+        }
+        if (shelvesQueries.listCollectionItemsForDefaults) {
+            shelvesQueries.listCollectionItemsForDefaults.mockReset();
         }
         shelvesQueries.addManual.mockReset();
         shelvesQueries.updateItemRating.mockReset();
@@ -284,11 +287,14 @@ describe('shelvesController', () => {
             shelvesQueries.updateReviewedEventLink.mockResolvedValue(null);
         }
         shelvesQueries.removeItem.mockResolvedValue(true);
-        if (shelvesQueries.ensureOwnedPlatformsForCollectionItem) {
-            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockResolvedValue([]);
-        }
         if (shelvesQueries.replaceOwnedPlatformsForCollectionItem) {
             shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue([]);
+        }
+        if (shelvesQueries.updateCollectionItemGameDefaults) {
+            shelvesQueries.updateCollectionItemGameDefaults.mockResolvedValue({ id: 55, format: null, platformMissing: false });
+        }
+        if (shelvesQueries.listCollectionItemsForDefaults) {
+            shelvesQueries.listCollectionItemsForDefaults.mockResolvedValue([]);
         }
         itemReplacementTracesQueries.createIntent.mockResolvedValue(null);
         itemReplacementTracesQueries.getByIdForUser.mockResolvedValue(null);
@@ -313,6 +319,22 @@ describe('shelvesController', () => {
             });
             expect(shelvesQueries.create).not.toHaveBeenCalled();
         });
+
+        it('validates games gameDefaults payload', async () => {
+            req.body = {
+                name: 'Games',
+                type: 'games',
+                gameDefaults: { platformType: 'custom', customPlatformText: '   ' },
+            };
+
+            await shelvesController.createShelf(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                error: expect.stringContaining('customPlatformText is required'),
+            }));
+            expect(shelvesQueries.create).not.toHaveBeenCalled();
+        });
     });
 
     describe('updateShelf', () => {
@@ -333,6 +355,54 @@ describe('shelvesController', () => {
                 error: 'Description is required when shelf type is "other".',
             });
             expect(shelvesQueries.update).not.toHaveBeenCalled();
+        });
+
+        it('reapplies defaults to existing items when games defaults change', async () => {
+            req.params = { shelfId: '10' };
+            req.body = {
+                gameDefaults: { platformType: 'xbox', format: 'digital' },
+            };
+            shelvesQueries.getById.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'games',
+                gameDefaults: { platformType: 'playstation', format: 'physical' },
+            });
+            shelvesQueries.update.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'games',
+                gameDefaults: { platformType: 'xbox', format: 'digital' },
+            });
+            shelvesQueries.listCollectionItemsForDefaults.mockResolvedValue([
+                {
+                    id: 99,
+                    collectableId: 301,
+                    collectableKind: 'games',
+                    collectableSystemName: 'Xbox Series X|S',
+                    collectablePlatformData: [{ name: 'Xbox Series X|S' }],
+                },
+            ]);
+
+            await shelvesController.updateShelf(req, res);
+
+            expect(shelvesQueries.listCollectionItemsForDefaults).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+            }, expect.any(Object));
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).toHaveBeenCalledWith({
+                collectionItemId: 99,
+                userId: 1,
+                shelfId: 10,
+                platforms: ['Xbox'],
+            }, expect.any(Object));
+            expect(shelvesQueries.updateCollectionItemGameDefaults).toHaveBeenCalledWith({
+                collectionItemId: 99,
+                userId: 1,
+                shelfId: 10,
+                format: 'digital',
+                platformMissing: false,
+            }, expect.any(Object));
         });
     });
 
@@ -410,11 +480,17 @@ describe('shelvesController', () => {
         });
     });
 
-    describe('owned platform seeding', () => {
-        it('seeds a default owned platform when adding a games collectable with systemName', async () => {
+    describe('games shelf defaults', () => {
+        it('applies matching games defaults when adding a collectable', async () => {
             req.params = { shelfId: '10' };
             req.body = { collectableId: 777 };
-            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games', visibility: 'public' });
+            shelvesQueries.getById.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'games',
+                visibility: 'public',
+                gameDefaults: { platformType: 'xbox', format: 'digital' },
+            });
             collectablesQueries.findById.mockResolvedValue({
                 id: 777,
                 title: 'Halo Infinite',
@@ -430,19 +506,74 @@ describe('shelvesController', () => {
                 notes: null,
                 rating: null,
             });
-            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockResolvedValue(['Xbox Series X']);
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue(['Xbox']);
 
             await shelvesController.addCollectable(req, res);
 
-            expect(shelvesQueries.ensureOwnedPlatformsForCollectionItem).toHaveBeenCalledWith({
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).toHaveBeenCalledWith({
                 collectionItemId: 888,
-                platforms: ['Xbox Series X'],
+                userId: 1,
+                shelfId: 10,
+                platforms: ['Xbox'],
+            }, null);
+            expect(shelvesQueries.updateCollectionItemGameDefaults).toHaveBeenCalledWith({
+                collectionItemId: 888,
+                userId: 1,
+                shelfId: 10,
+                format: 'digital',
+                platformMissing: false,
             }, null);
             expect(res.status).toHaveBeenCalledWith(201);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 item: expect.objectContaining({
                     id: 888,
-                    ownedPlatforms: ['Xbox Series X'],
+                    ownedPlatforms: ['Xbox'],
+                    platformMissing: false,
+                }),
+            }));
+        });
+
+        it('sets platformMissing and leaves format/platform blank when shelf platform mismatches collectable', async () => {
+            req.params = { shelfId: '10' };
+            req.body = { collectableId: 777 };
+            shelvesQueries.getById.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'games',
+                visibility: 'public',
+                gameDefaults: { platformType: 'playstation', format: 'physical' },
+            });
+            collectablesQueries.findById.mockResolvedValue({
+                id: 777,
+                title: 'Halo Infinite',
+                kind: 'games',
+                systemName: 'Xbox Series X',
+                platformData: [{ name: 'Xbox Series X|S' }],
+            });
+            shelvesQueries.addCollectable.mockResolvedValue({
+                id: 888,
+                position: null,
+                format: null,
+                notes: null,
+                rating: null,
+            });
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue([]);
+
+            await shelvesController.addCollectable(req, res);
+
+            expect(shelvesQueries.updateCollectionItemGameDefaults).toHaveBeenCalledWith({
+                collectionItemId: 888,
+                userId: 1,
+                shelfId: 10,
+                format: null,
+                platformMissing: true,
+            }, null);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 888,
+                    format: null,
+                    platformMissing: true,
+                    ownedPlatforms: [],
                 }),
             }));
         });
@@ -477,11 +608,19 @@ describe('shelvesController', () => {
                 shelfId: 10,
                 platforms: ['PlayStation 5', 'PS5'],
             });
+            expect(shelvesQueries.updateCollectionItemGameDefaults).toHaveBeenCalledWith({
+                collectionItemId: 55,
+                userId: 1,
+                shelfId: 10,
+                format: 'physical',
+                platformMissing: false,
+            });
             expect(collectablesQueries.updateFormat).toHaveBeenCalledWith(900, 'physical');
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 item: expect.objectContaining({
                     id: 55,
                     ownedPlatforms: ['PS5', 'PlayStation 5'],
+                    platformMissing: false,
                     collectable: expect.objectContaining({
                         format: 'physical',
                     }),
@@ -515,6 +654,7 @@ describe('shelvesController', () => {
                 item: expect.objectContaining({
                     id: 55,
                     ownedPlatforms: ['PlayStation 5'],
+                    platformMissing: false,
                     collectable: expect.objectContaining({
                         format: 'digital',
                     }),

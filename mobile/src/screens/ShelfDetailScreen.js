@@ -735,6 +735,11 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <View style={styles.itemContent}>
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
                     {info.subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
+                    {item.platformMissing ? (
+                        <View style={styles.platformMissingBadge}>
+                            <Text style={styles.platformMissingBadgeText}>Platform missing</Text>
+                        </View>
+                    ) : null}
                     {ownedPlatforms.length > 0 && (
                         <View style={styles.platformChipRow}>
                             {ownedPlatforms.slice(0, 3).map((platformName) => (
@@ -1611,6 +1616,21 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         gap: spacing.xs,
         marginTop: spacing.xs,
+    },
+    platformMissingBadge: {
+        marginTop: spacing.xs,
+        alignSelf: 'flex-start',
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+        backgroundColor: colors.error + '20',
+        borderWidth: 1,
+        borderColor: colors.error + '55',
+    },
+    platformMissingBadgeText: {
+        fontSize: 11,
+        color: colors.error,
+        fontWeight: '700',
     },
     platformChip: {
         backgroundColor: colors.surfaceElevated,

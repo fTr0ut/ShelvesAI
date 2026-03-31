@@ -44,6 +44,14 @@ const {
   OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
 } = require('../services/manuals/otherManual');
 const { normalizeString, normalizeStringArray } = require('../utils/normalize');
+const {
+  isGamesShelfType,
+  normalizeGameFormat,
+  normalizeGameDefaultsInput,
+  normalizeGameDefaultsForResponse,
+  areGameDefaultsEqual,
+  resolveGameShelfDefaultsForItem,
+} = require('../services/gameShelfDefaults');
 const visionResultCacheQueries = require('../database/queries/visionResultCache');
 const logger = require('../logger');
 const {
@@ -71,7 +79,6 @@ const REPLACEMENT_WINDOW_HOURS = {
   collectable_detail: 72,
   shelf_delete_modal: 24,
 };
-const OWNED_GAME_FORMATS = new Set(['physical', 'digital']);
 
 const VISION_PROMPT_RULES = [
   {
@@ -125,11 +132,7 @@ function normalizeOwnedPlatforms(value) {
 }
 
 function normalizeOwnedGameFormat(value) {
-  const normalizedValue = normalizeString(value);
-  if (!normalizedValue) return null;
-  const normalized = normalizedValue.toLowerCase();
-  if (!normalized) return null;
-  return OWNED_GAME_FORMATS.has(normalized) ? normalized : null;
+  return normalizeGameFormat(value);
 }
 
 function normalizePlatformData(value) {
@@ -192,22 +195,85 @@ function derivePlatformNames({ platformData = [], platforms = [], systemName = n
   return out;
 }
 
-function isGamesCollectable(collectable) {
-  const kind = normalizeString(collectable?.kind || collectable?.type).toLowerCase();
-  return kind === 'games' || kind === 'game';
+function formatShelfResponse(shelf) {
+  if (!shelf) return null;
+  return {
+    ...shelf,
+    gameDefaults: normalizeGameDefaultsForResponse(shelf.gameDefaults, { shelfType: shelf.type }),
+  };
 }
 
-async function seedDefaultOwnedPlatformForGameItem({ itemId, collectable, client = null }) {
-  if (!itemId || !isGamesCollectable(collectable)) return [];
-  const defaultPlatform = normalizeString(
-    collectable?.systemName || collectable?.system_name,
-  );
-  if (!defaultPlatform) return [];
-  if (typeof shelvesQueries.ensureOwnedPlatformsForCollectionItem !== 'function') return [];
-  return shelvesQueries.ensureOwnedPlatformsForCollectionItem(
-    { collectionItemId: itemId, platforms: [defaultPlatform] },
-    client,
-  );
+function resolveCollectionDefaultsForShelfItem({ shelf, collectable = null }) {
+  return resolveGameShelfDefaultsForItem({
+    shelfType: shelf?.type,
+    gameDefaults: shelf?.gameDefaults,
+    collectable,
+  });
+}
+
+async function applyShelfGameDefaultsToCollectionItem({
+  userId,
+  shelf,
+  itemId,
+  collectable = null,
+  client = null,
+}) {
+  if (!itemId || !isGamesShelfType(shelf?.type)) {
+    return {
+      ownedPlatforms: [],
+      format: null,
+      platformMissing: false,
+    };
+  }
+
+  const resolved = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
+  const ownedPlatforms = await shelvesQueries.replaceOwnedPlatformsForCollectionItem({
+    collectionItemId: itemId,
+    userId,
+    shelfId: shelf.id,
+    platforms: resolved.ownedPlatforms,
+  }, client);
+
+  await shelvesQueries.updateCollectionItemGameDefaults({
+    collectionItemId: itemId,
+    userId,
+    shelfId: shelf.id,
+    format: resolved.format,
+    platformMissing: resolved.platformMissing,
+  }, client);
+
+  return {
+    ownedPlatforms: normalizeOwnedPlatforms(ownedPlatforms),
+    format: resolved.format,
+    platformMissing: resolved.platformMissing,
+  };
+}
+
+async function applyGameDefaultsToShelfItems({
+  userId,
+  shelf,
+  client = null,
+}) {
+  if (!isGamesShelfType(shelf?.type)) return;
+  const items = await shelvesQueries.listCollectionItemsForDefaults({
+    userId,
+    shelfId: shelf.id,
+  }, client);
+  for (const item of items) {
+    await applyShelfGameDefaultsToCollectionItem({
+      userId,
+      shelf,
+      itemId: item.id,
+      collectable: item.collectableId
+        ? {
+          kind: item.collectableKind,
+          systemName: item.collectableSystemName,
+          platformData: normalizePlatformData(item.collectablePlatformData),
+        }
+        : null,
+      client,
+    });
+  }
 }
 
 function normalizeIdentifiers(value) {
@@ -287,6 +353,69 @@ function normalizeSourceLinks(value) {
       return null;
     })
     .filter(Boolean);
+}
+
+function normalizeMetadataMissing(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => normalizeString(entry))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function normalizeMetadataScoredAt(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) return new Date().toISOString();
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
+function normalizeMetadataScoreShape(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const hasMetadataKeys = (
+    Object.prototype.hasOwnProperty.call(value, 'score')
+    || Object.prototype.hasOwnProperty.call(value, 'maxScore')
+    || Object.prototype.hasOwnProperty.call(value, 'missing')
+    || Object.prototype.hasOwnProperty.call(value, 'scoredAt')
+  );
+  if (!hasMetadataKeys) return null;
+  return {
+    score: coerceNumber(value.score, null),
+    maxScore: coerceNumber(value.maxScore, null),
+    missing: normalizeMetadataMissing(value.missing),
+    scoredAt: normalizeMetadataScoredAt(value.scoredAt),
+  };
+}
+
+function normalizeMetadataScoreFromFields(input) {
+  const hasScoreFields = (
+    Object.prototype.hasOwnProperty.call(input || {}, '_metadataScore')
+    || Object.prototype.hasOwnProperty.call(input || {}, '_metadataMaxScore')
+    || Object.prototype.hasOwnProperty.call(input || {}, '_metadataMissing')
+    || Object.prototype.hasOwnProperty.call(input || {}, '_metadataScoredAt')
+  );
+  if (!hasScoreFields) return null;
+  return {
+    score: coerceNumber(input?._metadataScore, null),
+    maxScore: coerceNumber(input?._metadataMaxScore, null),
+    missing: normalizeMetadataMissing(input?._metadataMissing),
+    scoredAt: normalizeMetadataScoredAt(input?._metadataScoredAt),
+  };
+}
+
+function pickHigherMetadataScore(primary, secondary) {
+  if (!primary) return secondary || null;
+  if (!secondary) return primary;
+  const primaryScore = coerceNumber(primary.score, null);
+  const secondaryScore = coerceNumber(secondary.score, null);
+  if (primaryScore == null && secondaryScore == null) return primary;
+  if (primaryScore == null) return secondary;
+  if (secondaryScore == null) return primary;
+  return secondaryScore > primaryScore ? secondary : primary;
 }
 
 function decodeImageBase64Payload(imageBase64) {
@@ -537,6 +666,10 @@ function buildCollectableUpsertPayload(input, shelfType) {
     normalizeString(input?.systemName) || (platforms.length ? platforms[0] : null);
   const runtime = coerceNumber(input?.runtime ?? input?.extras?.runtime, null);
   const normalizedGenre = genre.length ? genre : null;
+  const metascore = pickHigherMetadataScore(
+    normalizeMetadataScoreFromFields(input),
+    normalizeMetadataScoreShape(input?.metascore),
+  );
 
   const fingerprint =
     input?.fingerprint ||
@@ -585,6 +718,7 @@ function buildCollectableUpsertPayload(input, shelfType) {
     coverImageUrl,
     coverImageSource,
     attribution,
+    metascore,
     ...(hasCastMembers ? { castMembers } : {}),
   };
 }
@@ -773,6 +907,7 @@ function formatShelfItem(row) {
     isVisionLinked: !!row.isVisionLinked,
     position: row.position ?? null,
     format: row.format ?? null,
+    platformMissing: row.platformMissing === true,
     notes: row.notes ?? null,
     rating: row.rating ?? null,
     reviewedEventId: row.reviewedEventLogId ?? null,
@@ -1120,7 +1255,7 @@ async function listShelves(req, res) {
     const total = parseInt(countResult.rows[0].total);
 
     res.json({
-      shelves: result.rows.map(rowToCamelCase),
+      shelves: result.rows.map(rowToCamelCase).map(formatShelfResponse),
       pagination: { limit, skip, total, hasMore: skip + result.rows.length < total },
     });
   } catch (err) {
@@ -1131,7 +1266,7 @@ async function listShelves(req, res) {
 
 async function createShelf(req, res) {
   try {
-    const { name, type, description } = req.body ?? {};
+    const { name, type, description, gameDefaults: rawGameDefaults } = req.body ?? {};
     if (!name || !type) return res.status(400).json({ error: "name and type are required" });
 
     const normalizedType = String(type).trim();
@@ -1142,6 +1277,12 @@ async function createShelf(req, res) {
 
     const visibilityRaw = String(req.body.visibility ?? "private").toLowerCase();
     const visibility = VISIBILITY_OPTIONS.includes(visibilityRaw) ? visibilityRaw : "private";
+    let gameDefaults = null;
+    try {
+      gameDefaults = normalizeGameDefaultsInput(rawGameDefaults, { shelfType: normalizedType });
+    } catch (validationErr) {
+      return res.status(400).json({ error: validationErr.message || 'Invalid gameDefaults payload' });
+    }
 
     const shelf = await shelvesQueries.create({
       userId: req.user.id,
@@ -1149,6 +1290,7 @@ async function createShelf(req, res) {
       type: normalizedType,
       description: normalizedDescription,
       visibility,
+      gameDefaults,
     });
 
     await logShelfEvent({
@@ -1158,7 +1300,7 @@ async function createShelf(req, res) {
       payload: { name: shelf.name, type: shelf.type, visibility: shelf.visibility },
     });
 
-    res.status(201).json({ shelf });
+    res.status(201).json({ shelf: formatShelfResponse(shelf) });
   } catch (err) {
     logger.error('createShelf error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1173,7 +1315,7 @@ async function getShelf(req, res) {
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
     const readOnly = shelf.ownerId !== req.user.id;
-    res.json({ shelf: { ...shelf, readOnly } });
+    res.json({ shelf: { ...formatShelfResponse(shelf), readOnly } });
   } catch (err) {
     logger.error('getShelf error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1196,6 +1338,13 @@ async function updateShelf(req, res) {
     if (Object.prototype.hasOwnProperty.call(payload, "description")) {
       updates.description = String(payload.description ?? "").trim();
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'gameDefaults')) {
+      try {
+        updates.game_defaults = normalizeGameDefaultsInput(payload.gameDefaults, { shelfType: existingShelf.type });
+      } catch (validationErr) {
+        return res.status(400).json({ error: validationErr.message || 'Invalid gameDefaults payload' });
+      }
+    }
 
     const resolvedDescription = Object.prototype.hasOwnProperty.call(updates, "description")
       ? updates.description
@@ -1204,9 +1353,29 @@ async function updateShelf(req, res) {
       return res.status(400).json({ error: OTHER_SHELF_DESCRIPTION_REQUIRED_ERROR });
     }
 
-    const shelf = await shelvesQueries.update(shelfId, req.user.id, updates);
+    const beforeDefaults = normalizeGameDefaultsForResponse(existingShelf.gameDefaults, { shelfType: existingShelf.type });
+    const updateIncludesGameDefaults = Object.prototype.hasOwnProperty.call(updates, 'game_defaults');
+    const afterDefaults = updateIncludesGameDefaults
+      ? normalizeGameDefaultsForResponse(updates.game_defaults, { shelfType: existingShelf.type })
+      : beforeDefaults;
+    const gameDefaultsChanged = isGamesShelfType(existingShelf.type)
+      && updateIncludesGameDefaults
+      && !areGameDefaultsEqual(beforeDefaults, afterDefaults);
+
+    const shelf = gameDefaultsChanged
+      ? await transaction(async (client) => {
+        const updatedShelf = await shelvesQueries.update(shelfId, req.user.id, updates, client);
+        if (!updatedShelf) return null;
+        await applyGameDefaultsToShelfItems({
+          userId: req.user.id,
+          shelf: updatedShelf,
+          client,
+        });
+        return updatedShelf;
+      })
+      : await shelvesQueries.update(shelfId, req.user.id, updates);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
-    res.json({ shelf });
+    res.json({ shelf: formatShelfResponse(shelf) });
   } catch (err) {
     logger.error('updateShelf error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1387,6 +1556,12 @@ async function addManualEntry(req, res) {
       limitedEdition,
       itemSpecificText,
     });
+    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+      userId: req.user.id,
+      shelf,
+      itemId: result?.collection?.id,
+      collectable: null,
+    });
 
     await logShelfEvent({
       userId: req.user.id,
@@ -1401,7 +1576,16 @@ async function addManualEntry(req, res) {
     });
 
     res.status(201).json({
-      item: { id: result.collection.id, manual: omitMarketValueSources(result.manual), position: null, format: null, notes: null, rating: null },
+      item: {
+        id: result.collection.id,
+        manual: omitMarketValueSources(result.manual),
+        position: null,
+        format: appliedDefaults.format,
+        platformMissing: appliedDefaults.platformMissing,
+        notes: null,
+        rating: null,
+        ownedPlatforms: appliedDefaults.ownedPlatforms,
+      },
     });
   } catch (err) {
     logger.error('addManualEntry error:', err);
@@ -1437,6 +1621,12 @@ async function addCollectable(req, res) {
         shelfId: shelf.id,
         manualId: manual.id,
       });
+      const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+        userId: req.user.id,
+        shelf,
+        itemId: item?.id,
+        collectable: null,
+      });
 
       await logShelfEvent({
         userId: req.user.id,
@@ -1455,6 +1645,9 @@ async function addCollectable(req, res) {
           id: item.id,
           manual: { id: manual.id, name: manual.name, title: manual.title || manual.name },
           position: item.position,
+          format: appliedDefaults.format,
+          platformMissing: appliedDefaults.platformMissing,
+          ownedPlatforms: appliedDefaults.ownedPlatforms,
         },
       });
     }
@@ -1463,16 +1656,20 @@ async function addCollectable(req, res) {
     const collectable = await collectablesQueries.findById(collectableId);
     if (!collectable) return res.status(404).json({ error: "Collectable not found" });
 
+    const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
     const item = await shelvesQueries.addCollectable({
       userId: req.user.id,
       shelfId: shelf.id,
       collectableId: collectable.id,
-      format,
+      format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : format,
+      platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
       notes,
       rating,
       position,
     });
-    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+      userId: req.user.id,
+      shelf,
       itemId: item?.id,
       collectable,
     });
@@ -1494,10 +1691,11 @@ async function addCollectable(req, res) {
         id: item.id,
         collectable: omitMarketValueSources(collectable),
         position: item.position,
-        format: item.format,
+        format: isGamesShelfType(shelf.type) ? appliedDefaults.format : item.format,
         notes: item.notes,
         rating: item.rating,
-        ownedPlatforms,
+        platformMissing: appliedDefaults.platformMissing,
+        ownedPlatforms: appliedDefaults.ownedPlatforms,
       },
     });
   } catch (err) {
@@ -1530,13 +1728,17 @@ async function addCollectableFromApi(req, res) {
 
     const collectable = await collectablesQueries.upsert(payload);
     const userFormat = normalizeString(resolvedInput?.format || resolvedInput?.physical?.format);
+    const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
     const item = await shelvesQueries.addCollectable({
       userId: req.user.id,
       shelfId: shelf.id,
       collectableId: collectable.id,
-      format: userFormat || null,
+      format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+      platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
     });
-    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+      userId: req.user.id,
+      shelf,
       itemId: item?.id,
       collectable,
     });
@@ -1558,10 +1760,11 @@ async function addCollectableFromApi(req, res) {
         id: item.id,
         collectable: omitMarketValueSources(collectable),
         position: item.position,
-        format: item.format,
+        format: isGamesShelfType(shelf.type) ? appliedDefaults.format : item.format,
         notes: item.notes,
         rating: item.rating,
-        ownedPlatforms,
+        platformMissing: appliedDefaults.platformMissing,
+        ownedPlatforms: appliedDefaults.ownedPlatforms,
       },
     });
   } catch (err) {
@@ -1693,9 +1896,10 @@ async function replaceShelfItem(req, res) {
       return res.status(400).json({ error: 'collectableId must be an integer' });
     }
 
+    let existingCollectableForReplace = null;
     if (existingCollectableId) {
-      const existingCollectable = await collectablesQueries.findById(existingCollectableId);
-      if (!existingCollectable) {
+      existingCollectableForReplace = await collectablesQueries.findById(existingCollectableId);
+      if (!existingCollectableForReplace) {
         throw buildHttpError(404, 'Collectable not found', 'replacement_collectable_not_found');
       }
     }
@@ -1721,12 +1925,24 @@ async function replaceShelfItem(req, res) {
 
       if (existingCollectableId) {
         replacementKind = 'collectable_id';
+        const resolvedDefaults = resolveCollectionDefaultsForShelfItem({
+          shelf,
+          collectable: existingCollectableForReplace,
+        });
         const replacedItem = await shelvesQueries.addCollectable({
           userId: req.user.id,
           shelfId: shelf.id,
           collectableId: existingCollectableId,
-          format: null,
+          format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : null,
+          platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
         }, client);
+        await applyShelfGameDefaultsToCollectionItem({
+          userId: req.user.id,
+          shelf,
+          itemId: replacedItem?.id,
+          collectable: existingCollectableForReplace,
+          client,
+        });
         targetItemId = replacedItem?.id || null;
         targetCollectableId = existingCollectableId;
       } else if (hasCollectablePayload) {
@@ -1738,12 +1954,21 @@ async function replaceShelfItem(req, res) {
 
         const collectable = await collectablesQueries.upsert(payload, client);
         const userFormat = normalizeString(body.collectable?.format || body.collectable?.physical?.format);
+        const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
         const replacedItem = await shelvesQueries.addCollectable({
           userId: req.user.id,
           shelfId: shelf.id,
           collectableId: collectable.id,
-          format: userFormat || null,
+          format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+          platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
         }, client);
+        await applyShelfGameDefaultsToCollectionItem({
+          userId: req.user.id,
+          shelf,
+          itemId: replacedItem?.id,
+          collectable,
+          client,
+        });
 
         targetItemId = replacedItem?.id || null;
         targetCollectableId = collectable.id;
@@ -1783,6 +2008,13 @@ async function replaceShelfItem(req, res) {
           limitedEdition: normalizeString(manualInput.limitedEdition),
           itemSpecificText: normalizeString(manualInput.itemSpecificText),
         }, client);
+        await applyShelfGameDefaultsToCollectionItem({
+          userId: req.user.id,
+          shelf,
+          itemId: manualResult?.collection?.id,
+          collectable: null,
+          client,
+        });
 
         targetItemId = manualResult?.collection?.id || null;
         targetManualId = manualResult?.manual?.id || null;
@@ -3820,13 +4052,17 @@ async function completeReviewItem(req, res) {
       let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
 
       if (collectable) {
+        const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
         const item = await shelvesQueries.addCollectable({
           userId: req.user.id,
           shelfId: shelf.id,
           collectableId: collectable.id,
-          format: userFormat || null,
+          format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+          platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
         });
-        const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+        const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+          userId: req.user.id,
+          shelf,
           itemId: item?.id,
           collectable,
         });
@@ -3851,9 +4087,11 @@ async function completeReviewItem(req, res) {
             id: item.id,
             collectable: omitMarketValueSources(collectable),
             position: item.position,
+            format: appliedDefaults.format,
+            platformMissing: appliedDefaults.platformMissing,
             notes: item.notes,
             rating: item.rating,
-            ownedPlatforms,
+            ownedPlatforms: appliedDefaults.ownedPlatforms,
           },
         });
       }
@@ -3956,6 +4194,12 @@ async function completeReviewItem(req, res) {
           primaryCreator: normalized.primaryCreator,
         });
       }
+      const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+        userId: req.user.id,
+        shelf,
+        itemId: manualResult?.collection?.id,
+        collectable: null,
+      });
 
       await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
 
@@ -3979,9 +4223,11 @@ async function completeReviewItem(req, res) {
           id: manualResult.collection.id,
           manual: omitMarketValueSources(manualResult.manual),
           position: manualResult.collection.position ?? null,
-          format: manualResult.collection.format ?? null,
+          format: appliedDefaults.format,
+          platformMissing: appliedDefaults.platformMissing,
           notes: manualResult.collection.notes ?? null,
           rating: manualResult.collection.rating ?? null,
+          ownedPlatforms: appliedDefaults.ownedPlatforms,
         },
       });
     }
@@ -4011,13 +4257,17 @@ async function completeReviewItem(req, res) {
     }
 
     // Add to user's shelf
+    const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
     const item = await shelvesQueries.addCollectable({
       userId: req.user.id,
       shelfId: shelf.id,
       collectableId: collectable.id,
-      format: userFormat || null,
+      format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+      platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
     });
-    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+      userId: req.user.id,
+      shelf,
       itemId: item?.id,
       collectable,
     });
@@ -4044,9 +4294,11 @@ async function completeReviewItem(req, res) {
         id: item.id,
         collectable: omitMarketValueSources(collectable),
         position: item.position,
+        format: appliedDefaults.format,
+        platformMissing: appliedDefaults.platformMissing,
         notes: item.notes,
         rating: item.rating,
-        ownedPlatforms,
+        ownedPlatforms: appliedDefaults.ownedPlatforms,
       },
     });
   } catch (err) {
@@ -4437,6 +4689,13 @@ async function updateOwnedPlatforms(req, res) {
     }
 
     let persistedFormat = normalizedFormat;
+    await shelvesQueries.updateCollectionItemGameDefaults({
+      collectionItemId: itemId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+      format: normalizedFormat,
+      platformMissing: false,
+    });
     if (typeof collectablesQueries.updateFormat === 'function') {
       const updatedCollectable = await collectablesQueries.updateFormat(currentItem.collectableId, normalizedFormat);
       const updatedValue = normalizeOwnedGameFormat(updatedCollectable?.format);
@@ -4449,6 +4708,7 @@ async function updateOwnedPlatforms(req, res) {
     const formatted = formatShelfItem(refreshed);
     if (formatted) {
       formatted.ownedPlatforms = normalizeOwnedPlatforms(ownedPlatforms);
+      formatted.platformMissing = false;
       if (formatted.collectable) {
         formatted.collectable.format = persistedFormat;
       }
@@ -4458,6 +4718,7 @@ async function updateOwnedPlatforms(req, res) {
       item: formatted || {
         id: itemId,
         ownedPlatforms: normalizeOwnedPlatforms(ownedPlatforms),
+        platformMissing: false,
         collectable: { format: persistedFormat },
       },
     });

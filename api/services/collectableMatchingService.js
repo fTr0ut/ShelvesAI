@@ -128,7 +128,9 @@ class CollectableMatchingService {
                 return {
                     ...collectable,
                     _metadataScore: metadata.score,
+                    _metadataMaxScore: metadata.maxScore ?? null,
                     _metadataMissing: Array.isArray(metadata.missing) ? metadata.missing : [],
+                    _metadataScoredAt: metadata.scoredAt || null,
                 };
             }
         } catch (err) {

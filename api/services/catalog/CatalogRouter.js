@@ -235,7 +235,9 @@ class CatalogRouter {
                             _source: api.name,
                             _sourceIndex: sourceIndex,
                             _metadataScore: metadata.score,
+                            _metadataMaxScore: metadata.maxScore,
                             _metadataMissing: metadata.missing,
+                            _metadataScoredAt: metadata.scoredAt,
                         });
                     }
 
@@ -262,7 +264,9 @@ class CatalogRouter {
                 _source: bestCandidate.source,
                 _sourceIndex: bestCandidate.sourceIndex,
                 _metadataScore: bestCandidate.metadata.score,
+                _metadataMaxScore: bestCandidate.metadata.maxScore,
                 _metadataMissing: bestCandidate.metadata.missing,
+                _metadataScoredAt: bestCandidate.metadata.scoredAt,
             });
         }
 

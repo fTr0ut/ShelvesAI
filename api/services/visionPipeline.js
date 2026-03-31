@@ -32,8 +32,14 @@ const {
     normalizePixelPadding,
     expandVisionBox2dByPixels,
 } = require('../utils/visionBox2d');
+const {
+    isGamesShelfType,
+    resolveGameShelfDefaultsForItem,
+} = require('./gameShelfDefaults');
 
 const { getSharedCatalogServices } = require('./catalog/sharedCatalogServices');
+const { getMetadataScorer } = require('./catalog/MetadataScorer');
+const { getApiContainerKey } = require('./config/shelfTypeResolver');
 const logger = require('../logger');
 
 // Load progress messages config
@@ -162,16 +168,6 @@ function normalizePlatformData(value) {
     return out;
 }
 
-function isGamesKind(value) {
-    const normalized = normalizeString(value).toLowerCase();
-    return normalized === 'games' || normalized === 'game';
-}
-
-function extractDefaultOwnedPlatform(collectable) {
-    if (!isGamesKind(collectable?.kind || collectable?.type)) return null;
-    return normalizeString(collectable?.systemName || collectable?.system_name) || null;
-}
-
 function normalizeIdentifiers(value) {
     if (!value) return {};
     if (value instanceof Map) return Object.fromEntries(value.entries());
@@ -282,12 +278,116 @@ function normalizeSourceLinks(value) {
         .filter(Boolean);
 }
 
+function normalizeMetadataMissing(value) {
+    if (!Array.isArray(value)) return [];
+    const out = value
+        .map((entry) => normalizeString(entry))
+        .filter(Boolean);
+    return Array.from(new Set(out));
+}
+
+function normalizeMetadataScoredAt(value) {
+    const normalized = normalizeString(value);
+    if (!normalized) return new Date().toISOString();
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
+    return parsed.toISOString();
+}
+
+function normalizeMetadataScoreShape(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const hasMetadataKeys = (
+        Object.prototype.hasOwnProperty.call(value, 'score')
+        || Object.prototype.hasOwnProperty.call(value, 'maxScore')
+        || Object.prototype.hasOwnProperty.call(value, 'missing')
+        || Object.prototype.hasOwnProperty.call(value, 'scoredAt')
+    );
+    if (!hasMetadataKeys) return null;
+
+    const score = Number(value.score);
+    const maxScore = Number(value.maxScore);
+
+    return {
+        score: Number.isFinite(score) ? score : null,
+        maxScore: Number.isFinite(maxScore) ? maxScore : null,
+        missing: normalizeMetadataMissing(value.missing),
+        scoredAt: normalizeMetadataScoredAt(value.scoredAt),
+    };
+}
+
+function normalizeMetadataScoreFromFields(item, defaultMaxScore = null) {
+    const hasScoreFields = (
+        Object.prototype.hasOwnProperty.call(item || {}, '_metadataScore')
+        || Object.prototype.hasOwnProperty.call(item || {}, '_metadataMaxScore')
+        || Object.prototype.hasOwnProperty.call(item || {}, '_metadataMissing')
+        || Object.prototype.hasOwnProperty.call(item || {}, '_metadataScoredAt')
+    );
+    if (!hasScoreFields) return null;
+
+    const score = Number(item?._metadataScore);
+    const maxScoreFromItem = Number(item?._metadataMaxScore);
+
+    return {
+        score: Number.isFinite(score) ? score : null,
+        maxScore: Number.isFinite(maxScoreFromItem) ? maxScoreFromItem : defaultMaxScore,
+        missing: normalizeMetadataMissing(item?._metadataMissing),
+        scoredAt: normalizeMetadataScoredAt(item?._metadataScoredAt),
+    };
+}
+
+function pickHigherMetadataScore(primary, secondary) {
+    if (!primary) return secondary || null;
+    if (!secondary) return primary;
+    const primaryScore = Number(primary.score);
+    const secondaryScore = Number(secondary.score);
+    if (!Number.isFinite(primaryScore) && !Number.isFinite(secondaryScore)) return primary;
+    if (!Number.isFinite(primaryScore)) return secondary;
+    if (!Number.isFinite(secondaryScore)) return primary;
+    return secondaryScore > primaryScore ? secondary : primary;
+}
+
 function sanitizeSaveError(err) {
     return {
         code: normalizeString(err?.code) || null,
         message: normalizeString(err?.message) || 'Unknown save error',
         severity: normalizeString(err?.severity) || null,
     };
+}
+
+async function applyGameDefaultsToCollectionItem({
+    userId,
+    shelfId,
+    shelfType,
+    shelfGameDefaults = null,
+    collectionItemId,
+    collectable = null,
+    client = null,
+}) {
+    if (!collectionItemId) {
+        return { format: null, ownedPlatforms: [], platformMissing: false };
+    }
+    if (!isGamesShelfType(shelfType)) {
+        return { format: null, ownedPlatforms: [], platformMissing: false };
+    }
+    const resolved = resolveGameShelfDefaultsForItem({
+        shelfType,
+        gameDefaults: shelfGameDefaults,
+        collectable,
+    });
+    await shelvesQueries.replaceOwnedPlatformsForCollectionItem({
+        collectionItemId,
+        userId,
+        shelfId,
+        platforms: resolved.ownedPlatforms,
+    }, client);
+    await shelvesQueries.updateCollectionItemGameDefaults({
+        collectionItemId,
+        userId,
+        shelfId,
+        format: resolved.format,
+        platformMissing: resolved.platformMissing,
+    }, client);
+    return resolved;
 }
 
 function buildGenericManualPayload(item, shelfType, manualFingerprint) {
@@ -571,6 +671,7 @@ class VisionPipelineService {
 
         // Reuse shared catalog service instances so rate limiting is process-wide.
         this.catalogs = options.catalogs || getSharedCatalogServices();
+        this.metadataScorer = options.metadataScorer || getMetadataScorer();
     }
 
     async executeHook(hookType, context) {
@@ -685,6 +786,7 @@ class VisionPipelineService {
             userId,
             shelfId: shelf.id,
             shelfType: shelf.type,
+            shelfGameDefaults: shelf.gameDefaults || null,
             thresholds: { max: confidenceMax, min: confidenceMin },
             ocrProvider,
             scanPhotoId,
@@ -2178,6 +2280,8 @@ class VisionPipelineService {
         const added = [];
         const failed = [];
         const saveTracking = hookContext?.saveTracking || null;
+        const metadataContainerType = getApiContainerKey(shelfType) || null;
+        const defaultMetadataMaxScore = metadataContainerType ? 100 : null;
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
@@ -2327,22 +2431,23 @@ class VisionPipelineService {
                         attribution: item.attribution || null,
                         ...(hasIgdbPayload ? { igdbPayload } : {}),
                         ...(hasCastMembers ? { castMembers } : {}),
-                        // Metadata quality score (from MetadataScorer via CatalogRouter)
-                        metascore: (item._metadataScore != null)
-                            ? {
-                                score: item._metadataScore,
-                                maxScore: item._metadataMaxScore ?? null,
-                                missing: item._metadataMissing ?? [],
-                                scoredAt: new Date().toISOString(),
-                            }
-                            : (
-                                item.metascore
-                                && typeof item.metascore === 'object'
-                                && !Array.isArray(item.metascore)
-                            )
-                                ? item.metascore
-                                : null,
                     };
+                    let metascore = pickHigherMetadataScore(
+                        normalizeMetadataScoreFromFields(item, defaultMetadataMaxScore),
+                        normalizeMetadataScoreShape(item.metascore),
+                    );
+                    if (metadataContainerType && this.metadataScorer && typeof this.metadataScorer.scoreAsync === 'function') {
+                        try {
+                            const scored = await this.metadataScorer.scoreAsync(collectablePayload, metadataContainerType);
+                            metascore = pickHigherMetadataScore(
+                                metascore,
+                                normalizeMetadataScoreShape(scored),
+                            );
+                        } catch (scoreErr) {
+                            logger.warn('[VisionPipeline.saveToShelf] metadata score failed:', scoreErr?.message || scoreErr);
+                        }
+                    }
+                    collectablePayload.metascore = metascore;
                     await this.executeHook(HOOK_TYPES.BEFORE_COLLECTABLE_SAVE, {
                         ...hookContext,
                         payload: collectablePayload,
@@ -2351,20 +2456,28 @@ class VisionPipelineService {
                     // rolls back the collectable insert, preventing orphaned records.
                     const { savedCollectable, savedShelfItem } = await transaction(async (txClient) => {
                         const upserted = await collectablesQueries.upsert(collectablePayload, txClient);
+                        const isGamesShelf = isGamesShelfType(shelfType);
+                        const resolvedDefaults = resolveGameShelfDefaultsForItem({
+                            shelfType,
+                            gameDefaults: hookContext?.shelfGameDefaults,
+                            collectable: upserted,
+                        });
                         const shelfEntry = await shelvesQueries.addCollectable({
                             userId,
                             shelfId,
                             collectableId: upserted.id,
-                            // Note: format (user-specific) is intentionally not set during vision scan
-                            // Users can set their preferred format later via manual edit
+                            format: resolvedDefaults.format,
+                            platformMissing: isGamesShelf ? resolvedDefaults.platformMissing : undefined,
                         }, txClient);
-                        const defaultOwnedPlatform = extractDefaultOwnedPlatform(upserted);
-                        if (defaultOwnedPlatform) {
-                            await shelvesQueries.ensureOwnedPlatformsForCollectionItem({
-                                collectionItemId: shelfEntry?.id,
-                                platforms: [defaultOwnedPlatform],
-                            }, txClient);
-                        }
+                        await applyGameDefaultsToCollectionItem({
+                            userId,
+                            shelfId,
+                            shelfType,
+                            shelfGameDefaults: hookContext?.shelfGameDefaults,
+                            collectionItemId: shelfEntry?.id,
+                            collectable: upserted,
+                            client: txClient,
+                        });
                         return { savedCollectable: upserted, savedShelfItem: shelfEntry };
                     });
                     collectable = savedCollectable;
@@ -2409,20 +2522,27 @@ class VisionPipelineService {
 
                 // Add pre-matched collectable to shelf
                 logger.info('[VisionPipeline.saveToShelf] Adding to shelf:', shelfId, 'collectable:', collectable.id);
+                const resolvedDefaults = resolveGameShelfDefaultsForItem({
+                    shelfType,
+                    gameDefaults: hookContext?.shelfGameDefaults,
+                    collectable,
+                });
+                const isGamesShelf = isGamesShelfType(shelfType);
                 const shelfItem = await shelvesQueries.addCollectable({
                     userId,
                     shelfId,
                     collectableId: collectable.id,
-                    // Note: format (user-specific) is intentionally not set during vision scan
-                    // Users can set their preferred format later via manual edit
+                    format: resolvedDefaults.format,
+                    platformMissing: isGamesShelf ? resolvedDefaults.platformMissing : undefined,
                 });
-                const defaultOwnedPlatform = extractDefaultOwnedPlatform(collectable);
-                if (defaultOwnedPlatform) {
-                    await shelvesQueries.ensureOwnedPlatformsForCollectionItem({
-                        collectionItemId: shelfItem?.id,
-                        platforms: [defaultOwnedPlatform],
-                    });
-                }
+                await applyGameDefaultsToCollectionItem({
+                    userId,
+                    shelfId,
+                    shelfType,
+                    shelfGameDefaults: hookContext?.shelfGameDefaults,
+                    collectionItemId: shelfItem?.id,
+                    collectable,
+                });
                 await this.executeHook(HOOK_TYPES.AFTER_SHELF_UPSERT, {
                     ...hookContext,
                     shelfItem,
@@ -2626,6 +2746,14 @@ class VisionPipelineService {
                     manualId: matchedManual.id,
                 });
                 if (existingCollection) {
+                    const manualDefaults = await applyGameDefaultsToCollectionItem({
+                        userId,
+                        shelfId,
+                        shelfType,
+                        shelfGameDefaults: hookContext?.shelfGameDefaults,
+                        collectionItemId: existingCollection.id,
+                        collectable: null,
+                    });
                     logger.info('[VisionPipeline.saveManualToShelf] Matched extracted item to existing manual already on shelf', {
                         extractedTitle: title,
                         sourceTable: 'user_manuals',
@@ -2651,6 +2779,8 @@ class VisionPipelineService {
                         coverMediaUrl: matchedManual.coverMediaUrl || null,
                         year: matchedManual.year ?? item.year ?? null,
                         type: shelfType,
+                        format: manualDefaults.format,
+                        platformMissing: manualDefaults.platformMissing,
                     });
                     continue;
                 }
@@ -2659,6 +2789,14 @@ class VisionPipelineService {
                     userId,
                     shelfId,
                     manualId: matchedManual.id,
+                });
+                const manualDefaults = await applyGameDefaultsToCollectionItem({
+                    userId,
+                    shelfId,
+                    shelfType,
+                    shelfGameDefaults: hookContext?.shelfGameDefaults,
+                    collectionItemId: collection.id,
+                    collectable: null,
                 });
                 logger.info('[VisionPipeline.saveManualToShelf] Matched extracted item to existing manual and linked to shelf', {
                     extractedTitle: title,
@@ -2690,6 +2828,8 @@ class VisionPipelineService {
                     coverMediaUrl: matchedManual.coverMediaUrl || null,
                     year: matchedManual.year ?? item.year ?? null,
                     type: shelfType,
+                    format: manualDefaults.format,
+                    platformMissing: manualDefaults.platformMissing,
                 });
                 continue;
             }
@@ -2714,6 +2854,14 @@ class VisionPipelineService {
                 ...payload,
                 tags: payload.tags || item.tags,
             });
+            const manualDefaults = await applyGameDefaultsToCollectionItem({
+                userId,
+                shelfId,
+                shelfType,
+                shelfGameDefaults: hookContext?.shelfGameDefaults,
+                collectionItemId: result?.collection?.id,
+                collectable: null,
+            });
             await this.executeHook(HOOK_TYPES.AFTER_SHELF_UPSERT, {
                 ...hookContext,
                 shelfItem: result.collection,
@@ -2733,6 +2881,8 @@ class VisionPipelineService {
                 coverMediaUrl: result.manual.coverMediaUrl || null,
                 year: result.manual.year ?? item.year ?? null,
                 type: shelfType,
+                format: manualDefaults.format,
+                platformMissing: manualDefaults.platformMissing,
             });
         }
 

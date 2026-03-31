@@ -25,6 +25,35 @@ const VISIBILITY_OPTIONS = [
     { value: 'public', label: 'Public', icon: 'globe' },
 ];
 
+const GAME_PLATFORM_OPTIONS = [
+    { value: '', label: 'No default' },
+    { value: 'all', label: 'All' },
+    { value: 'playstation', label: 'PlayStation' },
+    { value: 'xbox', label: 'Xbox' },
+    { value: 'nintendo', label: 'Nintendo' },
+    { value: 'pc', label: 'PC' },
+    { value: 'steam_deck', label: 'Steam Deck' },
+    { value: 'custom', label: 'Custom' },
+];
+
+const GAME_FORMAT_OPTIONS = [
+    { value: '', label: 'No default' },
+    { value: 'physical', label: 'Physical' },
+    { value: 'digital', label: 'Digital' },
+];
+
+function normalizeGameDefaults(value) {
+    if (!value || typeof value !== 'object') return null;
+    const platformType = String(value.platformType || '').trim().toLowerCase() || null;
+    const customPlatformText = platformType === 'custom'
+        ? String(value.customPlatformText || '').trim() || null
+        : null;
+    const formatRaw = String(value.format || '').trim().toLowerCase();
+    const format = formatRaw === 'physical' || formatRaw === 'digital' ? formatRaw : null;
+    if (!platformType && !customPlatformText && !format) return null;
+    return { platformType, customPlatformText, format };
+}
+
 export default function ShelfEditScreen({ route, navigation }) {
     const { shelf: initialShelf } = route.params || {};
     const shelfId = initialShelf?.id || initialShelf?._id || route.params?.shelfId || route.params?.id;
@@ -37,6 +66,9 @@ export default function ShelfEditScreen({ route, navigation }) {
     const [name, setName] = useState(initialShelf?.name || '');
     const [description, setDescription] = useState(initialShelf?.description || '');
     const [visibility, setVisibility] = useState(initialShelf?.visibility || 'private');
+    const [gamePlatformType, setGamePlatformType] = useState(initialShelf?.gameDefaults?.platformType || '');
+    const [customPlatformText, setCustomPlatformText] = useState(initialShelf?.gameDefaults?.customPlatformText || '');
+    const [gameFormat, setGameFormat] = useState(initialShelf?.gameDefaults?.format || '');
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const hasLoadedShelfRef = useRef(false);
@@ -49,7 +81,9 @@ export default function ShelfEditScreen({ route, navigation }) {
         };
     }, []);
 
-    const isOtherShelf = String(shelf?.type || initialShelf?.type || '').toLowerCase() === 'other';
+    const shelfType = String(shelf?.type || initialShelf?.type || '').toLowerCase();
+    const isOtherShelf = shelfType === 'other';
+    const isGamesShelf = shelfType === 'games';
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
@@ -73,6 +107,9 @@ export default function ShelfEditScreen({ route, navigation }) {
             setName(fetchedShelf?.name || '');
             setDescription(fetchedShelf?.description || '');
             setVisibility(fetchedShelf?.visibility || 'private');
+            setGamePlatformType(fetchedShelf?.gameDefaults?.platformType || '');
+            setCustomPlatformText(fetchedShelf?.gameDefaults?.customPlatformText || '');
+            setGameFormat(fetchedShelf?.gameDefaults?.format || '');
             hasLoadedShelfRef.current = true;
         } catch (e) {
             console.warn('Failed to load shelf:', e);
@@ -95,12 +132,18 @@ export default function ShelfEditScreen({ route, navigation }) {
             setName(initialShelf?.name || '');
             setDescription(initialShelf?.description || '');
             setVisibility(initialShelf?.visibility || 'private');
+            setGamePlatformType(initialShelf?.gameDefaults?.platformType || '');
+            setCustomPlatformText(initialShelf?.gameDefaults?.customPlatformText || '');
+            setGameFormat(initialShelf?.gameDefaults?.format || '');
             setLoading(false);
         } else {
             setShelf(null);
             setName('');
             setDescription('');
             setVisibility('private');
+            setGamePlatformType('');
+            setCustomPlatformText('');
+            setGameFormat('');
             setLoading(true);
         }
     }, [shelfId, initialShelf]);
@@ -136,23 +179,73 @@ export default function ShelfEditScreen({ route, navigation }) {
             Alert.alert('Error', 'Description is required for Other shelves');
             return;
         }
-
-        try {
-            setSaving(true);
-            await apiRequest({
-                apiBase,
-                path: `/api/shelves/${shelfId}`,
-                method: 'PUT',
-                token,
-                body: { name: trimmedName, description: trimmedDescription, visibility },
-            });
-            navigation.goBack();
-        } catch (e) {
-            Alert.alert('Error', e.message);
-        } finally {
-            setSaving(false);
+        if (isGamesShelf && gamePlatformType === 'custom' && !customPlatformText.trim()) {
+            Alert.alert('Error', 'Custom platform text is required when Platform is Custom');
+            return;
         }
-    }, [apiBase, shelfId, name, description, visibility, token, navigation, isOtherShelf]);
+
+        const nextGameDefaults = isGamesShelf
+            ? normalizeGameDefaults({
+                platformType: gamePlatformType || null,
+                customPlatformText: gamePlatformType === 'custom' ? customPlatformText.trim() : null,
+                format: gameFormat || null,
+            })
+            : null;
+        const originalGameDefaults = normalizeGameDefaults(shelf?.gameDefaults);
+        const defaultsChanged = isGamesShelf
+            && JSON.stringify(originalGameDefaults) !== JSON.stringify(nextGameDefaults);
+
+        const performSave = async () => {
+            try {
+                setSaving(true);
+                await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${shelfId}`,
+                    method: 'PUT',
+                    token,
+                    body: {
+                        name: trimmedName,
+                        description: trimmedDescription,
+                        visibility,
+                        ...(isGamesShelf ? { gameDefaults: nextGameDefaults } : {}),
+                    },
+                });
+                navigation.goBack();
+            } catch (e) {
+                Alert.alert('Error', e.message);
+            } finally {
+                setSaving(false);
+            }
+        };
+
+        if (defaultsChanged) {
+            Alert.alert(
+                'Update all shelf items?',
+                'Changing Games defaults will overwrite platform and format values for existing items on this shelf.',
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Save', style: 'destructive', onPress: () => { performSave(); } },
+                ],
+            );
+            return;
+        }
+
+        await performSave();
+    }, [
+        apiBase,
+        shelfId,
+        name,
+        description,
+        visibility,
+        token,
+        navigation,
+        isOtherShelf,
+        isGamesShelf,
+        gamePlatformType,
+        customPlatformText,
+        gameFormat,
+        shelf?.gameDefaults,
+    ]);
 
     const handleDelete = useCallback(() => {
         Alert.alert(
@@ -262,6 +355,65 @@ export default function ShelfEditScreen({ route, navigation }) {
                         </View>
                     </View>
 
+                    {isGamesShelf ? (
+                        <View style={styles.defaultsCard}>
+                            <Text style={styles.label}>Games Defaults</Text>
+                            <Text style={styles.helperText}>Used to fill your collection automatically.</Text>
+
+                            <View style={styles.defaultsSection}>
+                                <Text style={styles.subLabel}>Platform Type (optional)</Text>
+                                <View style={styles.optionRow}>
+                                    {GAME_PLATFORM_OPTIONS.map((option) => {
+                                        const selected = gamePlatformType === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.value || 'none'}
+                                                style={[styles.optionChip, selected && styles.optionChipActive]}
+                                                onPress={() => setGamePlatformType(option.value)}
+                                                disabled={saving || deleting}
+                                            >
+                                                <Text style={[styles.optionChipText, selected && styles.optionChipTextActive]}>
+                                                    {option.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                                {gamePlatformType === 'custom' ? (
+                                    <TextInput
+                                        style={[styles.input, styles.inlineInput]}
+                                        value={customPlatformText}
+                                        onChangeText={setCustomPlatformText}
+                                        placeholder="Enter custom platform"
+                                        placeholderTextColor={colors.textMuted}
+                                        editable={!saving && !deleting}
+                                    />
+                                ) : null}
+                            </View>
+
+                            <View style={styles.defaultsSection}>
+                                <Text style={styles.subLabel}>Format Type (optional)</Text>
+                                <View style={styles.optionRow}>
+                                    {GAME_FORMAT_OPTIONS.map((option) => {
+                                        const selected = gameFormat === option.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.value || 'none'}
+                                                style={[styles.optionChip, selected && styles.optionChipActive]}
+                                                onPress={() => setGameFormat(option.value)}
+                                                disabled={saving || deleting}
+                                            >
+                                                <Text style={[styles.optionChipText, selected && styles.optionChipTextActive]}>
+                                                    {option.label}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
+                        </View>
+                    ) : null}
+
                     {/* Shelf Info */}
                     <View style={styles.infoCard}>
                         <View style={styles.infoRow}>
@@ -353,6 +505,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.text,
         marginBottom: spacing.sm,
     },
+    helperText: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginBottom: spacing.sm,
+    },
     input: {
         backgroundColor: colors.surface,
         borderRadius: radius.lg,
@@ -392,6 +549,51 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     visibilityTextActive: {
         color: colors.primary,
         fontWeight: '500',
+    },
+    defaultsCard: {
+        marginBottom: spacing.lg,
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        borderWidth: 1,
+        borderColor: colors.border,
+        padding: spacing.md,
+        ...shadows.sm,
+    },
+    defaultsSection: {
+        marginTop: spacing.sm,
+    },
+    subLabel: {
+        fontSize: 13,
+        color: colors.textSecondary,
+        marginBottom: spacing.xs,
+    },
+    optionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+    },
+    optionChip: {
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 6,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.background,
+    },
+    optionChipActive: {
+        backgroundColor: colors.primary + '18',
+        borderColor: colors.primary,
+    },
+    optionChipText: {
+        fontSize: 12,
+        color: colors.textSecondary,
+    },
+    optionChipTextActive: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    inlineInput: {
+        marginTop: spacing.sm,
     },
     infoCard: {
         backgroundColor: colors.surface,
