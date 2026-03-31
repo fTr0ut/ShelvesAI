@@ -572,6 +572,66 @@ function dedupeByExtractionIndex(items) {
     return { deduped, droppedCount };
 }
 
+/**
+ * Deduplicate OCR extractions by a normalized title+author key.
+ * Used to prevent redundant catalog lookups for the same book seen multiple times.
+ * @param {Array} items - Items to deduplicate
+ * @returns {object} { deduped: Item[], groupMap: Map<string, Item[]> }
+ */
+function dedupeOcrExtractions(items) {
+    const deduped = [];
+    const groupMap = new Map();
+    let droppedCount = 0;
+
+    for (const item of items) {
+        const title = normalizeToken(item.title || item.name);
+        const author = normalizeToken(item.author || item.primaryCreator || item.creator);
+        const key = `${title}|${author}`;
+
+        if (!groupMap.has(key)) {
+            groupMap.set(key, []);
+            const representative = { ...item, _ocrGroupKey: key };
+            deduped.push(representative);
+        } else {
+            droppedCount += 1;
+        }
+        groupMap.get(key).push(item);
+    }
+
+    return { deduped, groupMap, droppedCount };
+}
+
+/**
+ * Fan out resolved items back to their original OCR extraction entries.
+ * Ensures all duplicates get the resolved data while keeping their unique regions/indices.
+ * @param {Array} resolvedItems - Items that were resolved (catalog/enrichment)
+ * @param {Map} groupMap - Map from _ocrGroupKey to original Item[]
+ * @returns {Array} Fanned out items
+ */
+function fanOutResolvedItems(resolvedItems, groupMap) {
+    if (!groupMap || groupMap.size === 0) return resolvedItems;
+    const fanned = [];
+
+    for (const resolved of resolvedItems) {
+        const key = resolved._ocrGroupKey;
+        if (!key || !groupMap.has(key)) {
+            fanned.push(resolved);
+            continue;
+        }
+
+        const originals = groupMap.get(key);
+        for (const original of originals) {
+            fanned.push({
+                ...resolved,
+                extractionIndex: normalizeExtractionIndex(original.extractionIndex),
+                box2d: normalizeBox2d(pickPreferredBox2d(original)),
+            });
+        }
+    }
+
+    return fanned;
+}
+
 function normalizeToken(value) {
     return normalizeString(value)
         .toLowerCase()
@@ -1126,11 +1186,15 @@ class VisionPipelineService {
         // ===== HIGH CONFIDENCE WORKFLOW (≥ max threshold) =====
         // Step 2: Fingerprint lookup for high confidence items
         await checkAborted();
-        updateProgress('matching', { count: highConfidence.length });
-        logger.info('[VisionPipeline] Step 2: Fingerprint lookup for', highConfidence.length, 'high-confidence items...');
-        const matched = [];
+        const { deduped: dedupedHigh, groupMap: highGroupMap, droppedCount: highDropped } = dedupeOcrExtractions(highConfidence);
+        if (highDropped > 0) {
+            logger.info('[VisionPipeline] Step 2 OCR dedup: collapsed', highConfidence.length, 'to', dedupedHigh.length, 'unique titles');
+        }
+        updateProgress('matching', { count: dedupedHigh.length });
+        logger.info('[VisionPipeline] Step 2: Fingerprint lookup for', dedupedHigh.length, 'high-confidence items...');
+        let matched = [];
         const unmatchedHigh = [];
-        for (const item of highConfidence) {
+        for (const item of dedupedHigh) {
             await checkAborted();
             const collectable = await this.matchCollectable(item, shelf.type);
             if (collectable) {
@@ -1139,6 +1203,8 @@ class VisionPipelineService {
                 unmatchedHigh.push(item);
             }
         }
+        // Fan back out to all original extraction entries
+        matched = fanOutResolvedItems(matched, highGroupMap);
         logger.info('[VisionPipeline] Step 2 Complete: Matched in DB:', matched.length, ', Unmatched high-conf:', unmatchedHigh.length);
         await this.executeHook(HOOK_TYPES.AFTER_FINGERPRINT_LOOKUP, {
             ...baseHookContext,
@@ -1157,6 +1223,8 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
                 catalogResults = await this.lookupCatalog(unmatchedHigh, shelf.type);
                 logger.info('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
+                // Fan back out to all original extraction entries
+                catalogResults.resolved = fanOutResolvedItems(catalogResults.resolved, highGroupMap);
             } else {
                 logger.info('[VisionPipeline] Step 3: Skipped - catalog lookup disabled');
             }
@@ -1221,7 +1289,9 @@ class VisionPipelineService {
                     unresolvedByTitle,
                     rawOcrFingerprints,
                 );
-                enrichedHighConf = mappedHigh.mapped;
+                enrichedHighConf = mappedHigh.mapped.map(item => ({ ...item, _skipRematch: true }));
+                // Fan back out to all original extraction entries
+                enrichedHighConf = fanOutResolvedItems(enrichedHighConf, highGroupMap);
                 if (mappedHigh.droppedCount > 0) {
                     logger.warn('[VisionPipeline] Step 4a dropped enrichment items that did not map to unresolved high-confidence entries', {
                         droppedCount: mappedHigh.droppedCount,
@@ -1254,12 +1324,16 @@ class VisionPipelineService {
         // ===== MEDIUM CONFIDENCE WORKFLOW (between min and max) =====
         // Fingerprint lookup, then catalog, then enrichment for unmatched
         await checkAborted();
-        updateProgress('matching', { count: mediumConfidence.length });
-        const mediumMatched = [];
+        const { deduped: dedupedMid, groupMap: midGroupMap, droppedCount: midDropped } = dedupeOcrExtractions(mediumConfidence);
+        if (midDropped > 0) {
+            logger.info('[VisionPipeline] Step 4b OCR dedup: collapsed', mediumConfidence.length, 'to', dedupedMid.length, 'unique titles');
+        }
+        updateProgress('matching', { count: dedupedMid.length });
+        let mediumMatched = [];
         const mediumUnmatched = [];
-        if (mediumConfidence.length > 0) {
+        if (dedupedMid.length > 0) {
             logger.info('[VisionPipeline] Step 4b: Medium-confidence matching (fingerprint first)...');
-            for (const item of mediumConfidence) {
+            for (const item of dedupedMid) {
                 const collectable = await this.matchCollectable(item, shelf.type);
                 if (collectable) {
                     mediumMatched.push({ ...item, collectable, source: 'database-match' });
@@ -1267,6 +1341,8 @@ class VisionPipelineService {
                     mediumUnmatched.push(item);
                 }
             }
+            // Fan back out to all original extraction entries
+            mediumMatched = fanOutResolvedItems(mediumMatched, midGroupMap);
             logger.info('[VisionPipeline] Step 4b: Medium-conf DB matches:', mediumMatched.length, ', Unmatched:', mediumUnmatched.length);
 
             // Add DB matches to our matched list
@@ -1289,6 +1365,8 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline] Step 4c: Catalog lookup for', mediumUnmatched.length, 'medium-confidence items...');
                 mediumCatalogResults = await this.lookupCatalog(mediumUnmatched, shelf.type);
                 logger.info('[VisionPipeline] Step 4c Complete: Catalog resolved:', mediumCatalogResults.resolved.length, ', Still unresolved:', mediumCatalogResults.unresolved.length);
+                // Fan back out to all original extraction entries
+                mediumCatalogResults.resolved = fanOutResolvedItems(mediumCatalogResults.resolved, midGroupMap);
             } else {
                 logger.info('[VisionPipeline] Step 4c: Skipped - catalog lookup disabled');
             }
@@ -1357,7 +1435,9 @@ class VisionPipelineService {
                     unresolvedByTitle,
                     rawOcrFingerprints,
                 );
-                enrichedMediumConf = mappedMedium.mapped;
+                enrichedMediumConf = mappedMedium.mapped.map(item => ({ ...item, _skipRematch: true }));
+                // Fan back out to all original extraction entries
+                enrichedMediumConf = fanOutResolvedItems(enrichedMediumConf, midGroupMap);
                 if (mappedMedium.droppedCount > 0) {
                     logger.warn('[VisionPipeline] Step 4d dropped enrichment items that did not map to unresolved medium-confidence entries', {
                         droppedCount: mappedMedium.droppedCount,
@@ -1896,6 +1976,8 @@ class VisionPipelineService {
                                 source: 'catalog-match',
                                 extractionIndex: input?.extractionIndex ?? null,
                                 box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
+                                _skipRematch: true,
+                                _ocrGroupKey: input?._ocrGroupKey || null,
                             });
                             continue;
                         }
@@ -1920,6 +2002,8 @@ class VisionPipelineService {
                                 source: 'catalog-match',
                                 extractionIndex: input?.extractionIndex ?? null,
                                 box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
+                                _skipRematch: true,
+                                _ocrGroupKey: input?._ocrGroupKey || null,
                             });
                             continue;
                         }
@@ -1960,6 +2044,8 @@ class VisionPipelineService {
                         catalogId: match.id,
                         description: match.description,
                         image: match.imageLinks?.thumbnail || match.cover?.url,
+                        _skipRematch: true,
+                        _ocrGroupKey: item?._ocrGroupKey || null,
                     });
                 } else {
                     unresolved.push(item);
@@ -2309,9 +2395,11 @@ class VisionPipelineService {
                 // Check if item already has a collectable from Step 2 (database match)
                 let collectable = item.collectable || null;
 
-                if (!collectable) {
+                if (!collectable && !item._skipRematch) {
                     // Only call matchCollectable if we don't already have one
                     collectable = await this.matchCollectable(item, shelfType);
+                } else if (item._skipRematch) {
+                    logger.info('[VisionPipeline.saveToShelf] Skipping re-match (freshly catalog-resolved):', item.title || item.name);
                 } else {
                     logger.info('[VisionPipeline.saveToShelf] Using pre-matched collectable:', collectable.id, collectable.title);
                 }
