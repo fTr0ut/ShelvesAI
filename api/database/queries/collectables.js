@@ -106,6 +106,55 @@ function normalizeCastMembers(input) {
     return out;
 }
 
+function normalizePlatformData(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const seen = new Set();
+    const out = [];
+
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') continue;
+
+        const provider = normalizeString(entry.provider || entry.source || 'igdb') || null;
+        const igdbPlatformIdRaw = entry.igdbPlatformId ?? entry.igdb_platform_id ?? entry.id ?? null;
+        const parsedIgdbPlatformId = Number.parseInt(igdbPlatformIdRaw, 10);
+        const igdbPlatformId = Number.isFinite(parsedIgdbPlatformId) ? parsedIgdbPlatformId : null;
+        const name = normalizeString(entry.name) || null;
+        const abbreviation = normalizeString(entry.abbreviation || entry.abbr) || null;
+        const sourceType = normalizeString(entry.sourceType || entry.source_type) || null;
+        const releaseDate = normalizeString(entry.releaseDate || entry.release_date) || null;
+        const releaseDateHuman = normalizeString(entry.releaseDateHuman || entry.release_date_human) || null;
+        const releaseRegion = normalizeString(entry.releaseRegion || entry.release_region) || null;
+        const releaseRegionName = normalizeString(entry.releaseRegionName || entry.release_region_name) || null;
+
+        if (!name && !abbreviation) continue;
+        const dedupeKey = [
+            igdbPlatformId != null ? String(igdbPlatformId) : '',
+            name ? name.toLowerCase() : '',
+            abbreviation ? abbreviation.toLowerCase() : '',
+            sourceType ? sourceType.toLowerCase() : '',
+            releaseRegion ? releaseRegion.toLowerCase() : '',
+            releaseDate ? releaseDate.toLowerCase() : '',
+        ].join('::');
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        out.push({
+            provider,
+            igdbPlatformId,
+            name,
+            abbreviation,
+            sourceType,
+            releaseDate,
+            releaseDateHuman,
+            releaseRegion,
+            releaseRegionName,
+        });
+    }
+
+    return out;
+}
+
 function normalizeStringArray(input) {
     if (input == null) return [];
     const source = Array.isArray(input) ? input : [input];
@@ -120,6 +169,12 @@ function normalizeStringArray(input) {
         out.push(normalized);
     }
     return out;
+}
+
+function normalizeMaxPlayers(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function normalizeMarketValueSources(input) {
@@ -320,8 +375,14 @@ async function upsert(data, client = null) {
         coverImageSource = 'external',
         attribution = null,
         metascore = null,
+        maxPlayers: rawMaxPlayers = undefined,
+        max_players: rawMaxPlayersSnake = undefined,
         castMembers: rawCastMembers = undefined,
         cast_members: rawCastMembersSnake = undefined,
+        platformData: rawPlatformData = undefined,
+        platform_data: rawPlatformDataSnake = undefined,
+        igdbPayload: rawIgdbPayload = undefined,
+        igdb_payload: rawIgdbPayloadSnake = undefined,
     } = data;
 
     const resolvedCoverUrl = pickCoverUrl(images, coverUrl);
@@ -337,6 +398,9 @@ async function upsert(data, client = null) {
             : Number.isFinite(Number(runtime))
                 ? Number(runtime)
                 : null;
+    const normalizedMaxPlayers = normalizeMaxPlayers(
+        rawMaxPlayers !== undefined ? rawMaxPlayers : rawMaxPlayersSnake,
+    );
     const hasCastMembers = (
         Object.prototype.hasOwnProperty.call(data, 'castMembers')
         || Object.prototype.hasOwnProperty.call(data, 'cast_members')
@@ -345,6 +409,27 @@ async function upsert(data, client = null) {
     const normalizedCastMembers = normalizeCastMembers(
         hasCastMembers ? selectedRawCastMembers : null,
     );
+    const hasPlatformData = (
+        Object.prototype.hasOwnProperty.call(data, 'platformData')
+        || Object.prototype.hasOwnProperty.call(data, 'platform_data')
+    );
+    const selectedRawPlatformData = rawPlatformData !== undefined ? rawPlatformData : rawPlatformDataSnake;
+    const normalizedPlatformData = normalizePlatformData(
+        hasPlatformData ? selectedRawPlatformData : null,
+    );
+    const hasIgdbPayload = (
+        Object.prototype.hasOwnProperty.call(data, 'igdbPayload')
+        || Object.prototype.hasOwnProperty.call(data, 'igdb_payload')
+    );
+    const selectedRawIgdbPayload = rawIgdbPayload !== undefined ? rawIgdbPayload : rawIgdbPayloadSnake;
+    const normalizedIgdbPayload = (
+        hasIgdbPayload
+        && selectedRawIgdbPayload
+        && typeof selectedRawIgdbPayload === 'object'
+        && !Array.isArray(selectedRawIgdbPayload)
+    )
+        ? selectedRawIgdbPayload
+        : null;
 
     const normalizedKind = normalizeCollectableKind(kind, 'item');
     const normalizedIdentifiers = identifiers && typeof identifiers === 'object' && !Array.isArray(identifiers)
@@ -359,6 +444,8 @@ async function upsert(data, client = null) {
     const attributionJson = attribution ? ensureJsonParam(attribution, 'attribution') : null;
     const metascoreJson = metascore ? ensureJsonParam(metascore, 'metascore') : null;
     const castMembersJson = hasCastMembers ? ensureJsonParam(normalizedCastMembers, 'castMembers') : null;
+    const platformDataJson = hasPlatformData ? ensureJsonParam(normalizedPlatformData, 'platformData') : null;
+    const igdbPayloadJson = hasIgdbPayload ? ensureJsonParam(normalizedIgdbPayload, 'igdbPayload') : null;
     const q = resolveQuery(client);
     const result = await q(
         `INSERT INTO collectables (
@@ -366,8 +453,8 @@ async function upsert(data, client = null) {
        primary_creator, creators, publishers, year, formats, system_name, tags, genre, runtime, identifiers,
        market_value, market_value_sources,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
-       cover_image_url, cover_image_source, attribution, metascore, cast_members
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+       cover_image_url, cover_image_source, attribution, metascore, max_players, cast_members, platform_data, igdb_payload
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
@@ -402,7 +489,10 @@ async function upsert(data, client = null) {
        cover_image_source = COALESCE(EXCLUDED.cover_image_source, collectables.cover_image_source),
        attribution = COALESCE(EXCLUDED.attribution, collectables.attribution),
        metascore = COALESCE(EXCLUDED.metascore, collectables.metascore),
-       cast_members = CASE WHEN $29::boolean THEN EXCLUDED.cast_members ELSE collectables.cast_members END,
+       max_players = COALESCE(EXCLUDED.max_players, collectables.max_players),
+       cast_members = CASE WHEN $32::boolean THEN EXCLUDED.cast_members ELSE collectables.cast_members END,
+       platform_data = CASE WHEN $33::boolean THEN EXCLUDED.platform_data ELSE collectables.platform_data END,
+       igdb_payload = CASE WHEN $34::boolean THEN EXCLUDED.igdb_payload ELSE collectables.igdb_payload END,
        updated_at = NOW()
      RETURNING *`,
         [
@@ -412,8 +502,13 @@ async function upsert(data, client = null) {
             fuzzyFingerprintsJson, coverImageUrl, coverImageSource,
             attributionJson,
             metascoreJson,
+            normalizedMaxPlayers,
             castMembersJson,
+            platformDataJson,
+            igdbPayloadJson,
             hasCastMembers,
+            hasPlatformData,
+            hasIgdbPayload,
         ]
     );
     const collectable = rowToCamelCase(result.rows[0]);
@@ -483,10 +578,35 @@ async function upsert(data, client = null) {
     return collectable;
 }
 
+function appendGamePlatformFilter({ sql, params, kind, platform }) {
+    const normalizedKind = kind ? normalizeCollectableKind(kind) : null;
+    const normalizedPlatform = normalizeString(platform).toLowerCase();
+    if (normalizedKind !== 'games' || !normalizedPlatform) {
+        return { sql, params };
+    }
+
+    const platformNeedle = `%${normalizedPlatform}%`;
+    const nextParams = params.concat(platformNeedle);
+    const paramRef = `$${nextParams.length}`;
+    const nextSql = `${sql}
+      AND (
+        LOWER(COALESCE(c.system_name, '')) LIKE ${paramRef}
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(c.platform_data, '[]'::jsonb)) AS pd
+          WHERE LOWER(COALESCE(pd->>'name', '')) LIKE ${paramRef}
+             OR LOWER(COALESCE(pd->>'abbreviation', '')) LIKE ${paramRef}
+        )
+      )
+    `;
+
+    return { sql: nextSql, params: nextParams };
+}
+
 /**
  * Search in global catalog with optional kind filter
  */
-async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
+async function searchGlobal({ q, kind, platform = null, limit = 20, offset = 0 }) {
     const normalizedQuery = normalizeSearchText(q);
     const normalizedCastMemberName = normalizeCastName(q);
     const castMatchQueryJson = JSON.stringify([{ nameNormalized: normalizedCastMemberName }]);
@@ -524,11 +644,15 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
         params.push(normalizedKind);
     }
 
-    sql += ` ORDER BY search_score DESC`;
-    sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
+    const filtered = appendGamePlatformFilter({ sql, params, kind: normalizedKind, platform });
+    sql = filtered.sql;
+    const finalParams = filtered.params.slice();
 
-    const result = await query(sql, params);
+    sql += ` ORDER BY search_score DESC`;
+    sql += ` LIMIT $${finalParams.length + 1} OFFSET $${finalParams.length + 2}`;
+    finalParams.push(limit, offset);
+
+    const result = await query(sql, finalParams);
     return result.rows.map(rowToCamelCase);
 }
 
@@ -536,7 +660,7 @@ async function searchGlobal({ q, kind, limit = 20, offset = 0 }) {
  * Search in global catalog using wildcard ILIKE patterns
  * Use * as wildcard character (converted to % for SQL)
  */
-async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
+async function searchGlobalWildcard({ pattern, kind, platform = null, limit = 20, offset = 0 }) {
     // Convert * to % for SQL ILIKE
     const sqlPattern = pattern.replace(/\*/g, '%');
     const normalizedPattern = normalizeSearchWildcardPattern(pattern);
@@ -562,11 +686,15 @@ async function searchGlobalWildcard({ pattern, kind, limit = 20, offset = 0 }) {
         params.push(normalizedKind);
     }
 
-    sql += ` ORDER BY c.title ASC`;
-    sql += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
+    const filtered = appendGamePlatformFilter({ sql, params, kind: normalizedKind, platform });
+    sql = filtered.sql;
+    const finalParams = filtered.params.slice();
 
-    const result = await query(sql, params);
+    sql += ` ORDER BY c.title ASC`;
+    sql += ` LIMIT $${finalParams.length + 1} OFFSET $${finalParams.length + 2}`;
+    finalParams.push(limit, offset);
+
+    const result = await query(sql, finalParams);
     return result.rows.map(rowToCamelCase);
 }
 
@@ -682,6 +810,21 @@ async function addFuzzyFingerprint(collectableId, fuzzyFp) {
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
+async function updateFormat(collectableId, format, client = null) {
+    if (!collectableId) return null;
+    const q = resolveQuery(client);
+    const normalizedFormat = normalizeString(format).toLowerCase() || null;
+    const result = await q(
+        `UPDATE collectables
+         SET format = $2,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [collectableId, normalizedFormat],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
 module.exports = {
     findByFingerprint,
     findByLightweightFingerprint,
@@ -695,4 +838,5 @@ module.exports = {
     searchGlobalWildcard,
     fuzzyMatch,
     addFuzzyFingerprint,
+    updateFormat,
 };

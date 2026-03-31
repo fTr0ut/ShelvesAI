@@ -1,28 +1,76 @@
-const { query } = require('../pg');
+const { query, transaction } = require('../pg');
 const { rowToCamelCase } = require('./utils');
+
+const INSTALLATION_DEVICE_ID_PREFIX = 'install:';
 
 /**
  * Register or update a push device token for a user
  * Uses upsert to handle re-registration of same token
  */
 async function registerToken(userId, expoPushToken, options = {}) {
-    const { deviceId = null, platform = null } = options;
+    const normalizedDeviceId = typeof options.deviceId === 'string' && options.deviceId.trim()
+        ? options.deviceId.trim()
+        : null;
+    const normalizedPlatform = typeof options.platform === 'string' && options.platform.trim()
+        ? options.platform.trim()
+        : null;
 
-    const result = await query(
-        `INSERT INTO push_device_tokens (user_id, expo_push_token, device_id, platform, is_active, last_used_at)
-         VALUES ($1, $2, $3, $4, true, NOW())
-         ON CONFLICT (user_id, expo_push_token)
-         DO UPDATE SET
-             is_active = true,
-             device_id = COALESCE(EXCLUDED.device_id, push_device_tokens.device_id),
-             platform = COALESCE(EXCLUDED.platform, push_device_tokens.platform),
-             last_used_at = NOW(),
-             updated_at = NOW()
-         RETURNING *`,
-        [userId, expoPushToken, deviceId, platform]
-    );
+    return transaction(async (client) => {
+        const upsertResult = await client.query(
+            `INSERT INTO push_device_tokens (user_id, expo_push_token, device_id, platform, is_active, last_used_at)
+             VALUES ($1, $2, $3, $4, true, NOW())
+             ON CONFLICT (user_id, expo_push_token)
+             DO UPDATE SET
+                 is_active = true,
+                 device_id = COALESCE(EXCLUDED.device_id, push_device_tokens.device_id),
+                 platform = COALESCE(EXCLUDED.platform, push_device_tokens.platform),
+                 last_used_at = NOW(),
+                 updated_at = NOW()
+             RETURNING *`,
+            [userId, expoPushToken, normalizedDeviceId, normalizedPlatform]
+        );
 
-    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+        if (normalizedDeviceId) {
+            if (normalizedDeviceId.startsWith(INSTALLATION_DEVICE_ID_PREFIX)) {
+                // Keep one active token per installation, and opportunistically retire pre-installation legacy rows.
+                await client.query(
+                    `UPDATE push_device_tokens
+                     SET is_active = false, updated_at = NOW()
+                     WHERE user_id = $1
+                       AND expo_push_token != $2
+                       AND is_active = true
+                       AND (
+                           device_id = $3
+                           OR device_id IS NULL
+                           OR device_id NOT LIKE 'install:%'
+                       )`,
+                    [userId, expoPushToken, normalizedDeviceId]
+                );
+            } else {
+                await client.query(
+                    `UPDATE push_device_tokens
+                     SET is_active = false, updated_at = NOW()
+                     WHERE user_id = $1
+                       AND expo_push_token != $2
+                       AND is_active = true
+                       AND device_id = $3`,
+                    [userId, expoPushToken, normalizedDeviceId]
+                );
+            }
+        } else {
+            // Backward compatibility fallback for clients that still omit device IDs.
+            await client.query(
+                `UPDATE push_device_tokens
+                 SET is_active = false, updated_at = NOW()
+                 WHERE user_id = $1
+                   AND expo_push_token != $2
+                   AND is_active = true`,
+                [userId, expoPushToken]
+            );
+        }
+
+        return upsertResult.rows[0] ? rowToCamelCase(upsertResult.rows[0]) : null;
+    });
 }
 
 /**

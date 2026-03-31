@@ -43,6 +43,22 @@ function toSimilarityNumber(value) {
     return Number.isFinite(num) ? num : 0;
 }
 
+function normalizeOwnedPlatforms(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const seen = new Set();
+    const out = [];
+    for (const entry of source) {
+        const normalized = String(entry ?? '').trim();
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
 /**
  * List all shelves for a user with item counts
  */
@@ -184,6 +200,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             c.market_value as collectable_market_value,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
+            c.platform_data as collectable_platform_data,
             c.tags as collectable_tags,
             c.images as collectable_images,
             c.identifiers as collectable_identifiers,
@@ -198,6 +215,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             c.cover_media_id as collectable_cover_media_id,
             m.local_path as collectable_cover_media_path,
             c.kind as collectable_kind,
+            COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             um.name as manual_name,
             um.type as manual_type,
             um.description as manual_description,
@@ -222,6 +240,11 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
+     LEFT JOIN LATERAL (
+       SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
+       FROM user_collection_platforms ucp
+       WHERE ucp.collection_item_id = uc.id
+     ) ucp ON TRUE
      LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
         AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1 AND uc.user_id = $2
@@ -262,6 +285,7 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             c.market_value as collectable_market_value,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
+            c.platform_data as collectable_platform_data,
             c.tags as collectable_tags,
             c.images as collectable_images,
             c.identifiers as collectable_identifiers,
@@ -276,6 +300,7 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             c.cover_media_id as collectable_cover_media_id,
             m.local_path as collectable_cover_media_path,
             c.kind as collectable_kind,
+            COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             um.name as manual_name,
             um.type as manual_type,
             um.description as manual_description,
@@ -300,6 +325,11 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
+     LEFT JOIN LATERAL (
+       SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
+       FROM user_collection_platforms ucp
+       WHERE ucp.collection_item_id = uc.id
+     ) ucp ON TRUE
      LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
         AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
      WHERE uc.shelf_id = $1
@@ -819,6 +849,8 @@ async function getItemById(itemId, userId, shelfId) {
             c.kind as collectable_kind,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
+            c.platform_data as collectable_platform_data,
+            COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             m.local_path as collectable_cover_media_path,
             um.id as manual_id,
             um.name as manual_name,
@@ -829,6 +861,11 @@ async function getItemById(itemId, userId, shelfId) {
          FROM user_collections uc
          LEFT JOIN collectables c ON c.id = uc.collectable_id
          LEFT JOIN media m ON m.id = c.cover_media_id
+         LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
+            FROM user_collection_platforms ucp
+            WHERE ucp.collection_item_id = uc.id
+         ) ucp ON TRUE
          LEFT JOIN user_manuals um ON um.id = uc.manual_id
          WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
         [itemId, userId, shelfId]
@@ -847,6 +884,77 @@ async function getManualById(manualId) {
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
+async function getOwnedPlatformsByCollectionItemId(collectionItemId, client = null) {
+    const q = resolveQuery(client);
+    const result = await q(
+        `SELECT platform_name
+         FROM user_collection_platforms
+         WHERE collection_item_id = $1
+         ORDER BY platform_name ASC`,
+        [collectionItemId],
+    );
+    return result.rows
+        .map((row) => String(row.platform_name || '').trim())
+        .filter(Boolean);
+}
+
+async function replaceOwnedPlatformsForCollectionItem({
+    collectionItemId,
+    userId,
+    shelfId,
+    platforms,
+}, client = null) {
+    const q = resolveQuery(client);
+    const normalizedPlatforms = normalizeOwnedPlatforms(platforms);
+
+    const ownership = await q(
+        `SELECT id
+         FROM user_collections
+         WHERE id = $1 AND user_id = $2 AND shelf_id = $3
+         LIMIT 1`,
+        [collectionItemId, userId, shelfId],
+    );
+    if (!ownership.rows[0]) return null;
+
+    await q(
+        `DELETE FROM user_collection_platforms WHERE collection_item_id = $1`,
+        [collectionItemId],
+    );
+
+    if (normalizedPlatforms.length) {
+        await q(
+            `INSERT INTO user_collection_platforms (collection_item_id, platform_name)
+             SELECT $1, platform_name
+             FROM UNNEST($2::text[]) AS platform_name
+             ON CONFLICT DO NOTHING`,
+            [collectionItemId, normalizedPlatforms],
+        );
+    }
+
+    return getOwnedPlatformsByCollectionItemId(collectionItemId, client);
+}
+
+async function ensureOwnedPlatformsForCollectionItem({
+    collectionItemId,
+    platforms,
+}, client = null) {
+    const q = resolveQuery(client);
+    const normalizedPlatforms = normalizeOwnedPlatforms(platforms);
+    if (!collectionItemId || !normalizedPlatforms.length) {
+        return [];
+    }
+
+    await q(
+        `INSERT INTO user_collection_platforms (collection_item_id, platform_name)
+         SELECT $1, platform_name
+         FROM UNNEST($2::text[]) AS platform_name
+         ON CONFLICT DO NOTHING`,
+        [collectionItemId, normalizedPlatforms],
+    );
+
+    return getOwnedPlatformsByCollectionItemId(collectionItemId, client);
+}
+
 /**
  * Search across a user's shelves, collectables, and manual entries
  */
@@ -857,7 +965,7 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
     const normalizedQuery = normalizeSearchText(q);
 
     const sql = `
-        SELECT result_type, id, shelf_id, collectable_id, manual_id, title, subtitle, kind, format, system_name, shelf_name,
+        SELECT result_type, id, shelf_id, collectable_id, manual_id, title, subtitle, kind, format, system_name, owned_platforms, shelf_name,
                year, genre, tags, cast_members,
                cover_url, cover_media_path,
                owner_photo_source, owner_photo_thumb_storage_provider, owner_photo_thumb_storage_key,
@@ -873,6 +981,7 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    s.type as kind,
                    NULL::text as format,
                    NULL::text as system_name,
+                   ARRAY[]::text[] as owned_platforms,
                    NULL::text as shelf_name,
                    NULL::text as year,
                    NULL::text[] as genre,
@@ -909,6 +1018,11 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    c.kind as kind,
                    uc.format as format,
                    c.system_name as system_name,
+                   COALESCE((
+                     SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name)
+                     FROM user_collection_platforms ucp
+                     WHERE ucp.collection_item_id = uc.id
+                   ), ARRAY[]::text[]) as owned_platforms,
                    s.name as shelf_name,
                    c.year as year,
                    c.genre as genre,
@@ -944,6 +1058,13 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                   c.year ILIKE '%' || $1 || '%' OR
                   array_to_string(c.genre, ' ') ILIKE '%' || $1 || '%' OR
                   array_to_string(c.tags, ' ') ILIKE '%' || $1 || '%' OR
+                  c.system_name ILIKE '%' || $1 || '%' OR
+                  EXISTS (
+                    SELECT 1
+                    FROM user_collection_platforms ucp
+                    WHERE ucp.collection_item_id = uc.id
+                      AND ucp.platform_name ILIKE '%' || $1 || '%'
+                  ) OR
                   c.cast_members::text ILIKE '%' || $1 || '%'
               )
               
@@ -959,6 +1080,7 @@ async function searchUserCollection(userId, searchQuery, { limit = 50, offset = 
                    um.type as kind,
                    COALESCE(uc.format, um.format) as format,
                    NULL::text as system_name,
+                   ARRAY[]::text[] as owned_platforms,
                    s.name as shelf_name,
                    um.year as year,
                    um.genre as genre,
@@ -1027,5 +1149,8 @@ module.exports = {
     updateReviewedEventLink,
     getItemById,
     getManualById,
+    getOwnedPlatformsByCollectionItemId,
+    replaceOwnedPlatformsForCollectionItem,
+    ensureOwnedPlatformsForCollectionItem,
     searchUserCollection,
 };

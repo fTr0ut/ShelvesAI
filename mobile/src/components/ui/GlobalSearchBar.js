@@ -17,6 +17,7 @@ import { AuthContext } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { apiRequest } from '../../services/api';
 import { resolveCollectableCoverUrl } from '../../utils/coverUrl';
+import { formatCollectableSearchMeta } from '../../utils/collectableDisplay';
 
 const SEARCH_TYPE_OPTIONS = [
     { label: 'All', value: '' },
@@ -396,6 +397,7 @@ export function GlobalSearchOverlay({ search }) {
                                                 ? `id-${item.id}`
                                                 : `api-${item.source || 'api'}-${item.title || 'untitled'}-${index}`;
                                             const typeLabel = getCollectableTypeLabel(item, search.selectedType);
+                                            const metadataLine = formatCollectableSearchMeta(item);
                                             return (
                                                 <TouchableOpacity
                                                     key={key}
@@ -414,6 +416,9 @@ export function GlobalSearchOverlay({ search }) {
                                                         {item.primaryCreator && (
                                                             <Text style={styles.resultSubtitle} numberOfLines={1}>{item.primaryCreator}</Text>
                                                         )}
+                                                        {metadataLine ? (
+                                                            <Text style={styles.resultMetaText} numberOfLines={1}>{metadataLine}</Text>
+                                                        ) : null}
                                                         <View style={styles.sourceChip}>
                                                             <Text style={styles.sourceChipText}>
                                                                 {typeLabel}
@@ -603,6 +608,11 @@ const createOverlayStyles = ({ colors, spacing, shadows }) => StyleSheet.create(
     },
     resultSubtitle: {
         fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    resultMetaText: {
+        fontSize: 11,
         color: colors.textMuted,
         marginTop: 2,
     },

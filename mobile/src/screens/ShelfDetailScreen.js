@@ -149,6 +149,22 @@ function buildVisionSummaryMessage({
     return `Same photo detected. This image was already scanned recently. Previous result: ${standard}`;
 }
 
+function normalizeOwnedPlatforms(value) {
+    if (value == null) return [];
+    const source = Array.isArray(value) ? value : [value];
+    const seen = new Set();
+    const out = [];
+    for (const entry of source) {
+        const normalized = String(entry || '').trim();
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
 export default function ShelfDetailScreen({ route, navigation }) {
     const { id, title, readOnly: readOnlyParam, autoAddItem } = route.params || {};
     const { token, apiBase, premiumEnabled, user } = useContext(AuthContext);
@@ -680,6 +696,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
         const collectableId = item.collectable?.id || item.collectableId;
         const manualId = item.manual?.id || item.manualId;
         const isFavorited = collectableId ? favorites[collectableId] : false;
+        const ownedPlatforms = normalizeOwnedPlatforms(item.ownedPlatforms);
 
         return (
             <TouchableOpacity
@@ -718,6 +735,18 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <View style={styles.itemContent}>
                     <Text style={styles.itemTitle} numberOfLines={1}>{info.title}</Text>
                     {info.subtitle ? <Text style={styles.itemSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
+                    {ownedPlatforms.length > 0 && (
+                        <View style={styles.platformChipRow}>
+                            {ownedPlatforms.slice(0, 3).map((platformName) => (
+                                <View key={`${item.id}-${platformName.toLowerCase()}`} style={styles.platformChip}>
+                                    <Text style={styles.platformChipText} numberOfLines={1}>{platformName}</Text>
+                                </View>
+                            ))}
+                            {ownedPlatforms.length > 3 && (
+                                <Text style={styles.platformMoreText}>+{ownedPlatforms.length - 3}</Text>
+                            )}
+                        </View>
+                    )}
                     <View style={styles.itemRatingRow}>
                         <StarRating
                             rating={item.rating || 0}
@@ -1575,6 +1604,27 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 13,
         color: colors.textMuted,
         marginTop: 2,
+    },
+    platformChipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: spacing.xs,
+        marginTop: spacing.xs,
+    },
+    platformChip: {
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: radius.full,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+    },
+    platformChipText: {
+        fontSize: 11,
+        color: colors.textSecondary,
+    },
+    platformMoreText: {
+        fontSize: 11,
+        color: colors.textMuted,
     },
     itemRatingRow: {
         marginTop: 4,

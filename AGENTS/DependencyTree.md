@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-30
+Last updated: 2026-03-31
 
 ---
 
@@ -49,6 +49,23 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-03-31 | owned-platform-format-required-and-row-badge | Tightened game-owned-platform editing contract. `mobile/src/screens/CollectableDetailScreen.js` now blocks save until ownership format is selected (`Physical`/`Digital`), shows a required prompt when unset, and renders ownership format badges in each Owned Platforms row after save. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now requires `format` for game collectables and returns 400 when missing/empty/invalid. Extended coverage in `api/__tests__/shelvesController.test.js` with missing-format rejection and required-format success assertions.
+- 2026-03-31 | collectable-detail-game-format-and-rating-visibility | Updated game detail UX and owned-platform save contract. `mobile/src/screens/CollectableDetailScreen.js` now relabels game `maxPlayers` as `# of Players`, hides `IGDB Rating` when numeric value is `0.0`, and adds Owned Platforms edit-time format selection (`Physical`/`Digital`) included in `PUT /api/shelves/:shelfId/items/:itemId/platforms` payload. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now validates optional `format` (`physical|digital`) and persists it via new helper `api/database/queries/collectables.updateFormat`; response now includes updated `item.collectable.format` when format is provided. Added migration `api/database/migrations/20260331143000_restore_collectables_format_column.js` to ensure `collectables.format` exists before writes. Added/updated controller tests in `api/__tests__/shelvesController.test.js`.
+- 2026-03-31 | igdb-platform-backfill-max-players-and-env-local-override | Updated `api/scripts/backfill-collectable-platform-data.js` to also backfill `collectables.max_players` alongside `platform_data`/`igdb_payload` using IGDB multiplayer mapping (`mapped.maxPlayers` fallback extraction). The script’s `ONLY_MISSING` mode now includes rows where `max_players IS NULL`, and env loading is explicit `.env` first with `.env.local` override when present for local testing.
+- 2026-03-31 | collectables-max-players-persistence | Added dedicated game-player-cap persistence on collectables. New migration `20260331130000_add_collectables_max_players` adds `collectables.max_players` (INTEGER, nullable) and init schema now includes the same column. `database/queries/collectables.upsert` now binds/writes `max_players`, and `routes/collectables.buildCollectableUpsertPayloadFromCandidate()` now forwards `maxPlayers` from API candidates into upsert payloads so game imports persist explicit player caps for downstream detail/search rendering.
+- 2026-03-31 | games-igdb-payload-and-maxplayers-contract | Expanded game metadata capture/contract coverage. Added `collectables.igdb_payload` JSONB persistence (migration `20260331120000_add_collectables_igdb_payload`, init schema update) and extended `GameCatalogService` IGDB query/mapping to capture full payload (`fields *`) plus ratings/multiplayer structures in one call. `mapIgdbGameToCollectable()` now emits top-level `maxPlayers` (from multiplayer modes), while collectable response shaping derives/exposes `maxPlayers` for game payloads from explicit/source/IGDB multiplayer metadata without exposing raw `igdbPayload` in public responses. Included helper regression coverage in `api/services/catalog/GameCatalogService.test.js` and `api/__tests__/collectablesRoute.helpers.test.js`.
+- 2026-03-31 | collectables-search-offset-type-fix | Fixed Postgres parameter typing bug in global collectables search where `OFFSET` could bind as text (`code 42804`). Updated query parameter ordering/binding in collectables search SQL paths so pagination uses numeric offsets reliably.
+- 2026-03-31 | catalog-timeout-queue-ordering-fix | Hardened outbound catalog timeout behavior to avoid false `"The user aborted a request."` under queue pressure. In `api/services/openLibrary.js`, `fetchJson()` now creates/starts `AbortController` timeout inside the `limitOpenLibrary(...)` executed task so queue wait does not consume timeout budget. In `api/services/hardcover.js`, `HardcoverClient.fetchGraphQL()` now starts timeout inside the `limitHardcover(...)` executed task and after local `RateLimiter.acquire()` wait, so both local limiter waits are excluded from timeout accounting.
+- 2026-03-31 | games-platform-ownership-and-igdb-platform-capture | Implemented game platform ownership + IGDB platform capture. Added `collectables.platform_data` JSONB persistence (migration `20260331100000_add_collectables_platform_data`, init schema update) and new `user_collection_platforms` table with uniqueness/indexing for case-insensitive per-item platform ownership (migration `20260331101000_create_user_collection_platforms`, init schema update). `GameCatalogService.mapIgdbGameToCollectable()` now maps full IGDB platform/release-date platform metadata into `platformData`; `collectables.upsert` now supports provided-only `platform_data` overwrite semantics. Added strict local game `platform=` filtering in `GET /api/collectables` and `GET /api/checkin/search` using `collectables.system_name` + `collectables.platform_data` while keeping existing API fallback/supplement behavior. Shelf hydration/search now includes `ownedPlatforms`, add flows auto-seed default owned platform from game `systemName` (`addCollectable`, `addCollectableFromApi`, review completion, vision save), and new owner endpoint `PUT /api/shelves/:shelfId/items/:itemId/platforms` updates platform chips per shelf item. Mobile updates: `CollectableDetailScreen` now hides game `systemName` in Details, replaces legacy owned-platform UI with a collapsible `Owned Platforms` section (per-platform rows + added date), and supports owned-platform editing; `ShelfDetailScreen` renders owned platform chips on list cards (single-row item model retained). Added script `api/scripts/backfill-collectable-platform-data.js` + npm command `backfill:collectable-platform-data`.
+- 2026-03-30 | onboarding-terms-logout-escape | Added `Back to Login` control on mobile onboarding Terms acceptance step (`mobile/src/screens/OnboardingProfileOptionalScreen.js`). Action clears secure token/session state (`clearToken`, auth context `setToken('')`, clears user/onboarding flags) so users can exit onboarding and return directly to the login flow.
+- 2026-03-30 | push-notification-duplicate-dedup | Fixed duplicate push deliveries from stale token rows + duplicate notification inserts. `pushDeviceTokens.registerToken` is now transactional with per-installation stale-token deactivation and opportunistic legacy-token cleanup; mobile push registration now sends stable persisted `deviceId` values (`install:<uuid>`) and always refreshes current Expo token on login/start before backend registration. Added migration `20260330200000_add_notification_dedup_indexes` to soft-delete older active duplicates and add partial unique indexes for workflow terminal notifications + `friend_accept`; `database/queries/notifications.create` now uses conflict-safe insert branches for those types. Mirrored new notification indexes in `database/init/01-schema.sql` and added regression tests in `api/__tests__/pushDeviceTokens.test.js` and `api/__tests__/notificationsQueries.test.js`.
+- 2026-03-30 | checkin-socialfeed-post-refresh-signal | Added targeted post-check-in feed refresh wiring for Social Feed without creating a new feed route. `BottomTabNavigator` now passes `originTab` when opening `CheckIn` modal (`mobile/src/navigation/BottomTabNavigator.js`), new event helper `mobile/src/services/checkInEvents.js` broadcasts successful check-ins, `CheckInScreen` emits that event then closes via `navigation.goBack()`, and `SocialFeedScreen` subscribes to the event to trigger immediate top-scroll + refresh when returning/focused.
+- 2026-03-30 | checkin-search-global-fallback-unification | Unified check-in item discovery with global collectables search fallback. `GET /api/checkin/search` now reuses global-search helper logic from `routes/collectables` for API fallback flags/limits/container resolution/provider lookup caching while still returning manual-item hits from local SQL (`api/routes/checkin.js`). Endpoint now returns source/search metadata (`searched`, `resolvedContainer`, `sources`) and supports fallback/supplement query flags. `mobile/src/screens/CheckInScreen.js` now requests fallback-enabled check-in search, adds inline type-chip filtering, adds `See more results` API-supplement reruns with expanded limits, and resolves API-backed candidates through `POST /api/collectables/resolve-search-hit` before creating check-ins. Added regression coverage in `api/__tests__/checkinSearchQuery.test.js`.
+- 2026-03-30 | onboarding-terms-link-revert | Reverted onboarding terms URL target back to `https://shelvesai.com/terms` by restoring API default `TERMS_OF_SERVICE_URL` (`api/config/constants.js`) and undoing the temporary `/terms/termsContent.json` linkage. Website terms page import reverted to local `src/app/terms/termsContent.json` and temporary `public/terms/termsContent.json` endpoint copy was removed.
+- 2026-03-30 | tv-global-search-api-container-fix | Fixed TV fallback API search resolution by wiring shared `TvCatalogService` into `CollectableMatchingService` catalog service selection (`api/services/collectableMatchingService.js`), so `GET /api/collectables` typed fallback searches with `resolvedContainer=tv` now call TMDB TV lookup paths instead of returning `No catalog service for type: tv`. Added regression coverage in `api/__tests__/collectableMatchingService.test.js`.
+- 2026-03-30 | onboarding-terms-json-linking | Redirected onboarding Terms link target to the JSON content endpoint by changing API default `TERMS_OF_SERVICE_URL` to `https://shelvesai.com/terms/termsContent.json` (`api/config/constants.js`). Website terms page now reads from `website/public/terms/termsContent.json` (moved source out of `src/app/terms/termsContent.json`) so both `/terms` rendering and onboarding link reference the same JSON payload path.
+- 2026-03-30 | onboarding-terms-acceptance | Added onboarding Terms of Service acceptance enforcement across API + mobile. API now appends active terms metadata to `/api/config/onboarding` (`terms.version`, `terms.url`), requires `termsAccepted=true` + matching `termsVersion` on `POST /api/onboarding/complete`, and persists `users.terms_accepted`, `users.terms_accepted_version`, and `users.terms_accepted_at` via new migration `20260330180000_add_users_terms_acceptance_fields`. Mobile onboarding optional step now renders a required Terms section with link-out to `/terms`, checkbox consent, and includes acceptance payload in onboarding completion request. Added backend coverage in `api/__tests__/onboardingController.test.js`.
+- 2026-03-30 | website-terms-of-service | Added /terms page to website covering user conduct, illegal/lewd content, harassment, doxxing, and advertising.
 - 2026-03-30 | account-feedback-submission | Implemented in-app Account Settings feedback submission flow. Mobile `AccountScreen` now includes a `Send Feedback` settings row opening a multiline prompt modal that submits to `POST /api/account/feedback`. API `routes/account.js` now exposes authenticated feedback endpoint with string-length validation; `controllers/accountController.submitFeedback` validates message + hydrates user contact details and calls new `services/emailService.sendFeedbackEmail(...)`. `emailService` now supports support-inbox feedback delivery via Resend (`SUPPORT_EMAIL` default `support@shelvesai.com`). Added coverage in `api/__tests__/accountController.feedback.test.js`.
 - 2026-03-30 | admin-workfeed-live-queue-monitoring | Added admin-facing live workflow queue monitoring in existing Jobs area. API adds read-only admin endpoints `GET /api/admin/workfeed` and `GET /api/admin/workfeed/:jobId` (wired in `routes/admin.js`, implemented in `controllers/adminController.js`) backed by new query helpers in `database/queries/workflowQueueJobs.js` for filtered/paginated queue listing, active-default ordering (`processing` then `queued` by queue order), and derived `queuePosition`/`queuedMs`. Responses are enriched with single-instance in-memory progress (`step/progress/message`) via `services/processingStatus`. Admin dashboard adds `getWorkfeed`/`getWorkfeedJob` client APIs, introduces Workfeed-first tabbed Jobs UI with 5s polling + race-safe refresh in `pages/Jobs.jsx`, and adds read-only queue detail modal `components/WorkfeedDetailModal.jsx`. Added backend coverage in `__tests__/adminWorkfeedController.test.js` and `database/queries/workflowQueueJobs.admin.test.js`.
 - 2026-03-30 | vision-workflow-queue-and-outbound-throttling | Implemented durable Postgres-backed workflow queueing for vision requests with claim-safe worker execution (`FOR UPDATE SKIP LOCKED`) via new `workflow_queue_jobs` table/query module/service (`database/queries/workflowQueueJobs.js`, `services/workflowQueueService.js`, `services/workflow/workflowSettings.js`). `POST /api/shelves/:shelfId/vision` now enqueues uncached async jobs and returns queue metadata (`status`, `queuePosition`, `estimatedWaitSeconds`, `notifyOnComplete`), `GET /api/shelves/:shelfId/vision/:jobId/status` now returns queue metadata + DB fallback hydration, and `DELETE /api/shelves/:shelfId/vision/:jobId` now supports queued and running abort semantics. Added route-level ingress rate limiting on `/vision` and `/catalog-lookup`, per-user queued cap protection, queue-depth-aware crop warmup capping, in-flight dedupe (`user+shelf+image_sha256`) and hash short-circuit for duplicate scan uploads. Added shared outbound limiter registry for Gemini/provider/S3 calls (`services/outboundLimiterRegistry.js`) and shared catalog service singletons (`services/catalog/sharedCatalogServices.js`) to prevent per-request limiter resets. Added queue-only workflow notifications (`workflow_complete`/`workflow_failed`, `entity_type=workflow_job`) plus `notification_preferences.push_workflow_jobs` support in API and mobile notification settings/tap routing.
@@ -228,6 +245,18 @@ ShelvesAI/
   - `mobile/src/screens/ShelfDetailScreen.js` uses these fields to render non-ambiguous completion alerts.
   - `mobile/src/hooks/useVisionProcessing.js` uses these fields for background toast messaging and completion callbacks.
 
+#### Game Platform Ownership Contract (`mobile` <- `api`)
+
+- Shelf item payloads (`GET /api/shelves/:shelfId/items`, detail hydration) now include:
+  - `collectable.platformData: PlatformData[]`
+  - `collectable.platforms: string[]` (derived convenience names)
+  - `collectable.maxPlayers: number | null` (games only; derived from IGDB multiplayer metadata when available)
+  - `ownedPlatforms: string[]` (user-owned consoles for that shelf item)
+- New owner-only endpoint:
+  - `PUT /api/shelves/:shelfId/items/:itemId/platforms`
+  - body: `{ platforms: string[] }`
+  - response: updated shelf item payload including `ownedPlatforms`
+
 #### Push Notification Contract (`mobile` <- `api`)
 
 - `GET /api/push/preferences` and `PATCH /api/push/preferences` now include `pushWorkflowJobs`.
@@ -343,6 +372,11 @@ api/__tests__/requestLogger.test.js
   -> api/middleware/requestLogger.js
   -> api/database/queries/jobRuns.js
 
+api/__tests__/collectableMatchingService.test.js
+  -> api/services/collectableMatchingService.js
+  -> api/services/catalog/sharedCatalogServices.js
+  -> api/services/catalog/MetadataScorer.js
+
 api/database/queries/jobRuns.test.js
   -> api/database/queries/jobRuns.js
   -> api/database/pg.js
@@ -367,7 +401,7 @@ controllers/authController.js
 #### shelves
 ```
 routes/shelves.js
-  -> includes POST /:shelfId/items/:itemId/replacement-intent and POST /:shelfId/items/:itemId/replace
+  -> includes POST /:shelfId/items/:itemId/replacement-intent, POST /:shelfId/items/:itemId/replace, and PUT /:shelfId/items/:itemId/platforms
   -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
   → controllers/shelvesController.js
   → middleware/auth.js
@@ -502,7 +536,7 @@ routes/collectables.js
   → services/collectables/kind.js
   → utils/normalize.js
   →database/queries/marketValueEstimates.js
-  Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type and provider-level fallback paging via offset), POST /api/collectables/resolve-search-hit, GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
+  Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type/platform and provider-level fallback paging via offset; local games platform filtering uses `system_name` + `platform_data`; game responses include derived `maxPlayers` when available), POST /api/collectables/resolve-search-hit, GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
 ```
 
 #### share
@@ -638,6 +672,7 @@ routes/checkin.js
   → database/queries/collectables.js
   → database/pg.js
   → database/queries/utils.js
+  -> routes/collectables.js (_helpers: API fallback/container resolution helpers)
 ```
 
 #### onboarding
@@ -992,6 +1027,13 @@ scripts/get-bearer-token.ps1
 
 scripts/fetch-api-payload.ps1
   (standalone PowerShell HTTP client for authenticated API payload retrieval)
+
+scripts/backfill-collectable-platform-data.js
+  â†’ database/pg.js
+  â†’ database/queries/collectables.js
+  â†’ services/catalog/GameCatalogService.js
+  â†’ logger.js
+  Behavior: loads `.env` then `.env.local` override when available; backfills `platform_data`, `igdb_payload`, and `max_players` for IGDB-linked games
 ```
 
 ### Database Query Dependencies
@@ -1641,12 +1683,22 @@ user_market_value_estimates (SERIAL PK)
   CHECK: exactly one of collectable_id/manual_id set
   UNIQUE(user_id, collectable_id) partial, UNIQUE(user_id, manual_id) partial
 
+user_collection_platforms (SERIAL PK)
+  -> collection_item_id (FK -> user_collections.id ON DELETE CASCADE)
+  -> platform_name (TEXT NOT NULL)
+  -> created_at
+  UNIQUE(collection_item_id, lower(platform_name))
+  INDEX(lower(platform_name))
+
 system_settings (key VARCHAR PK)
   ├── value (JSONB, not null)
   ├── description (TEXT, nullable)
   └── updated_by (FK → users.id, nullable)
 
 collectables (SERIAL PK)
+  -> max_players (INTEGER, nullable)
+  -> platform_data (JSONB, default `[]`)
+  -> igdb_payload (JSONB, default `NULL`)
   ├── fingerprint (SHA1 hash, unique)
   ├── lightweight_fingerprint
   ├── kind ∈ {book, movie, game, album}
@@ -1665,6 +1717,7 @@ news_items (SERIAL PK)
 
 - `user_collections`: CHECK ensures exactly one of `collectable_id` or `manual_id` is set
 - `user_collections`: UNIQUE partial index on `(user_id, shelf_id, manual_id)` when `manual_id IS NOT NULL` (prevents duplicate manual links on one shelf)
+- `user_collection_platforms`: UNIQUE index on `(collection_item_id, lower(platform_name))` (prevents duplicate owned-platform chips per shelf item)
 - `user_manuals`: UNIQUE partial index on `(user_id, shelf_id, manual_fingerprint)` when `manual_fingerprint IS NOT NULL` (prevents duplicate manual rows per shelf fingerprint)
 - `friendships`: CHECK prevents self-friendship; status ∈ {pending, accepted, blocked}
 - `shelves.type` ∈ {books, movies, games, vinyl, tv, other}
@@ -1684,7 +1737,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (57 files, 2026-01-10 -> 2026-03-30)
+### Migration History (62 files, 2026-01-10 -> 2026-03-31)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1750,6 +1803,11 @@ news_items (SERIAL PK)
 | `20260329010000_add_collectables_cast_members` | + `collectables.cast_members` (JSONB) and partial GIN index `idx_collectables_cast_members_gin` for cast containment lookups |
 | `20260330010000_create_workflow_queue_jobs` | + `workflow_queue_jobs` (durable workflow queue table, claim/active-dedupe indexes, status/attempt constraints, updated_at trigger) |
 | `20260330010010_add_workflow_job_notifications` | expand `notifications` type/entity CHECK constraints for workflow jobs (`workflow_complete`, `workflow_failed`, `workflow_job`) and + `notification_preferences.push_workflow_jobs` |
+| `20260330180000_add_users_terms_acceptance_fields` | + `users.terms_accepted`, `users.terms_accepted_version`, `users.terms_accepted_at` |
+| `20260331100000_add_collectables_platform_data` | + `collectables.platform_data` (JSONB NOT NULL DEFAULT `[]`) |
+| `20260331101000_create_user_collection_platforms` | + `user_collection_platforms` (per-shelf-item owned platforms with case-insensitive uniqueness and lookup indexes) |
+| `20260331120000_add_collectables_igdb_payload` | + `collectables.igdb_payload` (JSONB) |
+| `20260331130000_add_collectables_max_players` | + `collectables.max_players` (INTEGER) |
 
 ---
 
@@ -1814,4 +1872,4 @@ These files have the most dependents or are critical infrastructure:
 | `admin-dashboard/src/api/client.js` | All admin API calls flow through it |
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
 
-
+---

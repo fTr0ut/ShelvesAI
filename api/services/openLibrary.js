@@ -70,24 +70,26 @@ function buildSearchUrl({ title, author, limit = 10, offset = 0, page = 0 }) {
 }
 
 async function fetchJson(url) {
-  const controller = AbortController ? new AbortController() : null;
-  const timeout = controller ? setTimeout(() => controller.abort(), getTimeout()) : null;
-  try {
-    const USER_AGENT = 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)';
-
-    const response = await limitOpenLibrary(() => fetch(url, {
-      signal: controller ? controller.signal : undefined,
-      headers: {
-        'User-Agent': USER_AGENT,
-      },
-    }));
-    if (!response.ok) {
-      throw new Error(`OpenLibrary request failed with ${response.status}`);
+  const USER_AGENT = 'ShelvesAI/1.0 (johnandrewnichols@gmail.com)';
+  const response = await limitOpenLibrary(async () => {
+    const controller = AbortController ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), getTimeout()) : null;
+    try {
+      return await fetch(url, {
+        signal: controller ? controller.signal : undefined,
+        headers: {
+          'User-Agent': USER_AGENT,
+        },
+      });
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
-    return await response.json();
-  } finally {
-    if (timeout) clearTimeout(timeout);
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenLibrary request failed with ${response.status}`);
   }
+  return await response.json();
 }
 
 // --- Helpers ---------------------------------------------------------------

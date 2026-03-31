@@ -73,6 +73,16 @@ const DEFAULT_PAGE_LIMIT = 20;
 /** Hard upper bound on page size accepted by parsePagination. */
 const MAX_PAGE_LIMIT = 100;
 
+// ---------------------------------------------------------------------------
+// Terms of service (api/controllers/onboardingController.js, api/routes/config.js)
+// ---------------------------------------------------------------------------
+
+/** Active Terms of Service version required during onboarding completion. */
+const CURRENT_TERMS_VERSION = (process.env.CURRENT_TERMS_VERSION || '2026-03-30').trim();
+
+/** Public URL for the latest Terms of Service page. */
+const TERMS_OF_SERVICE_URL = (process.env.TERMS_OF_SERVICE_URL || 'https://shelvesai.com/terms').trim();
+
 module.exports = {
   AUTH_CACHE_TTL_MS,
   AUTH_CACHE_MAX_ENTRIES,
@@ -84,4 +94,6 @@ module.exports = {
   PREVIEW_PAYLOAD_LIMIT,
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
+  CURRENT_TERMS_VERSION,
+  TERMS_OF_SERVICE_URL,
 };

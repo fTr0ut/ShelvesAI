@@ -1,0 +1,101 @@
+{
+  "title": "Terms of Service",
+  "lastUpdated": "March 30, 2026",
+  "sections": [
+    {
+      "id": 1,
+      "title": "1. Introduction & Eligibility",
+      "content": [
+        "Welcome to ShelvesAI. By accessing or using our mobile application, website, and related services, you agree to comply with and be bound by these Terms of Service. If you do not agree with any part of these terms, please do not use our services.",
+        "To use ShelvesAI, you must be at least 13 years of age (or the minimum age of digital consent in your country). By creating an account, you represent that you meet this requirement."
+      ]
+    },
+    {
+      "id": 2,
+      "title": "2. User Conduct & Acceptable Use",
+      "content": [
+        "When using ShelvesAI, you agree to interact respectfully with our platform and other users. The following behaviors and content are strictly prohibited:"
+      ],
+      "list": [
+        {
+          "title": "Illegal or Explicit Content:",
+          "text": "You may not upload, share, or promote content that is illegal, sexually explicit, lewd, or pornographic."
+        },
+        {
+          "title": "Harassment & Bullying:",
+          "text": "We maintain a zero-tolerance policy for harassment, bullying, abusive language, or threatening behavior towards any individual or group."
+        },
+        {
+          "title": "Doxxing:",
+          "text": "You may not publicly or privately share, broadcast, or reveal the personally identifiable information (PII) of others, including addresses, phone numbers, or real identities without explicit consent."
+        },
+        {
+          "title": "Spam & Unlabeled Advertising:",
+          "text": "You may not use ShelvesAI for unsolicited advertising, spam, or promotional campaigns. Any allowed promotional content or sponsorship must be distinctly and explicitly labeled as such."
+        },
+        {
+          "title": "Copyrighted Material & Uploads:",
+          "text": "You may only upload content (including photos and text) that you own or have explicit, documented permission to use. You may not upload copyrighted material for which you do not hold the necessary rights."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "3. Content Ownership & License",
+      "content": [
+        "You retain full ownership of the data, images, reviews, and collections you upload to ShelvesAI. However, to operate the service, we require certain permissions. By posting content publicly or sharing it within the app, you grant ShelvesAI a worldwide, royalty-free, transferable license to host, store, use, display, reproduce, modify (e.g., formatting for mobile screens), and distribute your content solely for the purposes of operating, providing, and improving the service.",
+        "We reserve the right to proactively or reactively review, moderate, hide, or delete any content or accounts that violate these Terms, without prior notice."
+      ]
+    },
+    {
+      "id": 4,
+      "title": "4. Copyright Policy (DMCA)",
+      "content": [
+        "We respect the intellectual property rights of others. If you believe your copyrighted work has been uploaded to ShelvesAI without authorization, please contact us at **support@shelvesai.com** with a description of the work, its location on the app, and your contact information so we can investigate and remove the infringing material."
+      ]
+    },
+    {
+      "id": 5,
+      "title": "5. Account Termination & Data Retention",
+      "content": [
+        "We reserve the right to suspend or terminate your account at any time, for any reason, including but not limited to a reasonable suspicion of violating these Terms of Service. In cases of severe violations, such as illegal content or harassment, accounts will be permanently terminated immediately.",
+        "Upon account termination, you may lose access to all data, collections, and content associated with your account. We are not responsible for the loss of this data, and we reserve the right to permanently delete it from our servers following termination."
+      ]
+    },
+    {
+      "id": 6,
+      "title": "6. Disclaimer of Warranties",
+      "content": [
+        "ShelvesAI is provided on an \"as is\" and \"as available\" basis. We make no warranties, either express or implied, regarding the reliability, accuracy, or availability of the service. We do not guarantee that the app will be uninterrupted, error-free, or entirely secure."
+      ]
+    },
+    {
+      "id": 7,
+      "title": "7. Limitation of Liability",
+      "content": [
+        "To the maximum extent permitted by law, ShelvesAI and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits, revenues, or data, resulting from your use of or inability to use the service."
+      ]
+    },
+    {
+      "id": 8,
+      "title": "8. Governing Law & Jurisdiction",
+      "content": [
+        "These Terms of Service and any separate agreements whereby we provide you services shall be governed by and construed in accordance with the laws of the State of Florida, without regard to its conflict of law principles. Any legal disputes arising from these Terms shall be resolved exclusively in the state or federal courts located in Florida."
+      ]
+    },
+    {
+      "id": 9,
+      "title": "9. Changes to the Terms",
+      "content": [
+        "We may update these Terms of Service periodically to reflect changes in our service or legal requirements. We will notify users of any material changes via email or within the application. Continued use of ShelvesAI after updates indicates your acceptance of the new Terms."
+      ]
+    },
+    {
+      "id": 10,
+      "title": "10. Contact Us",
+      "content": [
+        "If you have questions, feedback, or need to report a violation of these terms, please contact our support team at **support@shelvesai.com**."
+      ]
+    }
+  ]
+}

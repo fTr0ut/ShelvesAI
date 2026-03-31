@@ -22,6 +22,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { resolveCollectableCoverUrl } from '../utils/coverUrl';
+import { formatCollectableSearchMeta } from '../utils/collectableDisplay';
 import {
   buildCollectableItemKey,
   buildCollectableSearchQuery,
@@ -566,6 +567,7 @@ export default function ItemSearchScreen({ route, navigation }) {
                 const key = buildCollectableItemKey(item, index);
                 const coverUrl = resolveCollectableCoverUrl(item, apiBase);
                 const creator = item.primaryCreator || item.author || '';
+                const metadataLine = formatCollectableSearchMeta(item);
                 return (
                   <TouchableOpacity
                     key={key}
@@ -582,6 +584,7 @@ export default function ItemSearchScreen({ route, navigation }) {
                     <View style={styles.resultInfo}>
                       <Text style={styles.resultTitle} numberOfLines={2}>{item.title || item.name || 'Untitled'}</Text>
                       {creator ? <Text style={styles.resultSubtitle} numberOfLines={1}>{creator}</Text> : null}
+                      {metadataLine ? <Text style={styles.resultMetaText} numberOfLines={1}>{metadataLine}</Text> : null}
                       <View style={styles.resultMetaRow}>
                         <Text style={styles.resultKind}>{getCollectableTypeLabel(item, searchType)}</Text>
                       </View>
@@ -800,6 +803,11 @@ const createStyles = ({ colors, spacing, shadows, radius }) => StyleSheet.create
     marginTop: 2,
     color: colors.textMuted,
     fontSize: 12,
+  },
+  resultMetaText: {
+    marginTop: 2,
+    color: colors.textMuted,
+    fontSize: 11,
   },
   resultMetaRow: {
     marginTop: 4,

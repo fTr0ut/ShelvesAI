@@ -23,6 +23,7 @@ import QuickCheckInModal from '../components/news/QuickCheckInModal';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
+import { subscribeCheckInPosted } from '../services/checkInEvents';
 import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
 import { getShareableEventId, shareEntityLink } from '../services/shareLinks';
@@ -286,6 +287,7 @@ export default function SocialFeedScreen({ navigation, route }) {
     // Listen for tab press reset
     const lastResetTabRef = useRef(null);
     const feedListRef = useRef(null);
+    const pendingCheckInRefreshRef = useRef(false);
     useEffect(() => {
         const resetTabTimestamp = route.params?.resetTab;
         if (resetTabTimestamp && resetTabTimestamp !== lastResetTabRef.current) {
@@ -317,6 +319,46 @@ export default function SocialFeedScreen({ navigation, route }) {
         load({ silent: true, forceRefreshPersonalizations: canRefreshPersonalizations });
         loadUnreadCount();
     }, [activeFilter, lastPersonalizationRefresh, load, loadUnreadCount]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeCheckInPosted((payload = {}) => {
+            if (payload.originTab !== 'Home') return;
+            pendingCheckInRefreshRef.current = true;
+
+            if (!navigation.isFocused()) return;
+            if (activeFilter !== 'all') {
+                setActiveFilter('all');
+                return;
+            }
+            pendingCheckInRefreshRef.current = false;
+            feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+            onRefresh();
+        });
+        return unsubscribe;
+    }, [activeFilter, navigation, onRefresh]);
+
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', () => {
+            if (!pendingCheckInRefreshRef.current) return;
+            if (activeFilter !== 'all') {
+                setActiveFilter('all');
+                return;
+            }
+            pendingCheckInRefreshRef.current = false;
+            feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+            onRefresh();
+        });
+        return unsubscribe;
+    }, [activeFilter, navigation, onRefresh]);
+
+    useEffect(() => {
+        if (!pendingCheckInRefreshRef.current) return;
+        if (activeFilter !== 'all') return;
+        if (!navigation.isFocused()) return;
+        pendingCheckInRefreshRef.current = false;
+        feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+        onRefresh();
+    }, [activeFilter, navigation, onRefresh]);
 
     // Debounced search handler
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);

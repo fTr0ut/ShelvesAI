@@ -11,25 +11,28 @@ import {
     View,
     StatusBar,
     Platform,
+    Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest, getValidToken } from '../services/api';
+import { apiRequest, clearToken, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
 
 export default function OnboardingProfileOptionalScreen({ navigation }) {
-    const { token, apiBase, setNeedsOnboarding, setUser, onboardingConfig } = useContext(AuthContext);
+    const { token, apiBase, setNeedsOnboarding, setUser, setToken, onboardingConfig, user } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [profile, setProfile] = useState(null);
     const [bio, setBio] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [loggingOut, setLoggingOut] = useState(false);
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [error, setError] = useState('');
+    const [termsAccepted, setTermsAccepted] = useState(false);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -52,6 +55,15 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
     useEffect(() => {
         loadProfile();
     }, [loadProfile]);
+
+    useEffect(() => {
+        const requiredTermsVersion = onboardingConfig?.terms?.version;
+        const acceptedActiveTerms = user?.termsAccepted === true
+            && (!requiredTermsVersion || user?.termsAcceptedVersion === requiredTermsVersion);
+        if (acceptedActiveTerms) {
+            setTermsAccepted(true);
+        }
+    }, [onboardingConfig?.terms?.version, user?.termsAccepted, user?.termsAcceptedVersion]);
 
     const getProfileImageSource = () => {
         if (profile?.profileMediaPath) {
@@ -125,11 +137,18 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
     };
 
     const completeOnboarding = useCallback(async () => {
+        const payload = { termsAccepted: true };
+        const requiredTermsVersion = onboardingConfig?.terms?.version;
+        if (requiredTermsVersion) {
+            payload.termsVersion = requiredTermsVersion;
+        }
+
         const result = await apiRequest({
             apiBase,
             path: '/api/onboarding/complete',
             method: 'POST',
             token,
+            body: payload,
         });
         if (result?.user) {
             setUser(result.user);
@@ -141,9 +160,30 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                 routes: [{ name: 'Main' }, { name: 'ShelfCreateScreen' }],
             });
         }, 0);
-    }, [apiBase, navigation, setNeedsOnboarding, setUser, token]);
+    }, [apiBase, navigation, onboardingConfig?.terms?.version, setNeedsOnboarding, setUser, token]);
+
+    const requireTermsAcceptance = useCallback(() => {
+        if (termsAccepted) {
+            return true;
+        }
+        setError(onboardingConfig?.terms?.requiredError || 'You must accept the Terms of Service to continue.');
+        return false;
+    }, [onboardingConfig?.terms?.requiredError, termsAccepted]);
+
+    const openTerms = useCallback(() => {
+        const url = onboardingConfig?.terms?.url;
+        if (!url) {
+            return;
+        }
+        Linking.openURL(url).catch(() => {
+            setError('Unable to open Terms of Service link.');
+        });
+    }, [onboardingConfig?.terms?.url]);
 
     const handleContinue = useCallback(async () => {
+        if (!requireTermsAcceptance()) {
+            return;
+        }
         try {
             setSaving(true);
             setError('');
@@ -166,9 +206,12 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [apiBase, bio, completeOnboarding, profile, token]);
+    }, [apiBase, bio, completeOnboarding, profile, requireTermsAcceptance, token]);
 
     const handleSkip = useCallback(async () => {
+        if (!requireTermsAcceptance()) {
+            return;
+        }
         try {
             setSaving(true);
             setError('');
@@ -178,7 +221,22 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         } finally {
             setSaving(false);
         }
-    }, [completeOnboarding]);
+    }, [completeOnboarding, requireTermsAcceptance]);
+
+    const handleBackToLogin = useCallback(async () => {
+        try {
+            setLoggingOut(true);
+            setError('');
+            await clearToken();
+            setUser(null);
+            setNeedsOnboarding(false);
+            setToken('');
+        } catch (err) {
+            setError('Unable to log out right now. Please try again.');
+        } finally {
+            setLoggingOut(false);
+        }
+    }, [setNeedsOnboarding, setToken, setUser]);
 
     if (!onboardingConfig?.optional) {
         return (
@@ -250,12 +308,37 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                         />
                         <Text style={styles.charCount}>{bio.length}/500</Text>
                     </View>
+
+                    <View style={styles.termsSection}>
+                        <Text style={styles.termsTitle}>{onboardingConfig.terms?.title || 'Terms of Service'}</Text>
+                        <Text style={styles.termsSubtitle}>
+                            {onboardingConfig.terms?.subtitle || 'Please review and accept our Terms before continuing.'}
+                        </Text>
+                        <TouchableOpacity style={styles.termsLinkRow} onPress={openTerms} disabled={saving}>
+                            <Ionicons name="document-text-outline" size={16} color={colors.primary} />
+                            <Text style={styles.termsLinkText}>{onboardingConfig.terms?.readLabel || 'Read Terms of Service'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.checkboxRow}
+                            onPress={() => setTermsAccepted((prev) => !prev)}
+                            disabled={saving}
+                        >
+                            <Ionicons
+                                name={termsAccepted ? 'checkbox' : 'square-outline'}
+                                size={20}
+                                color={termsAccepted ? colors.primary : colors.textMuted}
+                            />
+                            <Text style={styles.checkboxLabel}>
+                                {onboardingConfig.terms?.agreeLabel || 'I agree to the Terms of Service'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 <TouchableOpacity
-                    style={[styles.primaryButton, saving && styles.primaryButtonDisabled]}
+                    style={[styles.primaryButton, (saving || loggingOut || uploadingPhoto) && styles.primaryButtonDisabled]}
                     onPress={handleContinue}
-                    disabled={saving}
+                    disabled={saving || loggingOut || uploadingPhoto}
                 >
                     <Text style={styles.primaryButtonText}>
                         {saving ? onboardingConfig.optional.savingLabel : onboardingConfig.optional.continueLabel}
@@ -263,8 +346,14 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                     <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.skipButton} onPress={handleSkip} disabled={saving}>
+                <TouchableOpacity style={styles.skipButton} onPress={handleSkip} disabled={saving || loggingOut || uploadingPhoto}>
                     <Text style={styles.skipText}>{onboardingConfig.optional.skipLabel}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.logoutButton} onPress={handleBackToLogin} disabled={saving || loggingOut || uploadingPhoto}>
+                    <Text style={styles.logoutButtonText}>
+                        {loggingOut ? 'Returning to login...' : 'Back to Login'}
+                    </Text>
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>
@@ -343,6 +432,46 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
         inputGroup: {
             marginBottom: spacing.sm,
         },
+        termsSection: {
+            marginTop: spacing.md,
+            paddingTop: spacing.md,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            gap: spacing.xs,
+        },
+        termsTitle: {
+            fontSize: 14,
+            fontWeight: '600',
+            color: colors.text,
+        },
+        termsSubtitle: {
+            fontSize: 13,
+            color: colors.textMuted,
+            lineHeight: 18,
+        },
+        termsLinkRow: {
+            marginTop: spacing.xs,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.xs,
+        },
+        termsLinkText: {
+            color: colors.primary,
+            fontSize: 13,
+            fontWeight: '500',
+            textDecorationLine: 'underline',
+        },
+        checkboxRow: {
+            marginTop: spacing.sm,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
+        },
+        checkboxLabel: {
+            fontSize: 13,
+            color: colors.text,
+            flex: 1,
+        },
         label: {
             fontSize: 13,
             fontWeight: '500',
@@ -405,5 +534,14 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             color: colors.textMuted,
             fontSize: 14,
             textDecorationLine: 'underline',
+        },
+        logoutButton: {
+            alignItems: 'center',
+            paddingVertical: spacing.sm,
+        },
+        logoutButtonText: {
+            color: colors.error,
+            fontSize: 14,
+            fontWeight: '600',
         },
     });

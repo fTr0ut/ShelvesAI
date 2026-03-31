@@ -121,6 +121,14 @@ function coerceNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function maxFinite(values = []) {
+  const finite = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!finite.length) return null;
+  return Math.max(...finite);
+}
+
 class GameCatalogService {
   constructor(options = {}) {
     const enableSecondPass =
@@ -594,6 +602,7 @@ class GameCatalogService {
       ? Math.floor(Number(offset))
       : 0;
     const fields = [
+      '*',
       'id',
       'name',
       'slug',
@@ -605,8 +614,10 @@ class GameCatalogService {
       'release_dates.human',
       'release_dates.platform.name',
       'release_dates.platform.abbreviation',
+      'release_dates.platform.id',
       'platforms.name',
       'platforms.abbreviation',
+      'platforms.id',
       'genres.name',
       'involved_companies.company.name',
       'involved_companies.company.slug',
@@ -621,6 +632,32 @@ class GameCatalogService {
       'artworks.image_id',
       'websites.url',
       'url',
+      'age_ratings.rating',
+      'age_ratings.category',
+      'age_ratings.synopsis',
+      'age_ratings.content_descriptions.description',
+      'age_ratings.content_descriptions.category',
+      'game_modes.name',
+      'themes.name',
+      'player_perspectives.name',
+      'videos.name',
+      'videos.video_id',
+      'external_games.category',
+      'external_games.uid',
+      'external_games.url',
+      'multiplayer_modes.campaigncoop',
+      'multiplayer_modes.dropin',
+      'multiplayer_modes.lancoop',
+      'multiplayer_modes.offlinecoop',
+      'multiplayer_modes.offlinecoopmax',
+      'multiplayer_modes.offlinemax',
+      'multiplayer_modes.onlinecoop',
+      'multiplayer_modes.onlinecoopmax',
+      'multiplayer_modes.onlinemax',
+      'multiplayer_modes.splitscreen',
+      'multiplayer_modes.platform.id',
+      'multiplayer_modes.platform.name',
+      'multiplayer_modes.platform.abbreviation',
     ];
 
     const filters = [];
@@ -812,6 +849,77 @@ class GameCatalogService {
     return uniqueStrings(names);
   }
 
+  extractPlatformData(game) {
+    const out = [];
+    const seen = new Set();
+    const push = (entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const igdbPlatformIdRaw = entry.igdbPlatformId ?? entry.igdb_platform_id ?? entry.id ?? null;
+      const parsedId = Number.parseInt(igdbPlatformIdRaw, 10);
+      const igdbPlatformId = Number.isFinite(parsedId) ? parsedId : null;
+      const name = normalizeString(entry.name) || null;
+      const abbreviation = normalizeString(entry.abbreviation || entry.abbr) || null;
+      if (!name && !abbreviation) return;
+      const normalized = {
+        provider: normalizeString(entry.provider || 'igdb') || 'igdb',
+        igdbPlatformId,
+        name,
+        abbreviation,
+        sourceType: normalizeString(entry.sourceType || entry.source_type) || null,
+        releaseDate: normalizeString(entry.releaseDate || entry.release_date) || null,
+        releaseDateHuman: normalizeString(entry.releaseDateHuman || entry.release_date_human) || null,
+        releaseRegion: normalizeString(entry.releaseRegion || entry.release_region) || null,
+        releaseRegionName: normalizeString(entry.releaseRegionName || entry.release_region_name) || null,
+      };
+      const key = [
+        normalized.igdbPlatformId != null ? String(normalized.igdbPlatformId) : '',
+        String(normalized.name || '').toLowerCase(),
+        String(normalized.abbreviation || '').toLowerCase(),
+        String(normalized.sourceType || '').toLowerCase(),
+        String(normalized.releaseRegion || '').toLowerCase(),
+        String(normalized.releaseDate || '').toLowerCase(),
+      ].join('::');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(normalized);
+    };
+
+    if (Array.isArray(game?.platforms)) {
+      for (const platform of game.platforms) {
+        if (!platform) continue;
+        push({
+          provider: 'igdb',
+          igdbPlatformId: platform.id,
+          name: platform.name,
+          abbreviation: platform.abbreviation,
+          sourceType: 'platform',
+        });
+      }
+    }
+
+    if (Array.isArray(game?.release_dates)) {
+      for (const releaseDate of game.release_dates) {
+        if (!releaseDate) continue;
+        const releaseDateValue = Number.isFinite(Number(releaseDate.date))
+          ? new Date(Number(releaseDate.date) * 1000).toISOString().slice(0, 10)
+          : null;
+        push({
+          provider: 'igdb',
+          igdbPlatformId: releaseDate?.platform?.id ?? null,
+          name: releaseDate?.platform?.name || null,
+          abbreviation: releaseDate?.platform?.abbreviation || null,
+          sourceType: 'release_date',
+          releaseDate: releaseDateValue,
+          releaseDateHuman: releaseDate?.human || null,
+          releaseRegion: releaseDate?.region != null ? String(releaseDate.region) : null,
+          releaseRegionName: releaseDate?.region ? IGDB_REGION_MAP[releaseDate.region] || null : null,
+        });
+      }
+    }
+
+    return out;
+  }
+
   extractReleaseYear(game) {
     if (!game) return null;
     const dates = [];
@@ -825,6 +933,55 @@ class GameCatalogService {
       ? dates.reduce((min, current) => (current && current < min ? current : min))
       : null;
     return earliest ? secondsToYear(earliest) : null;
+  }
+
+  extractRatingData(game) {
+    if (!game || typeof game !== 'object') return null;
+    const data = pruneObject({
+      rating: coerceNumber(game.rating),
+      ratingCount: coerceNumber(game.rating_count),
+      aggregatedRating: coerceNumber(game.aggregated_rating),
+      aggregatedRatingCount: coerceNumber(game.aggregated_rating_count),
+      totalRating: coerceNumber(game.total_rating),
+      totalRatingCount: coerceNumber(game.total_rating_count),
+      hypes: coerceNumber(game.hypes),
+      follows: coerceNumber(game.follows),
+    });
+    return Object.keys(data).length ? data : null;
+  }
+
+  extractMultiplayerData(game) {
+    if (!game || !Array.isArray(game.multiplayer_modes) || !game.multiplayer_modes.length) {
+      return null;
+    }
+
+    const modes = game.multiplayer_modes.filter((mode) => mode && typeof mode === 'object');
+    if (!modes.length) return null;
+
+    const toBool = (value) => value === true;
+    const any = (key) => modes.some((mode) => toBool(mode[key]));
+    const offlineMax = maxFinite(modes.map((mode) => mode.offlinemax));
+    const onlineMax = maxFinite(modes.map((mode) => mode.onlinemax));
+    const offlineCoopMax = maxFinite(modes.map((mode) => mode.offlinecoopmax));
+    const onlineCoopMax = maxFinite(modes.map((mode) => mode.onlinecoopmax));
+    const maxPlayers = maxFinite([offlineMax, onlineMax, offlineCoopMax, onlineCoopMax]);
+
+    const data = pruneObject({
+      supportsCampaignCoop: any('campaigncoop'),
+      supportsDropIn: any('dropin'),
+      supportsLanCoop: any('lancoop'),
+      supportsOfflineCoop: any('offlinecoop'),
+      supportsOnlineCoop: any('onlinecoop'),
+      supportsSplitScreen: any('splitscreen'),
+      maxPlayers,
+      maxOfflinePlayers: offlineMax,
+      maxOnlinePlayers: onlineMax,
+      maxOfflineCoopPlayers: offlineCoopMax,
+      maxOnlineCoopPlayers: onlineCoopMax,
+      modeCount: modes.length,
+    });
+
+    return Object.keys(data).length ? data : null;
   }
 
   pickPreferredRegion(game, fallbackRegion) {
@@ -907,8 +1064,11 @@ class GameCatalogService {
     const publisher = publisherNames[0] || normalizeString(item?.publisher);
     const year =
       this.extractReleaseYear(game) || normalizeString(item?.year) || null;
+    const ratingData = this.extractRatingData(game);
+    const multiplayerData = this.extractMultiplayerData(game);
     const region = this.pickPreferredRegion(game, item?.region);
     const systemName = this.pickPreferredPlatform(game, item?.systemName);
+    const platformData = this.extractPlatformData(game);
     const descriptionParts = [game.summary, game.storyline]
       .map((part) => normalizeString(part))
       .filter(Boolean);
@@ -1008,6 +1168,11 @@ class GameCatalogService {
     ]);
 
     const now = new Date();
+    const igdbPayload = {
+      fetchedAt: now.toISOString(),
+      score: Number.isFinite(Number(score)) ? Number(score) : null,
+      game,
+    };
 
     return {
       kind: 'game',
@@ -1024,6 +1189,8 @@ class GameCatalogService {
       year: year || null,
       region: region || null,
       systemName: systemName || null,
+      platformData,
+      maxPlayers: multiplayerData?.maxPlayers ?? null,
       urlCoverFront: coverXL || coverLarge || null,
       urlCoverBack: null,
       genre: genres,
@@ -1046,6 +1213,8 @@ class GameCatalogService {
           fetchedAt: now,
           raw: {
             score: score ?? null,
+            ratings: ratingData,
+            multiplayer: multiplayerData,
           },
         },
       ],
@@ -1061,8 +1230,17 @@ class GameCatalogService {
               platform: rd?.platform?.name || rd?.platform?.abbreviation || null,
             }))
             : [],
+          ratings: ratingData,
+          multiplayer: multiplayerData,
         },
       },
+      metascore: ratingData
+        ? {
+          provider: 'igdb',
+          ...ratingData,
+        }
+        : null,
+      igdbPayload,
       lightweightFingerprint: lwf || null,
       fingerprint,
     };

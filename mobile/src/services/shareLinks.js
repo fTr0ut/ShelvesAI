@@ -1,4 +1,4 @@
-import { Share } from 'react-native';
+import { Share, Platform } from 'react-native';
 
 const DEFAULT_SITE_BASE = 'https://shelvesai.com';
 const FALLBACK_SLUG = 'shared';
@@ -104,12 +104,14 @@ export async function shareEntityLink({
 
   const canonicalUrl = payload?.canonicalUrl || fallbackUrl;
   const shareTitle = payload?.title || title || 'Shared on ShelvesAI';
-  const shareMessage = message || `${shareTitle}\n${canonicalUrl}`;
+  const shareMessage = message || (Platform.OS === 'ios'
+    ? shareTitle
+    : `${shareTitle}\n${canonicalUrl}`);
 
   await Share.share({
     title: shareTitle,
     message: shareMessage,
-    url: canonicalUrl,
+    ...(Platform.OS === 'ios' && { url: canonicalUrl }),
   });
 
   return {

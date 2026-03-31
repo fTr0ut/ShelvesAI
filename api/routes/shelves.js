@@ -95,6 +95,7 @@ router.post('/:shelfId/items/:itemId/replacement-intent', shelfItemIntParams, ct
 router.post('/:shelfId/items/:itemId/replace', shelfItemIntParams, ctrl.replaceShelfItem);
 router.delete('/:shelfId/items/:itemId', shelfItemIntParams, ctrl.removeShelfItem);
 router.put('/:shelfId/items/:itemId/rating', shelfItemIntParams, ctrl.rateShelfItem);
+router.put('/:shelfId/items/:itemId/platforms', shelfItemIntParams, ctrl.updateOwnedPlatforms);
 router.put('/:shelfId/manual/:itemId', shelfItemIntParams, validateStringLengths({ name: 500, description: 5000 }), ctrl.updateManualEntry);
 router.post('/:shelfId/manual/:itemId/cover', shelfItemIntParams, upload.single('cover'), ctrl.uploadManualCover);
 router.get('/:shelfId/items/:itemId/owner-photo', shelfItemOwnerPhotoIntParams, ctrl.getShelfItemOwnerPhoto);
@@ -123,4 +124,3 @@ router.delete('/:shelfId/review/:id', shelfReviewIntParams, ctrl.dismissReviewIt
 
 
 module.exports = router;
-

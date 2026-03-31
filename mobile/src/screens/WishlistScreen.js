@@ -43,6 +43,7 @@ export default function WishlistScreen({ navigation, route }) {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [isOwner, setIsOwner] = useState(false);
 
     // Local Search & Sort
     const [localSearchQuery, setLocalSearchQuery] = useState('');
@@ -73,6 +74,7 @@ export default function WishlistScreen({ navigation, route }) {
             const data = await apiRequest({ apiBase, path: `/api/wishlists/${wishlistId}`, token });
             setWishlist(data.wishlist);
             setItems(data.items || []);
+            setIsOwner(!!data.isOwner);
         } catch (e) {
             if (!isRefresh) Alert.alert('Error', 'Failed to load wishlist');
         } finally {
@@ -182,13 +184,15 @@ export default function WishlistScreen({ navigation, route }) {
                         <Text style={styles.itemNotes} numberOfLines={1}>{item.notes}</Text>
                     ) : null}
                 </View>
-                <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={() => handleDeleteItem(item.id)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                    <Ionicons name="trash-outline" size={20} color={colors.textMuted} />
-                </TouchableOpacity>
+                {isOwner && (
+                    <TouchableOpacity
+                        style={styles.deleteButton}
+                        onPress={() => handleDeleteItem(item.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <Ionicons name="trash-outline" size={20} color={colors.textMuted} />
+                    </TouchableOpacity>
+                )}
             </TouchableOpacity>
         );
     };
@@ -303,7 +307,9 @@ export default function WishlistScreen({ navigation, route }) {
                 <View style={styles.emptyState}>
                     <Ionicons name="heart-outline" size={48} color={colors.textMuted} />
                     <Text style={styles.emptyTitle}>No items yet</Text>
-                    <Text style={styles.emptySubtitle}>Tap the + button to search and add items</Text>
+                    <Text style={styles.emptySubtitle}>
+                        {isOwner ? 'Tap the + button to search and add items' : 'This wishlist is empty'}
+                    </Text>
                 </View>
             ) : (
                 <FlatList
@@ -316,13 +322,15 @@ export default function WishlistScreen({ navigation, route }) {
                 />
             )}
 
-            {/* FAB */}
-            <TouchableOpacity
-                style={styles.fab}
-                onPress={openGlobalSearch}
-            >
-                <Ionicons name="add" size={28} color={colors.textInverted} />
-            </TouchableOpacity>
+            {/* FAB - only visible to owner */}
+            {isOwner && (
+                <TouchableOpacity
+                    style={styles.fab}
+                    onPress={openGlobalSearch}
+                >
+                    <Ionicons name="add" size={28} color={colors.textInverted} />
+                </TouchableOpacity>
+            )}
 
             {/* Sort Modal */}
             <Modal

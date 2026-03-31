@@ -165,6 +165,107 @@ function normalizeCastList(value) {
   return out;
 }
 
+function normalizePlatformData(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  const out = [];
+  const seen = new Set();
+
+  for (const entry of source) {
+    let next = null;
+
+    if (typeof entry === 'string') {
+      const name = normalizeTextValue(entry);
+      if (!name) continue;
+      next = {
+        provider: null,
+        igdbPlatformId: null,
+        name,
+        abbreviation: null,
+        sourceType: null,
+        releaseDate: null,
+        releaseDateHuman: null,
+        releaseRegion: null,
+        releaseRegionName: null,
+      };
+    } else if (entry && typeof entry === 'object') {
+      const igdbPlatformIdRaw = entry.igdbPlatformId ?? entry.igdb_platform_id ?? entry.id ?? null;
+      const parsedIgdbPlatformId = parseInt(igdbPlatformIdRaw, 10);
+      const igdbPlatformId = Number.isFinite(parsedIgdbPlatformId) ? parsedIgdbPlatformId : null;
+      const name = normalizeTextValue(entry.name);
+      const abbreviation = normalizeTextValue(entry.abbreviation || entry.abbr);
+      if (!name && !abbreviation) continue;
+      next = {
+        provider: normalizeTextValue(entry.provider || entry.source),
+        igdbPlatformId,
+        name: name || null,
+        abbreviation: abbreviation || null,
+        sourceType: normalizeTextValue(entry.sourceType || entry.source_type),
+        releaseDate: normalizeTextValue(entry.releaseDate || entry.release_date),
+        releaseDateHuman: normalizeTextValue(entry.releaseDateHuman || entry.release_date_human),
+        releaseRegion: normalizeTextValue(entry.releaseRegion || entry.release_region),
+        releaseRegionName: normalizeTextValue(entry.releaseRegionName || entry.release_region_name),
+      };
+    } else {
+      continue;
+    }
+
+    const key = [
+      next.igdbPlatformId != null ? String(next.igdbPlatformId) : '',
+      String(next.name || '').toLowerCase(),
+      String(next.abbreviation || '').toLowerCase(),
+      String(next.sourceType || '').toLowerCase(),
+      String(next.releaseRegion || '').toLowerCase(),
+      String(next.releaseDate || '').toLowerCase(),
+    ].join('::');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(next);
+  }
+
+  return out;
+}
+
+function derivePlatformNames({ platformData = [], platforms = [], systemName = null }) {
+  const out = [];
+  const seen = new Set();
+  const push = (value) => {
+    const normalized = normalizeTextValue(value);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(normalized);
+  };
+
+  platformData.forEach((entry) => {
+    push(entry?.name);
+    push(entry?.abbreviation);
+  });
+  normalizeArray(platforms).forEach((entry) => {
+    if (typeof entry === 'string') push(entry);
+    else if (entry && typeof entry === 'object') {
+      push(entry.name);
+      push(entry.abbreviation || entry.abbr);
+    }
+  });
+  push(systemName);
+
+  return out;
+}
+
+function buildPlatformFilterClause({ alias = 'c', paramRef }) {
+  return `(
+    LOWER(COALESCE(${alias}.system_name, '')) LIKE ${paramRef}
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(COALESCE(${alias}.platform_data, '[]'::jsonb)) AS pd
+      WHERE LOWER(COALESCE(pd->>'name', '')) LIKE ${paramRef}
+         OR LOWER(COALESCE(pd->>'abbreviation', '')) LIKE ${paramRef}
+    )
+  )`;
+}
+
 function parseRuntime(value) {
   if (value == null || value === '') return null;
   const parsed = parseInt(value, 10);
@@ -404,7 +505,19 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
   const genre = normalizeStringArray(candidate?.genre ?? candidate?.genres);
   const publishers = normalizeStringArray(candidate?.publisher ?? candidate?.publishers);
   const formats = normalizeStringArray(candidate?.format ?? candidate?.formats);
+  const systemName = normalizeTextValue(
+    candidate?.systemName
+    || candidate?.platform
+    || (Array.isArray(candidate?.platforms) ? candidate.platforms[0] : null),
+  );
+  const platformData = normalizePlatformData(
+    candidate?.platformData
+    ?? candidate?.platform_data
+    ?? candidate?.platforms
+    ?? [],
+  );
   const tags = normalizeTags(candidate?.tags || candidate?.genre || candidate?.genres);
+  const maxPlayers = deriveMaxPlayers(candidate);
   const coverUrl = normalizeTextValue(
     candidate?.coverUrl ||
     candidate?.cover_url ||
@@ -418,9 +531,23 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
   const identifiers = candidate?.identifiers && typeof candidate.identifiers === 'object' && !Array.isArray(candidate.identifiers)
     ? candidate.identifiers
     : {};
+  const metascore = (
+    candidate?.metascore
+    && typeof candidate.metascore === 'object'
+    && !Array.isArray(candidate.metascore)
+  )
+    ? candidate.metascore
+    : null;
   const images = normalizeArray(candidate?.images).filter(Boolean);
   const provider = normalizeTextValue(candidate?.provider || candidate?._source || candidate?.source);
   const sources = normalizeArray(candidate?.sources).filter(Boolean);
+  const hasIgdbPayload = (
+    Object.prototype.hasOwnProperty.call(candidate || {}, 'igdbPayload')
+    || Object.prototype.hasOwnProperty.call(candidate || {}, 'igdb_payload')
+  );
+  const igdbPayload = hasIgdbPayload
+    ? (candidate?.igdbPayload ?? candidate?.igdb_payload ?? null)
+    : undefined;
   const hasCastMembers = (
     Object.prototype.hasOwnProperty.call(candidate || {}, 'castMembers')
     || Object.prototype.hasOwnProperty.call(candidate || {}, 'cast_members')
@@ -456,6 +583,8 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
     marketValueSources,
     publishers,
     formats,
+    systemName,
+    platformData,
     tags,
     genre: genre.length ? genre : null,
     runtime: parseRuntime(candidate?.runtime),
@@ -465,8 +594,11 @@ function buildCollectableUpsertPayloadFromCandidate(candidate, fallbackKind) {
     coverImageUrl,
     coverImageSource,
     attribution: candidate?.attribution && typeof candidate.attribution === 'object' ? candidate.attribution : null,
+    metascore,
+    maxPlayers,
     externalId,
     sources,
+    ...(hasIgdbPayload ? { igdbPayload } : {}),
     ...(hasCastMembers ? { castMembers } : {}),
   };
 }
@@ -505,8 +637,107 @@ function normalizeSourceLinks(value) {
 
 function omitMarketValueSources(entity) {
   if (!entity || typeof entity !== 'object') return entity;
-  const { marketValueSources, ...rest } = entity;
+  const { marketValueSources, igdbPayload, igdb_payload, ...rest } = entity;
   return rest;
+}
+
+function parsePlayerCount(value) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function maxPlayerCount(values = []) {
+  let max = null;
+  for (const value of values) {
+    const parsed = parsePlayerCount(value);
+    if (parsed == null) continue;
+    if (max == null || parsed > max) max = parsed;
+  }
+  return max;
+}
+
+function deriveMaxPlayersFromMultiplayerShape(multiplayer) {
+  if (!multiplayer || typeof multiplayer !== 'object') return null;
+  return maxPlayerCount([
+    multiplayer.maxPlayers,
+    multiplayer.max_players,
+    multiplayer.maxOfflinePlayers,
+    multiplayer.max_offline_players,
+    multiplayer.maxOnlinePlayers,
+    multiplayer.max_online_players,
+    multiplayer.maxOfflineCoopPlayers,
+    multiplayer.max_offline_coop_players,
+    multiplayer.maxOnlineCoopPlayers,
+    multiplayer.max_online_coop_players,
+    multiplayer.offlinemax,
+    multiplayer.onlinemax,
+    multiplayer.offlinecoopmax,
+    multiplayer.onlinecoopmax,
+  ]);
+}
+
+function deriveMaxPlayersFromModes(modes) {
+  if (!Array.isArray(modes) || !modes.length) return null;
+  const values = [];
+  for (const mode of modes) {
+    if (!mode || typeof mode !== 'object') continue;
+    values.push(
+      mode.maxPlayers,
+      mode.max_players,
+      mode.maxplayers,
+      mode.offlinemax,
+      mode.onlinemax,
+      mode.offlinecoopmax,
+      mode.onlinecoopmax,
+    );
+  }
+  return maxPlayerCount(values);
+}
+
+function deriveMaxPlayers(entity) {
+  if (!entity || typeof entity !== 'object') return null;
+
+  const explicit = parsePlayerCount(entity.maxPlayers ?? entity.max_players);
+  if (explicit != null) return explicit;
+
+  const sourceCandidates = [];
+  for (const source of normalizeArray(entity.sources)) {
+    if (!source || typeof source !== 'object') continue;
+    const raw = source.raw;
+    if (!raw || typeof raw !== 'object') continue;
+    sourceCandidates.push(
+      deriveMaxPlayersFromMultiplayerShape(raw.multiplayer),
+      deriveMaxPlayersFromModes(raw.multiplayer_modes),
+      deriveMaxPlayersFromModes(raw.multiplayerModes),
+    );
+  }
+  const sourceDerived = maxPlayerCount(sourceCandidates);
+  if (sourceDerived != null) return sourceDerived;
+
+  const extrasDerived = deriveMaxPlayersFromMultiplayerShape(entity?.extras?.igdb?.multiplayer);
+  if (extrasDerived != null) return extrasDerived;
+
+  const igdbPayload = entity.igdbPayload ?? entity.igdb_payload;
+  if (igdbPayload && typeof igdbPayload === 'object') {
+    const payloadDerived = maxPlayerCount([
+      deriveMaxPlayersFromMultiplayerShape(igdbPayload.multiplayer),
+      deriveMaxPlayersFromModes(igdbPayload.multiplayer_modes),
+      deriveMaxPlayersFromModes(igdbPayload?.game?.multiplayer_modes),
+    ]);
+    if (payloadDerived != null) return payloadDerived;
+  }
+
+  return null;
+}
+
+function includeGameplayPayload(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+  const normalizedKind = normalizeCollectableKind(entity.kind || entity.type || '');
+  if (normalizedKind !== 'games') return entity;
+  return {
+    ...entity,
+    maxPlayers: deriveMaxPlayers(entity),
+  };
 }
 
 function includeCastPayload(entity) {
@@ -531,8 +762,36 @@ function includeCastPayload(entity) {
   };
 }
 
+function includePlatformPayload(entity) {
+  if (!entity || typeof entity !== 'object') return entity;
+  const hasPlatformData = (
+    Object.prototype.hasOwnProperty.call(entity, 'platformData')
+    || Object.prototype.hasOwnProperty.call(entity, 'platform_data')
+  );
+  const normalizedPlatformData = normalizePlatformData(
+    hasPlatformData ? (entity.platformData ?? entity.platform_data) : [],
+  );
+  const systemName = normalizeTextValue(entity.systemName || entity.system_name) || null;
+  const derivedPlatforms = derivePlatformNames({
+    platformData: normalizedPlatformData,
+    platforms: entity.platforms,
+    systemName,
+  });
+
+  return {
+    ...entity,
+    systemName,
+    platformData: normalizedPlatformData,
+    platforms: derivedPlatforms,
+  };
+}
+
 function buildCollectableResponsePayload(entity) {
-  return includeCastPayload(omitMarketValueSources(entity));
+  return includePlatformPayload(
+    includeCastPayload(
+      omitMarketValueSources(includeGameplayPayload(entity)),
+    ),
+  );
 }
 
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true
@@ -702,6 +961,20 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
     const rawType = String(req.query.type || "").trim();
     const type = normalizeExplicitType(rawType);
     const platform = normalizeTextValue(req.query.platform);
+    const explicitTypeProvided = !!rawType && rawType.toLowerCase() !== 'all';
+    const resolvedContainerForLocal = platform
+      ? await resolveApiContainerForSearch({
+        explicitType: explicitTypeProvided ? rawType : '',
+        queryText: q,
+        userId: req.user?.id || null,
+      })
+      : null;
+    const shouldFilterLocalGames = !!platform && (
+      type === 'games'
+      || (!type && resolvedContainerForLocal === 'games')
+    );
+    const effectiveLocalKind = shouldFilterLocalGames ? 'games' : (type || null);
+    const platformNeedle = shouldFilterLocalGames ? `%${String(platform).toLowerCase()}%` : null;
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
     const useWildcard = String(req.query.wildcard || '').toLowerCase() === 'true';
     const fallbackApi = parseBooleanFlag(req.query.fallbackApi);
@@ -709,18 +982,30 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
     const apiSupplement = parseBooleanFlag(req.query.apiSupplement);
 
     if (!q) {
+      const whereClauses = [];
+      const whereParams = [];
+      if (effectiveLocalKind) {
+        whereParams.push(effectiveLocalKind);
+        whereClauses.push(`kind = $${whereParams.length}`);
+      }
+      if (platformNeedle) {
+        whereParams.push(platformNeedle);
+        whereClauses.push(buildPlatformFilterClause({ alias: 'collectables', paramRef: `$${whereParams.length}` }));
+      }
+      const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
       // Return paginated list without search
       const result = await query(
-        `SELECT * FROM collectables 
-         ${type ? 'WHERE kind = $1' : ''}
+        `SELECT * FROM collectables
+         ${whereSql}
          ORDER BY created_at DESC
-         LIMIT $${type ? 2 : 1} OFFSET $${type ? 3 : 2}`,
-        type ? [type, limit, offset] : [limit, offset]
+         LIMIT $${whereParams.length + 1} OFFSET $${whereParams.length + 2}`,
+        [...whereParams, limit, offset],
       );
 
       const countResult = await query(
-        `SELECT COUNT(*) as total FROM collectables ${type ? 'WHERE kind = $1' : ''}`,
-        type ? [type] : []
+        `SELECT COUNT(*) as total FROM collectables ${whereSql}`,
+        whereParams,
       );
       const total = parseInt(countResult.rows[0].total);
 
@@ -754,7 +1039,13 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
 
     if (useWildcard && q.includes('*')) {
       // Wildcard mode: use ILIKE pattern matching
-      results = await collectablesQueries.searchGlobalWildcard({ pattern: q, kind: type || null, limit, offset });
+      results = await collectablesQueries.searchGlobalWildcard({
+        pattern: q,
+        kind: effectiveLocalKind,
+        platform: shouldFilterLocalGames ? platform : null,
+        limit,
+        offset,
+      });
       const sqlPattern = q.replace(/\*/g, '%');
       const normalizedPattern = normalizeSearchWildcardPattern(q);
       countSql = `SELECT COUNT(*) as total FROM collectables 
@@ -763,12 +1054,25 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
          OR primary_creator ILIKE $1
          OR ${normalizedCollectableTitleExpr} ILIKE $2
          OR ${normalizedCollectableCreatorExpr} ILIKE $2
-       )
-       ${type ? 'AND kind = $3' : ''}`;
-      countParams = type ? [sqlPattern, normalizedPattern, type] : [sqlPattern, normalizedPattern];
+       )`;
+      countParams = [sqlPattern, normalizedPattern];
+      if (effectiveLocalKind) {
+        countParams.push(effectiveLocalKind);
+        countSql += ` AND kind = $${countParams.length}`;
+      }
+      if (platformNeedle) {
+        countParams.push(platformNeedle);
+        countSql += ` AND ${buildPlatformFilterClause({ alias: 'collectables', paramRef: `$${countParams.length}` })}`;
+      }
     } else {
       // Default: trigram similarity search
-      results = await collectablesQueries.searchGlobal({ q, kind: type || null, limit, offset });
+      results = await collectablesQueries.searchGlobal({
+        q,
+        kind: effectiveLocalKind,
+        platform: shouldFilterLocalGames ? platform : null,
+        limit,
+        offset,
+      });
       const normalizedQuery = normalizeSearchText(q);
       const castContainmentJson = JSON.stringify([{ nameNormalized: normalizeCastName(q) }]);
       countSql = `SELECT COUNT(*) as total FROM collectables 
@@ -778,9 +1082,16 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
          OR ${normalizedCollectableTitleExpr} % $2
          OR ${normalizedCollectableCreatorExpr} % $2
          OR cast_members @> $3::jsonb
-       )
-       ${type ? 'AND kind = $4' : ''}`;
-      countParams = type ? [q, normalizedQuery, castContainmentJson, type] : [q, normalizedQuery, castContainmentJson];
+       )`;
+      countParams = [q, normalizedQuery, castContainmentJson];
+      if (effectiveLocalKind) {
+        countParams.push(effectiveLocalKind);
+        countSql += ` AND kind = $${countParams.length}`;
+      }
+      if (platformNeedle) {
+        countParams.push(platformNeedle);
+        countSql += ` AND ${buildPlatformFilterClause({ alias: 'collectables', paramRef: `$${countParams.length}` })}`;
+      }
     }
 
     const countResult = await query(countSql, countParams);
@@ -805,7 +1116,6 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       limit,
     });
     if (shouldFallbackOnZeroResults || shouldSupplementLocalResults) {
-      const explicitTypeProvided = !!rawType && rawType.toLowerCase() !== 'all';
       resolvedContainer = await resolveApiContainerForSearch({
         explicitType: explicitTypeProvided ? rawType : '',
         queryText: q,
@@ -1089,14 +1399,20 @@ router.put("/:collectableId", requireAdmin, validateIntParam(['collectableId']),
 
 module.exports = router;
 module.exports._helpers = {
+  parseBooleanFlag,
   normalizeExplicitType,
   normalizeApiContainerType,
   parseFallbackLimit,
   computeFallbackFetchLimit,
   parseStructuredQueryForCreator,
   buildApiLookupInputs,
+  fetchFallbackResultsWithCache,
+  mergeSearchResults,
   resolveApiContainerForSearch,
   buildCollectableUpsertPayloadFromCandidate,
   includeCastPayload,
   buildCollectableResponsePayload,
+  MIN_FALLBACK_QUERY_LENGTH,
+  DEFAULT_FALLBACK_LIMIT,
+  MAX_FALLBACK_LIMIT,
 };

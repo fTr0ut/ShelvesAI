@@ -94,6 +94,28 @@ async function create({ userId, actorId, type, entityId, entityType, metadata = 
             values
         );
         notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    } else if (type === 'friend_accept') {
+        const result = await query(
+            `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, actor_id, entity_id, type)
+             WHERE deleted_at IS NULL AND type = 'friend_accept'
+             DO NOTHING
+             RETURNING *`,
+            values
+        );
+        notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+    } else if (type === 'workflow_complete' || type === 'workflow_failed') {
+        const result = await query(
+            `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, entity_id, type)
+             WHERE deleted_at IS NULL AND type IN ('workflow_complete', 'workflow_failed')
+             DO NOTHING
+             RETURNING *`,
+            values
+        );
+        notification = result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
     } else {
         const result = await query(
             `INSERT INTO notifications (user_id, actor_id, type, entity_id, entity_type, metadata)

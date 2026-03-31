@@ -161,6 +161,12 @@ describe('shelvesController', () => {
         shelvesQueries.getItemById.mockReset();
         shelvesQueries.removeItem.mockReset();
         shelvesQueries.addCollectable.mockReset();
+        if (shelvesQueries.ensureOwnedPlatformsForCollectionItem) {
+            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockReset();
+        }
+        if (shelvesQueries.replaceOwnedPlatformsForCollectionItem) {
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockReset();
+        }
         shelvesQueries.addManual.mockReset();
         shelvesQueries.updateItemRating.mockReset();
         if (shelvesQueries.updateReviewedEventLink) {
@@ -174,6 +180,10 @@ describe('shelvesController', () => {
         }
         collectablesQueries.fuzzyMatch.mockReset();
         collectablesQueries.upsert.mockReset();
+        if (!collectablesQueries.updateFormat) {
+            collectablesQueries.updateFormat = jest.fn();
+        }
+        collectablesQueries.updateFormat.mockReset();
         itemReplacementTracesQueries.createIntent.mockReset();
         itemReplacementTracesQueries.getByIdForUser.mockReset();
         itemReplacementTracesQueries.markCompleted.mockReset();
@@ -274,6 +284,12 @@ describe('shelvesController', () => {
             shelvesQueries.updateReviewedEventLink.mockResolvedValue(null);
         }
         shelvesQueries.removeItem.mockResolvedValue(true);
+        if (shelvesQueries.ensureOwnedPlatformsForCollectionItem) {
+            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockResolvedValue([]);
+        }
+        if (shelvesQueries.replaceOwnedPlatformsForCollectionItem) {
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue([]);
+        }
         itemReplacementTracesQueries.createIntent.mockResolvedValue(null);
         itemReplacementTracesQueries.getByIdForUser.mockResolvedValue(null);
         itemReplacementTracesQueries.markCompleted.mockResolvedValue(null);
@@ -391,6 +407,169 @@ describe('shelvesController', () => {
                     source: 'user',
                 }),
             }));
+        });
+    });
+
+    describe('owned platform seeding', () => {
+        it('seeds a default owned platform when adding a games collectable with systemName', async () => {
+            req.params = { shelfId: '10' };
+            req.body = { collectableId: 777 };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games', visibility: 'public' });
+            collectablesQueries.findById.mockResolvedValue({
+                id: 777,
+                title: 'Halo Infinite',
+                primaryCreator: '343 Industries',
+                year: 2021,
+                kind: 'games',
+                systemName: 'Xbox Series X',
+            });
+            shelvesQueries.addCollectable.mockResolvedValue({
+                id: 888,
+                position: null,
+                format: null,
+                notes: null,
+                rating: null,
+            });
+            shelvesQueries.ensureOwnedPlatformsForCollectionItem.mockResolvedValue(['Xbox Series X']);
+
+            await shelvesController.addCollectable(req, res);
+
+            expect(shelvesQueries.ensureOwnedPlatformsForCollectionItem).toHaveBeenCalledWith({
+                collectionItemId: 888,
+                platforms: ['Xbox Series X'],
+            }, null);
+            expect(res.status).toHaveBeenCalledWith(201);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 888,
+                    ownedPlatforms: ['Xbox Series X'],
+                }),
+            }));
+        });
+    });
+
+    describe('updateOwnedPlatforms', () => {
+        it('updates owned platforms for a game shelf item', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { platforms: ['PlayStation 5', 'PS5', 'PlayStation 5'], format: 'Physical' };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games' });
+            shelvesQueries.getItemById
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 900,
+                    collectableKind: 'games',
+                })
+                .mockResolvedValueOnce({
+                    id: 55,
+                    shelfId: 10,
+                    collectableId: 900,
+                    collectableKind: 'games',
+                    ownedPlatforms: ['PS5', 'PlayStation 5'],
+                });
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue(['PS5', 'PlayStation 5']);
+            collectablesQueries.updateFormat.mockResolvedValue({ id: 900, format: 'physical' });
+
+            await shelvesController.updateOwnedPlatforms(req, res);
+
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).toHaveBeenCalledWith({
+                collectionItemId: 55,
+                userId: 1,
+                shelfId: 10,
+                platforms: ['PlayStation 5', 'PS5'],
+            });
+            expect(collectablesQueries.updateFormat).toHaveBeenCalledWith(900, 'physical');
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 55,
+                    ownedPlatforms: ['PS5', 'PlayStation 5'],
+                    collectable: expect.objectContaining({
+                        format: 'physical',
+                    }),
+                }),
+            }));
+        });
+
+        it('updates collectable format when provided', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { platforms: ['PlayStation 5'], format: 'Digital' };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games' });
+            shelvesQueries.getItemById
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 900,
+                    collectableKind: 'games',
+                })
+                .mockResolvedValueOnce({
+                    id: 55,
+                    shelfId: 10,
+                    collectableId: 900,
+                    collectableKind: 'games',
+                });
+            shelvesQueries.replaceOwnedPlatformsForCollectionItem.mockResolvedValue(['PlayStation 5']);
+            collectablesQueries.updateFormat.mockResolvedValue({ id: 900, format: 'digital' });
+
+            await shelvesController.updateOwnedPlatforms(req, res);
+
+            expect(collectablesQueries.updateFormat).toHaveBeenCalledWith(900, 'digital');
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 55,
+                    ownedPlatforms: ['PlayStation 5'],
+                    collectable: expect.objectContaining({
+                        format: 'digital',
+                    }),
+                }),
+            }));
+        });
+
+        it('rejects owned platform updates for non-game collectables', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { platforms: ['PlayStation 5'] };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books' });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 900,
+                collectableKind: 'books',
+            });
+
+            await shelvesController.updateOwnedPlatforms(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).not.toHaveBeenCalled();
+        });
+
+        it('rejects invalid owned-platform format values', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { platforms: ['PlayStation 5'], format: 'Steam Key' };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games' });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 900,
+                collectableKind: 'games',
+            });
+
+            await shelvesController.updateOwnedPlatforms(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).not.toHaveBeenCalled();
+            expect(collectablesQueries.updateFormat).not.toHaveBeenCalled();
+        });
+
+        it('rejects missing owned-platform format', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { platforms: ['PlayStation 5'] };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games' });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: 900,
+                collectableKind: 'games',
+            });
+
+            await shelvesController.updateOwnedPlatforms(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).not.toHaveBeenCalled();
+            expect(collectablesQueries.updateFormat).not.toHaveBeenCalled();
         });
     });
 

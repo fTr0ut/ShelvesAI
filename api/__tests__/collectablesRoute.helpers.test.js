@@ -198,6 +198,40 @@ describe('collectables route helpers', () => {
     ]);
   });
 
+  it('maps game candidate system/platform data into collectable upsert payload', () => {
+    const payload = buildCollectableUpsertPayloadFromCandidate(
+      {
+        title: 'Halo Infinite',
+        kind: 'games',
+        systemName: 'Xbox Series X',
+        maxPlayers: 16,
+        metascore: { provider: 'igdb', rating: 88.1, ratingCount: 1000 },
+        igdbPayload: {
+          fetchedAt: '2026-03-31T00:00:00.000Z',
+          score: 321,
+          game: { id: 99, name: 'Halo Infinite' },
+        },
+        platformData: [
+          { provider: 'igdb', igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' },
+          { provider: 'igdb', igdbPlatformId: 6, name: 'PC (Microsoft Windows)', abbreviation: 'PC' },
+        ],
+      },
+      'games',
+    );
+
+    expect(payload.systemName).toBe('Xbox Series X');
+    expect(payload.platformData).toEqual([
+      expect.objectContaining({ igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' }),
+      expect.objectContaining({ igdbPlatformId: 6, name: 'PC (Microsoft Windows)', abbreviation: 'PC' }),
+    ]);
+    expect(payload.metascore).toEqual({ provider: 'igdb', rating: 88.1, ratingCount: 1000 });
+    expect(payload.maxPlayers).toBe(16);
+    expect(payload.igdbPayload).toEqual(expect.objectContaining({
+      score: 321,
+      game: expect.objectContaining({ id: 99, name: 'Halo Infinite' }),
+    }));
+  });
+
   it('includes cast list in payload when cast members are provided', () => {
     const payload = includeCastPayload({
       id: 7,
@@ -235,11 +269,91 @@ describe('collectables route helpers', () => {
       title: 'Inception',
       marketValue: '$20',
       marketValueSources: [{ url: 'https://example.com' }],
+      igdbPayload: { game: { id: 1 } },
       cast: [{ name: 'Leonardo DiCaprio' }, 'Joseph Gordon-Levitt', 'Joseph Gordon-Levitt'],
     });
 
     expect(payload.marketValueSources).toBeUndefined();
+    expect(payload.igdbPayload).toBeUndefined();
     expect(payload.cast).toEqual(['Leonardo DiCaprio', 'Joseph Gordon-Levitt']);
     expect(payload.castMembers).toEqual([]);
+  });
+
+  it('builds response payload with normalized platformData and derived platforms', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 9,
+      title: 'Halo Infinite',
+      system_name: 'Xbox Series X',
+      platform_data: [
+        { provider: 'igdb', igdb_platform_id: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' },
+      ],
+    });
+
+    expect(payload.systemName).toBe('Xbox Series X');
+    expect(payload.platformData).toEqual([
+      expect.objectContaining({ igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' }),
+    ]);
+    expect(payload.platforms).toEqual(['Xbox Series X|S', 'XSX', 'Xbox Series X']);
+  });
+
+  it('surfaces maxPlayers directly from source multiplayer metadata', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 10,
+      kind: 'games',
+      title: 'Mario Kart 8 Deluxe',
+      sources: [
+        {
+          provider: 'igdb',
+          raw: {
+            multiplayer: {
+              maxOnlinePlayers: 12,
+              maxPlayers: 12,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(payload.maxPlayers).toBe(12);
+  });
+
+  it('derives maxPlayers from igdbPayload multiplayer modes when no source max exists', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 11,
+      kind: 'game',
+      title: 'Halo Infinite',
+      igdbPayload: {
+        game: {
+          multiplayer_modes: [
+            { offlinemax: 4, onlinemax: 8 },
+            { offlinemax: 2, onlinemax: 16 },
+          ],
+        },
+      },
+    });
+
+    expect(payload.maxPlayers).toBe(16);
+    expect(payload.igdbPayload).toBeUndefined();
+  });
+
+  it('prefers explicit maxPlayers over derived multiplayer metadata', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 12,
+      kind: 'games',
+      title: 'Street Fighter',
+      maxPlayers: 2,
+      sources: [
+        {
+          provider: 'igdb',
+          raw: {
+            multiplayer: {
+              maxPlayers: 8,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(payload.maxPlayers).toBe(2);
   });
 });

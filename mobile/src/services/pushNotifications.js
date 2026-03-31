@@ -2,7 +2,10 @@ import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import { Platform } from 'react-native'
 import Constants from 'expo-constants'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { apiRequest } from './api'
+
+const PUSH_INSTALLATION_ID_KEY = 'pushInstallationId'
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -12,6 +15,25 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 })
+
+function generateUuidV4() {
+  // RFC4122 v4-compatible shape using Math.random to avoid extra dependencies.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16)
+    const value = char === 'x' ? random : ((random & 0x3) | 0x8)
+    return value.toString(16)
+  })
+}
+
+async function getOrCreatePushInstallationId() {
+  const existing = await AsyncStorage.getItem(PUSH_INSTALLATION_ID_KEY)
+  if (existing && existing.startsWith('install:')) {
+    return existing
+  }
+  const installationId = `install:${generateUuidV4()}`
+  await AsyncStorage.setItem(PUSH_INSTALLATION_ID_KEY, installationId)
+  return installationId
+}
 
 /**
  * Register for push notifications and get the Expo push token
@@ -67,6 +89,7 @@ export async function registerForPushNotifications() {
  */
 export async function registerPushTokenWithBackend({ apiBase, token, expoPushToken }) {
   try {
+    const installationId = await getOrCreatePushInstallationId()
     const response = await apiRequest({
       apiBase,
       path: '/api/push/register',
@@ -75,7 +98,7 @@ export async function registerPushTokenWithBackend({ apiBase, token, expoPushTok
       body: {
         expoPushToken,
         platform: Platform.OS,
-        deviceId: Device.deviceName || undefined,
+        deviceId: installationId,
       },
     })
     return response

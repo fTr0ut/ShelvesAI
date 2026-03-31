@@ -65,26 +65,25 @@ export function PushProvider({ children, navigationRef }) {
     if (!token || !apiBase) return
 
     try {
-      // Get Expo push token
-      let pushToken = expoPushToken
+      // Always fetch the current Expo token so rotations are detected promptly.
+      const latestPushToken = await registerForPushNotifications()
+      if (!latestPushToken) {
+        if (__DEV__) console.log('Could not get push token')
+        return
+      }
 
-      if (!pushToken) {
-        pushToken = await registerForPushNotifications()
-        if (!pushToken) {
-          if (__DEV__) console.log('Could not get push token')
-          return
-        }
+      if (expoPushToken !== latestPushToken) {
         if (isMountedRef.current) {
-          setExpoPushToken(pushToken)
+          setExpoPushToken(latestPushToken)
         }
-        await AsyncStorage.setItem(PUSH_TOKEN_KEY, pushToken)
+        await AsyncStorage.setItem(PUSH_TOKEN_KEY, latestPushToken)
       }
 
       // Register with backend
       await registerPushTokenWithBackend({
         apiBase,
         token,
-        expoPushToken: pushToken,
+        expoPushToken: latestPushToken,
       })
 
       if (isMountedRef.current) {

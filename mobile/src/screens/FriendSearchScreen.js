@@ -21,6 +21,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { resolveCollectableCoverUrl } from '../utils/coverUrl';
+import { formatCollectableSearchMeta } from '../utils/collectableDisplay';
 import {
     buildCollectableItemKey,
     COLLECTABLE_SEARCH_TYPE_OPTIONS,
@@ -761,6 +762,7 @@ export default function FriendSearchScreen({ route, navigation }) {
     const renderItem = useCallback(({ item, index }) => {
         const coverUrl = resolveCollectableCoverUrl(item, apiBase);
         const typeLabel = getCollectableTypeLabel(item, selectedType);
+        const metadataLine = formatCollectableSearchMeta(item);
         const itemKey = buildCollectableItemKey(item, index);
         const isResolving = resolvingItemKey === itemKey;
 
@@ -780,6 +782,9 @@ export default function FriendSearchScreen({ route, navigation }) {
                     <Text style={styles.itemTitle} numberOfLines={2}>{item.title || 'Untitled'}</Text>
                     {item.primaryCreator ? (
                         <Text style={styles.itemCreator} numberOfLines={1}>{item.primaryCreator}</Text>
+                    ) : null}
+                    {metadataLine ? (
+                        <Text style={styles.itemMetaText} numberOfLines={1}>{metadataLine}</Text>
                     ) : null}
                     <View style={styles.itemMetaRow}>
                         <Text style={styles.itemKind}>{typeLabel}</Text>
@@ -1484,6 +1489,11 @@ const createStyles = ({ colors, spacing, shadows, radius }) => StyleSheet.create
     },
     itemCreator: {
         fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    itemMetaText: {
+        fontSize: 11,
         color: colors.textMuted,
         marginTop: 2,
     },

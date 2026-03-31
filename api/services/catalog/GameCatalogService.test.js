@@ -184,6 +184,23 @@ describe('GameCatalogService.safeLookup', () => {
     expect(result.game).toBe(fallbackResult);
   });
 
+  it('includes fields * in game search query for full IGDB payload capture', () => {
+    const service = new GameCatalogService({
+      clientId: 'client',
+      clientSecret: 'secret',
+    });
+    const query = service.buildSearchQuery({
+      title: 'Halo Infinite',
+      developer: '343 Industries',
+      limit: 5,
+    });
+
+    expect(query).toContain('fields *,');
+    expect(query).toContain('platforms.name');
+    expect(query).toContain('release_dates.platform.name');
+    expect(query).toContain('multiplayer_modes.onlinemax');
+  });
+
   it('provides metadata when lookupFirstPass encounters IGDB rate limiting', async () => {
     const service = new GameCatalogService({
       clientId: 'client',
@@ -262,5 +279,95 @@ describe('GameCatalogService.safeLookup', () => {
     expect(results[0].provider).toBe('igdb');
     expect(results[1].provider).toBe('igdb');
     expect(results.map((entry) => entry.game.id)).toEqual(expect.arrayContaining([8, 9]));
+  });
+
+  it('maps IGDB platforms and release-date platform metadata into collectable platformData', () => {
+    const service = new GameCatalogService({
+      clientId: 'client',
+      clientSecret: 'secret',
+    });
+    const game = {
+      id: 99,
+      name: 'Halo Infinite',
+      rating: 84.6,
+      rating_count: 1200,
+      aggregated_rating: 87.2,
+      aggregated_rating_count: 300,
+      total_rating: 85.9,
+      total_rating_count: 1500,
+      platforms: [
+        { id: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' },
+      ],
+      multiplayer_modes: [
+        {
+          campaigncoop: true,
+          onlinecoop: true,
+          onlinecoopmax: 4,
+          onlinemax: 24,
+          offlinecoop: false,
+          offlinemax: 2,
+          splitscreen: true,
+        },
+      ],
+      release_dates: [
+        {
+          date: Date.UTC(2021, 10, 15) / 1000,
+          human: 'Nov 15, 2021',
+          region: 2,
+          platform: { id: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' },
+        },
+      ],
+      involved_companies: [],
+    };
+    const mapped = service.mapIgdbGameToCollectable(
+      game,
+      { title: 'Halo Infinite', systemName: 'Xbox Series X' },
+      'lwf-halo',
+      321,
+    );
+
+    expect(mapped.systemName).toBe('Xbox Series X|S');
+    expect(mapped.platformData).toEqual([
+      expect.objectContaining({
+        provider: 'igdb',
+        igdbPlatformId: 169,
+        name: 'Xbox Series X|S',
+        abbreviation: 'XSX',
+        sourceType: 'platform',
+      }),
+      expect.objectContaining({
+        provider: 'igdb',
+        igdbPlatformId: 169,
+        name: 'Xbox Series X|S',
+        abbreviation: 'XSX',
+        sourceType: 'release_date',
+        releaseDate: '2021-11-15',
+        releaseDateHuman: 'Nov 15, 2021',
+        releaseRegion: '2',
+        releaseRegionName: 'North America',
+      }),
+    ]);
+    expect(mapped.metascore).toEqual(expect.objectContaining({
+      provider: 'igdb',
+      rating: 84.6,
+      ratingCount: 1200,
+      aggregatedRating: 87.2,
+      aggregatedRatingCount: 300,
+      totalRating: 85.9,
+      totalRatingCount: 1500,
+    }));
+    expect(mapped.sources?.[0]?.raw?.multiplayer).toEqual(expect.objectContaining({
+      maxPlayers: 24,
+      maxOnlinePlayers: 24,
+      maxOnlineCoopPlayers: 4,
+      supportsOnlineCoop: true,
+      supportsCampaignCoop: true,
+      supportsSplitScreen: true,
+    }));
+    expect(mapped.maxPlayers).toBe(24);
+    expect(mapped.igdbPayload).toEqual(expect.objectContaining({
+      score: 321,
+      game: expect.objectContaining({ id: 99, name: 'Halo Infinite' }),
+    }));
   });
 });

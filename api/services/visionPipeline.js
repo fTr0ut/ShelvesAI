@@ -123,6 +123,55 @@ function normalizeArray(value) {
     return [value];
 }
 
+function normalizePlatformData(value) {
+    if (value == null) return [];
+    const source = Array.isArray(value) ? value : [value];
+    const seen = new Set();
+    const out = [];
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') continue;
+        const igdbPlatformIdRaw = entry.igdbPlatformId ?? entry.igdb_platform_id ?? entry.id ?? null;
+        const parsedIgdbPlatformId = parseInt(igdbPlatformIdRaw, 10);
+        const igdbPlatformId = Number.isFinite(parsedIgdbPlatformId) ? parsedIgdbPlatformId : null;
+        const name = normalizeString(entry.name) || null;
+        const abbreviation = normalizeString(entry.abbreviation || entry.abbr) || null;
+        if (!name && !abbreviation) continue;
+        const normalized = {
+            provider: normalizeString(entry.provider || entry.source || 'igdb') || 'igdb',
+            igdbPlatformId,
+            name,
+            abbreviation,
+            sourceType: normalizeString(entry.sourceType || entry.source_type) || null,
+            releaseDate: normalizeString(entry.releaseDate || entry.release_date) || null,
+            releaseDateHuman: normalizeString(entry.releaseDateHuman || entry.release_date_human) || null,
+            releaseRegion: normalizeString(entry.releaseRegion || entry.release_region) || null,
+            releaseRegionName: normalizeString(entry.releaseRegionName || entry.release_region_name) || null,
+        };
+        const key = [
+            normalized.igdbPlatformId != null ? String(normalized.igdbPlatformId) : '',
+            String(normalized.name || '').toLowerCase(),
+            String(normalized.abbreviation || '').toLowerCase(),
+            String(normalized.sourceType || '').toLowerCase(),
+            String(normalized.releaseRegion || '').toLowerCase(),
+            String(normalized.releaseDate || '').toLowerCase(),
+        ].join('::');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
+function isGamesKind(value) {
+    const normalized = normalizeString(value).toLowerCase();
+    return normalized === 'games' || normalized === 'game';
+}
+
+function extractDefaultOwnedPlatform(collectable) {
+    if (!isGamesKind(collectable?.kind || collectable?.type)) return null;
+    return normalizeString(collectable?.systemName || collectable?.system_name) || null;
+}
+
 function normalizeIdentifiers(value) {
     if (!value) return {};
     if (value instanceof Map) return Object.fromEntries(value.entries());
@@ -2196,6 +2245,11 @@ class VisionPipelineService {
                         item.systemName ||
                         (Array.isArray(item.platforms) ? item.platforms[0] : item.platform),
                     );
+                    const platformData = normalizePlatformData(
+                        item.platformData
+                        ?? item.platform_data
+                        ?? item.platforms,
+                    );
                     // Collectable-level formats (VHS, DVD, 4K, etc.) - NOT user-specific
                     const itemFormat = normalizeString(item.format || item.physical?.format);
                     const formats = normalizeStringArray(item.formats, itemFormat);
@@ -2216,6 +2270,13 @@ class VisionPipelineService {
                         item.marketValueSources || item.market_value_sources || item.marketSources,
                     );
                     const externalId = normalizeString(item.externalId || item.catalogId);
+                    const hasIgdbPayload = (
+                        Object.prototype.hasOwnProperty.call(item || {}, 'igdbPayload')
+                        || Object.prototype.hasOwnProperty.call(item || {}, 'igdb_payload')
+                    );
+                    const igdbPayload = hasIgdbPayload
+                        ? (item.igdbPayload ?? item.igdb_payload ?? null)
+                        : undefined;
 
                     const fingerprint = item.fingerprint || makeCollectableFingerprint({
                         title,
@@ -2246,6 +2307,7 @@ class VisionPipelineService {
                         marketValueSources,
                         formats,
                         systemName,
+                        platformData,
                         genre: genre.length ? genre : null,
                         runtime,
                         tags,
@@ -2263,6 +2325,7 @@ class VisionPipelineService {
                         coverImageUrl: item.coverImageUrl || null,
                         coverImageSource: item.coverImageSource || null,
                         attribution: item.attribution || null,
+                        ...(hasIgdbPayload ? { igdbPayload } : {}),
                         ...(hasCastMembers ? { castMembers } : {}),
                         // Metadata quality score (from MetadataScorer via CatalogRouter)
                         metascore: (item._metadataScore != null)
@@ -2272,7 +2335,13 @@ class VisionPipelineService {
                                 missing: item._metadataMissing ?? [],
                                 scoredAt: new Date().toISOString(),
                             }
-                            : null,
+                            : (
+                                item.metascore
+                                && typeof item.metascore === 'object'
+                                && !Array.isArray(item.metascore)
+                            )
+                                ? item.metascore
+                                : null,
                     };
                     await this.executeHook(HOOK_TYPES.BEFORE_COLLECTABLE_SAVE, {
                         ...hookContext,
@@ -2289,6 +2358,13 @@ class VisionPipelineService {
                             // Note: format (user-specific) is intentionally not set during vision scan
                             // Users can set their preferred format later via manual edit
                         }, txClient);
+                        const defaultOwnedPlatform = extractDefaultOwnedPlatform(upserted);
+                        if (defaultOwnedPlatform) {
+                            await shelvesQueries.ensureOwnedPlatformsForCollectionItem({
+                                collectionItemId: shelfEntry?.id,
+                                platforms: [defaultOwnedPlatform],
+                            }, txClient);
+                        }
                         return { savedCollectable: upserted, savedShelfItem: shelfEntry };
                     });
                     collectable = savedCollectable;
@@ -2340,6 +2416,13 @@ class VisionPipelineService {
                     // Note: format (user-specific) is intentionally not set during vision scan
                     // Users can set their preferred format later via manual edit
                 });
+                const defaultOwnedPlatform = extractDefaultOwnedPlatform(collectable);
+                if (defaultOwnedPlatform) {
+                    await shelvesQueries.ensureOwnedPlatformsForCollectionItem({
+                        collectionItemId: shelfItem?.id,
+                        platforms: [defaultOwnedPlatform],
+                    });
+                }
                 await this.executeHook(HOOK_TYPES.AFTER_SHELF_UPSERT, {
                     ...hookContext,
                     shelfItem,

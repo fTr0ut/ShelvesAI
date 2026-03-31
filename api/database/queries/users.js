@@ -89,6 +89,23 @@ async function setOnboardingCompleted(id, value) {
 }
 
 /**
+ * Complete onboarding and persist active terms acceptance metadata.
+ */
+async function completeOnboardingWithTerms(id, termsAcceptedVersion) {
+    const result = await query(
+        `UPDATE users
+         SET onboarding_completed = TRUE,
+             terms_accepted = TRUE,
+             terms_accepted_version = $1,
+             terms_accepted_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [termsAcceptedVersion, id]
+    );
+    return result.rows[0] || null;
+}
+
+/**
  * Get public profile by username (respects privacy settings)
  * @param {string} username - Username to look up
  * @param {string|null} viewerId - ID of the viewer (null if unauthenticated)
@@ -202,7 +219,8 @@ async function getFullProfile(userId) {
     const result = await query(
         `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone_number,
                 u.picture, u.country, u.state, u.city, u.is_private, u.bio,
-                u.onboarding_completed, u.show_personal_photos, u.created_at, u.updated_at,
+                u.onboarding_completed, u.terms_accepted, u.terms_accepted_version, u.terms_accepted_at,
+                u.show_personal_photos, u.created_at, u.updated_at,
                 pm.local_path as profile_media_path
          FROM users u
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
@@ -234,6 +252,7 @@ module.exports = {
     create,
     updateProfile,
     setOnboardingCompleted,
+    completeOnboardingWithTerms,
     getPublicProfile,
     getFullProfile,
 };

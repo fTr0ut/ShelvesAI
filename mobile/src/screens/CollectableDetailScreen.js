@@ -30,11 +30,87 @@ import { apiRequest, getValidToken } from '../services/api';
 import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 import AddToShelfModal from '../components/AddToShelfModal';
+import {
+    resolveCollectableMaxPlayers,
+    resolveCollectableRating,
+    resolveCollectableRatingCount,
+    resolveMultiplayerData,
+    resolveRatingsData,
+} from '../utils/collectableDisplay';
 
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
 const PERSISTENT_TAB_FOOTER_SPACER = 88;
+const MAX_OWNED_PLATFORMS = 25;
+const OWNED_GAME_FORMAT_OPTIONS = ['physical', 'digital'];
+
+function normalizeUniqueStrings(input) {
+    if (input == null) return [];
+    const source = Array.isArray(input) ? input : [input];
+    const seen = new Set();
+    const out = [];
+    for (const entry of source) {
+        const normalized = String(entry || '').trim();
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out;
+}
+
+function normalizeOwnedGameFormat(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return OWNED_GAME_FORMAT_OPTIONS.includes(normalized) ? normalized : null;
+}
+
+function formatOwnedGameFormatLabel(value) {
+    if (value === 'physical') return 'Physical';
+    if (value === 'digital') return 'Digital';
+    return 'Not set';
+}
+
+function derivePlatformOptionsFromCollectable(collectable, fallbackSystemName = null) {
+    const out = [];
+    const seen = new Set();
+    const push = (value) => {
+        const normalized = String(value || '').trim();
+        if (!normalized) return;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(normalized);
+    };
+
+    normalizeUniqueStrings(collectable?.platforms).forEach(push);
+    if (Array.isArray(collectable?.platformData)) {
+        collectable.platformData.forEach((entry) => {
+            push(entry?.name);
+            push(entry?.abbreviation);
+        });
+    }
+    push(collectable?.systemName);
+    push(fallbackSystemName);
+    return out;
+}
+
+function formatDisplayDate(value) {
+    if (!value) return null;
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    try {
+        return new Intl.DateTimeFormat('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+        }).format(parsed);
+    } catch (_) {
+        return parsed.toISOString().slice(0, 10);
+    }
+}
 
 export default function CollectableDetailScreen({ route, navigation }) {
     const { item, shelfId, readOnly, id, collectableId, manualId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
@@ -95,6 +171,14 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [shareBusy, setShareBusy] = useState(false);
     const [isCastExpanded, setIsCastExpanded] = useState(false);
     const [isTagsExpanded, setIsTagsExpanded] = useState(false);
+    const [isOwnedPlatformsExpanded, setIsOwnedPlatformsExpanded] = useState(true);
+    const [ownedPlatforms, setOwnedPlatforms] = useState(() => normalizeUniqueStrings(item?.ownedPlatforms));
+    const [platformDraft, setPlatformDraft] = useState('');
+    const [isEditingOwnedPlatforms, setIsEditingOwnedPlatforms] = useState(false);
+    const [ownedPlatformsSaving, setOwnedPlatformsSaving] = useState(false);
+    const [ownedPlatformFormat, setOwnedPlatformFormat] = useState(() => normalizeOwnedGameFormat(
+        item?.collectable?.format || item?.collectableSnapshot?.format || item?.format,
+    ));
 
     const notesShelfId = item?.shelfId || shelfId || null;
     const resolvedCollectableId = manualId
@@ -124,6 +208,21 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const canShowReplaceCTA = isOwnedShelfItem
         && item?.isVisionLinked === true
         && isWithinHoursWindow(item?.createdAt, 72);
+    const itemCollectableKind = String(
+        item?.collectable?.kind
+        || item?.collectable?.type
+        || item?.collectableKind
+        || '',
+    ).trim().toLowerCase();
+    const sourceCollectableKind = String(source?.kind || source?.type || '').trim().toLowerCase();
+    const isGameCollectableContext = itemCollectableKind === 'games'
+        || itemCollectableKind === 'game'
+        || sourceCollectableKind === 'games'
+        || sourceCollectableKind === 'game';
+    const canEditOwnedPlatforms = isOwnedShelfItem && isGameCollectableContext;
+    const ownedPlatformsAddedDateLabel = useMemo(() => (
+        formatDisplayDate(item?.createdAt || item?.addedAt || item?.updatedAt) || 'Unknown'
+    ), [item?.addedAt, item?.createdAt, item?.updatedAt]);
     const hasNoteChanges = (notesDraft || '').trim() !== (collectionNotes || '').trim();
     const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
     const isInsideBottomTab = useMemo(() => {
@@ -874,6 +973,71 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     }, [apiBase, canEditNotes, collectable?.id, isManual, item?.collectable?.id, item?.collectableId, item?.id, notesDraft, notesShelfId, resolvedCollectableId, reviewPublishedAt, reviewUpdatedAt, reviewedEventId, shareToFeed, token]);
 
+    const addOwnedPlatformFromDraft = useCallback(() => {
+        const candidate = platformDraft.trim();
+        if (!candidate) return;
+        if (ownedPlatforms.length >= MAX_OWNED_PLATFORMS) {
+            Alert.alert('Limit reached', `You can store up to ${MAX_OWNED_PLATFORMS} owned platforms per item.`);
+            return;
+        }
+        const alreadyOwned = ownedPlatforms.some((entry) => entry.toLowerCase() === candidate.toLowerCase());
+        if (alreadyOwned) {
+            setPlatformDraft('');
+            return;
+        }
+        setOwnedPlatforms((prev) => normalizeUniqueStrings([...prev, candidate]));
+        setPlatformDraft('');
+    }, [ownedPlatforms, platformDraft]);
+
+    const removeOwnedPlatform = useCallback((name) => {
+        const needle = String(name || '').trim().toLowerCase();
+        if (!needle) return;
+        setOwnedPlatforms((prev) => prev.filter((entry) => String(entry || '').trim().toLowerCase() !== needle));
+    }, []);
+
+    const addOwnedPlatformSuggestion = useCallback((name) => {
+        const candidate = String(name || '').trim();
+        if (!candidate) return;
+        if (ownedPlatforms.length >= MAX_OWNED_PLATFORMS) return;
+        setOwnedPlatforms((prev) => normalizeUniqueStrings([...prev, candidate]));
+    }, [ownedPlatforms]);
+
+    const handleSaveOwnedPlatforms = useCallback(async () => {
+        if (!canEditOwnedPlatforms || !notesShelfId || !item?.id) return;
+        if (!ownedPlatformFormat) {
+            Alert.alert('Format required', 'Select Physical or Digital before saving owned platforms.');
+            return;
+        }
+
+        setOwnedPlatformsSaving(true);
+        try {
+            const payload = {
+                platforms: normalizeUniqueStrings(ownedPlatforms),
+                format: ownedPlatformFormat,
+            };
+            const data = await apiRequest({
+                apiBase,
+                path: `/api/shelves/${notesShelfId}/items/${item.id}/platforms`,
+                method: 'PUT',
+                token,
+                body: payload,
+            });
+            const nextOwned = normalizeUniqueStrings(data?.item?.ownedPlatforms ?? payload.platforms);
+            const nextFormat = normalizeOwnedGameFormat(
+                data?.item?.collectable?.format ?? payload.format ?? ownedPlatformFormat,
+            );
+            setOwnedPlatforms(nextOwned);
+            setOwnedPlatformFormat(nextFormat);
+            setIsEditingOwnedPlatforms(false);
+            setPlatformDraft('');
+        } catch (err) {
+            console.warn('Failed to save owned platforms:', err);
+            Alert.alert('Error', err?.message || 'Failed to update owned platforms');
+        } finally {
+            setOwnedPlatformsSaving(false);
+        }
+    }, [apiBase, canEditOwnedPlatforms, item?.id, notesShelfId, ownedPlatformFormat, ownedPlatforms, token]);
+
     const handleUploadOwnerPhoto = async () => {
         if (!canEditOwnerPhoto) return;
         try {
@@ -1478,6 +1642,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
             excludedKeys.add('shelfId');
             excludedKeys.add('coverContentType');
         }
+        if (isGameCollectableContext) {
+            excludedKeys.add('systemName');
+            excludedKeys.add('system_name');
+        }
 
         const labelOverrides = {
             primaryCreator: isMovieType ? 'Director' : 'Creator',
@@ -1567,6 +1735,11 @@ export default function CollectableDetailScreen({ route, navigation }) {
             return String(value);
         };
 
+        const formatOneDecimal = (value) => {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed.toFixed(1) : null;
+        };
+
         const resolveBaseValue = (key) => {
             let rawValue = resolveValue(source, key);
             if (!rawValue && !isManual && manual) {
@@ -1645,7 +1818,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         const preferredKeys = [
             'format',
-            'systemName',
+            ...(!isGameCollectableContext ? ['systemName'] : []),
             'publisher',
             'primaryCreator',
             'developer',
@@ -1700,6 +1873,51 @@ export default function CollectableDetailScreen({ route, navigation }) {
             const label = labelOverrides[key] || prettifyLabel(key);
             addEntry(key, label, value);
         });
+
+        if (isGameCollectableContext) {
+            const maxPlayers = resolveCollectableMaxPlayers(source) ?? resolveCollectableMaxPlayers(collectable);
+            addEntry('maxPlayers', '# of Players', maxPlayers);
+
+            const rating = resolveCollectableRating(source) ?? resolveCollectableRating(collectable);
+            const parsedIgdbRating = Number(rating);
+            if (Number.isFinite(parsedIgdbRating) && parsedIgdbRating > 0) {
+                addEntry('igdbRating', 'IGDB Rating', formatOneDecimal(parsedIgdbRating));
+            }
+
+            const ratingCount = resolveCollectableRatingCount(source) ?? resolveCollectableRatingCount(collectable);
+            addEntry('igdbRatingCount', 'Rating Count', ratingCount);
+
+            const ratingsData = resolveRatingsData(source) || resolveRatingsData(collectable);
+            addEntry(
+                'aggregatedRating',
+                'Aggregated Rating',
+                formatOneDecimal(ratingsData?.aggregatedRating),
+            );
+            addEntry('aggregatedRatingCount', 'Aggregated Rating Count', ratingsData?.aggregatedRatingCount ?? null);
+            addEntry(
+                'totalRating',
+                'Total Rating',
+                formatOneDecimal(ratingsData?.totalRating),
+            );
+            addEntry('totalRatingCount', 'Total Rating Count', ratingsData?.totalRatingCount ?? null);
+
+            const multiplayerData = resolveMultiplayerData(source) || resolveMultiplayerData(collectable);
+            addEntry('maxOnlinePlayers', 'Max Online Players', multiplayerData?.maxOnlinePlayers ?? multiplayerData?.onlinemax ?? null);
+            addEntry('maxOfflinePlayers', 'Max Offline Players', multiplayerData?.maxOfflinePlayers ?? multiplayerData?.offlinemax ?? null);
+            addEntry(
+                'maxOnlineCoopPlayers',
+                'Max Online Co-op Players',
+                multiplayerData?.maxOnlineCoopPlayers ?? multiplayerData?.onlinecoopmax ?? null,
+            );
+            addEntry(
+                'maxOfflineCoopPlayers',
+                'Max Offline Co-op Players',
+                multiplayerData?.maxOfflineCoopPlayers ?? multiplayerData?.offlinecoopmax ?? null,
+            );
+            addEntry('supportsOnlineCoop', 'Supports Online Co-op', multiplayerData?.supportsOnlineCoop ?? multiplayerData?.onlinecoop ?? null);
+            addEntry('supportsOfflineCoop', 'Supports Offline Co-op', multiplayerData?.supportsOfflineCoop ?? multiplayerData?.offlinecoop ?? null);
+            addEntry('supportsSplitScreen', 'Supports Split Screen', multiplayerData?.supportsSplitScreen ?? multiplayerData?.splitscreen ?? null);
+        }
 
         const nestedGroups = [
             { key: 'physical', source: resolveBaseValue('physical') },
@@ -1850,6 +2068,39 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const showAutoScanSubtext = ownerPhoto?.source === 'vision_crop' && !!ownerPhoto?.hasPhoto;
     const showOwnerPhotoInRatingColumn = showOwnerPhotoSection && !shouldReplaceManualHeroWithOwnerPhoto;
     const showOwnerPhotoInHeroForCollectable = showOwnerPhotoInRatingColumn && !isManual;
+    const platformOptions = useMemo(
+        () => derivePlatformOptionsFromCollectable(
+            collectable,
+            item?.collectable?.systemName || item?.collectableSystemName || null,
+        ),
+        [collectable, item?.collectable?.systemName, item?.collectableSystemName],
+    );
+    const availableOwnedPlatformSuggestions = useMemo(() => {
+        const ownedSet = new Set(normalizeUniqueStrings(ownedPlatforms).map((entry) => entry.toLowerCase()));
+        return platformOptions.filter((entry) => !ownedSet.has(String(entry || '').trim().toLowerCase()));
+    }, [platformOptions, ownedPlatforms]);
+
+    useEffect(() => {
+        setOwnedPlatforms(normalizeUniqueStrings(item?.ownedPlatforms));
+        setPlatformDraft('');
+        setIsEditingOwnedPlatforms(false);
+        setOwnedPlatformFormat(normalizeOwnedGameFormat(
+            item?.collectable?.format || item?.collectableSnapshot?.format || item?.format,
+        ));
+    }, [item?.id, item?.ownedPlatforms]);
+
+    useEffect(() => {
+        if (isEditingOwnedPlatforms) return;
+        setOwnedPlatformFormat(normalizeOwnedGameFormat(
+            collectable?.format || item?.collectable?.format || item?.collectableSnapshot?.format || item?.format,
+        ));
+    }, [
+        collectable?.format,
+        isEditingOwnedPlatforms,
+        item?.collectable?.format,
+        item?.collectableSnapshot?.format,
+        item?.format,
+    ]);
 
     useEffect(() => {
         setCollectionNotes(item?.notes ?? null);
@@ -2285,6 +2536,173 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                 </View>
                             ))}
                         </View>
+                    </View>
+                )}
+
+                {hasShelfItemContext && isGameCollectableContext && (
+                    <View style={styles.section}>
+                        <TouchableOpacity
+                            style={styles.collapsibleHeader}
+                            onPress={() => setIsOwnedPlatformsExpanded((prev) => !prev)}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.collapsibleHeaderTitleWrap}>
+                                <Text style={styles.sectionTitleCompact}>Owned Platforms</Text>
+                                <Text style={styles.collapsibleHeaderCount}>{ownedPlatforms.length}</Text>
+                            </View>
+                            <Ionicons
+                                name={isOwnedPlatformsExpanded ? 'chevron-up' : 'chevron-down'}
+                                size={18}
+                                color={colors.textMuted}
+                            />
+                        </TouchableOpacity>
+                        {isOwnedPlatformsExpanded && (
+                            <>
+                                {canEditOwnedPlatforms && (
+                                    <View style={styles.ownedPlatformActionsRow}>
+                                        {!isEditingOwnedPlatforms ? (
+                                            <TouchableOpacity
+                                                style={styles.notesEditButton}
+                                                onPress={() => setIsEditingOwnedPlatforms(true)}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Ionicons name="pencil" size={14} color={colors.text} />
+                                            </TouchableOpacity>
+                                        ) : (
+                                            <TouchableOpacity
+                                                style={[
+                                                    styles.notesSaveButton,
+                                                    (ownedPlatformsSaving || !ownedPlatformFormat) && styles.notesSaveButtonDisabled,
+                                                ]}
+                                                onPress={handleSaveOwnedPlatforms}
+                                                disabled={ownedPlatformsSaving || !ownedPlatformFormat}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Text style={styles.notesSaveButtonText}>
+                                                    {ownedPlatformsSaving ? 'Saving...' : 'Save'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                )}
+
+                                <View style={styles.collapsibleCard}>
+                                    {ownedPlatforms.length > 0 ? ownedPlatforms.map((platformName, index) => (
+                                        <View
+                                            key={platformName.toLowerCase()}
+                                            style={[
+                                                styles.ownedPlatformRow,
+                                                index < ownedPlatforms.length - 1 && styles.collapsibleRowBorder,
+                                            ]}
+                                        >
+                                            <View style={styles.ownedPlatformTextWrap}>
+                                                <View style={styles.ownedPlatformNameRow}>
+                                                    <Text style={styles.ownedPlatformName}>{platformName}</Text>
+                                                    {ownedPlatformFormat && (
+                                                        <View style={styles.ownedPlatformFormatBadge}>
+                                                            <Text style={styles.ownedPlatformFormatBadgeText}>
+                                                                {formatOwnedGameFormatLabel(ownedPlatformFormat)}
+                                                            </Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                                <Text style={styles.ownedPlatformDate}>
+                                                    Added Date: {ownedPlatformsAddedDateLabel}
+                                                </Text>
+                                            </View>
+                                            {isEditingOwnedPlatforms && canEditOwnedPlatforms && (
+                                                <TouchableOpacity
+                                                    style={styles.ownedPlatformRemoveButton}
+                                                    onPress={() => removeOwnedPlatform(platformName)}
+                                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                                >
+                                                    <Ionicons name="close" size={14} color={colors.textSecondary} />
+                                                </TouchableOpacity>
+                                            )}
+                                        </View>
+                                    )) : (
+                                        <View style={styles.ownedPlatformEmptyState}>
+                                            <Text style={styles.platformHint}>No owned platforms saved yet.</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                {isEditingOwnedPlatforms && canEditOwnedPlatforms && (
+                                    <>
+                                        <View style={styles.platformFormatSection}>
+                                            <Text style={styles.platformFormatLabel}>Ownership Format</Text>
+                                            <View style={styles.platformFormatOptionsRow}>
+                                                {OWNED_GAME_FORMAT_OPTIONS.map((option) => {
+                                                    const selected = ownedPlatformFormat === option;
+                                                    return (
+                                                        <TouchableOpacity
+                                                            key={`owned-format-${option}`}
+                                                            style={[
+                                                                styles.platformFormatOptionChip,
+                                                                selected && styles.platformFormatOptionChipSelected,
+                                                            ]}
+                                                            onPress={() => setOwnedPlatformFormat(option)}
+                                                            disabled={ownedPlatformsSaving}
+                                                            activeOpacity={0.85}
+                                                        >
+                                                            <Text
+                                                                style={[
+                                                                    styles.platformFormatOptionText,
+                                                                    selected && styles.platformFormatOptionTextSelected,
+                                                                ]}
+                                                            >
+                                                                {formatOwnedGameFormatLabel(option)}
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    );
+                                                })}
+                                            </View>
+                                            {!ownedPlatformFormat && (
+                                                <Text style={styles.platformFormatRequiredText}>
+                                                    Required: select Physical or Digital.
+                                                </Text>
+                                            )}
+                                        </View>
+
+                                        <View style={styles.platformEditorRow}>
+                                            <TextInput
+                                                style={styles.platformInput}
+                                                value={platformDraft}
+                                                onChangeText={setPlatformDraft}
+                                                placeholder="Add console/platform"
+                                                placeholderTextColor={colors.textMuted}
+                                                editable={!ownedPlatformsSaving}
+                                                onSubmitEditing={addOwnedPlatformFromDraft}
+                                                returnKeyType="done"
+                                            />
+                                            <TouchableOpacity
+                                                style={styles.platformAddButton}
+                                                onPress={addOwnedPlatformFromDraft}
+                                                disabled={ownedPlatformsSaving}
+                                                activeOpacity={0.85}
+                                            >
+                                                <Ionicons name="add" size={16} color={colors.textInverted} />
+                                            </TouchableOpacity>
+                                        </View>
+
+                                        {availableOwnedPlatformSuggestions.length > 0 && (
+                                            <View style={styles.platformSuggestionRow}>
+                                                {availableOwnedPlatformSuggestions.slice(0, 8).map((platformName) => (
+                                                    <TouchableOpacity
+                                                        key={`suggest-${platformName.toLowerCase()}`}
+                                                        style={styles.platformSuggestionChip}
+                                                        onPress={() => addOwnedPlatformSuggestion(platformName)}
+                                                        activeOpacity={0.85}
+                                                    >
+                                                        <Text style={styles.platformSuggestionText}>{platformName}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </>
+                                )}
+                            </>
+                        )}
                     </View>
                 )}
 
@@ -3051,6 +3469,145 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 12,
         fontWeight: '600',
         color: colors.textInverted,
+    },
+    ownedPlatformActionsRow: {
+        marginTop: spacing.sm,
+        alignItems: 'flex-end',
+    },
+    ownedPlatformRow: {
+        paddingVertical: spacing.sm,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    ownedPlatformTextWrap: {
+        flex: 1,
+        paddingRight: spacing.sm,
+    },
+    ownedPlatformName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    ownedPlatformNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+        flexWrap: 'wrap',
+    },
+    ownedPlatformFormatBadge: {
+        paddingHorizontal: spacing.xs,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceElevated,
+    },
+    ownedPlatformFormatBadgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: colors.textSecondary,
+        textTransform: 'uppercase',
+    },
+    ownedPlatformDate: {
+        marginTop: 3,
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    ownedPlatformRemoveButton: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.surfaceElevated,
+    },
+    ownedPlatformEmptyState: {
+        paddingVertical: spacing.sm,
+    },
+    platformHint: {
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    platformEditorRow: {
+        marginTop: spacing.sm,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+    },
+    platformFormatSection: {
+        marginTop: spacing.sm,
+    },
+    platformFormatLabel: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginBottom: spacing.xs,
+    },
+    platformFormatRequiredText: {
+        marginTop: spacing.xs,
+        fontSize: 12,
+        color: colors.danger || '#b42318',
+    },
+    platformFormatOptionsRow: {
+        flexDirection: 'row',
+        gap: spacing.xs,
+    },
+    platformFormatOptionChip: {
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    platformFormatOptionChipSelected: {
+        backgroundColor: `${colors.primary}22`,
+        borderColor: colors.primary,
+    },
+    platformFormatOptionText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.textSecondary,
+    },
+    platformFormatOptionTextSelected: {
+        color: colors.primary,
+    },
+    platformInput: {
+        flex: 1,
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        fontSize: 14,
+        color: colors.text,
+        ...shadows.sm,
+    },
+    platformAddButton: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.primary,
+        ...shadows.sm,
+    },
+    platformSuggestionRow: {
+        marginTop: spacing.sm,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+    },
+    platformSuggestionChip: {
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    platformSuggestionText: {
+        fontSize: 12,
+        color: colors.textSecondary,
     },
     notesUnsavedText: {
         marginTop: spacing.xs,

@@ -94,6 +94,7 @@ async function getWishlist(req, res) {
 
         // First try to get as owner
         let wishlist = await wishlistsQueries.getById(parseInt(id), req.user.id);
+        let isOwner = !!wishlist;
 
         // If not owner, check visibility
         if (!wishlist) {
@@ -106,7 +107,7 @@ async function getWishlist(req, res) {
         // Get items
         const items = await wishlistsQueries.getItems(parseInt(id));
 
-        res.json({ wishlist, items });
+        res.json({ wishlist, items, isOwner });
     } catch (err) {
         logger.error('getWishlist error:', err);
         res.status(500).json({ error: 'Server error' });

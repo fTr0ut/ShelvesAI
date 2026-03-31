@@ -160,7 +160,7 @@ describe('collectables.upsert media sync transaction behavior', () => {
     );
 
     const params = txClient.query.mock.calls[0][1];
-    expect(params[27]).toBe(JSON.stringify([
+    expect(params[28]).toBe(JSON.stringify([
       {
         personId: 88,
         name: 'Actor Name',
@@ -170,7 +170,11 @@ describe('collectables.upsert media sync transaction behavior', () => {
         profilePath: '/actor.jpg',
       },
     ]));
-    expect(params[28]).toBe(true);
+    expect(params[29]).toBeNull();
+    expect(params[30]).toBeNull();
+    expect(params[31]).toBe(true);
+    expect(params[32]).toBe(false);
+    expect(params[33]).toBe(false);
   });
 
   it('does not force cast_members overwrite when cast payload is omitted', async () => {
@@ -190,7 +194,125 @@ describe('collectables.upsert media sync transaction behavior', () => {
     );
 
     const params = txClient.query.mock.calls[0][1];
-    expect(params[27]).toBeNull();
-    expect(params[28]).toBe(false);
+    expect(params[28]).toBeNull();
+    expect(params[30]).toBeNull();
+    expect(params[31]).toBe(false);
+    expect(params[32]).toBe(false);
+    expect(params[33]).toBe(false);
+  });
+
+  it('serializes platform_data payload and marks platform overwrite as provided', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 43, title: 'Platform Data' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-43',
+        lightweightFingerprint: 'lwf-43',
+        kind: 'games',
+        title: 'Platform Data',
+        platformData: [
+          { provider: 'igdb', igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' },
+        ],
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[29]).toBe(JSON.stringify([
+      {
+        provider: 'igdb',
+        igdbPlatformId: 169,
+        name: 'Xbox Series X|S',
+        abbreviation: 'XSX',
+        sourceType: null,
+        releaseDate: null,
+        releaseDateHuman: null,
+        releaseRegion: null,
+        releaseRegionName: null,
+      },
+    ]));
+    expect(params[30]).toBeNull();
+    expect(params[31]).toBe(false);
+    expect(params[32]).toBe(true);
+    expect(params[33]).toBe(false);
+  });
+
+  it('does not force platform_data overwrite when platform payload is omitted', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 44, title: 'No Platform Update' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-44',
+        lightweightFingerprint: 'lwf-44',
+        kind: 'games',
+        title: 'No Platform Update',
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[29]).toBeNull();
+    expect(params[30]).toBeNull();
+    expect(params[32]).toBe(false);
+    expect(params[33]).toBe(false);
+  });
+
+  it('serializes igdb_payload and marks igdb overwrite as provided', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 45, title: 'IGDB Payload' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-45',
+        lightweightFingerprint: 'lwf-45',
+        kind: 'games',
+        title: 'IGDB Payload',
+        igdbPayload: {
+          fetchedAt: '2026-03-31T00:00:00.000Z',
+          score: 321,
+          game: { id: 99, name: 'Halo Infinite' },
+        },
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[30]).toBe(JSON.stringify({
+      fetchedAt: '2026-03-31T00:00:00.000Z',
+      score: 321,
+      game: { id: 99, name: 'Halo Infinite' },
+    }));
+    expect(params[31]).toBe(false);
+    expect(params[32]).toBe(false);
+    expect(params[33]).toBe(true);
+  });
+
+  it('binds max_players when maxPlayers is provided', async () => {
+    const txClient = {
+      query: jest.fn().mockResolvedValueOnce({ rows: [buildCollectableRow({ id: 46, title: 'Max Players' })] }),
+    };
+    ensureCoverMediaForCollectable.mockResolvedValueOnce(null);
+
+    await collectablesQueries.upsert(
+      {
+        fingerprint: 'fp-46',
+        lightweightFingerprint: 'lwf-46',
+        kind: 'games',
+        title: 'Max Players',
+        maxPlayers: 4,
+      },
+      txClient,
+    );
+
+    const params = txClient.query.mock.calls[0][1];
+    expect(params[27]).toBe(4);
   });
 });

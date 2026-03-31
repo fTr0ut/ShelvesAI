@@ -10,7 +10,8 @@ async function getAccount(req, res) {
     const result = await query(
       `SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone_number,
               u.picture, u.country, u.city, u.state, u.is_private, u.is_premium,
-              u.onboarding_completed, u.show_personal_photos, u.created_at,
+              u.onboarding_completed, u.terms_accepted, u.terms_accepted_version, u.terms_accepted_at,
+              u.show_personal_photos, u.created_at,
               pm.local_path as profile_media_path
        FROM users u
        LEFT JOIN profile_media pm ON pm.id = u.profile_media_id

@@ -71,6 +71,7 @@ const REPLACEMENT_WINDOW_HOURS = {
   collectable_detail: 72,
   shelf_delete_modal: 24,
 };
+const OWNED_GAME_FORMATS = new Set(['physical', 'digital']);
 
 const VISION_PROMPT_RULES = [
   {
@@ -105,6 +106,108 @@ function normalizeArray(value) {
   if (!value) return [];
   if (Array.isArray(value)) return value.filter(Boolean);
   return [value];
+}
+
+function normalizeOwnedPlatforms(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  const seen = new Set();
+  const out = [];
+  for (const entry of source) {
+    const normalized = normalizeString(entry);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function normalizeOwnedGameFormat(value) {
+  const normalizedValue = normalizeString(value);
+  if (!normalizedValue) return null;
+  const normalized = normalizedValue.toLowerCase();
+  if (!normalized) return null;
+  return OWNED_GAME_FORMATS.has(normalized) ? normalized : null;
+}
+
+function normalizePlatformData(value) {
+  if (value == null) return [];
+  const source = Array.isArray(value) ? value : [value];
+  const seen = new Set();
+  const out = [];
+  for (const entry of source) {
+    if (!entry || typeof entry !== 'object') continue;
+    const igdbPlatformIdRaw = entry.igdbPlatformId ?? entry.igdb_platform_id ?? entry.id ?? null;
+    const parsedIgdbPlatformId = parseInt(igdbPlatformIdRaw, 10);
+    const igdbPlatformId = Number.isFinite(parsedIgdbPlatformId) ? parsedIgdbPlatformId : null;
+    const name = normalizeString(entry.name) || null;
+    const abbreviation = normalizeString(entry.abbreviation || entry.abbr) || null;
+    if (!name && !abbreviation) continue;
+    const normalized = {
+      provider: normalizeString(entry.provider || entry.source || 'igdb') || 'igdb',
+      igdbPlatformId,
+      name,
+      abbreviation,
+      sourceType: normalizeString(entry.sourceType || entry.source_type) || null,
+      releaseDate: normalizeString(entry.releaseDate || entry.release_date) || null,
+      releaseDateHuman: normalizeString(entry.releaseDateHuman || entry.release_date_human) || null,
+      releaseRegion: normalizeString(entry.releaseRegion || entry.release_region) || null,
+      releaseRegionName: normalizeString(entry.releaseRegionName || entry.release_region_name) || null,
+    };
+    const dedupeKey = [
+      normalized.igdbPlatformId != null ? String(normalized.igdbPlatformId) : '',
+      String(normalized.name || '').toLowerCase(),
+      String(normalized.abbreviation || '').toLowerCase(),
+      String(normalized.sourceType || '').toLowerCase(),
+      String(normalized.releaseRegion || '').toLowerCase(),
+      String(normalized.releaseDate || '').toLowerCase(),
+    ].join('::');
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function derivePlatformNames({ platformData = [], platforms = [], systemName = null }) {
+  const seen = new Set();
+  const out = [];
+  const push = (value) => {
+    const normalized = normalizeString(value);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(normalized);
+  };
+
+  normalizeOwnedPlatforms(platforms).forEach(push);
+  normalizePlatformData(platformData).forEach((entry) => {
+    push(entry.name);
+    push(entry.abbreviation);
+  });
+  push(systemName);
+  return out;
+}
+
+function isGamesCollectable(collectable) {
+  const kind = normalizeString(collectable?.kind || collectable?.type).toLowerCase();
+  return kind === 'games' || kind === 'game';
+}
+
+async function seedDefaultOwnedPlatformForGameItem({ itemId, collectable, client = null }) {
+  if (!itemId || !isGamesCollectable(collectable)) return [];
+  const defaultPlatform = normalizeString(
+    collectable?.systemName || collectable?.system_name,
+  );
+  if (!defaultPlatform) return [];
+  if (typeof shelvesQueries.ensureOwnedPlatformsForCollectionItem !== 'function') return [];
+  return shelvesQueries.ensureOwnedPlatformsForCollectionItem(
+    { collectionItemId: itemId, platforms: [defaultPlatform] },
+    client,
+  );
 }
 
 function normalizeIdentifiers(value) {
@@ -423,6 +526,11 @@ function buildCollectableUpsertPayload(input, shelfType) {
     input?.platform,
     input?.systemName,
   );
+  const platformData = normalizePlatformData(
+    input?.platformData
+    ?? input?.platform_data
+    ?? input?.platforms,
+  );
   const format = normalizeString(input?.format || input?.physical?.format);
   const formats = normalizeStringArray(input?.formats, format);
   const systemName =
@@ -464,6 +572,7 @@ function buildCollectableUpsertPayload(input, shelfType) {
     marketValueSources,
     formats,
     systemName,
+    platformData,
     genre: normalizedGenre,
     runtime,
     tags,
@@ -587,6 +696,13 @@ function formatShelfItem(row) {
   const collectablePublishers = Array.isArray(row.collectablePublishers)
     ? row.collectablePublishers.filter(Boolean)
     : [];
+  const collectablePlatformData = normalizePlatformData(row.collectablePlatformData);
+  const collectableSystemName = normalizeString(row.collectableSystemName) || null;
+  const collectablePlatforms = derivePlatformNames({
+    platformData: collectablePlatformData,
+    platforms: row.collectablePlatforms,
+    systemName: collectableSystemName,
+  });
   const collectable = row.collectableId ? {
     id: row.collectableId,
     title: row.collectableTitle || null,
@@ -598,7 +714,9 @@ function formatShelfItem(row) {
     year: row.collectableYear || null,
     marketValue: row.collectableMarketValue || null,
     formats: Array.isArray(row.collectableFormats) ? row.collectableFormats : [],
-    systemName: row.collectableSystemName || null,
+    systemName: collectableSystemName,
+    platformData: collectablePlatformData,
+    platforms: collectablePlatforms,
     tags: Array.isArray(row.collectableTags) ? row.collectableTags : [],
     genre: Array.isArray(row.collectableGenre) ? row.collectableGenre : [],
     runtime: row.collectableRuntime ?? null,
@@ -660,6 +778,7 @@ function formatShelfItem(row) {
     reviewedEventId: row.reviewedEventLogId ?? null,
     reviewPublishedAt: row.reviewedEventPublishedAt || null,
     reviewUpdatedAt: row.reviewedEventUpdatedAt || null,
+    ownedPlatforms: normalizeOwnedPlatforms(row.ownedPlatforms),
     ownerPhoto: row.ownerPhotoSource ? {
       source: row.ownerPhotoSource,
       visible: !!row.ownerPhotoVisible,
@@ -1353,6 +1472,10 @@ async function addCollectable(req, res) {
       rating,
       position,
     });
+    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+      itemId: item?.id,
+      collectable,
+    });
 
     await logShelfEvent({
       userId: req.user.id,
@@ -1374,6 +1497,7 @@ async function addCollectable(req, res) {
         format: item.format,
         notes: item.notes,
         rating: item.rating,
+        ownedPlatforms,
       },
     });
   } catch (err) {
@@ -1412,6 +1536,10 @@ async function addCollectableFromApi(req, res) {
       collectableId: collectable.id,
       format: userFormat || null,
     });
+    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+      itemId: item?.id,
+      collectable,
+    });
 
     await logShelfEvent({
       userId: req.user.id,
@@ -1433,6 +1561,7 @@ async function addCollectableFromApi(req, res) {
         format: item.format,
         notes: item.notes,
         rating: item.rating,
+        ownedPlatforms,
       },
     });
   } catch (err) {
@@ -3697,6 +3826,10 @@ async function completeReviewItem(req, res) {
           collectableId: collectable.id,
           format: userFormat || null,
         });
+        const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+          itemId: item?.id,
+          collectable,
+        });
 
         await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
 
@@ -3720,6 +3853,7 @@ async function completeReviewItem(req, res) {
             position: item.position,
             notes: item.notes,
             rating: item.rating,
+            ownedPlatforms,
           },
         });
       }
@@ -3883,6 +4017,10 @@ async function completeReviewItem(req, res) {
       collectableId: collectable.id,
       format: userFormat || null,
     });
+    const ownedPlatforms = await seedDefaultOwnedPlatformForGameItem({
+      itemId: item?.id,
+      collectable,
+    });
 
     // Mark review item as completed
     await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
@@ -3908,6 +4046,7 @@ async function completeReviewItem(req, res) {
         position: item.position,
         notes: item.notes,
         rating: item.rating,
+        ownedPlatforms,
       },
     });
   } catch (err) {
@@ -4247,6 +4386,87 @@ async function searchUserCollection(req, res) {
   }
 }
 
+async function updateOwnedPlatforms(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (!Number.isInteger(shelfId) || !Number.isInteger(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const currentItem = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!currentItem) return res.status(404).json({ error: 'Item not found' });
+    if (!currentItem.collectableId) {
+      return res.status(400).json({ error: 'Owned platforms can only be set on catalog collectables' });
+    }
+
+    const collectableKind = normalizeString(currentItem.collectableKind).toLowerCase();
+    if (collectableKind !== 'games' && collectableKind !== 'game') {
+      return res.status(400).json({ error: 'Owned platforms are only supported for game collectables' });
+    }
+
+    const rawPlatforms = req.body?.platforms;
+    if (!Array.isArray(rawPlatforms)) {
+      return res.status(400).json({ error: 'platforms must be an array of strings' });
+    }
+    if (rawPlatforms.length > 25) {
+      return res.status(400).json({ error: 'platforms supports up to 25 entries' });
+    }
+    const platforms = normalizeOwnedPlatforms(rawPlatforms);
+    const formatProvided = req.body && Object.prototype.hasOwnProperty.call(req.body, 'format');
+    const rawFormat = req.body?.format;
+    const normalizedFormat = normalizeOwnedGameFormat(rawFormat);
+    if (!formatProvided || !normalizeString(rawFormat)) {
+      return res.status(400).json({ error: 'format is required and must be either "physical" or "digital"' });
+    }
+    if (normalizedFormat === null) {
+      return res.status(400).json({ error: 'format must be either "physical" or "digital"' });
+    }
+
+    const ownedPlatforms = await shelvesQueries.replaceOwnedPlatformsForCollectionItem({
+      collectionItemId: itemId,
+      userId: req.user.id,
+      shelfId: shelf.id,
+      platforms,
+    });
+    if (ownedPlatforms === null) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    let persistedFormat = normalizedFormat;
+    if (typeof collectablesQueries.updateFormat === 'function') {
+      const updatedCollectable = await collectablesQueries.updateFormat(currentItem.collectableId, normalizedFormat);
+      const updatedValue = normalizeOwnedGameFormat(updatedCollectable?.format);
+      if (updatedValue) {
+        persistedFormat = updatedValue;
+      }
+    }
+
+    const refreshed = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    const formatted = formatShelfItem(refreshed);
+    if (formatted) {
+      formatted.ownedPlatforms = normalizeOwnedPlatforms(ownedPlatforms);
+      if (formatted.collectable) {
+        formatted.collectable.format = persistedFormat;
+      }
+    }
+
+    return res.json({
+      item: formatted || {
+        id: itemId,
+        ownedPlatforms: normalizeOwnedPlatforms(ownedPlatforms),
+        collectable: { format: persistedFormat },
+      },
+    });
+  } catch (err) {
+    logger.error('updateOwnedPlatforms error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   listShelves,
   createShelf,
@@ -4285,5 +4505,6 @@ module.exports = {
   abortVision,
   addCollectableFromApi,
   getManualItem,
+  updateOwnedPlatforms,
   searchUserCollection,
 };

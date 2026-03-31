@@ -34,6 +34,9 @@ CREATE TABLE users (
     is_private BOOLEAN DEFAULT FALSE,
     is_premium BOOLEAN DEFAULT TRUE,
     onboarding_completed BOOLEAN DEFAULT FALSE,
+    terms_accepted BOOLEAN DEFAULT FALSE,
+    terms_accepted_version TEXT,
+    terms_accepted_at TIMESTAMPTZ,
     show_personal_photos BOOLEAN DEFAULT TRUE,
 
     -- Admin & Suspension
@@ -142,7 +145,10 @@ CREATE TABLE collectables (
     cover_image_url TEXT,
     cover_image_source TEXT,  -- 'local' or 'external'
     attribution JSONB,  -- { linkUrl, linkText, logoPath, disclaimerText }
+    max_players INTEGER,
     cast_members JSONB,
+    platform_data JSONB NOT NULL DEFAULT '[]',
+    igdb_payload JSONB,
 
     -- Source tracking
     sources JSONB DEFAULT '[]',
@@ -341,6 +347,23 @@ CREATE INDEX idx_user_collections_user ON user_collections(user_id);
 CREATE INDEX idx_user_collections_collectable ON user_collections(collectable_id) WHERE collectable_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_user_collections_unique_manual ON user_collections(user_id, shelf_id, manual_id) WHERE manual_id IS NOT NULL;
 CREATE INDEX idx_user_collections_owner_photo_crop ON user_collections(owner_photo_crop_id) WHERE owner_photo_crop_id IS NOT NULL;
+
+-- ============================================
+-- USER COLLECTION PLATFORMS (Per-item owned platforms)
+-- ============================================
+CREATE TABLE user_collection_platforms (
+    id SERIAL PRIMARY KEY,
+    collection_item_id INTEGER NOT NULL REFERENCES user_collections(id) ON DELETE CASCADE,
+    platform_name TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_user_collection_platforms_unique_item_name
+ON user_collection_platforms (collection_item_id, lower(platform_name));
+CREATE INDEX idx_user_collection_platforms_platform_name_lower
+ON user_collection_platforms (lower(platform_name));
+CREATE INDEX idx_user_collection_platforms_collection_item
+ON user_collection_platforms (collection_item_id);
 
 -- ============================================
 -- ITEM REPLACEMENT TRACES (Wrong-match corrections)
@@ -650,6 +673,10 @@ CREATE UNIQUE INDEX idx_notifications_like_active ON notifications(user_id, acto
     WHERE type = 'like' AND deleted_at IS NULL;
 CREATE UNIQUE INDEX idx_notifications_friend_request_dedup ON notifications(user_id, actor_id, entity_id, type)
     WHERE type = 'friend_request' AND deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_notifications_workflow_dedup ON notifications(user_id, entity_id, type)
+    WHERE deleted_at IS NULL AND type IN ('workflow_complete', 'workflow_failed');
+CREATE UNIQUE INDEX idx_notifications_friend_accept_dedup ON notifications(user_id, actor_id, entity_id, type)
+    WHERE deleted_at IS NULL AND type = 'friend_accept';
 
 -- ============================================
 -- PUSH NOTIFICATIONS

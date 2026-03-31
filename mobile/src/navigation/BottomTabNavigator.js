@@ -109,6 +109,7 @@ export default function BottomTabNavigator() {
     const { colors, spacing, shadows, radius, typography, isDark } = useTheme();
     const insets = useSafeAreaInsets();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [activeTabRoute, setActiveTabRoute] = useState('Home');
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
     const { user } = useContext(AuthContext);
     const menuProgress = useSharedValue(0);
@@ -213,8 +214,8 @@ export default function BottomTabNavigator() {
 
     const handleCheckIn = useCallback(() => {
         closeMenu();
-        navigation.navigate('CheckIn');
-    }, [closeMenu, navigation]);
+        navigation.navigate('CheckIn', { originTab: activeTabRoute });
+    }, [activeTabRoute, closeMenu, navigation]);
 
     const handleSearch = useCallback(() => {
         closeMenu();
@@ -277,6 +278,9 @@ export default function BottomTabNavigator() {
                     name="Home"
                     component={SocialFeedScreen}
                     listeners={({ navigation }) => ({
+                        focus: () => {
+                            setActiveTabRoute('Home');
+                        },
                         tabPress: (e) => {
                             if (navigation.isFocused()) {
                                 navigation.setParams({ resetTab: Date.now() });
@@ -327,6 +331,11 @@ export default function BottomTabNavigator() {
                 <Tab.Screen
                     name="Shelves"
                     component={ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER ? ShelvesTabStack : ShelvesScreen}
+                    listeners={() => ({
+                        focus: () => {
+                            setActiveTabRoute('Shelves');
+                        },
+                    })}
                     options={{
                         ...(ENABLE_PROFILE_IN_TAB_BAR && {
                             tabBarItemStyle: { flex: 2, alignItems: 'flex-start', paddingLeft: 24 },

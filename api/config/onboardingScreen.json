@@ -67,6 +67,13 @@
     "skipLabel": "Skip for now",
     "loadError": "Failed to load profile"
   },
+  "terms": {
+    "title": "Terms of Service",
+    "subtitle": "Please review and accept our Terms before continuing.",
+    "readLabel": "Read Terms of Service",
+    "agreeLabel": "I agree to the Terms of Service",
+    "requiredError": "You must accept the Terms of Service to continue."
+  },
   "username": {
     "title": "Choose a Username",
     "subtitle": "This is how other collectors will find you",

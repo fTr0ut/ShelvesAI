@@ -572,11 +572,6 @@ class HardcoverClient {
     let lastError = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      const controller = AbortController ? new AbortController() : null;
-      const timeout = controller
-        ? setTimeout(() => controller.abort(), this.timeoutMs)
-        : null;
-
       try {
         await this.limiter.acquire();
         const requestBody = JSON.stringify({ query, variables });
@@ -598,12 +593,22 @@ class HardcoverClient {
             maxRetries: this.maxRetries,
           });
         }
-        const response = await limitHardcover(() => this.fetch(this.baseUrl, {
-          method: 'POST',
-          headers,
-          body: requestBody,
-          signal: controller ? controller.signal : undefined,
-        }));
+        const response = await limitHardcover(async () => {
+          const controller = AbortController ? new AbortController() : null;
+          const timeout = controller
+            ? setTimeout(() => controller.abort(), this.timeoutMs)
+            : null;
+          try {
+            return await this.fetch(this.baseUrl, {
+              method: 'POST',
+              headers,
+              body: requestBody,
+              signal: controller ? controller.signal : undefined,
+            });
+          } finally {
+            if (timeout) clearTimeout(timeout);
+          }
+        });
 
         if (!response.ok) {
           const text = await response.text();
@@ -624,8 +629,6 @@ class HardcoverClient {
 
         return payload?.data || null;
       } catch (err) {
-        if (timeout) clearTimeout(timeout);
-
         const isAbortError = err?.name === 'AbortError';
         const isTimeoutError = isAbortError || err?.message?.includes('aborted');
         const isNetworkError = err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT' ||
@@ -648,8 +651,6 @@ class HardcoverClient {
           throw new Error('Hardcover request aborted');
         }
         throw err;
-      } finally {
-        if (timeout) clearTimeout(timeout);
       }
     }
 

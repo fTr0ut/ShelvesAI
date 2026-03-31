@@ -133,6 +133,9 @@ async function me(req, res) {
         lastName: user.last_name,
         picture: user.picture,
         onboardingCompleted: !!user.onboarding_completed,
+        termsAccepted: !!user.terms_accepted,
+        termsAcceptedVersion: user.terms_accepted_version || null,
+        termsAcceptedAt: user.terms_accepted_at || null,
       }
     });
   } catch (err) {

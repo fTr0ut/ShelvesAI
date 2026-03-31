@@ -101,9 +101,11 @@ class CollectableMatchingService {
         this.gameCatalogService = shared.game;
         this.movieCatalogService = shared.movie;
         this.musicCatalogService = shared.music;
+        this.tvCatalogService = shared.tv;
         this.catalogServices = [
             this.gameCatalogService,
             this.movieCatalogService,
+            this.tvCatalogService,
             this.bookCatalogService,
             this.musicCatalogService,
         ];

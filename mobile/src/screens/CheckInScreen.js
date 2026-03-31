@@ -5,6 +5,7 @@ import {
     Image,
     Keyboard,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     Pressable,
     ScrollView,
@@ -22,11 +23,14 @@ import Animated, {
     SlideOutLeft,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { emitCheckInPosted } from '../services/checkInEvents';
+import { formatCollectableSearchMeta } from '../utils/collectableDisplay';
 import { useSearch } from '../hooks/useSearch';
+import { COLLECTABLE_SEARCH_TYPE_OPTIONS, MIN_FALLBACK_QUERY_LENGTH } from '../hooks/useCollectableSearchEngine';
 
 const STEPS = {
     STATUS: 'status',
@@ -39,9 +43,18 @@ const STATUS_OPTIONS = [
     { key: 'continuing', label: 'Continuing', icon: 'refresh-outline', description: 'Still in progress' },
     { key: 'completed', label: 'Completed', icon: 'checkmark-circle-outline', description: 'Finished it' },
 ];
+const DEFAULT_SEARCH_LIMIT = 10;
+const SEE_MORE_LIMIT = 25;
+const DEFAULT_SEARCH_META = {
+    results: [],
+    searched: { local: true, api: false },
+    resolvedContainer: null,
+    sources: { localCount: 0, apiCount: 0 },
+};
 
 export default function CheckInScreen() {
     const navigation = useNavigation();
+    const route = useRoute();
     const { token, apiBase } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
@@ -52,6 +65,9 @@ export default function CheckInScreen() {
     const [visibility, setVisibility] = useState('public');
     const [note, setNote] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [selectedType, setSelectedType] = useState('');
+    const [showTypePicker, setShowTypePicker] = useState(false);
+    const [expandedSearch, setExpandedSearch] = useState(false);
 
     const styles = useMemo(
         () => createStyles({ colors, spacing, typography, shadows, radius }),
@@ -61,13 +77,21 @@ export default function CheckInScreen() {
 
     // Search via shared hook (handles debounce, cleanup, and BUG-19 blur cleanup).
     const searchFn = useCallback(async (text) => {
+        const limit = expandedSearch ? SEE_MORE_LIMIT : DEFAULT_SEARCH_LIMIT;
+        const encodedType = selectedType ? `&type=${encodeURIComponent(selectedType)}` : '';
+        const shouldUseApi = text.trim().length >= MIN_FALLBACK_QUERY_LENGTH;
         const data = await apiRequest({
             apiBase,
-            path: `/api/checkin/search?q=${encodeURIComponent(text)}&limit=10&wildcard=true`,
+            path: `/api/checkin/search?q=${encodeURIComponent(text)}&limit=${limit}&wildcard=true&fallbackApi=${shouldUseApi ? 'true' : 'false'}&fallbackLimit=${limit}&apiSupplement=${expandedSearch ? 'true' : 'false'}${encodedType}`,
             token,
         });
-        return data?.results || [];
-    }, [apiBase, token]);
+        return {
+            results: data?.results || [],
+            searched: data?.searched || { local: true, api: false },
+            resolvedContainer: data?.resolvedContainer || null,
+            sources: data?.sources || { localCount: 0, apiCount: 0 },
+        };
+    }, [apiBase, expandedSearch, selectedType, token]);
 
     const {
         query: searchQuery,
@@ -77,13 +101,34 @@ export default function CheckInScreen() {
         clear: clearSearch,
     } = useSearch(searchFn);
 
-    const searchResults = searchResultsRaw ?? [];
+    const searchMeta = searchResultsRaw ?? DEFAULT_SEARCH_META;
+    const searchResults = searchMeta.results || [];
+    const selectedTypeOption = useMemo(() => (
+        COLLECTABLE_SEARCH_TYPE_OPTIONS.find((entry) => entry.value === selectedType)
+        || COLLECTABLE_SEARCH_TYPE_OPTIONS[0]
+    ), [selectedType]);
+    const canSeeMoreResults = (
+        !expandedSearch
+        && searchQuery.trim().length >= MIN_FALLBACK_QUERY_LENGTH
+        && searchResults.length > 0
+    );
+
+    const onSearchChange = useCallback((text) => {
+        if (expandedSearch) setExpandedSearch(false);
+        handleSearchChange(text);
+    }, [expandedSearch, handleSearchChange]);
 
     // BUG-19: clear pending search timeout on navigation blur.
     useEffect(() => {
         const unsubscribe = navigation.addListener('blur', clearSearch);
         return unsubscribe;
     }, [navigation, clearSearch]);
+
+    useEffect(() => {
+        if (!searchQuery.trim()) return;
+        setExpandedSearch(false);
+        handleSearchChange(searchQuery);
+    }, [selectedType, handleSearchChange]);
 
     // Step handlers
     const handleStatusSelect = useCallback((status) => {
@@ -99,26 +144,56 @@ export default function CheckInScreen() {
     const handleBack = useCallback(() => {
         if (step === STEPS.SEARCH) {
             setStep(STEPS.STATUS);
+            setSelectedType('');
+            setExpandedSearch(false);
             clearSearch();
         } else if (step === STEPS.CONFIRM) {
             setStep(STEPS.SEARCH);
         }
     }, [step, clearSearch]);
 
+    const handleSeeMoreResults = useCallback(() => {
+        if (!searchQuery.trim()) return;
+        setExpandedSearch(true);
+        handleSearchChange(searchQuery.trim());
+    }, [handleSearchChange, searchQuery]);
+
     const handleSubmit = useCallback(async () => {
         if (!selectedStatus || !selectedItem) return;
 
         try {
             setSubmitting(true);
-            const isManual = selectedItem?.source === 'manual';
+            let itemForCheckin = selectedItem;
+            if (selectedItem?.fromApi) {
+                const resolved = await apiRequest({
+                    apiBase,
+                    path: '/api/collectables/resolve-search-hit',
+                    method: 'POST',
+                    token,
+                    body: {
+                        candidate: selectedItem,
+                        selectedType: selectedType || selectedItem?.kind || null,
+                    },
+                });
+                if (!resolved?.collectable?.id) {
+                    throw new Error('Unable to resolve this result for check-in');
+                }
+                itemForCheckin = {
+                    ...resolved.collectable,
+                    source: 'collectable',
+                    fromApi: false,
+                };
+            }
+
+            const isManual = itemForCheckin?.source === 'manual';
             await apiRequest({
                 apiBase,
                 path: '/api/checkin',
                 method: 'POST',
                 token,
                 body: {
-                    collectableId: isManual ? undefined : selectedItem.id,
-                    manualId: isManual ? selectedItem.id : undefined,
+                    collectableId: isManual ? undefined : itemForCheckin.id,
+                    manualId: isManual ? itemForCheckin.id : undefined,
                     status: selectedStatus.key,
                     visibility,
                     note: note.trim() || undefined,
@@ -128,6 +203,10 @@ export default function CheckInScreen() {
                 {
                     text: 'OK',
                     onPress: () => {
+                        emitCheckInPosted({
+                            originTab: route?.params?.originTab || '',
+                            postedAt: Date.now(),
+                        });
                         navigation.goBack();
                     }
                 }
@@ -137,7 +216,7 @@ export default function CheckInScreen() {
         } finally {
             setSubmitting(false);
         }
-    }, [apiBase, token, selectedStatus, selectedItem, visibility, note, navigation]);
+    }, [apiBase, token, selectedStatus, selectedItem, selectedType, visibility, note, navigation, route?.params?.originTab]);
 
     // Get cover URL for display
     const getCoverUrl = (item) => {
@@ -193,15 +272,49 @@ export default function CheckInScreen() {
                                 placeholder="Search for a book, movie, game..."
                                 placeholderTextColor={colors.textMuted}
                                 value={searchQuery}
-                                onChangeText={handleSearchChange}
+                                onChangeText={onSearchChange}
                                 autoFocus
                             />
+                            <TouchableOpacity style={styles.typeChip} onPress={() => setShowTypePicker(true)}>
+                                <Text style={styles.typeChipText}>{selectedTypeOption.label}</Text>
+                                <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
+                            </TouchableOpacity>
                             {searchQuery.length > 0 && (
                                 <TouchableOpacity onPress={clearSearch}>
                                     <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                                 </TouchableOpacity>
                             )}
                         </View>
+
+                        <Modal
+                            visible={showTypePicker}
+                            transparent
+                            animationType="fade"
+                            onRequestClose={() => setShowTypePicker(false)}
+                        >
+                            <Pressable style={styles.typeModalOverlay} onPress={() => setShowTypePicker(false)}>
+                                <Pressable style={styles.typeModalCard} onPress={() => {}}>
+                                    {COLLECTABLE_SEARCH_TYPE_OPTIONS.map((option) => {
+                                        const selected = option.value === selectedType;
+                                        return (
+                                            <TouchableOpacity
+                                                key={option.label}
+                                                style={styles.typeModalOption}
+                                                onPress={() => {
+                                                    setSelectedType(option.value);
+                                                    setShowTypePicker(false);
+                                                }}
+                                            >
+                                                <Text style={[styles.typeModalOptionText, selected && styles.typeModalOptionTextSelected]}>
+                                                    {option.label}
+                                                </Text>
+                                                {selected && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </Pressable>
+                            </Pressable>
+                        </Modal>
 
                         {searchLoading && (
                             <View style={styles.loadingContainer}>
@@ -210,11 +323,13 @@ export default function CheckInScreen() {
                         )}
 
                         <ScrollView style={styles.searchResultsList} showsVerticalScrollIndicator={false}>
-                            {searchResults.map((item) => {
+                            {searchResults.map((item, index) => {
                                 const coverUrl = getCoverUrl(item);
+                                const metadataLine = formatCollectableSearchMeta(item);
+                                const resultKey = `${item.source || 'collectable'}-${item.id ?? item.externalId ?? `${item.title || 'untitled'}-${index}`}`;
                                 return (
                                     <TouchableOpacity
-                                        key={`${item.source || 'collectable'}-${item.id}`}
+                                        key={resultKey}
                                         style={styles.searchResultItem}
                                         onPress={() => handleItemSelect(item)}
                                     >
@@ -230,6 +345,9 @@ export default function CheckInScreen() {
                                             {item.primaryCreator && (
                                                 <Text style={styles.resultSubtitle} numberOfLines={1}>{item.primaryCreator}</Text>
                                             )}
+                                            {metadataLine ? (
+                                                <Text style={styles.resultMetaText} numberOfLines={1}>{metadataLine}</Text>
+                                            ) : null}
                                             {item.kind && (
                                                 <Text style={styles.resultKind}>{item.kind}</Text>
                                             )}
@@ -244,6 +362,13 @@ export default function CheckInScreen() {
                                     <Ionicons name="search-outline" size={32} color={colors.textMuted} />
                                     <Text style={styles.emptyText}>No results found</Text>
                                 </View>
+                            )}
+
+                            {!searchLoading && canSeeMoreResults && (
+                                <TouchableOpacity style={styles.seeMoreButton} onPress={handleSeeMoreResults}>
+                                    <Text style={styles.seeMoreText}>See more results</Text>
+                                    <Ionicons name="arrow-forward" size={14} color={colors.primary} />
+                                </TouchableOpacity>
                             )}
                         </ScrollView>
                     </Animated.View>
@@ -502,6 +627,47 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 15,
         color: colors.text,
     },
+    typeChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        height: 28,
+        paddingHorizontal: spacing.sm,
+        borderRadius: radius.full,
+        backgroundColor: colors.surfaceElevated,
+    },
+    typeChipText: {
+        fontSize: 12,
+        color: colors.text,
+        fontWeight: '600',
+    },
+    typeModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.25)',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.xl,
+    },
+    typeModalCard: {
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        overflow: 'hidden',
+        ...shadows.md,
+    },
+    typeModalOption: {
+        minHeight: 42,
+        paddingHorizontal: spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    typeModalOptionText: {
+        color: colors.text,
+        fontSize: 15,
+    },
+    typeModalOptionTextSelected: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
     loadingContainer: {
         padding: spacing.md,
         alignItems: 'center',
@@ -541,6 +707,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textMuted,
         marginTop: 2,
     },
+    resultMetaText: {
+        fontSize: 11,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
     resultKind: {
         fontSize: 11,
         color: colors.primary,
@@ -555,6 +726,24 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 14,
         color: colors.textMuted,
         marginTop: spacing.sm,
+    },
+    seeMoreButton: {
+        minHeight: 40,
+        marginTop: spacing.xs,
+        marginBottom: spacing.sm,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        borderColor: colors.primary + '66',
+        backgroundColor: colors.primary + '10',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.xs,
+    },
+    seeMoreText: {
+        color: colors.primary,
+        fontSize: 13,
+        fontWeight: '600',
     },
 
     // Confirm step
