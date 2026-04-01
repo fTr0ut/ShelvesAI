@@ -1019,5 +1019,63 @@ describe('VisionPipelineService', () => {
 
             updateJobSpy.mockRestore();
         });
+
+        it('emits extraction heartbeat progress stages while OCR extraction is still running', async () => {
+            jest.useFakeTimers();
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            let resolveExtraction;
+            const extractionPromise = new Promise((resolve) => {
+                resolveExtraction = resolve;
+            });
+            mockGemini.detectShelfItemsFromImage.mockReturnValue(extractionPromise);
+
+            try {
+                const processPromise = service.processImage('base64', { id: 11, type: 'book' }, 100, 'job-heartbeat');
+                await Promise.resolve();
+
+                jest.advanceTimersByTime(3000);
+                await Promise.resolve();
+
+                let heartbeatSteps = updateJobSpy.mock.calls
+                    .map((call) => call[1]?.step)
+                    .filter((step) => step === 'extracting-in-flight' || step === 'extracting-deep-parse');
+                expect(heartbeatSteps).toEqual(expect.arrayContaining(['extracting-in-flight']));
+
+                jest.advanceTimersByTime(6000);
+                await Promise.resolve();
+
+                heartbeatSteps = updateJobSpy.mock.calls
+                    .map((call) => call[1]?.step)
+                    .filter((step) => step === 'extracting-in-flight' || step === 'extracting-deep-parse');
+                expect(heartbeatSteps).toEqual(expect.arrayContaining(['extracting-in-flight', 'extracting-deep-parse']));
+                expect(heartbeatSteps.filter((step) => step === 'extracting-in-flight')).toHaveLength(1);
+                expect(heartbeatSteps.filter((step) => step === 'extracting-deep-parse')).toHaveLength(1);
+
+                resolveExtraction({ items: [] });
+                await processPromise;
+            } finally {
+                updateJobSpy.mockRestore();
+                jest.useRealTimers();
+            }
+        });
+
+        it('does not emit extraction heartbeat stages when OCR extraction finishes quickly', async () => {
+            jest.useFakeTimers();
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({ items: [] });
+
+            try {
+                await service.processImage('base64', { id: 12, type: 'book' }, 100, 'job-fast');
+                jest.runOnlyPendingTimers();
+
+                const heartbeatSteps = updateJobSpy.mock.calls
+                    .map((call) => call[1]?.step)
+                    .filter((step) => step === 'extracting-in-flight' || step === 'extracting-deep-parse');
+                expect(heartbeatSteps).toHaveLength(0);
+            } finally {
+                updateJobSpy.mockRestore();
+                jest.useRealTimers();
+            }
+        });
     });
 });

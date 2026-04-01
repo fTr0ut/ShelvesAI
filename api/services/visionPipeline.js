@@ -792,7 +792,12 @@ class VisionPipelineService {
         const updateProgress = (key, vars = {}) => {
             if (jobId) {
                 const { step, progress, message } = getProgressMessage(key, vars);
-                processingStatus.updateJob(jobId, { step, progress, message, status: 'processing' });
+                const currentProgress = Number(processingStatus.getJob(jobId)?.progress);
+                const nextProgress = Number(progress);
+                const resolvedProgress = Number.isFinite(currentProgress)
+                    ? Math.max(currentProgress, nextProgress)
+                    : nextProgress;
+                processingStatus.updateJob(jobId, { step, progress: resolvedProgress, message, status: 'processing' });
             }
         };
 
@@ -860,14 +865,39 @@ class VisionPipelineService {
         logger.info('[VisionPipeline] Step 1: Extracting items from image via vision OCR...');
         let rawItems = [];
         let conversationHistory = null;
+        const extractionHeartbeatTimeouts = [];
+        const clearExtractionHeartbeatTimeouts = () => {
+            if (extractionHeartbeatTimeouts.length === 0) return;
+            for (const timeoutId of extractionHeartbeatTimeouts) {
+                clearTimeout(timeoutId);
+            }
+            extractionHeartbeatTimeouts.length = 0;
+        };
         if (providedRawItems) {
             rawItems = providedRawItems;
             // MLKit fallback: no Gemini extraction, so no conversation history
         } else if (this.ocrEnabled) {
-            const extractResult = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
-            rawItems = extractResult.items;
-            conversationHistory = extractResult.conversationHistory;
-            if (extractResult.warning) warnings.push(extractResult.warning);
+            let extractionInFlight = true;
+            if (jobId) {
+                extractionHeartbeatTimeouts.push(setTimeout(() => {
+                    if (!extractionInFlight) return;
+                    updateProgress('extractingInFlight');
+                }, 3000));
+                extractionHeartbeatTimeouts.push(setTimeout(() => {
+                    if (!extractionInFlight) return;
+                    updateProgress('extractingDeepParse');
+                }, 9000));
+            }
+
+            try {
+                const extractResult = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
+                rawItems = extractResult.items;
+                conversationHistory = extractResult.conversationHistory;
+                if (extractResult.warning) warnings.push(extractResult.warning);
+            } finally {
+                extractionInFlight = false;
+                clearExtractionHeartbeatTimeouts();
+            }
         } else {
             throw new Error('Vision OCR disabled and no rawItems provided');
         }

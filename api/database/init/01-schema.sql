@@ -90,12 +90,42 @@ CREATE TABLE shelves (
     type TEXT NOT NULL,  -- 'books', 'movies', 'games', 'vinyl', 'other'
     description TEXT,
     game_defaults JSONB,
+    photo_storage_provider TEXT,
+    photo_storage_key TEXT,
+    photo_content_type TEXT,
+    photo_size_bytes INTEGER,
+    photo_width INTEGER,
+    photo_height INTEGER,
+    photo_updated_at TIMESTAMPTZ,
 
     visibility TEXT DEFAULT 'private'
         CHECK (visibility IN ('private', 'friends', 'public')),
 
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT shelves_photo_storage_check CHECK (
+        (
+            photo_storage_provider IS NULL
+            AND photo_storage_key IS NULL
+            AND photo_content_type IS NULL
+            AND photo_size_bytes IS NULL
+            AND photo_width IS NULL
+            AND photo_height IS NULL
+            AND photo_updated_at IS NULL
+        )
+        OR (
+            photo_storage_provider IN ('s3', 'local')
+            AND photo_storage_key IS NOT NULL
+            AND photo_content_type IS NOT NULL
+            AND photo_size_bytes IS NOT NULL
+            AND photo_size_bytes > 0
+            AND photo_width IS NOT NULL
+            AND photo_width > 0
+            AND photo_height IS NOT NULL
+            AND photo_height > 0
+            AND photo_updated_at IS NOT NULL
+        )
+    )
 );
 
 CREATE INDEX idx_shelves_owner ON shelves(owner_id);

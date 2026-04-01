@@ -7,6 +7,7 @@ const visionItemRegionsQueries = require('../database/queries/visionItemRegions'
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
 const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
+const shelfPhotosQueries = require('../database/queries/shelfPhotos');
 const manualMediaQueries = require('../database/queries/manualMedia');
 const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
@@ -78,6 +79,12 @@ jest.mock('../database/queries/userCollectionPhotos', () => ({
     loadOwnerPhotoThumbnailBuffer: jest.fn(),
     upsertOwnerPhotoThumbnailForItem: jest.fn(),
     attachVisionCropToItem: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('../database/queries/shelfPhotos', () => ({
+    getByShelfId: jest.fn().mockResolvedValue(null),
+    uploadPhotoForShelf: jest.fn().mockResolvedValue(null),
+    clearPhotoForShelf: jest.fn().mockResolvedValue(null),
+    loadPhotoBuffer: jest.fn(),
 }));
 jest.mock('../database/queries/manualMedia', () => ({
     uploadFromBuffer: jest.fn().mockResolvedValue(null),
@@ -213,6 +220,10 @@ describe('shelvesController', () => {
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
         userCollectionPhotosQueries.attachVisionCropToItem.mockReset();
+        shelfPhotosQueries.getByShelfId.mockReset();
+        shelfPhotosQueries.uploadPhotoForShelf.mockReset();
+        shelfPhotosQueries.clearPhotoForShelf.mockReset();
+        shelfPhotosQueries.loadPhotoBuffer.mockReset();
         manualMediaQueries.uploadFromBuffer.mockReset();
         needsReviewQueries.getById.mockReset();
         needsReviewQueries.markCompleted.mockReset();
@@ -305,6 +316,9 @@ describe('shelvesController', () => {
         userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockReset();
         userCollectionPhotosQueries.upsertOwnerPhotoThumbnailForItem.mockReset();
         userCollectionPhotosQueries.attachVisionCropToItem.mockResolvedValue(null);
+        shelfPhotosQueries.getByShelfId.mockResolvedValue(null);
+        shelfPhotosQueries.uploadPhotoForShelf.mockResolvedValue(null);
+        shelfPhotosQueries.clearPhotoForShelf.mockResolvedValue(null);
         manualMediaQueries.uploadFromBuffer.mockResolvedValue(null);
     });
 
@@ -392,6 +406,48 @@ describe('shelvesController', () => {
                     hasMore: true,
                 }),
                 sort: { sortBy: 'name', sortDir: 'asc' },
+            }));
+        });
+
+        it('includes normalized shelfPhoto contract fields', async () => {
+            req.query = {};
+            query.mockResolvedValueOnce({
+                rows: [{
+                    id: 2,
+                    name: 'Decor Shelf',
+                    type: 'books',
+                    item_count: '3',
+                    photo_storage_provider: 'local',
+                    photo_storage_key: 'shelf-photos/u1/2/abc.jpg',
+                    photo_content_type: 'image/jpeg',
+                    photo_size_bytes: 12345,
+                    photo_width: 640,
+                    photo_height: 480,
+                    photo_updated_at: '2026-04-01T10:00:00.000Z',
+                }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '1' }],
+                rowCount: 1,
+            });
+
+            await shelvesController.listShelves(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                shelves: expect.arrayContaining([
+                    expect.objectContaining({
+                        id: 2,
+                        shelfPhoto: expect.objectContaining({
+                            hasPhoto: true,
+                            contentType: 'image/jpeg',
+                            sizeBytes: 12345,
+                            width: 640,
+                            height: 480,
+                            imageUrl: '/api/shelves/2/photo/image',
+                        }),
+                    }),
+                ]),
             }));
         });
 
@@ -561,6 +617,129 @@ describe('shelvesController', () => {
                 format: 'digital',
                 platformMissing: false,
             }, expect.any(Object));
+        });
+    });
+
+    describe('shelf photos', () => {
+        it('includes shelfPhoto in getShelf responses', async () => {
+            req.params = { shelfId: '10' };
+            req.user = { id: 1 };
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                name: 'Books',
+                type: 'books',
+                visibility: 'private',
+                photoStorageProvider: 'local',
+                photoStorageKey: 'shelf-photos/1/10/photo.jpg',
+                photoContentType: 'image/jpeg',
+                photoSizeBytes: 100,
+                photoWidth: 1200,
+                photoHeight: 900,
+                photoUpdatedAt: '2026-04-01T12:00:00.000Z',
+            });
+
+            await shelvesController.getShelf(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                shelf: expect.objectContaining({
+                    id: 10,
+                    shelfPhoto: expect.objectContaining({
+                        hasPhoto: true,
+                        imageUrl: '/api/shelves/10/photo/image',
+                    }),
+                }),
+            }));
+        });
+
+        it('uploads a shelf photo for owners', async () => {
+            req.params = { shelfId: '10' };
+            req.file = { buffer: Buffer.from('photo'), mimetype: 'image/jpeg' };
+            shelvesQueries.getById.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                type: 'books',
+            });
+            shelfPhotosQueries.uploadPhotoForShelf.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                photoStorageProvider: 'local',
+                photoStorageKey: 'shelf-photos/1/10/abcd.jpg',
+                photoContentType: 'image/jpeg',
+                photoSizeBytes: 5000,
+                photoWidth: 800,
+                photoHeight: 600,
+                photoUpdatedAt: '2026-04-01T12:00:00.000Z',
+            });
+
+            await shelvesController.uploadShelfPhoto(req, res);
+
+            expect(shelfPhotosQueries.uploadPhotoForShelf).toHaveBeenCalledWith({
+                shelfId: 10,
+                userId: 1,
+                buffer: req.file.buffer,
+                contentType: 'image/jpeg',
+            });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                shelfPhoto: expect.objectContaining({
+                    hasPhoto: true,
+                    imageUrl: '/api/shelves/10/photo/image',
+                }),
+            }));
+        });
+
+        it('rejects upload when no file is provided', async () => {
+            req.params = { shelfId: '10' };
+            req.file = null;
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'books' });
+
+            await shelvesController.uploadShelfPhoto(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({ error: 'No image file provided' });
+        });
+
+        it('returns 404 on photo metadata request when shelf is not viewable', async () => {
+            req.params = { shelfId: '10' };
+            shelvesQueries.getForViewing.mockResolvedValue(null);
+
+            await shelvesController.getShelfPhoto(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(404);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Shelf not found' });
+        });
+
+        it('returns shelf photo bytes for viewable shelves', async () => {
+            req.params = { shelfId: '10' };
+            const imageBuffer = Buffer.from('image');
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                photoStorageProvider: 'local',
+                photoStorageKey: 'shelf-photos/1/10/abcd.jpg',
+                photoContentType: 'image/jpeg',
+            });
+            shelfPhotosQueries.loadPhotoBuffer.mockResolvedValue({
+                buffer: imageBuffer,
+                contentType: 'image/jpeg',
+                contentLength: imageBuffer.length,
+            });
+
+            await shelvesController.getShelfPhotoImage(req, res);
+
+            expect(shelfPhotosQueries.loadPhotoBuffer).toHaveBeenCalled();
+            expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+            expect(res.send).toHaveBeenCalledWith(imageBuffer);
+        });
+
+        it('returns 404 when deleting shelf photo as non-owner', async () => {
+            req.params = { shelfId: '10' };
+            shelvesQueries.getById.mockResolvedValue(null);
+
+            await shelvesController.deleteShelfPhoto(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(404);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Shelf not found' });
         });
     });
 

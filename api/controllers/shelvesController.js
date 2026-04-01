@@ -30,6 +30,7 @@ const visionItemRegionsQueries = require('../database/queries/visionItemRegions'
 const visionItemCropsQueries = require('../database/queries/visionItemCrops');
 const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
+const shelfPhotosQueries = require('../database/queries/shelfPhotos');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const { getWorkflowQueueService } = require('../services/workflowQueueService');
@@ -197,9 +198,43 @@ function derivePlatformNames({ platformData = [], platforms = [], systemName = n
 
 function formatShelfResponse(shelf) {
   if (!shelf) return null;
+  const {
+    photoStorageProvider,
+    photoStorageKey,
+    photoContentType,
+    photoSizeBytes,
+    photoWidth,
+    photoHeight,
+    photoUpdatedAt,
+    ...rest
+  } = shelf;
   return {
-    ...shelf,
-    gameDefaults: normalizeGameDefaultsForResponse(shelf.gameDefaults, { shelfType: shelf.type }),
+    ...rest,
+    gameDefaults: normalizeGameDefaultsForResponse(rest.gameDefaults, { shelfType: rest.type }),
+    shelfPhoto: formatShelfPhotoResponse({
+      id: rest.id,
+      photoStorageProvider,
+      photoStorageKey,
+      photoContentType,
+      photoSizeBytes,
+      photoWidth,
+      photoHeight,
+      photoUpdatedAt,
+    }),
+  };
+}
+
+function formatShelfPhotoResponse(shelfRow) {
+  const hasPhoto = !!(shelfRow?.photoStorageProvider && shelfRow?.photoStorageKey);
+  const shelfId = shelfRow?.id;
+  return {
+    hasPhoto,
+    contentType: shelfRow?.photoContentType || null,
+    sizeBytes: shelfRow?.photoSizeBytes ?? null,
+    width: shelfRow?.photoWidth ?? null,
+    height: shelfRow?.photoHeight ?? null,
+    updatedAt: shelfRow?.photoUpdatedAt || null,
+    imageUrl: hasPhoto && shelfId ? `/api/shelves/${shelfId}/photo/image` : null,
   };
 }
 
@@ -1451,6 +1486,100 @@ async function deleteShelf(req, res) {
   } catch (err) {
     logger.error('deleteShelf error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getShelfPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    return res.json({
+      shelfPhoto: formatShelfPhotoResponse(shelf),
+    });
+  } catch (err) {
+    logger.error('getShelfPhoto error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function getShelfPhotoImage(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+    if (!shelf.photoStorageProvider || !shelf.photoStorageKey) {
+      return res.status(404).json({ error: 'Shelf photo not found' });
+    }
+
+    const payload = await shelfPhotosQueries.loadPhotoBuffer(shelf);
+    res.setHeader('Content-Type', payload.contentType || shelf.photoContentType || 'image/jpeg');
+    if (Number.isFinite(payload.contentLength)) {
+      res.setHeader('Content-Length', String(payload.contentLength));
+    }
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.send(payload.buffer);
+  } catch (err) {
+    logger.error('getShelfPhotoImage error:', err);
+    return res.status(500).json({ error: 'Failed to load shelf photo image' });
+  }
+}
+
+async function uploadShelfPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    const updatedShelf = await shelfPhotosQueries.uploadPhotoForShelf({
+      shelfId: shelf.id,
+      userId: req.user.id,
+      buffer: req.file.buffer,
+      contentType: req.file.mimetype || 'image/jpeg',
+    });
+
+    return res.json({
+      shelfPhoto: formatShelfPhotoResponse(updatedShelf),
+    });
+  } catch (err) {
+    logger.error('uploadShelfPhoto error:', err);
+    const statusCode = /image/i.test(String(err?.message || '')) ? 400 : 500;
+    return res.status(statusCode).json({ error: err?.message || 'Failed to upload shelf photo' });
+  }
+}
+
+async function deleteShelfPhoto(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const updatedShelf = await shelfPhotosQueries.clearPhotoForShelf({
+      shelfId: shelf.id,
+      userId: req.user.id,
+    });
+    if (!updatedShelf) {
+      return res.status(404).json({ error: 'Shelf not found' });
+    }
+
+    return res.json({
+      shelfPhoto: formatShelfPhotoResponse(updatedShelf),
+    });
+  } catch (err) {
+    logger.error('deleteShelfPhoto error:', err);
+    return res.status(500).json({ error: 'Failed to delete shelf photo' });
   }
 }
 
@@ -4791,6 +4920,10 @@ module.exports = {
   getShelf,
   updateShelf,
   deleteShelf,
+  getShelfPhoto,
+  getShelfPhotoImage,
+  uploadShelfPhoto,
+  deleteShelfPhoto,
   listShelfItems,
   searchManualEntry,
   addManualEntry,

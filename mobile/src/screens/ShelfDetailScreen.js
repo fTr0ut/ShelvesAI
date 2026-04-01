@@ -634,7 +634,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
         if (searchQuery.trim().length > 0) return visibleItems;
         if (viewMode === 'banner') {
             const out = [];
-            let lastSection = null;
+            const groups = new Map();
+            
             visibleItems.forEach(item => {
                 const collectable = item.collectable || item.collectableSnapshot;
                 const manual = item.manual || item.manualSnapshot;
@@ -665,11 +666,40 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     }
                 }
                 
-                if (sectionTitle !== lastSection) {
-                    out.push({ isSectionHeader: true, title: sectionTitle, id: `header-${sectionTitle}` });
-                    lastSection = sectionTitle;
+                if (!groups.has(sectionTitle)) {
+                    groups.set(sectionTitle, {
+                        sectionTitle,
+                        format,
+                        year,
+                        items: []
+                    });
                 }
-                out.push(item);
+                groups.get(sectionTitle).items.push(item);
+            });
+
+            const groupValues = Array.from(groups.values());
+            groupValues.sort((a, b) => {
+                if (a.sectionTitle === 'Unknown') return 1;
+                if (b.sectionTitle === 'Unknown') return -1;
+                
+                const formatCmp = a.format.localeCompare(b.format);
+                if (formatCmp !== 0) return formatCmp;
+
+                if (sortKey === 'year_desc') {
+                    const yearA = parseInt(a.year, 10);
+                    const yearB = parseInt(b.year, 10);
+                    const validA = !isNaN(yearA);
+                    const validB = !isNaN(yearB);
+                    if (validA && validB) return yearB - yearA;
+                    if (validA) return -1;
+                    if (validB) return 1;
+                }
+                return 0;
+            });
+
+            groupValues.forEach(g => {
+                out.push({ isSectionHeader: true, title: g.sectionTitle, id: `header-${g.sectionTitle}` });
+                out.push(...g.items);
             });
             return out;
         }
@@ -1472,6 +1502,16 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return match ? match.label : 'Sort';
     }, [sortKey]);
 
+    const viewLabel = useMemo(() => {
+        const modes = {
+            tile: 'Tile View',
+            banner: 'Banner List',
+            list: 'Detailed List',
+            swipe: 'Swipe Cards',
+        };
+        return modes[viewMode] || 'View';
+    }, [viewMode]);
+
     if (loading && !refreshing) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -1557,9 +1597,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 </View>
             </View>
 
-            {/* Search + Sort */}
-            <View style={[styles.controlsRow, items.length > 5 ? null : styles.controlsRowRight]}>
-                {items.length > 5 && (
+            {/* Search */}
+            {items.length > 5 && (
+                <View style={styles.searchRow}>
                     <View style={styles.searchBox}>
                         <Ionicons name="search" size={18} color={colors.textMuted} />
                         <TextInput
@@ -1570,25 +1610,28 @@ export default function ShelfDetailScreen({ route, navigation }) {
                             onChangeText={setSearchQuery}
                         />
                     </View>
-                )}
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity
-                        style={styles.sortButton}
-                        onPress={() => setSortOpen(true)}
-                        accessibilityLabel="Sort items"
-                    >
-                        <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
-                        <Text style={styles.sortButtonText} numberOfLines={1}>{sortLabel}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.sortButton, { marginLeft: spacing.sm }]}
-                        onPress={() => setDisplayModeOpen(true)}
-                        accessibilityLabel="Change view mode"
-                    >
-                        <Ionicons name="grid-outline" size={16} color={colors.textMuted} />
-                        <Text style={styles.sortButtonText} numberOfLines={1}>View</Text>
-                    </TouchableOpacity>
                 </View>
+            )}
+
+            {/* Sort & View */}
+            <View style={[styles.controlsRow, { justifyContent: 'space-between' }]}>
+                <TouchableOpacity
+                    style={[styles.sortButton, { flex: 1, maxWidth: undefined, justifyContent: 'center' }]}
+                    onPress={() => setSortOpen(true)}
+                    accessibilityLabel="Sort items"
+                >
+                    <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
+                    <Text style={styles.sortButtonText} numberOfLines={1}>Sort: {sortLabel}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={[styles.sortButton, { flex: 1, maxWidth: undefined, justifyContent: 'center' }]}
+                    onPress={() => setDisplayModeOpen(true)}
+                    accessibilityLabel="Change view mode"
+                >
+                    <Ionicons name="grid-outline" size={16} color={colors.textMuted} />
+                    <Text style={styles.sortButtonText} numberOfLines={1}>View: {viewLabel}</Text>
+                </TouchableOpacity>
             </View>
 
             {/* Items List */}
@@ -1755,6 +1798,11 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.sm,
+    },
+    searchRow: {
+        flexDirection: 'row',
+        paddingHorizontal: spacing.md,
+        paddingBottom: spacing.sm,
     },
     controlsRow: {
         flexDirection: 'row',
@@ -2039,7 +2087,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     },
     swipeCardItem: {
         flex: 1,
-        height: Dimensions.get('window').height * 0.55,
+        height: Dimensions.get('window').height * 0.70,
         borderRadius: radius.xl,
         overflow: 'hidden',
         alignItems: 'center',

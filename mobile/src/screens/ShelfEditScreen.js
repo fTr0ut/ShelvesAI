@@ -15,9 +15,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CommonActions, useFocusEffect } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { CachedImage, CategoryIcon } from '../components/ui';
+import { apiRequest, getValidToken } from '../services/api';
+import { clearShelvesListCache } from '../services/shelvesListCache';
 
 const VISIBILITY_OPTIONS = [
     { value: 'private', label: 'Private', icon: 'lock-closed' },
@@ -71,6 +74,9 @@ export default function ShelfEditScreen({ route, navigation }) {
     const [gameFormat, setGameFormat] = useState(initialShelf?.gameDefaults?.format || '');
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
+    const [shelfPhotoBusy, setShelfPhotoBusy] = useState(false);
+    const [shelfPhotoLoadFailed, setShelfPhotoLoadFailed] = useState(false);
+    const [imageAuthToken, setImageAuthToken] = useState(null);
     const hasLoadedShelfRef = useRef(false);
     const shelfLoadInFlightRef = useRef(false);
     const isMountedRef = useRef(true);
@@ -80,6 +86,22 @@ export default function ShelfEditScreen({ route, navigation }) {
             isMountedRef.current = false;
         };
     }, []);
+
+    useEffect(() => {
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        getValidToken(token)
+            .then((resolved) => {
+                if (isActive) setImageAuthToken(resolved || token);
+            })
+            .catch(() => {
+                if (isActive) setImageAuthToken(token);
+            });
+        return () => { isActive = false; };
+    }, [token]);
 
     const shelfType = String(shelf?.type || initialShelf?.type || '').toLowerCase();
     const isOtherShelf = shelfType === 'other';
@@ -110,6 +132,7 @@ export default function ShelfEditScreen({ route, navigation }) {
             setGamePlatformType(fetchedShelf?.gameDefaults?.platformType || '');
             setCustomPlatformText(fetchedShelf?.gameDefaults?.customPlatformText || '');
             setGameFormat(fetchedShelf?.gameDefaults?.format || '');
+            setShelfPhotoLoadFailed(false);
             hasLoadedShelfRef.current = true;
         } catch (e) {
             console.warn('Failed to load shelf:', e);
@@ -135,6 +158,7 @@ export default function ShelfEditScreen({ route, navigation }) {
             setGamePlatformType(initialShelf?.gameDefaults?.platformType || '');
             setCustomPlatformText(initialShelf?.gameDefaults?.customPlatformText || '');
             setGameFormat(initialShelf?.gameDefaults?.format || '');
+            setShelfPhotoLoadFailed(false);
             setLoading(false);
         } else {
             setShelf(null);
@@ -144,6 +168,7 @@ export default function ShelfEditScreen({ route, navigation }) {
             setGamePlatformType('');
             setCustomPlatformText('');
             setGameFormat('');
+            setShelfPhotoLoadFailed(false);
             setLoading(true);
         }
     }, [shelfId, initialShelf]);
@@ -166,6 +191,168 @@ export default function ShelfEditScreen({ route, navigation }) {
             };
         }, [loadShelf]),
     );
+
+    const resolveApiUri = useCallback((value) => {
+        if (!value) return null;
+        if (/^https?:/i.test(value)) return value;
+        if (!apiBase) return value.startsWith('/') ? value : `/${value}`;
+        return `${apiBase.replace(/\/+$/, '')}${value.startsWith('/') ? '' : '/'}${value}`;
+    }, [apiBase]);
+
+    const withVersion = useCallback((uri, rawVersion) => {
+        if (!uri) return null;
+        const versionTs = rawVersion ? new Date(rawVersion).getTime() : NaN;
+        if (!Number.isFinite(versionTs)) return uri;
+        return `${uri}${uri.includes('?') ? '&' : '?'}v=${versionTs}`;
+    }, []);
+
+    const shelfPhotoHeaders = imageAuthToken
+        ? {
+            Authorization: `Bearer ${imageAuthToken}`,
+            'ngrok-skip-browser-warning': 'true',
+        }
+        : null;
+    const shelfPhotoSource = (() => {
+        const shelfPhoto = shelf?.shelfPhoto;
+        if (!shelfPhoto?.hasPhoto || !shelfPhoto?.imageUrl || !shelfPhotoHeaders || shelfPhotoLoadFailed) {
+            return null;
+        }
+        const uri = withVersion(resolveApiUri(shelfPhoto.imageUrl), shelfPhoto.updatedAt || null);
+        if (!uri) return null;
+        return {
+            uri,
+            headers: shelfPhotoHeaders,
+        };
+    })();
+
+    const buildShelfPhotoFilename = useCallback((asset) => {
+        const uriName = String(asset?.uri || '').split('/').pop();
+        if (uriName && uriName.includes('.')) return uriName;
+        const mime = String(asset?.mimeType || '').toLowerCase();
+        const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+        return `shelf-photo-${Date.now()}.${ext}`;
+    }, []);
+
+    const uploadShelfPhotoAsset = useCallback(async (asset) => {
+        if (!asset?.uri || shelfPhotoBusy || !shelfId || !apiBase) return;
+        setShelfPhotoBusy(true);
+        try {
+            const authToken = await getValidToken(token);
+            if (!authToken) {
+                throw new Error('Authentication required');
+            }
+
+            const formData = new FormData();
+            formData.append('photo', {
+                uri: asset.uri,
+                name: buildShelfPhotoFilename(asset),
+                type: asset.mimeType || 'image/jpeg',
+            });
+
+            const response = await fetch(`${apiBase}/api/shelves/${shelfId}/photo`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                    'ngrok-skip-browser-warning': 'true',
+                },
+                body: formData,
+            });
+            const raw = await response.text();
+            let payload = {};
+            try {
+                payload = raw ? JSON.parse(raw) : {};
+            } catch (_err) {
+                payload = {};
+            }
+
+            if (!response.ok) {
+                throw new Error(payload?.error || `HTTP ${response.status}`);
+            }
+
+            clearShelvesListCache();
+            setShelfPhotoLoadFailed(false);
+            await loadShelf({ showBlockingLoader: false });
+        } catch (err) {
+            Alert.alert('Error', err?.message || 'Failed to upload shelf photo');
+        } finally {
+            setShelfPhotoBusy(false);
+        }
+    }, [apiBase, buildShelfPhotoFilename, loadShelf, shelfId, shelfPhotoBusy, token]);
+
+    const handleShelfPhotoUpload = useCallback(async () => {
+        if (shelfPhotoBusy || saving || deleting) return;
+
+        const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+        const libraryPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!cameraPermission.granted && !libraryPermission.granted) {
+            Alert.alert('Permission required', 'Camera or photo library permission is required.');
+            return;
+        }
+
+        let selectedSource = null;
+        if (cameraPermission.granted && libraryPermission.granted) {
+            selectedSource = await new Promise((resolve) => {
+                Alert.alert('Shelf Photo', 'Choose photo source', [
+                    { text: 'Take Photo', onPress: () => resolve('camera') },
+                    { text: 'Choose from Library', onPress: () => resolve('library') },
+                    { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+                ]);
+            });
+            if (!selectedSource) return;
+        } else if (cameraPermission.granted) {
+            selectedSource = 'camera';
+        } else {
+            selectedSource = 'library';
+        }
+
+        const pickerConfig = {
+            quality: 0.8,
+            mediaTypes: ['images'],
+            allowsMultipleSelection: false,
+            exif: false,
+        };
+        const result = selectedSource === 'camera'
+            ? await ImagePicker.launchCameraAsync(pickerConfig)
+            : await ImagePicker.launchImageLibraryAsync(pickerConfig);
+        if (result.canceled) return;
+
+        const asset = result.assets?.[0];
+        if (!asset?.uri) {
+            Alert.alert('Error', 'No photo selected');
+            return;
+        }
+        await uploadShelfPhotoAsset(asset);
+    }, [deleting, saving, shelfPhotoBusy, uploadShelfPhotoAsset]);
+
+    const handleShelfPhotoDelete = useCallback(async () => {
+        if (shelfPhotoBusy || saving || deleting || !shelf?.shelfPhoto?.hasPhoto || !shelfId) return;
+
+        Alert.alert('Remove shelf photo', 'Remove this custom shelf photo?', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Remove',
+                style: 'destructive',
+                onPress: async () => {
+                    setShelfPhotoBusy(true);
+                    try {
+                        await apiRequest({
+                            apiBase,
+                            path: `/api/shelves/${shelfId}/photo`,
+                            method: 'DELETE',
+                            token,
+                        });
+                        clearShelvesListCache();
+                        setShelfPhotoLoadFailed(false);
+                        await loadShelf({ showBlockingLoader: false });
+                    } catch (err) {
+                        Alert.alert('Error', err?.message || 'Failed to remove shelf photo');
+                    } finally {
+                        setShelfPhotoBusy(false);
+                    }
+                },
+            },
+        ]);
+    }, [apiBase, deleting, loadShelf, saving, shelf?.shelfPhoto?.hasPhoto, shelfId, shelfPhotoBusy, token]);
 
     const handleSave = useCallback(async () => {
         const trimmedName = name.trim();
@@ -331,6 +518,59 @@ export default function ShelfEditScreen({ route, navigation }) {
                         <View style={{ width: 40 }} />
                     </View>
 
+                    <View style={styles.shelfPhotoCard}>
+                        <View style={styles.shelfPhotoMedia}>
+                            {shelfPhotoSource ? (
+                                <CachedImage
+                                    source={shelfPhotoSource}
+                                    style={styles.shelfPhotoImage}
+                                    contentFit="cover"
+                                    onError={() => setShelfPhotoLoadFailed(true)}
+                                />
+                            ) : (
+                                <View style={styles.shelfPhotoFallback}>
+                                    <CategoryIcon type={shelfType || 'item'} size={28} />
+                                </View>
+                            )}
+                        </View>
+                        <View style={styles.shelfPhotoContent}>
+                            <Text style={styles.shelfPhotoTitle}>Shelf Photo</Text>
+                            <Text style={styles.shelfPhotoSubtitle}>
+                                {shelf?.shelfPhoto?.hasPhoto
+                                    ? 'Custom photo is visible on your shelves.'
+                                    : 'Add a custom image to represent this shelf.'}
+                            </Text>
+                            <View style={styles.shelfPhotoActions}>
+                                <TouchableOpacity
+                                    style={[styles.shelfPhotoButton, shelfPhotoBusy && styles.shelfPhotoButtonDisabled]}
+                                    onPress={handleShelfPhotoUpload}
+                                    disabled={shelfPhotoBusy || saving || deleting}
+                                >
+                                    {shelfPhotoBusy ? (
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                    ) : (
+                                        <>
+                                            <Ionicons name="image-outline" size={16} color={colors.primary} />
+                                            <Text style={styles.shelfPhotoButtonText}>
+                                                {shelf?.shelfPhoto?.hasPhoto ? 'Replace' : 'Upload'}
+                                            </Text>
+                                        </>
+                                    )}
+                                </TouchableOpacity>
+                                {shelf?.shelfPhoto?.hasPhoto ? (
+                                    <TouchableOpacity
+                                        style={[styles.shelfPhotoRemoveButton, shelfPhotoBusy && styles.shelfPhotoButtonDisabled]}
+                                        onPress={handleShelfPhotoDelete}
+                                        disabled={shelfPhotoBusy || saving || deleting}
+                                    >
+                                        <Ionicons name="trash-outline" size={16} color={colors.error} />
+                                        <Text style={styles.shelfPhotoRemoveText}>Remove</Text>
+                                    </TouchableOpacity>
+                                ) : null}
+                            </View>
+                        </View>
+                    </View>
+
                     {/* Name */}
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Name</Text>
@@ -340,7 +580,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                             onChangeText={setName}
                             placeholder="Shelf name"
                             placeholderTextColor={colors.textMuted}
-                            editable={!saving && !deleting}
+                            editable={!saving && !deleting && !shelfPhotoBusy}
                         />
                     </View>
 
@@ -355,7 +595,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                             onChangeText={setDescription}
                             placeholder={isOtherShelf ? 'Describe what this Other shelf contains' : 'Optional description'}
                             placeholderTextColor={colors.textMuted}
-                            editable={!saving && !deleting}
+                            editable={!saving && !deleting && !shelfPhotoBusy}
                             multiline
                             numberOfLines={3}
                             textAlignVertical="top"
@@ -371,7 +611,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                     key={opt.value}
                                     style={[styles.visibilityOption, visibility === opt.value && styles.visibilityActive]}
                                     onPress={() => setVisibility(opt.value)}
-                                    disabled={saving || deleting}
+                                    disabled={saving || deleting || shelfPhotoBusy}
                                 >
                                     <Ionicons
                                         name={opt.icon}
@@ -401,7 +641,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                                 key={option.value || 'none'}
                                                 style={[styles.optionChip, selected && styles.optionChipActive]}
                                                 onPress={() => setGamePlatformType(option.value)}
-                                                disabled={saving || deleting}
+                                                disabled={saving || deleting || shelfPhotoBusy}
                                             >
                                                 <Text style={[styles.optionChipText, selected && styles.optionChipTextActive]}>
                                                     {option.label}
@@ -417,7 +657,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                         onChangeText={setCustomPlatformText}
                                         placeholder="Enter custom platform"
                                         placeholderTextColor={colors.textMuted}
-                                        editable={!saving && !deleting}
+                                        editable={!saving && !deleting && !shelfPhotoBusy}
                                     />
                                 ) : null}
                             </View>
@@ -432,7 +672,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                                 key={option.value || 'none'}
                                                 style={[styles.optionChip, selected && styles.optionChipActive]}
                                                 onPress={() => setGameFormat(option.value)}
-                                                disabled={saving || deleting}
+                                                disabled={saving || deleting || shelfPhotoBusy}
                                             >
                                                 <Text style={[styles.optionChipText, selected && styles.optionChipTextActive]}>
                                                     {option.label}
@@ -467,7 +707,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                     <TouchableOpacity
                         style={styles.deleteButton}
                         onPress={handleDelete}
-                        disabled={deleting || saving}
+                        disabled={deleting || saving || shelfPhotoBusy}
                     >
                         <Ionicons name="trash-outline" size={18} color={colors.error} />
                         <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete Shelf'}</Text>
@@ -477,9 +717,9 @@ export default function ShelfEditScreen({ route, navigation }) {
                 {/* Save Button */}
                 <View style={styles.footer}>
                     <TouchableOpacity
-                        style={[styles.saveButton, (saving || deleting) && styles.saveButtonDisabled]}
+                        style={[styles.saveButton, (saving || deleting || shelfPhotoBusy) && styles.saveButtonDisabled]}
                         onPress={handleSave}
-                        disabled={saving || deleting}
+                        disabled={saving || deleting || shelfPhotoBusy}
                     >
                         <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
                     </TouchableOpacity>
@@ -526,6 +766,88 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 18,
         fontWeight: '600',
         color: colors.text,
+    },
+    shelfPhotoCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.surface,
+        marginBottom: spacing.lg,
+        borderRadius: radius.lg,
+        padding: spacing.md,
+        gap: spacing.md,
+        ...shadows.sm,
+    },
+    shelfPhotoMedia: {
+        width: 84,
+        height: 84,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+        backgroundColor: colors.surfaceElevated,
+    },
+    shelfPhotoImage: {
+        width: '100%',
+        height: '100%',
+    },
+    shelfPhotoFallback: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: colors.primary + '12',
+    },
+    shelfPhotoContent: {
+        flex: 1,
+    },
+    shelfPhotoTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: colors.text,
+    },
+    shelfPhotoSubtitle: {
+        fontSize: 13,
+        color: colors.textMuted,
+        marginTop: 2,
+    },
+    shelfPhotoActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        marginTop: spacing.sm,
+    },
+    shelfPhotoButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderColor: colors.primary + '55',
+        backgroundColor: colors.primary + '10',
+        borderRadius: radius.full,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 6,
+    },
+    shelfPhotoButtonText: {
+        fontSize: 12,
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    shelfPhotoRemoveButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderColor: colors.error + '55',
+        backgroundColor: colors.error + '10',
+        borderRadius: radius.full,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 6,
+    },
+    shelfPhotoRemoveText: {
+        fontSize: 12,
+        color: colors.error,
+        fontWeight: '600',
+    },
+    shelfPhotoButtonDisabled: {
+        opacity: 0.55,
     },
     inputGroup: {
         marginBottom: spacing.lg,

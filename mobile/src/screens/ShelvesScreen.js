@@ -17,11 +17,11 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { CategoryIcon, AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
+import { CachedImage, CategoryIcon, AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
 import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { apiRequest, getValidToken } from '../services/api';
 import { clearShelvesListCache } from '../services/shelvesListCache';
 import { fetchShelvesPage } from '../services/shelvesListService';
 
@@ -54,6 +54,8 @@ export default function ShelvesScreen({ navigation }) {
     const [viewMode, setViewMode] = useState('tile');
     const [displayModeOpen, setDisplayModeOpen] = useState(false);
     const [unmatchedCount, setUnmatchedCount] = useState(0);
+    const [imageAuthToken, setImageAuthToken] = useState(null);
+    const [shelfPhotoFailures, setShelfPhotoFailures] = useState({});
 
     useEffect(() => {
         const loadViewMode = async () => {
@@ -66,6 +68,22 @@ export default function ShelvesScreen({ navigation }) {
         };
         loadViewMode();
     }, []);
+
+    useEffect(() => {
+        let isActive = true;
+        if (!token) {
+            setImageAuthToken(null);
+            return () => { isActive = false; };
+        }
+        getValidToken(token)
+            .then((resolved) => {
+                if (isActive) setImageAuthToken(resolved || token);
+            })
+            .catch(() => {
+                if (isActive) setImageAuthToken(token);
+            });
+        return () => { isActive = false; };
+    }, [token]);
 
     const handleChangeViewMode = async (mode) => {
         setViewMode(mode);
@@ -104,6 +122,7 @@ export default function ShelvesScreen({ navigation }) {
             const fetchedShelves = Array.isArray(data.shelves) ? data.shelves : [];
             const pagination = data?.pagination || {};
             setShelves(fetchedShelves);
+            setShelfPhotoFailures({});
             setTotalShelves(Number.isFinite(Number(pagination.total)) ? Number(pagination.total) : fetchedShelves.length);
             setHasMoreShelves(Boolean(pagination.hasMore));
             setUnmatchedCount(unmatchedData.count || 0);
@@ -331,6 +350,67 @@ export default function ShelvesScreen({ navigation }) {
         });
     };
 
+    const resolveApiUri = useCallback((value) => {
+        if (!value) return null;
+        if (/^https?:/i.test(value)) return value;
+        if (!apiBase) return value.startsWith('/') ? value : `/${value}`;
+        return `${apiBase.replace(/\/+$/, '')}${value.startsWith('/') ? '' : '/'}${value}`;
+    }, [apiBase]);
+
+    const withVersion = useCallback((uri, rawVersion) => {
+        if (!uri) return null;
+        const versionTs = rawVersion ? new Date(rawVersion).getTime() : NaN;
+        if (!Number.isFinite(versionTs)) return uri;
+        return `${uri}${uri.includes('?') ? '&' : '?'}v=${versionTs}`;
+    }, []);
+
+    const shelfPhotoHeaders = imageAuthToken
+        ? {
+            Authorization: `Bearer ${imageAuthToken}`,
+            'ngrok-skip-browser-warning': 'true',
+        }
+        : null;
+
+    const buildShelfPhotoSource = useCallback((shelf) => {
+        if (!shelfPhotoHeaders) return null;
+        if (shelf?.isGlobalResult) return null;
+        const shelfPhoto = shelf?.shelfPhoto;
+        if (!shelfPhoto?.hasPhoto || !shelfPhoto?.imageUrl) return null;
+        const shelfId = String(shelf?.id ?? shelf?.shelfId ?? shelf?.originalId ?? '');
+        if (!shelfId) return null;
+        if (shelfPhotoFailures[shelfId]) return null;
+        const resolvedUri = resolveApiUri(shelfPhoto.imageUrl);
+        const versioned = withVersion(resolvedUri, shelfPhoto.updatedAt || null);
+        if (!versioned) return null;
+        return {
+            uri: versioned,
+            headers: shelfPhotoHeaders,
+        };
+    }, [resolveApiUri, shelfPhotoFailures, shelfPhotoHeaders, withVersion]);
+
+    const renderShelfPhotoPreview = useCallback((item, size = 44) => {
+        const source = buildShelfPhotoSource(item);
+        if (!source) {
+            return (
+                <View style={[styles.shelfPhotoFallback, { width: size, height: size }]}>
+                    <CategoryIcon type={item.type || item.kind} size={size >= 48 ? 28 : 22} />
+                </View>
+            );
+        }
+        return (
+            <CachedImage
+                source={source}
+                style={[styles.shelfPhotoImage, { width: size, height: size }]}
+                contentFit="cover"
+                onError={() => {
+                    const shelfId = String(item?.id ?? item?.shelfId ?? item?.originalId ?? '');
+                    if (!shelfId) return;
+                    setShelfPhotoFailures((prev) => ({ ...prev, [shelfId]: true }));
+                }}
+            />
+        );
+    }, [buildShelfPhotoSource, styles]);
+
     const renderGridItem = ({ item }) => {
         if (item.type === 'special-create') {
             return (
@@ -355,7 +435,7 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.gridIconBox}>
-                    <CategoryIcon type={item.type || item.kind} size={28} />
+                    {renderShelfPhotoPreview(item, 48)}
                 </View>
                 <Text style={styles.gridTitle} numberOfLines={2}>{item.name || item.title}</Text>
                 <Text style={styles.gridMeta}>{item.isGlobalResult ? 'Shelf' : `${item.itemCount || 0} items`}</Text>
@@ -490,7 +570,7 @@ export default function ShelvesScreen({ navigation }) {
                 activeOpacity={0.8}
             >
                 <View style={styles.listIcon}>
-                    <CategoryIcon type={item.kind || item.type} size={22} />
+                    {renderShelfPhotoPreview(item, 44)}
                 </View>
                 <View style={styles.listContent}>
                     <Text style={styles.listTitle} numberOfLines={1}>{item.title || item.name}</Text>
@@ -533,7 +613,7 @@ export default function ShelvesScreen({ navigation }) {
             );
         }
 
-        const coverUri = item.coverImageUrl ? { uri: item.coverImageUrl.startsWith('http') ? item.coverImageUrl : `${apiBase}${item.coverImageUrl}` } : null;
+        const shelfPhotoSource = buildShelfPhotoSource(item);
 
         return (
             <View style={{ width: windowWidth, padding: spacing.md }}>
@@ -542,9 +622,9 @@ export default function ShelvesScreen({ navigation }) {
                     onPress={() => handleOpenShelf(item)}
                     activeOpacity={0.8}
                 >
-                    {coverUri ? (
+                    {shelfPhotoSource ? (
                         <ImageBackground
-                            source={coverUri}
+                            source={shelfPhotoSource}
                             style={styles.swipeBackground}
                             imageStyle={styles.swipeBackgroundImage}
                             blurRadius={10}
@@ -1047,6 +1127,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: spacing.sm,
+        overflow: 'hidden',
     },
     createIconBox: {
         width: 48,
@@ -1117,6 +1198,16 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: spacing.md,
+        overflow: 'hidden',
+    },
+    shelfPhotoImage: {
+        borderRadius: radius.md,
+    },
+    shelfPhotoFallback: {
+        borderRadius: radius.md,
+        backgroundColor: colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     listContent: {
         flex: 1,
@@ -1190,7 +1281,7 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     },
     swipeCardItem: {
         flex: 1,
-        height: Dimensions.get('window').height * 0.55,
+        height: Dimensions.get('window').height * 0.70,
         borderRadius: radius.xl,
         overflow: 'hidden',
         alignItems: 'center',

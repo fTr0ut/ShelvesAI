@@ -1,4 +1,4 @@
-# ShelvesAI Dependency Tree
+﻿# ShelvesAI Dependency Tree
 
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
@@ -26,21 +26,21 @@ Last updated: 2026-04-01
 
 ```
 ShelvesAI/
-├── api/              Express 5 REST API (Node.js, CommonJS, port 5001)
-├── mobile/           Expo SDK 54 / React Native 0.81 / React 19
-├── website/          Next.js 16 App Router marketing + account flows
-├── admin-dashboard/  Vite 7 + React 18 SPA (port 5173)
-├── shared/           Design tokens (ES module, consumed by mobile via Metro)
-└── docker-compose.yml  PostgreSQL 16 + pgAdmin (local dev)
+â”œâ”€â”€ api/              Express 5 REST API (Node.js, CommonJS, port 5001)
+â”œâ”€â”€ mobile/           Expo SDK 54 / React Native 0.81 / React 19
+â”œâ”€â”€ website/          Next.js 16 App Router marketing + account flows
+â”œâ”€â”€ admin-dashboard/  Vite 7 + React 18 SPA (port 5173)
+â”œâ”€â”€ shared/           Design tokens (ES module, consumed by mobile via Metro)
+â””â”€â”€ docker-compose.yml  PostgreSQL 16 + pgAdmin (local dev)
 ```
 
 **Communication patterns:**
-- `mobile → api`: REST over HTTPS, Bearer JWT auth, token in expo-secure-store
-- `website → api`: REST over HTTPS for password reset validate/update
-- `admin-dashboard → api`: REST via `/api/admin/*`, HttpOnly cookie auth + CSRF header
-- `shared → mobile`: Metro watchFolders (not a package, direct file import)
-- `shared → admin-dashboard`: NOT consumed (admin uses Tailwind)
-- `shared → api`: NOT consumed
+- `mobile â†’ api`: REST over HTTPS, Bearer JWT auth, token in expo-secure-store
+- `website â†’ api`: REST over HTTPS for password reset validate/update
+- `admin-dashboard â†’ api`: REST via `/api/admin/*`, HttpOnly cookie auth + CSRF header
+- `shared â†’ mobile`: Metro watchFolders (not a package, direct file import)
+- `shared â†’ admin-dashboard`: NOT consumed (admin uses Tailwind)
+- `shared â†’ api`: NOT consumed
 
 ---
 
@@ -49,16 +49,20 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-01 | vision-extraction-heartbeat-progress | Added extraction heartbeat progress stages between 10% and 50% for long-running vision OCR scans. `api/config/visionProgressMessages.json` now includes `extractingInFlight` (`extracting-in-flight`, 20%) and `extractingDeepParse` (`extracting-deep-parse`, 30%). `api/services/visionPipeline.processImage()` now schedules timed heartbeat updates at 3s/9s while extraction is in-flight and clears timers in `finally` to prevent stale updates. Progress updates are now monotonic (never regress percent when later stages report lower configured values). Added test coverage in `api/__tests__/visionPipeline.test.js` for long-running extraction heartbeat emission and fast-extraction heartbeat suppression.
 - 2026-04-01 | shelf-detail-screen-display-modes | Implemented four distinct display modes (`tile`, `banner`, `list`, `swipe`) for the Shelf Detail mobile screen to enhance browsing individual shelf items. Added `AsyncStorage` persistence for user view mode preference, created new Display Mode Modal, injected Banner mode section headers grouping items by Format (Physical/Digital/Unknown) with an optional secondary sub-grouping by Year when sorted by Year. Implemented a horizontal full-screen Swipe view with darkened item cover backgrounds and metadata overlay. Updated `mobile/src/screens/ShelfDetailScreen.js` layout state management, dynamic `layoutData` configs, and layout rendering styles.
 - 2026-04-01 | shelves-screen-display-modes | Implemented four distinct display modes (`tile`, `banner`, `list`, `swipe`) for the Shelves mobile screen to enhance collection browsing. Added `AsyncStorage` persistence for user mode preference, created new Display Mode Modal, grouped shelves with section headers for `banner` mode, added metadata including item count and date for `list` mode, and implemented a premium horizontal-scrolling card view with darkened background image overlays for `swipe` mode. Updated `mobile/src/screens/ShelvesScreen.js` rendering logic, state management, and `createStyles` to fully support these layouts while maintaining search capability.
 - 2026-04-01 | shelf-delete-post-success-navigation-reset | Updated `mobile/src/screens/ShelfEditScreen.js` shelf deletion flow to keep the confirmation alert, await successful `DELETE /api/shelves/:shelfId`, and then perform a root-level navigation reset (`Main -> Shelves -> ShelvesHome`) via `CommonActions.reset` so users reliably land on their Shelves list after deletion instead of remaining on stale nested `ShelfEdit` state.
+- 2026-04-01 | shelf-level-custom-photos | Added shelf-level custom photo support across API + mobile. Database now persists shelf photo storage metadata via migration `20260401110000_add_shelf_photo_fields` (`shelves.photo_storage_provider/key/content_type/size_bytes/width/height/updated_at` + `shelves_photo_storage_check`), with init schema parity. Added new query module `api/database/queries/shelfPhotos.js` (upload/load/clear with private S3-or-local storage and old-asset cleanup). Added shelf photo routes `GET /api/shelves/:shelfId/photo`, `GET /api/shelves/:shelfId/photo/image`, `POST /api/shelves/:shelfId/photo`, `DELETE /api/shelves/:shelfId/photo` in `api/routes/shelves.js` and controller handlers in `api/controllers/shelvesController.js`. Shelf payloads from create/get/list/update now expose normalized `shelfPhoto` contract (`hasPhoto/contentType/sizeBytes/width/height/updatedAt/imageUrl`) while omitting raw storage columns. Mobile `ShelfDetailScreen` now supports owner upload/replace/remove from a shelf-photo hero card and refreshes shelf list cache after changes; `ShelvesScreen` now renders shelf photos (tile/list/swipe) with authenticated image requests + fallback icons. Added coverage in `api/__tests__/shelvesController.test.js` and new query tests `api/database/queries/shelfPhotos.test.js`.
+- 2026-04-01 | shelf-photo-card-moved-to-edit-screen | Relocated shelf-photo management UI from `mobile/src/screens/ShelfDetailScreen.js` to `mobile/src/screens/ShelfEditScreen.js`. `ShelfEditScreen` now renders the shelf photo hero card with authenticated preview and owner actions (`Upload`/`Replace`/`Remove`) using the existing `/api/shelves/:shelfId/photo` endpoints; `ShelfDetailScreen` now only displays shelf content without shelf-photo editing controls.
+- 2026-04-01 | shelf-create-photo-upload-section | Added an optional shelf-photo upload section to `mobile/src/screens/ShelfCreateScreen.js`. Users can pick/replace/remove a local photo during creation; after successful `POST /api/shelves`, the screen uploads that photo to `POST /api/shelves/:shelfId/photo` and then navigates to the new shelf detail.
 - 2026-04-01 | shelves-list-pagination-sorting-and-etag-caching | Extended `GET /api/shelves` in `api/controllers/shelvesController.js` to support paged sorting (`limit`, `skip`, `sortBy`, `sortDir`) with safe sort whitelist mapping (`type`, `name`, `createdAt`, `updatedAt`), deterministic tie-break ordering (`s.id`), response sort metadata, and conditional requests via ETag + `If-None-Match` (`304` + `Cache-Control: private, max-age=0, must-revalidate`). Added controller coverage in `api/__tests__/shelvesController.test.js` for default/invalid sort fallback, all supported sort combinations, pagination metadata, and 304 behavior. Mobile now has shared shelves list cache/service (`mobile/src/services/shelvesListCache.js`, `mobile/src/services/shelvesListService.js`) with 60s in-memory cache keyed by page+sort and ETag-aware fetches, `apiRequest` 304/meta support plus centralized shelves-cache invalidation on successful non-GET `/api/shelves*` writes (`mobile/src/services/api.js`), `ShelvesScreen` browse-mode pagination + sort modal + search-mode sort disable (`mobile/src/screens/ShelvesScreen.js`), and paged full-shelf loading in `mobile/src/screens/ShelfSelectScreen.js` and `mobile/src/components/AddToShelfModal.js`.
 - 2026-03-31 | owned-platform-format-required-and-row-badge | Tightened game-owned-platform editing contract. `mobile/src/screens/CollectableDetailScreen.js` now blocks save until ownership format is selected (`Physical`/`Digital`), shows a required prompt when unset, and renders ownership format badges in each Owned Platforms row after save. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now requires `format` for game collectables and returns 400 when missing/empty/invalid. Extended coverage in `api/__tests__/shelvesController.test.js` with missing-format rejection and required-format success assertions.
 - 2026-03-31 | metadata-score-persistence-and-igdb-rating-separation | Fixed metadata score persistence so DB `collectables.metascore` now stores only metadata-quality scoring payloads (`score/maxScore/missing/scoredAt`) and no longer accepts IGDB rating objects. `api/services/catalog/GameCatalogService.mapIgdbGameToCollectable()` no longer maps IGDB ratings into `metascore`; ratings remain under `extras.igdb.ratings`. `api/services/visionPipeline.saveToShelf()` now computes metadata scores via `MetadataScorer` for new scan saves, merges with carried `_metadata*` values, and persists the highest score. `api/routes/collectables.buildCollectableUpsertPayloadFromCandidate()` and `api/controllers/shelvesController.buildCollectableUpsertPayload()` now prioritize scorer-derived `_metadata*` fields and reject non-metadata-shaped `metascore` payloads. `CatalogRouter`/`CollectableMatchingService` now propagate `_metadataMaxScore` and `_metadataScoredAt` alongside `_metadataScore`/`_metadataMissing`. Added/updated tests in `api/services/catalog/GameCatalogService.test.js`, `api/__tests__/collectablesRoute.helpers.test.js`, and `api/__tests__/visionPipeline.test.js`.
 - 2026-03-31 | platform-missing-insert-default-fix | Fixed `user_collections.platform_missing` NOT NULL insert failures for non-game add flows (including vision bulk saves) by updating `api/database/queries/shelves.addCollectable` to persist `FALSE` when platform missing is omitted and to only mutate `platform_missing` on conflict updates when explicitly provided. Added query regression coverage in `api/database/queries/shelves.test.js`.
 - 2026-03-31 | games-shelf-defaults-mismatch-guard-and-platform-missing | Implemented games-shelf default platform/format inheritance with mismatch guarding across add/review/replace/vision/catalog save paths. Added `api/services/gameShelfDefaults.js` shared resolver, `shelves.game_defaults` JSONB and `user_collections.platform_missing` BOOLEAN via migration `20260331190000_add_shelf_game_defaults_and_platform_missing`, and wired shelf create/update/list/get payload contracts to round-trip normalized `gameDefaults` plus item-level `platformMissing`. `PUT /api/shelves/:shelfId` now propagates changed games defaults to existing shelf items with overwrite semantics (owned platforms + format + missing state). Mobile `ShelfCreateScreen`/`ShelfEditScreen` now expose optional games defaults UI (with overwrite warning on edit), and `ShelfDetailScreen` + `CollectableDetailScreen` render a `Platform missing` badge/chip when flagged.
 - 2026-03-31 | collectable-detail-game-format-and-rating-visibility | Updated game detail UX and owned-platform save contract. `mobile/src/screens/CollectableDetailScreen.js` now relabels game `maxPlayers` as `# of Players`, hides `IGDB Rating` when numeric value is `0.0`, and adds Owned Platforms edit-time format selection (`Physical`/`Digital`) included in `PUT /api/shelves/:shelfId/items/:itemId/platforms` payload. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now validates optional `format` (`physical|digital`) and persists it via new helper `api/database/queries/collectables.updateFormat`; response now includes updated `item.collectable.format` when format is provided. Added migration `api/database/migrations/20260331143000_restore_collectables_format_column.js` to ensure `collectables.format` exists before writes. Added/updated controller tests in `api/__tests__/shelvesController.test.js`.
-- 2026-03-31 | igdb-platform-backfill-max-players-and-env-local-override | Updated `api/scripts/backfill-collectable-platform-data.js` to also backfill `collectables.max_players` alongside `platform_data`/`igdb_payload` using IGDB multiplayer mapping (`mapped.maxPlayers` fallback extraction). The script’s `ONLY_MISSING` mode now includes rows where `max_players IS NULL`, and env loading is explicit `.env` first with `.env.local` override when present for local testing.
+- 2026-03-31 | igdb-platform-backfill-max-players-and-env-local-override | Updated `api/scripts/backfill-collectable-platform-data.js` to also backfill `collectables.max_players` alongside `platform_data`/`igdb_payload` using IGDB multiplayer mapping (`mapped.maxPlayers` fallback extraction). The scriptâ€™s `ONLY_MISSING` mode now includes rows where `max_players IS NULL`, and env loading is explicit `.env` first with `.env.local` override when present for local testing.
 - 2026-03-31 | collectables-max-players-persistence | Added dedicated game-player-cap persistence on collectables. New migration `20260331130000_add_collectables_max_players` adds `collectables.max_players` (INTEGER, nullable) and init schema now includes the same column. `database/queries/collectables.upsert` now binds/writes `max_players`, and `routes/collectables.buildCollectableUpsertPayloadFromCandidate()` now forwards `maxPlayers` from API candidates into upsert payloads so game imports persist explicit player caps for downstream detail/search rendering.
 - 2026-03-31 | games-igdb-payload-and-maxplayers-contract | Expanded game metadata capture/contract coverage. Added `collectables.igdb_payload` JSONB persistence (migration `20260331120000_add_collectables_igdb_payload`, init schema update) and extended `GameCatalogService` IGDB query/mapping to capture full payload (`fields *`) plus ratings/multiplayer structures in one call. `mapIgdbGameToCollectable()` now emits top-level `maxPlayers` (from multiplayer modes), while collectable response shaping derives/exposes `maxPlayers` for game payloads from explicit/source/IGDB multiplayer metadata without exposing raw `igdbPayload` in public responses. Included helper regression coverage in `api/services/catalog/GameCatalogService.test.js` and `api/__tests__/collectablesRoute.helpers.test.js`.
 - 2026-03-31 | collectables-search-offset-type-fix | Fixed Postgres parameter typing bug in global collectables search where `OFFSET` could bind as text (`code 42804`). Updated query parameter ordering/binding in collectables search SQL paths so pagination uses numeric offsets reliably.
@@ -107,7 +111,7 @@ ShelvesAI/
 - 2026-03-29 | typed-api-search-title-creator-hybrid | Improved typed API fallback query semantics in `api/routes/collectables.js`: fallback now parses structured text patterns (`title by creator`, `title directed by creator`) and forwards both title + creator fields to matching services, runs creator-only fallback lookups for creator-capable containers (`books`, `vinyl`), and dedupes merged API candidates before applying fallback limit. Extended helper exports/tests in `api/__tests__/collectablesRoute.helpers.test.js` for structured parsing and lookup input generation. Updated `api/services/catalog/MusicCatalogService.js` to allow artist-only lookups (when title is empty but artist exists) and adjusted ranking/query builder accordingly; added regression coverage in `api/services/catalog/MusicCatalogService.test.js`.
 - 2026-03-29 | movie-game-creator-only-api-fallback | Extended creator-only fallback behavior to `movies` and `games`. In `api/routes/collectables.js`, creator-only lookup inputs now include `movies` and `games` containers for typed fallback/supplement flows. `api/services/catalog/MovieCatalogService.js` now supports director-only lookups by querying TMDB people and directed movie credits (`/search/person`, `/person/{id}/movie_credits`) and reuses `safeLookupMany` for single-result lookup consistency. `api/services/catalog/GameCatalogService.js` now supports developer-only lookups and adds `safeLookupMany` with developer-aware IGDB query filters (`involved_companies.developer` + company name/slug). Added regression coverage in `api/services/catalog/MovieCatalogService.test.js` and `api/services/catalog/GameCatalogService.test.js`.
 - 2026-03-29 | fallback-limit-25-and-api-paging | Increased collectables API fallback cap from 5 to 25 in `api/routes/collectables.js` and added paged API fallback behavior for zero-local-result searches (API fallback now honors `offset`/`limit` by fetching a bounded result pool and slicing response pages with accurate `pagination.hasMore`). `GlobalSearchBar` now passes a 25-result fallback limit into "See more results" navigation. `FriendSearchScreen` item results now support incremental paging (`onEndReached`) and request subsequent pages from `/api/collectables` with preserved fallback/supplement options, appending deduped results client-side.
-- 2026-03-28 | mention-tagging-in-comments | Added @mention tagging system for comments. New DB migration `20260328000000_add_mention_notification_type.js` expands `notifications` type CHECK constraint to include `'mention'` and adds `push_mentions` boolean to `notification_preferences`. Updated init schema `01-schema.sql` for consistency. API: added `parseMentions()` helper and mention notification logic in `eventSocialController.addComment()` — parses `@username` tokens, batch-resolves via new `usersQueries.findByUsernames()`, verifies friendship + event visibility before creating `type='mention'` notifications. Updated `pushNotificationService.buildPushContent()` with `mention` title/body (also fixed existing `comment` body to read `metadata.preview` instead of `metadata.commentText`). Updated `pushController.js` and `notificationPreferences.js` to support `pushMentions` preference field. Mobile: new `useMentionInput` hook (`mobile/src/hooks/useMentionInput.js`) for `@` detection, friend list caching (`GET /api/friends?limit=200` mapped via `isRequester` to flat friend objects), local filtering, and `@username` insertion. New `MentionSuggestions` component (`mobile/src/components/ui/MentionSuggestions.js`) renders absolutely-positioned overlay with avatar/username/name rows. Integrated into `FeedDetailScreen.js` and `SocialFeedScreen.js` comment inputs. Fixed `PushContext.js` deep link param bug: changed `{ eventId: entityId }` to `{ id: entityId }` to match `FeedDetailScreen` route params (fixes broken push notification navigation for like/comment/mention types). Added `mention` case to `NotificationScreen.buildNotificationText()` and `Mentions` toggle to `NotificationSettingsScreen.js`.
+- 2026-03-28 | mention-tagging-in-comments | Added @mention tagging system for comments. New DB migration `20260328000000_add_mention_notification_type.js` expands `notifications` type CHECK constraint to include `'mention'` and adds `push_mentions` boolean to `notification_preferences`. Updated init schema `01-schema.sql` for consistency. API: added `parseMentions()` helper and mention notification logic in `eventSocialController.addComment()` â€” parses `@username` tokens, batch-resolves via new `usersQueries.findByUsernames()`, verifies friendship + event visibility before creating `type='mention'` notifications. Updated `pushNotificationService.buildPushContent()` with `mention` title/body (also fixed existing `comment` body to read `metadata.preview` instead of `metadata.commentText`). Updated `pushController.js` and `notificationPreferences.js` to support `pushMentions` preference field. Mobile: new `useMentionInput` hook (`mobile/src/hooks/useMentionInput.js`) for `@` detection, friend list caching (`GET /api/friends?limit=200` mapped via `isRequester` to flat friend objects), local filtering, and `@username` insertion. New `MentionSuggestions` component (`mobile/src/components/ui/MentionSuggestions.js`) renders absolutely-positioned overlay with avatar/username/name rows. Integrated into `FeedDetailScreen.js` and `SocialFeedScreen.js` comment inputs. Fixed `PushContext.js` deep link param bug: changed `{ eventId: entityId }` to `{ id: entityId }` to match `FeedDetailScreen` route params (fixes broken push notification navigation for like/comment/mention types). Added `mention` case to `NotificationScreen.buildNotificationText()` and `Mentions` toggle to `NotificationSettingsScreen.js`.
 - 2026-03-28 | deep-link-share-web-fallback | Implemented cross-service share/deep-link foundation for canonical `https://shelvesai.com/app/...` URLs with web fallback chain. Added new public API route module `api/routes/share.js` mounted at `GET /api/share/*` (`collectables/:id`, `manuals/:id`, `shelves/:id`, `events/:id`) returning `{ visibility, entityType, id, slug, title, description, imageUrl, canonicalUrl, appUrl }` with public-vs-restricted metadata behavior. Added website dynamic share routes under `website/src/app/app/{collectables,manuals,shelves,events}/[id]/[slug]/page.tsx`, shared metadata fetcher `website/src/lib/shareMetadata.ts`, reusable landing/redirect components (`ShareLanding`, `ShareFallbackRedirect`) and new `website/src/app/download/page.tsx`. Added `.well-known` route handlers for iOS/Android association (`apple-app-site-association`, `assetlinks.json`) and env placeholders in `website/.env.example` for store links/fingerprints. Updated mobile deep-link parsing (`mobile/src/navigation/linkingConfig.js`) to canonical `/app/*` paths with legacy alias normalization and manual deep-link handling, updated deep-link test cases/scripts, added manual-id support in `CollectableDetailScreen`, and added iOS/Android app-link config in `mobile/app.json` plus Android manifest HTTPS intent filters.
 - 2026-03-28 | native-share-ui-profile-share-links | Added native mobile share actions across event cards (`SocialFeedScreen` + `FeedDetailScreen`), shelf detail header, collectable detail actions, and profile screen actions using new helper service `mobile/src/services/shareLinks.js` (metadata fetch + canonical fallback + `Share.share`). Expanded share backend with `GET /api/share/profiles/:username` in `api/routes/share.js`. Added website profile share route `website/src/app/app/profiles/[username]/[slug]/page.tsx` and extended `website/src/lib/shareMetadata.ts` kind support to `profiles`. Updated mobile deep-link canonical profile support to `app/profiles/:username/:slug?` with legacy `profile/:username` alias compatibility and added deep-link test case coverage.
 - 2026-03-27 | mobile-global-search-bar | Extracted global search (friends/collectables API search with floating dropdown) from `SocialFeedScreen` into new shared component `mobile/src/components/ui/GlobalSearchBar.js`, exporting `useGlobalSearch` hook, `GlobalSearchInput`, and `GlobalSearchOverlay`. Both `SocialFeedScreen` and `ShelvesScreen` now use the shared component. Header layout refactored on both screens: search bar + notifications in top row, page title ("Feed" / "My Shelves") in a sub-header row below. `ShelvesScreen` retains its local "Search shelves..." filter below the sub-header. Overlay renders at screen body level (not inside header or Modal) via a `body` wrapper View to correctly shade the body without stealing TextInput focus. Removed inline search state/handlers/styles from `SocialFeedScreen`. Added `GlobalSearchBar` to `ui/index.js` barrel exports.
@@ -120,13 +124,13 @@ ShelvesAI/
 - 2026-03-27 | mobile-feed-owner-thumb-itemid-hardening | Updated `mobile/src/utils/feedAddedEvent.js` owner-photo thumbnail id resolution to use only explicit collection item ids (`item.itemId` / `payload.itemId`) and no longer fall back to generic `id`, preventing feed thumb requests from non-canonical ids.
 - 2026-03-27 | other-manual-cover-read-time-privacy-gating | Added backend read-time redaction for `other` manual cover media in `api/controllers/feedController.js` (`GET /api/feed`, `GET /api/feed/:id`) and `api/controllers/shelvesController.js` (`GET /api/manuals/:manualId`): cover fields are now nulled for non-owners when the linked collection item has an owner photo (`vision_crop` or `upload`) but sharing is currently disabled (`owner_photo_visible=false` or `users.show_personal_photos=false`). Feed redaction now also nulls `itemId` references for blocked manual items so clients cannot derive owner-photo thumbnail endpoints from redacted entries. Copy-to-cover writes remain unchanged; schema/contracts unchanged; standalone manual-cover-only items without linked owner photo remain visible.
 - 2026-03-27 | owner-photo-privacy-manual-promotion-guard | Hardened `shelvesController.attachCropToCollectionItem` so `other`-shelf crop-to-manual cover promotion only runs when crop attach succeeds and the attached owner photo is both `vision_crop` and share-enabled (`owner_photo_visible = true`). Added regression tests in `api/__tests__/shelvesController.test.js` for share-off skip and share-on promotion behavior.
-- 2026-03-26 | vision-crop-warmup-blocking | Changed crop warmup in `shelvesController.processShelfVision` from fire-and-forget (`queueVisionCropWarmup` via `setImmediate`) to blocking (`await warmVisionScanCrops`) before `processingStatus.completeJob`, so crop photos are generated and attached to shelf items before the mobile client sees 100% completion. Added `generatingPhotos` progress step at 95% in `api/config/visionProgressMessages.json`. Both async and sync vision processing paths updated. No mobile code changes required — existing polling naturally handles the new progress step.
+- 2026-03-26 | vision-crop-warmup-blocking | Changed crop warmup in `shelvesController.processShelfVision` from fire-and-forget (`queueVisionCropWarmup` via `setImmediate`) to blocking (`await warmVisionScanCrops`) before `processingStatus.completeJob`, so crop photos are generated and attached to shelf items before the mobile client sees 100% completion. Added `generatingPhotos` progress step at 95% in `api/config/visionProgressMessages.json`. Both async and sync vision processing paths updated. No mobile code changes required â€” existing polling naturally handles the new progress step.
 - 2026-03-26 | feed-added-event-visual-refresh | Refined added-event system end-to-end for shelf posts. API now standardizes `item.collectable_added` / `item.manual_added` payloads across `shelvesController` and `visionPipeline` with normalized title/name, creator, year, media fields, ids, and source metadata; feed mapping in `feedController` now exposes top-level `title`/`creator`/`year` for added items in both `GET /api/feed` and `GET /api/feed/:id`, and feed-detail item hydration now selects collectable year. Mobile added new shared helper `mobile/src/utils/feedAddedEvent.js` and updated `SocialFeedScreen`, `ProfileScreen`, and `FeedDetailScreen` to use dynamic shelf-type header copy, remove shelf-description body usage in added cards, render single-item detail rows (thumbnail + name/creator/year), preserve multi-item stacked thumbnails, and show `other` shelf owner-photo thumbnails with placeholder fallback when unavailable.
 - 2026-03-26 | mobile-navigation-manual-edit-nested-setparams-target-fix | Fixed manual-edit return updates across nested navigation by passing `detailNavigatorKey` from `CollectableDetailScreen` into `ManualEditScreen` and dispatching `CommonActions.setParams` with both `source` (`detailRouteKey`) and `target` (`detailNavigatorKey`), preventing unhandled `SET_PARAMS` warnings when detail is mounted inside the nested Shelves stack.
 - 2026-03-26 | mobile-navigation-manual-edit-close-behavior-fix | Updated `ManualEditScreen` save flow to dispatch `CommonActions.setParams` to the existing `CollectableDetail` route via `detailRouteKey` (instead of `navigate(...)`), so save updates detail params without pushing/focusing another route and `goBack()` reliably closes the edit screen.
 - 2026-03-26 | mobile-navigation-manual-edit-save-route-fix | Fixed `ManualEditScreen` save flow to include route `name: 'CollectableDetail'` in object-form `navigation.navigate(...)` when targeting `detailRouteKey`, resolving React Navigation runtime error requiring a route name for object arguments.
 - 2026-03-26 | mobile-navigation-add-to-shelf-nested-route-fix | Fixed `BottomTabNavigator` add-to-shelf FAB navigation to target the actual nested navigator path (`Main -> Shelves -> ShelfSelect`) when persistent shelves footer mode is enabled, replacing the invalid direct `navigate('Shelves', { screen: 'ShelfSelect' })` dispatch.
-- 2026-03-26 | market-value-ui-enhancements | Added market value estimate feature: new `user_market_value_estimates` DB table (migration `20260326000000`), new query module `database/queries/marketValueEstimates.js`, three new API endpoints on `/api/collectables/:id` (`market-value-sources` GET, `user-estimate` GET/PUT — all support `?type=manual` for `user_manuals` items), new `MarketValueSourcesScreen` (registered in App.js root stack + BottomTabNavigator ShelvesTabStack). Updated `CollectableDetailScreen` to show "Est. Market Value" label with clickable navigation to sources screen in both the manual (`manualEditableFields`) and collectable (`preferredKeys`) metadata paths, and appends user estimate as "Your Estimate" metadata row when present. User estimate fetch supports both collectable and manual items via `?type=manual` query param.
+- 2026-03-26 | market-value-ui-enhancements | Added market value estimate feature: new `user_market_value_estimates` DB table (migration `20260326000000`), new query module `database/queries/marketValueEstimates.js`, three new API endpoints on `/api/collectables/:id` (`market-value-sources` GET, `user-estimate` GET/PUT â€” all support `?type=manual` for `user_manuals` items), new `MarketValueSourcesScreen` (registered in App.js root stack + BottomTabNavigator ShelvesTabStack). Updated `CollectableDetailScreen` to show "Est. Market Value" label with clickable navigation to sources screen in both the manual (`manualEditableFields`) and collectable (`preferredKeys`) metadata paths, and appends user estimate as "Your Estimate" metadata row when present. User estimate fetch supports both collectable and manual items via `?type=manual` query param.
 - 2026-03-26 | collectable-detail-replace-cta-layout | Updated `CollectableDetailScreen` header actions so the manual-entry edit pencil no longer gets displaced when the vision-linked replacement CTA is present: the `Not the item you intended to add?` CTA now renders in its own row beneath the header while manual edit access remains in the right header action slot.
 - 2026-03-26 | mobile-navigation-persistent-shelves-footer | Added rollback-gated persistent footer flow for shelf details by introducing a nested Shelves stack inside `BottomTabNavigator` (`ShelvesHome`, `ShelfCreateScreen`, `ShelfSelect`, `ShelfDetail`, `ShelfEdit`, `ItemSearch`, `CollectableDetail`) behind `ENABLE_PERSISTENT_SHELVES_DETAIL_FOOTER`. Add-FAB now routes to nested `Shelves -> ShelfSelect` when enabled (legacy root `ShelfSelect` path retained when disabled). Added tab-parent-aware bottom spacing in `ShelfDetailScreen` and `CollectableDetailScreen` so list/scroll content and local floating actions clear the persistent tab bar only when rendered under tab navigation.
 - 2026-03-25 | reviewed-republish-upsert-and-updated-label | Implemented stable reviewed re-publish workflow: added `user_collections.reviewed_event_log_id/reviewed_event_published_at/reviewed_event_updated_at` (migration `20260325201500_add_reviewed_event_link_to_user_collections` + init schema alter), exposed linkage fields in shelf-item payloads (`reviewedEventId`, `reviewPublishedAt`, `reviewUpdatedAt`), and added `feedQueries.upsertReviewedEvent(...)` to update existing reviewed event logs in place (or create/link fallback), with content-change guard on notes/rating/metadata and aggregate `last_activity_at` bump for changed republishes. Updated `shelvesController` collectable/manual note-share paths to use reviewed upsert + persist linkage on `user_collections`, updated mobile note-save payloads to pass optional `reviewedEventId`, and added reviewed `Updated on <absolute local datetime>` rendering across `SocialFeedScreen`, `FeedDetailScreen`, and `ProfileScreen`. Feed entry merge ordering now sorts by activity (`updatedAt` fallback) to keep re-published reviewed cards at the top.
@@ -177,7 +181,7 @@ ShelvesAI/
 - 2026-03-23 | auth-tooling | Added PowerShell helper `api/scripts/fetch-api-payload.ps1` to call authenticated API endpoints using a bearer token (param/env/clipboard), with method/body support plus raw/pretty output and optional response file save.
 - 2026-03-23 | vision-crops | Hardened vision bbox handling and scan-region persistence: added shared normalizer `utils/visionBox2d.js` used by `googleGemini`, `visionPipeline`, and `visionCropper`; `processShelfVision` now passes scan dimensions into pipeline options; `visionPipeline.persistVisionRegions()` auto-repairs absolute bbox coordinates when dimensions are known, rejects invalid boxes, logs repair/reject counts, and calls `visionItemRegions.upsertRegionsForScan(..., replaceExisting: true)` for per-scan snapshot replacement before crop warmup.
 - 2026-03-22 | vision-workflow | Added explicit vision completion contract fields across API and mobile consumption: `addedCount`, `needsReviewCount`, `existingCount`, `extractedCount`, `summaryMessage`; documented sync, async status, and catalog lookup payload expectations.
-- 2026-03-23 | vision-workflow | Joined enrichment requests to original Gemini vision extraction using multi-turn chat sessions (`startChat`/`sendMessage`). `detectShelfItemsFromImage()` now returns `{ items, conversationHistory }`. `enrichWithSchema()` and `enrichWithSchemaUncertain()` accept optional `conversationHistory` param — when provided and vision/text models match, enrichment continues the chat session (image context preserved). "Other" shelf search enrichment also uses chat mode. New private helper `_executeEnrichmentRequest()` handles chat-vs-standalone branching. `visionPipeline.js` threads `conversationHistory` from `extractItems()` through `processImage()` to both enrichment calls. Fully backward-compatible (MLKit rawItems path, model mismatch, enrichment disabled all fall back to standalone mode).
+- 2026-03-23 | vision-workflow | Joined enrichment requests to original Gemini vision extraction using multi-turn chat sessions (`startChat`/`sendMessage`). `detectShelfItemsFromImage()` now returns `{ items, conversationHistory }`. `enrichWithSchema()` and `enrichWithSchemaUncertain()` accept optional `conversationHistory` param â€” when provided and vision/text models match, enrichment continues the chat session (image context preserved). "Other" shelf search enrichment also uses chat mode. New private helper `_executeEnrichmentRequest()` handles chat-vs-standalone branching. `visionPipeline.js` threads `conversationHistory` from `extractItems()` through `processImage()` to both enrichment calls. Fully backward-compatible (MLKit rawItems path, model mismatch, enrichment disabled all fall back to standalone mode).
 - 2026-03-23 | vision-workflow | Consolidated "other" shelf vision pipeline from 2 Gemini calls to 1. `detectShelfItemsFromImage()` now passes `tools: [{ googleSearch: {} }]` on the vision `generateContent` call for "other" shelves, getting full metadata + search grounding in a single request. Removed the separate Step 2 search enrichment block and the `other_initial` prompt from `visionSettings.json`. Conversation history is now returned for all shelf types including "other".
 - 2026-03-23 | vision-workflow | Added Gemini 2.5 thinking budget control to `detectShelfItemsFromImage()`: `thinkingBudget: 0` for standard shelf OCR (pure perception, no reasoning cost), `thinkingBudget: 3000` for "other" shelves (search grounding + reasoning). Enrichment calls (`_executeEnrichmentRequest`) use default/unlimited thinking. Also bumped `DEFAULT_REQUEST_TIMEOUT_MS` from 10s to 60s and passed `requestOptions: { timeout }` to SDK `getGenerativeModel()` for proper fetch-level `AbortController` timeout.
 - 2026-03-23 | vision-workflow | Hardened vision extraction failure handling: `detectShelfItemsFromImage()` now throws on Gemini transport/provider failures (instead of returning empty `items`), repairs truncated JSON arrays when possible, and returns an extraction warning for partial recovery. `VisionPipelineService.processImage()` now carries extraction warnings into the existing `warnings` response payload.
@@ -210,7 +214,7 @@ ShelvesAI/
 
 ## Cross-Component Dependencies
 
-### API ↔ Mobile Contract
+### API â†” Mobile Contract
 
 | Mobile Service | API Route | Auth |
 |---|---|---|
@@ -264,6 +268,17 @@ ShelvesAI/
   - body: `{ platforms: string[] }`
   - response: updated shelf item payload including `ownedPlatforms`
 
+#### Shelf Photo Contract (`mobile` <- `api`)
+
+- Shelf payloads returned from `GET /api/shelves`, `GET /api/shelves/:shelfId`, `POST /api/shelves`, and `PUT /api/shelves/:shelfId` now include:
+  - `shelfPhoto`: `{ hasPhoto, contentType, sizeBytes, width, height, updatedAt, imageUrl }`
+  - `imageUrl` resolves to `/api/shelves/:shelfId/photo/image` when `hasPhoto=true`.
+- New shelf photo endpoints:
+  - `GET /api/shelves/:shelfId/photo` -> metadata-only `shelfPhoto` payload.
+  - `GET /api/shelves/:shelfId/photo/image` -> authenticated binary image payload.
+  - `POST /api/shelves/:shelfId/photo` (multipart `photo`) -> updated `shelfPhoto`.
+  - `DELETE /api/shelves/:shelfId/photo` -> cleared `shelfPhoto` (`hasPhoto=false`).
+
 #### Push Notification Contract (`mobile` <- `api`)
 
 - `GET /api/push/preferences` and `PATCH /api/push/preferences` now include `pushWorkflowJobs`.
@@ -276,7 +291,7 @@ ShelvesAI/
   - `mobile/src/screens/NotificationScreen.js` renders workflow-specific notification copy.
   - `mobile/src/context/PushContext.js` routes workflow notifications to `ShelfDetail` when `metadata.shelfId` exists.
 
-### API ↔ Admin Dashboard Contract
+### API â†” Admin Dashboard Contract
 
 | Admin Client Function | API Route | Auth |
 |---|---|---|
@@ -307,7 +322,7 @@ ShelvesAI/
 | `getShelf(shelfId)` | `GET /api/admin/shelves/:shelfId` | Cookie |
 | `getShelfItems(shelfId, params)` | `GET /api/admin/shelves/:shelfId/items` | Cookie |
 
-### API ↔ Website Contract
+### API â†” Website Contract
 
 | Website Route/Component | API Route | Auth |
 |---|---|---|
@@ -323,36 +338,36 @@ ShelvesAI/
 
 ```
 api/index.js
-  → api/server.js
+  â†’ api/server.js
   -> api/logger.js
-  → api/database/pg.js
-  → api/services/newsCacheScheduler.js
-  → api/services/newsSeenCleanupScheduler.js
+  â†’ api/database/pg.js
+  â†’ api/services/newsCacheScheduler.js
+  â†’ api/services/newsSeenCleanupScheduler.js
 
 api/server.js
-  → api/routes/resetPasswordPage.js
-  → api/routes/auth.js
-  → api/routes/shelves.js
-  → api/routes/account.js
-  → api/routes/collectables.js
-  → api/routes/feed.js
-  → api/routes/friends.js
-  → api/routes/profile.js
-  → api/routes/wishlists.js
-  → api/routes/favorites.js
-  → api/routes/lists.js
-  → api/routes/unmatched.js
-  → api/routes/onboarding.js
-  → api/routes/config.js
-  → api/routes/checkin.js
-  → api/routes/notifications.js
-  → api/routes/ratings.js
-  → api/routes/discover.js
-  → api/routes/push.js
-  → api/routes/admin.js
-  → api/routes/manuals.js
-  → api/routes/waitlist.js
-  → api/routes/share.js
+  â†’ api/routes/resetPasswordPage.js
+  â†’ api/routes/auth.js
+  â†’ api/routes/shelves.js
+  â†’ api/routes/account.js
+  â†’ api/routes/collectables.js
+  â†’ api/routes/feed.js
+  â†’ api/routes/friends.js
+  â†’ api/routes/profile.js
+  â†’ api/routes/wishlists.js
+  â†’ api/routes/favorites.js
+  â†’ api/routes/lists.js
+  â†’ api/routes/unmatched.js
+  â†’ api/routes/onboarding.js
+  â†’ api/routes/config.js
+  â†’ api/routes/checkin.js
+  â†’ api/routes/notifications.js
+  â†’ api/routes/ratings.js
+  â†’ api/routes/discover.js
+  â†’ api/routes/push.js
+  â†’ api/routes/admin.js
+  â†’ api/routes/manuals.js
+  â†’ api/routes/waitlist.js
+  â†’ api/routes/share.js
 ```
 
 ### Runtime Logging Utilities
@@ -389,128 +404,130 @@ api/database/queries/jobRuns.test.js
   -> api/database/pg.js
 ```
 
-### Routes → Controllers → Queries/Services
+### Routes â†’ Controllers â†’ Queries/Services
 
 #### auth
 ```
 routes/auth.js
-  → controllers/authController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/authController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/authController.js
-  → database/queries/auth.js
-  → database/queries/passwordReset.js
-  → services/emailService.js
-  → utils/adminAuth.js
+  â†’ database/queries/auth.js
+  â†’ database/queries/passwordReset.js
+  â†’ services/emailService.js
+  â†’ utils/adminAuth.js
 ```
 
 #### shelves
 ```
 routes/shelves.js
+  -> includes GET/POST/DELETE shelf photo endpoints (`/:shelfId/photo`, `/:shelfId/photo/image`)
   -> includes POST /:shelfId/items/:itemId/replacement-intent, POST /:shelfId/items/:itemId/replace, and PUT /:shelfId/items/:itemId/platforms
   -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
-  → controllers/shelvesController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/shelvesController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
   -> middleware/workflowJobContext.js (vision/catalog workflow routes only)
   -> express-rate-limit
-  → utils/imageValidation.js
+  â†’ utils/imageValidation.js
 
 controllers/shelvesController.js
   -> database/queries/itemReplacementTraces.js
-  → database/pg.js
-  → database/queries/shelves.js
-  → database/queries/collectables.js
-  → database/queries/feed.js
-  → database/queries/utils.js
-  → database/queries/needsReview.js
+  â†’ database/pg.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/collectables.js
+  â†’ database/queries/feed.js
+  â†’ database/queries/utils.js
+  â†’ database/queries/needsReview.js
   -> database/queries/visionQuota.js
   -> database/queries/visionResultCache.js
-  → database/queries/manualMedia.js
+  â†’ database/queries/manualMedia.js
+  -> database/queries/shelfPhotos.js
   -> database/queries/userCollectionPhotos.js
   -> database/queries/visionScanPhotos.js
   -> database/queries/visionItemRegions.js
   -> database/queries/visionItemCrops.js
   -> database/queries/workflowQueueJobs.js
-  → services/collectables/fingerprint.js
-  → services/collectableMatchingService.js
-  → services/catalog/BookCatalogService.js
-  → services/catalog/MovieCatalogService.js
-  → services/catalog/GameCatalogService.js
+  â†’ services/collectables/fingerprint.js
+  â†’ services/collectableMatchingService.js
+  â†’ services/catalog/BookCatalogService.js
+  â†’ services/catalog/MovieCatalogService.js
+  â†’ services/catalog/GameCatalogService.js
   -> services/gameShelfDefaults.js
-  → services/visionPipeline.js
-  → services/visionPipelineHooks.js
+  â†’ services/visionPipeline.js
+  â†’ services/visionPipelineHooks.js
   -> services/visionCropper.js
-  → services/processingStatus.js
+  â†’ services/processingStatus.js
   -> services/workflowQueueService.js
   -> services/workflow/workflowSettings.js
-  → services/mediaUrl.js
-  → services/manuals/otherManual.js
-  → utils/imageValidation.js
-  → utils/normalize.js
-  → config/constants.js
+  â†’ services/mediaUrl.js
+  â†’ services/manuals/otherManual.js
+  â†’ utils/imageValidation.js
+  â†’ utils/normalize.js
+  â†’ config/constants.js
 ```
 
 #### feed
 ```
 routes/feed.js
-  → controllers/feedController.js
-  → controllers/eventSocialController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/feedController.js
+  â†’ controllers/eventSocialController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/feedController.js
-  → database/pg.js
-  → database/queries/feed.js
-  → database/queries/shelves.js
-  → database/queries/friendships.js
-  → database/queries/eventSocial.js
-  → database/queries/newsSeen.js
-  → database/queries/utils.js
-  → services/discovery/newsRecommendations.js
-  → services/mediaUrl.js
-  → config/constants.js
+  â†’ database/pg.js
+  â†’ database/queries/feed.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/friendships.js
+  â†’ database/queries/eventSocial.js
+  â†’ database/queries/newsSeen.js
+  â†’ database/queries/utils.js
+  â†’ services/discovery/newsRecommendations.js
+  â†’ services/mediaUrl.js
+  â†’ config/constants.js
 
 controllers/eventSocialController.js
-  → database/queries/eventSocial.js
-  → database/queries/notifications.js
-  → database/queries/friendships.js
-  → database/queries/users.js
-  → database/queries/utils.js
+  â†’ database/queries/eventSocial.js
+  â†’ database/queries/notifications.js
+  â†’ database/queries/friendships.js
+  â†’ database/queries/users.js
+  â†’ database/queries/utils.js
 ```
 
 #### friends
 ```
 routes/friends.js
-  → controllers/friendController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/friendController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/friendController.js
-  → database/pg.js
-  → database/queries/friendships.js
-  → database/queries/notifications.js
-  → database/queries/utils.js
-  → services/mediaUrl.js
+  â†’ database/pg.js
+  â†’ database/queries/friendships.js
+  â†’ database/queries/notifications.js
+  â†’ database/queries/utils.js
+  â†’ services/mediaUrl.js
 ```
 
 #### profile
 ```
 routes/profile.js
-  → controllers/profileController.js
-  → middleware/auth.js
-  → middleware/validate.js
-  → utils/imageValidation.js
+  â†’ controllers/profileController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
+  â†’ utils/imageValidation.js
 
 controllers/profileController.js
-  → database/pg.js
-  → database/queries/users.js
-  → database/queries/shelves.js
-  → database/queries/profileMedia.js
-  → database/queries/utils.js
-  → services/mediaUrl.js
-  → utils/imageValidation.js
+  â†’ database/pg.js
+  â†’ database/queries/users.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/profileMedia.js
+  â†’ database/queries/utils.js
+  â†’ services/mediaUrl.js
+  â†’ utils/imageValidation.js
 ```
 
 #### account
@@ -534,25 +551,25 @@ controllers/accountController.js
 #### collectables
 ```
 routes/collectables.js
-  → middleware/auth.js
-  → middleware/admin.js
-  → middleware/validate.js
-  → database/queries/collectables.js
-  → database/pg.js
-  → database/queries/utils.js
-  → services/collectables/fingerprint.js
-  → services/collectables/kind.js
-  → utils/normalize.js
-  →database/queries/marketValueEstimates.js
+  â†’ middleware/auth.js
+  â†’ middleware/admin.js
+  â†’ middleware/validate.js
+  â†’ database/queries/collectables.js
+  â†’ database/pg.js
+  â†’ database/queries/utils.js
+  â†’ services/collectables/fingerprint.js
+  â†’ services/collectables/kind.js
+  â†’ utils/normalize.js
+  â†’database/queries/marketValueEstimates.js
   Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type/platform and provider-level fallback paging via offset; local games platform filtering uses `system_name` + `platform_data`; game responses include derived `maxPlayers` when available), POST /api/collectables/resolve-search-hit, GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
 ```
 
 #### share
 ```
 routes/share.js
-  → database/pg.js
-  → services/mediaUrl.js
-  → logger.js
+  â†’ database/pg.js
+  â†’ services/mediaUrl.js
+  â†’ logger.js
   Public endpoints:
     GET /api/share/collectables/:id
     GET /api/share/manuals/:id
@@ -566,147 +583,147 @@ routes/share.js
 #### wishlists
 ```
 routes/wishlists.js
-  → controllers/wishlistController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/wishlistController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/wishlistController.js
-  → database/queries/wishlists.js
+  â†’ database/queries/wishlists.js
 ```
 
 #### favorites
 ```
 routes/favorites.js
-  → controllers/favoritesController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/favoritesController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/favoritesController.js
-  → database/queries/favorites.js
-  → database/queries/collectables.js
-  → database/queries/feed.js
-  → database/queries/users.js
-  → database/queries/friendships.js
-  → database/queries/shelves.js
-  → services/mediaUrl.js
-  → utils/errorHandler.js
+  â†’ database/queries/favorites.js
+  â†’ database/queries/collectables.js
+  â†’ database/queries/feed.js
+  â†’ database/queries/users.js
+  â†’ database/queries/friendships.js
+  â†’ database/queries/shelves.js
+  â†’ services/mediaUrl.js
+  â†’ utils/errorHandler.js
 ```
 
 #### lists
 ```
 routes/lists.js
-  → controllers/listsController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/listsController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/listsController.js
-  → database/queries/lists.js
-  → database/queries/collectables.js
-  → database/queries/feed.js
+  â†’ database/queries/lists.js
+  â†’ database/queries/collectables.js
+  â†’ database/queries/feed.js
 ```
 
 #### ratings
 ```
 routes/ratings.js
-  → controllers/ratingsController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/ratingsController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/ratingsController.js
-  → database/queries/ratings.js
-  → database/queries/marketValueEstimates.js
-  → database/queries/collectables.js
-  → database/queries/shelves.js
-  → database/queries/feed.js
-  → services/mediaUrl.js
+  â†’ database/queries/ratings.js
+  â†’ database/queries/marketValueEstimates.js
+  â†’ database/queries/collectables.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/feed.js
+  â†’ services/mediaUrl.js
 ```
 
 #### notifications
 ```
 routes/notifications.js
-  → controllers/notificationController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/notificationController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 
 controllers/notificationController.js
-  → database/queries/notifications.js
-  → database/queries/utils.js
+  â†’ database/queries/notifications.js
+  â†’ database/queries/utils.js
 ```
 
 #### push
 ```
 routes/push.js
-  → controllers/pushController.js
-  → middleware/auth.js
+  â†’ controllers/pushController.js
+  â†’ middleware/auth.js
 
 controllers/pushController.js
-  → database/queries/pushDeviceTokens.js
-  → database/queries/notificationPreferences.js
-  → services/pushNotificationService.js
+  â†’ database/queries/pushDeviceTokens.js
+  â†’ database/queries/notificationPreferences.js
+  â†’ services/pushNotificationService.js
 ```
 
 #### discover
 ```
 routes/discover.js
-  → controllers/discoverController.js
-  → middleware/auth.js
+  â†’ controllers/discoverController.js
+  â†’ middleware/auth.js
 
 controllers/discoverController.js
-  → database/pg.js
-  → database/queries/newsDismissed.js
-  → database/queries/utils.js
-  → utils/errorHandler.js
+  â†’ database/pg.js
+  â†’ database/queries/newsDismissed.js
+  â†’ database/queries/utils.js
+  â†’ utils/errorHandler.js
 ```
 
 #### unmatched
 ```
 routes/unmatched.js
-  → middleware/auth.js
-  → middleware/validate.js
-  → database/queries/needsReview.js
-  → database/queries/shelves.js
-  → database/queries/collectables.js
-  → services/collectables/fingerprint.js
-  → services/manuals/otherManual.js
-  → services/collectableMatchingService.js (lazy require)
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
+  â†’ database/queries/needsReview.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/collectables.js
+  â†’ services/collectables/fingerprint.js
+  â†’ services/manuals/otherManual.js
+  â†’ services/collectableMatchingService.js (lazy require)
 ```
 
 #### checkin
 ```
 routes/checkin.js
-  → middleware/auth.js
-  → middleware/validate.js
-  → database/queries/feed.js
-  → database/queries/collectables.js
-  → database/pg.js
-  → database/queries/utils.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
+  â†’ database/queries/feed.js
+  â†’ database/queries/collectables.js
+  â†’ database/pg.js
+  â†’ database/queries/utils.js
   -> routes/collectables.js (_helpers: API fallback/container resolution helpers)
 
 Mobile check-in flows that resolve external items before POST /api/checkin:
-  CheckInScreen       → POST /api/collectables/resolve-search-hit (auth only)
-  QuickCheckInModal   → POST /api/collectables/from-news (auth only)
+  CheckInScreen       â†’ POST /api/collectables/resolve-search-hit (auth only)
+  QuickCheckInModal   â†’ POST /api/collectables/from-news (auth only)
 ```
 
 #### onboarding
 ```
 routes/onboarding.js
-  → controllers/onboardingController.js
-  → middleware/auth.js
+  â†’ controllers/onboardingController.js
+  â†’ middleware/auth.js
 
 controllers/onboardingController.js
-  → database/queries/users.js
-  → database/queries/utils.js
+  â†’ database/queries/users.js
+  â†’ database/queries/utils.js
 ```
 
 #### admin
 ```
 routes/admin.js
-  → controllers/adminController.js
-  → controllers/authController.js
-  → middleware/auth.js
-  → middleware/admin.js
-  → middleware/csrf.js
-  → middleware/validate.js
+  â†’ controllers/adminController.js
+  â†’ controllers/authController.js
+  â†’ middleware/auth.js
+  â†’ middleware/admin.js
+  â†’ middleware/csrf.js
+  â†’ middleware/validate.js
   Routes (read, before CSRF):
     GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
     GET  /workfeed, /workfeed/:jobId
@@ -718,24 +735,24 @@ routes/admin.js
     POST /users/:userId/vision-quota/reset
 
 controllers/adminController.js
-  → database/queries/admin.js
-  → database/queries/jobRuns.js
+  â†’ database/queries/admin.js
+  â†’ database/queries/jobRuns.js
   -> database/queries/workflowQueueJobs.js
-  → database/queries/systemSettings.js
-  → database/queries/visionQuota.js
-  → database/queries/adminContent.js
+  â†’ database/queries/systemSettings.js
+  â†’ database/queries/visionQuota.js
+  â†’ database/queries/adminContent.js
   -> services/processingStatus.js
-  → services/config/SystemSettingsCache.js
-  → database/queries/utils.js
-  → utils/adminAuth.js
+  â†’ services/config/SystemSettingsCache.js
+  â†’ database/queries/utils.js
+  â†’ utils/adminAuth.js
 ```
 
 #### manuals
 ```
 routes/manuals.js
-  → controllers/shelvesController.js
-  → middleware/auth.js
-  → middleware/validate.js
+  â†’ controllers/shelvesController.js
+  â†’ middleware/auth.js
+  â†’ middleware/validate.js
 ```
 
 #### config
@@ -747,25 +764,25 @@ routes/config.js
 #### waitlist
 ```
 routes/waitlist.js
-  → middleware/validate.js
-  → resend (Contacts API)
+  â†’ middleware/validate.js
+  â†’ resend (Contacts API)
 ```
 
 #### resetPasswordPage
 ```
 routes/resetPasswordPage.js
-  (no internal imports — serves reset-password web fallback + app deep-link bridge)
+  (no internal imports â€” serves reset-password web fallback + app deep-link bridge)
 ```
 
 ### Middleware Internal Dependencies
 
 ```
 middleware/auth.js
-  → database/pg.js
+  â†’ database/pg.js
   -> context.js
-  → utils/adminAuth.js
-  → config/constants.js
-  Selects: is_premium, premium_locked_by_admin → sets req.user.premiumLockedByAdmin
+  â†’ utils/adminAuth.js
+  â†’ config/constants.js
+  Selects: is_premium, premium_locked_by_admin â†’ sets req.user.premiumLockedByAdmin
 
 middleware/admin.js
   (no internal imports)
@@ -774,7 +791,7 @@ middleware/validate.js
   (no internal imports)
 
 middleware/csrf.js
-  → utils/adminAuth.js
+  â†’ utils/adminAuth.js
 
 middleware/requestLogger.js
   -> context.js
@@ -788,22 +805,22 @@ middleware/workflowJobContext.js
 
 ```
 services/visionPipeline.js
-  → services/googleGemini.js
-  → services/processingStatus.js
-  → services/visionPipelineHooks.js
+  â†’ services/googleGemini.js
+  â†’ services/processingStatus.js
+  â†’ services/visionPipelineHooks.js
   -> services/gameShelfDefaults.js
-  → services/collectables/fingerprint.js
-  → services/collectables/kind.js
+  â†’ services/collectables/fingerprint.js
+  â†’ services/collectables/kind.js
   -> services/catalog/sharedCatalogServices.js
-  → services/manuals/otherManual.js
-  → database/pg.js
-  → database/queries/collectables.js
-  → database/queries/shelves.js
-  → database/queries/needsReview.js
-  → database/queries/feed.js
+  â†’ services/manuals/otherManual.js
+  â†’ database/pg.js
+  â†’ database/queries/collectables.js
+  â†’ database/queries/shelves.js
+  â†’ database/queries/needsReview.js
+  â†’ database/queries/feed.js
   -> database/queries/visionItemRegions.js
-  → config/constants.js
-  → config/visionSettings.json
+  â†’ config/constants.js
+  â†’ config/visionSettings.json
   -> utils/visionBox2d.js
   Data flow: extractItems() -> { items, conversationHistory, warning }
              processImage() threads conversationHistory to enrichUnresolved/enrichUncertain
@@ -812,16 +829,16 @@ services/visionPipeline.js
              persistVisionRegions(...) uses replaceExisting snapshot semantics per scanPhotoId
 
 services/gameShelfDefaults.js
-  (no internal imports — shared games defaults validation/normalization + mismatch resolver)
+  (no internal imports â€” shared games defaults validation/normalization + mismatch resolver)
 
 services/visionPipelineHooks.js
-  (no internal imports — hook registry)
+  (no internal imports â€” hook registry)
 
 services/processingStatus.js
-  (no internal imports — in-memory Map)
+  (no internal imports â€” in-memory Map)
 
 services/googleGemini.js
-  → config/visionSettings.json
+  â†’ config/visionSettings.json
   -> services/outboundLimiterRegistry.js
   -> utils/visionBox2d.js
   Methods: detectShelfItemsFromImage() -> { items, conversationHistory, warning }
@@ -836,59 +853,59 @@ services/googleGemini.js
              when conversationHistory is available and visionModel === textModel
 
 services/googleCloudVision.js
-  (no internal imports — disabled)
+  (no internal imports â€” disabled)
 
 services/visionCropper.js
   -> utils/visionBox2d.js
   Uses shared bbox normalization for crop rectangle repair/clamping (normalized + absolute-style coords)
 
 services/collectableMatchingService.js
-  → database/queries/collectables.js
-  → services/collectables/fingerprint.js
+  â†’ database/queries/collectables.js
+  â†’ services/collectables/fingerprint.js
   -> services/catalog/sharedCatalogServices.js
   -> services/catalog/MetadataScorer.js
   -> services/config/shelfTypeResolver.js
 
 services/collectables/fingerprint.js
-  (no internal imports — crypto hashing)
+  (no internal imports â€” crypto hashing)
 
 services/collectables/kind.js
-  → services/config/shelfTypeResolver.js
+  â†’ services/config/shelfTypeResolver.js
 
 services/config/shelfTypeResolver.js
-  → config/shelfType.json
+  â†’ config/shelfType.json
 
 services/catalog/BookCatalogService.js
-  → services/catalog/CatalogRouter.js
-  → services/openLibrary.js
-  → services/hardcover.js
-  → adapters/openlibrary.adapter.js
-  → adapters/hardcover.adapter.js
+  â†’ services/catalog/CatalogRouter.js
+  â†’ services/openLibrary.js
+  â†’ services/hardcover.js
+  â†’ adapters/openlibrary.adapter.js
+  â†’ adapters/hardcover.adapter.js
 
 services/catalog/MovieCatalogService.js
-  → services/catalog/CatalogRouter.js
-  → services/catalog/adapters/TmdbAdapter.js
+  â†’ services/catalog/CatalogRouter.js
+  â†’ services/catalog/adapters/TmdbAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/GameCatalogService.js
-  → services/catalog/CatalogRouter.js
-  → services/catalog/adapters/IgdbAdapter.js
+  â†’ services/catalog/CatalogRouter.js
+  â†’ services/catalog/adapters/IgdbAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/TvCatalogService.js
-  → services/catalog/CatalogRouter.js
-  → services/catalog/adapters/TmdbTvAdapter.js
+  â†’ services/catalog/CatalogRouter.js
+  â†’ services/catalog/adapters/TmdbTvAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/MusicCatalogService.js
-  → services/collectables/fingerprint.js
-  → adapters/musicbrainz.adapter.js
-  → services/config/shelfTypeResolver.js
-  → services/catalog/MusicBrainzRequestQueue.js
-  → services/catalog/CatalogRouter.js (lazy require)
+  â†’ services/collectables/fingerprint.js
+  â†’ adapters/musicbrainz.adapter.js
+  â†’ services/config/shelfTypeResolver.js
+  â†’ services/catalog/MusicBrainzRequestQueue.js
+  â†’ services/catalog/CatalogRouter.js (lazy require)
 
 services/catalog/MusicBrainzRequestQueue.js
-  (no internal imports — FIFO request queue)
+  (no internal imports â€” FIFO request queue)
 
 services/catalog/sharedCatalogServices.js
   -> services/catalog/BookCatalogService.js
@@ -898,56 +915,56 @@ services/catalog/sharedCatalogServices.js
   -> services/catalog/MusicCatalogService.js
 
 services/catalog/CoverArtBackfillHook.js
-  → services/visionPipelineHooks.js (lazy require in register())
+  â†’ services/visionPipelineHooks.js (lazy require in register())
 
 services/catalog/CatalogRouter.js
-  → config/apiContainers.json
-  → services/catalog/MetadataScorer.js
+  â†’ config/apiContainers.json
+  â†’ services/catalog/MetadataScorer.js
 
 services/catalog/MetadataScorer.js
-  → config/metadataScoreConfig.json
-  → services/config/SystemSettingsCache.js
+  â†’ config/metadataScoreConfig.json
+  â†’ services/config/SystemSettingsCache.js
 
 services/catalog/metadataScore.js
-  → services/catalog/MetadataScorer.js
+  â†’ services/catalog/MetadataScorer.js
 
 services/config/SystemSettingsCache.js
-  → database/queries/systemSettings.js (lazy require, cache miss only)
+  â†’ database/queries/systemSettings.js (lazy require, cache miss only)
 
 services/catalog/adapters/TmdbAdapter.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/catalog/adapters/TmdbTvAdapter.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/catalog/adapters/IgdbAdapter.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/catalog/adapters/MusicBrainzAdapter.js
-  → services/collectables/fingerprint.js
-  → adapters/musicbrainz.adapter.js
-  → utils/withTimeout.js
-  → services/catalog/MusicCatalogService.js (lazy require)
+  â†’ services/collectables/fingerprint.js
+  â†’ adapters/musicbrainz.adapter.js
+  â†’ utils/withTimeout.js
+  â†’ services/catalog/MusicCatalogService.js (lazy require)
 
 services/catalog/adapters/DiscogsAdapter.js
-  → services/collectables/fingerprint.js
-  → adapters/discogs.adapter.js
-  → utils/withTimeout.js
-  → utils/RateLimiter.js
+  â†’ services/collectables/fingerprint.js
+  â†’ adapters/discogs.adapter.js
+  â†’ utils/withTimeout.js
+  â†’ utils/RateLimiter.js
 
 services/openLibrary.js
   -> services/outboundLimiterRegistry.js
 
 services/hardcover.js
   -> services/outboundLimiterRegistry.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/emailService.js
   -> logger.js
   (uses resend)
 
 services/pushNotificationService.js
-  (no internal imports — uses expo-server-sdk)
+  (no internal imports â€” uses expo-server-sdk)
 
 services/s3.js
   -> services/outboundLimiterRegistry.js
@@ -973,26 +990,26 @@ services/manuals/otherManual.js
   (no internal imports)
 
 services/newsCacheScheduler.js
-  → jobs/refreshNewsCache.js
+  â†’ jobs/refreshNewsCache.js
   -> utils/jobRunner.js
 
 services/newsSeenCleanupScheduler.js
-  → database/queries/newsSeen.js
+  â†’ database/queries/newsSeen.js
   -> utils/jobRunner.js
 
 services/discovery/newsRecommendations.js
-  → database/pg.js
-  → database/queries/newsSeen.js
+  â†’ database/pg.js
+  â†’ database/queries/newsSeen.js
 
 services/discovery/CollectableDiscoveryHook.js
-  → database/queries/collectables.js
-  → services/collectables/fingerprint.js
+  â†’ database/queries/collectables.js
+  â†’ services/collectables/fingerprint.js
 
 services/discovery/TmdbDiscoveryAdapter.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/discovery/IgdbDiscoveryAdapter.js
-  → utils/RateLimiter.js
+  â†’ utils/RateLimiter.js
 
 services/discovery/BlurayDiscoveryAdapter.js
   (uses cheerio for scraping)
@@ -1005,38 +1022,38 @@ services/discovery/NytBooksDiscoveryAdapter.js
 
 ```
 jobs/refreshNewsCache.js
-  → services/discovery/TmdbDiscoveryAdapter.js
-  → services/discovery/IgdbDiscoveryAdapter.js
-  → services/discovery/BlurayDiscoveryAdapter.js
-  → services/discovery/NytBooksDiscoveryAdapter.js
-  → database/pg.js
+  â†’ services/discovery/TmdbDiscoveryAdapter.js
+  â†’ services/discovery/IgdbDiscoveryAdapter.js
+  â†’ services/discovery/BlurayDiscoveryAdapter.js
+  â†’ services/discovery/NytBooksDiscoveryAdapter.js
+  â†’ database/pg.js
 
 jobs/resetAndRefreshNewsCache.js
-  → jobs/refreshNewsCache.js
+  â†’ jobs/refreshNewsCache.js
 
 jobs/refreshCollectableMetadata.js
-  → services/catalog/* (catalog services)
+  â†’ services/catalog/* (catalog services)
 
 jobs/refreshTmdbCoverCache.js
-  → services/s3.js
+  â†’ services/s3.js
 
 jobs/cleanupNeedsReview.js
-  → database/pg.js
+  â†’ database/pg.js
 ```
 
 ### Scripts Internal Dependencies
 
 ```
 scripts/backfillMetascore.js
-  → database/pg.js
-  → services/catalog/MetadataScorer.js
-  → services/config/shelfTypeResolver.js
-  → database/queries/utils.js
+  â†’ database/pg.js
+  â†’ services/catalog/MetadataScorer.js
+  â†’ services/config/shelfTypeResolver.js
+  â†’ database/queries/utils.js
 
 scripts/backfill-missing-cover-media.js
-  → database/pg.js
-  → database/queries/media.js
-  → logger.js
+  â†’ database/pg.js
+  â†’ database/queries/media.js
+  â†’ logger.js
 
 scripts/get-bearer-token.ps1
   (standalone PowerShell HTTP client for local auth token retrieval)
@@ -1045,10 +1062,10 @@ scripts/fetch-api-payload.ps1
   (standalone PowerShell HTTP client for authenticated API payload retrieval)
 
 scripts/backfill-collectable-platform-data.js
-  â†’ database/pg.js
-  â†’ database/queries/collectables.js
-  â†’ services/catalog/GameCatalogService.js
-  â†’ logger.js
+  Ã¢â€ â€™ database/pg.js
+  Ã¢â€ â€™ database/queries/collectables.js
+  Ã¢â€ â€™ services/catalog/GameCatalogService.js
+  Ã¢â€ â€™ logger.js
   Behavior: loads `.env` then `.env.local` override when available; backfills `platform_data`, `igdb_payload`, and `max_players` for IGDB-linked games
 ```
 
@@ -1056,43 +1073,44 @@ scripts/backfill-collectable-platform-data.js
 
 ```
 database/pg.js
-  (no internal imports — pg Pool singleton)
+  (no internal imports â€” pg Pool singleton)
 
 database/queries/utils.js
-  (no internal imports — pure helpers)
+  (no internal imports â€” pure helpers)
 
-database/queries/auth.js → database/pg.js, database/queries/utils.js
-database/queries/shelves.js → database/pg.js, database/queries/utils.js
+database/queries/auth.js â†’ database/pg.js, database/queries/utils.js
+database/queries/shelves.js â†’ database/pg.js, database/queries/utils.js
 database/queries/itemReplacementTraces.js -> database/pg.js, database/queries/utils.js
-database/queries/collectables.js → database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
-database/queries/feed.js → database/pg.js, database/queries/utils.js, config/constants.js
-database/queries/eventSocial.js → database/pg.js, database/queries/utils.js
-database/queries/friendships.js → database/pg.js, database/queries/utils.js
-database/queries/users.js → database/pg.js, database/queries/utils.js
-database/queries/notifications.js → database/pg.js, database/queries/utils.js
-database/queries/needsReview.js → database/pg.js, database/queries/utils.js
-database/queries/wishlists.js → database/pg.js, database/queries/utils.js
-database/queries/favorites.js → database/pg.js, database/queries/utils.js
-database/queries/lists.js → database/pg.js, database/queries/utils.js
-database/queries/ratings.js → database/pg.js, database/queries/utils.js
-database/queries/ownership.js → database/pg.js
-database/queries/media.js → database/pg.js, services/s3.js, utils/imageValidation.js
-database/queries/manualMedia.js → database/pg.js, services/s3.js
-database/queries/userCollectionPhotos.js → database/pg.js, services/s3.js, utils/imageValidation.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
-database/queries/visionScanPhotos.js → database/pg.js, services/s3.js, utils/imageValidation.js
-database/queries/visionItemRegions.js → database/pg.js, database/queries/utils.js (replaceExisting snapshot delete-before-insert support)
-database/queries/visionItemCrops.js → database/pg.js, services/s3.js, database/queries/visionScanPhotos.js
-database/queries/profileMedia.js → database/pg.js, services/s3.js
-database/queries/passwordReset.js → database/pg.js
-database/queries/visionQuota.js → database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
-database/queries/pushDeviceTokens.js → database/pg.js, database/queries/utils.js
-database/queries/notificationPreferences.js → database/pg.js, database/queries/utils.js
+database/queries/collectables.js â†’ database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
+database/queries/feed.js â†’ database/pg.js, database/queries/utils.js, config/constants.js
+database/queries/eventSocial.js â†’ database/pg.js, database/queries/utils.js
+database/queries/friendships.js â†’ database/pg.js, database/queries/utils.js
+database/queries/users.js â†’ database/pg.js, database/queries/utils.js
+database/queries/notifications.js â†’ database/pg.js, database/queries/utils.js
+database/queries/needsReview.js â†’ database/pg.js, database/queries/utils.js
+database/queries/wishlists.js â†’ database/pg.js, database/queries/utils.js
+database/queries/favorites.js â†’ database/pg.js, database/queries/utils.js
+database/queries/lists.js â†’ database/pg.js, database/queries/utils.js
+database/queries/ratings.js â†’ database/pg.js, database/queries/utils.js
+database/queries/ownership.js â†’ database/pg.js
+database/queries/media.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/manualMedia.js â†’ database/pg.js, services/s3.js
+database/queries/userCollectionPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
+database/queries/shelfPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/visionScanPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/visionItemRegions.js â†’ database/pg.js, database/queries/utils.js (replaceExisting snapshot delete-before-insert support)
+database/queries/visionItemCrops.js â†’ database/pg.js, services/s3.js, database/queries/visionScanPhotos.js
+database/queries/profileMedia.js â†’ database/pg.js, services/s3.js
+database/queries/passwordReset.js â†’ database/pg.js
+database/queries/visionQuota.js â†’ database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
+database/queries/pushDeviceTokens.js â†’ database/pg.js, database/queries/utils.js
+database/queries/notificationPreferences.js â†’ database/pg.js, database/queries/utils.js
 database/queries/workflowQueueJobs.js -> database/pg.js, database/queries/utils.js
-database/queries/systemSettings.js → database/pg.js, database/queries/utils.js
-database/queries/newsSeen.js → database/pg.js
-database/queries/newsDismissed.js → database/pg.js
-database/queries/admin.js → database/pg.js, database/queries/utils.js
-database/queries/adminContent.js → database/pg.js, database/queries/utils.js
+database/queries/systemSettings.js â†’ database/pg.js, database/queries/utils.js
+database/queries/newsSeen.js â†’ database/pg.js
+database/queries/newsDismissed.js â†’ database/pg.js
+database/queries/admin.js â†’ database/pg.js, database/queries/utils.js
+database/queries/adminContent.js â†’ database/pg.js, database/queries/utils.js
 ```
 
 ### Utility Dependencies
@@ -1100,10 +1118,10 @@ database/queries/adminContent.js → database/pg.js, database/queries/utils.js
 ```
 utils/errorHandler.js       (no internal imports)
 utils/normalize.js           (no internal imports)
-utils/adminAuth.js           (no internal imports — uses crypto)
-utils/imageValidation.js     (no internal imports — uses file-type, image-size)
+utils/adminAuth.js           (no internal imports â€” uses crypto)
+utils/imageValidation.js     (no internal imports â€” uses file-type, image-size)
 utils/withTimeout.js         (no internal imports)
-utils/payloadLogger.js       (no internal imports — uses fs)
+utils/payloadLogger.js       (no internal imports â€” uses fs)
 utils/RateLimiter.js         (no internal imports)
 utils/visionBox2d.js        (shared bbox normalization helpers for pipeline/cropper/Gemini)
 ```
@@ -1111,18 +1129,18 @@ utils/visionBox2d.js        (shared bbox normalization helpers for pipeline/crop
 ### Adapters
 
 ```
-adapters/openlibrary.adapter.js  (no internal imports — transforms API responses)
+adapters/openlibrary.adapter.js  (no internal imports â€” transforms API responses)
 adapters/hardcover.adapter.js    (no internal imports)
 adapters/tmdb.adapter.js         (no internal imports)
 adapters/tmdbTv.adapter.js       (no internal imports)
-adapters/musicbrainz.adapter.js  → services/collectables/fingerprint.js
-adapters/discogs.adapter.js      → services/collectables/fingerprint.js
+adapters/musicbrainz.adapter.js  â†’ services/collectables/fingerprint.js
+adapters/discogs.adapter.js      â†’ services/collectables/fingerprint.js
 ```
 
 ### Config Files (data, not code)
 
 ```
-config/constants.js              (no internal imports — env-backed constants)
+config/constants.js              (no internal imports â€” env-backed constants)
 config/shelfType.json            (shelf type definitions + aliases)
 config/visionSettings.json       (per-type OCR/confidence thresholds + prompts; types: books, movies, games, tv, vinyl, other)
 config/visionProgressMessages.json (user-facing progress strings)
@@ -1139,9 +1157,9 @@ config/metadataScoreConfig.json  (per-type metadata scoring weights + field defi
 
 ```
 mobile/index.js
-  → mobile/src/polyfills/index.js
-      → mobile/src/polyfills/message-channel.js
-  → mobile/src/App.js
+  â†’ mobile/src/polyfills/index.js
+      â†’ mobile/src/polyfills/message-channel.js
+  â†’ mobile/src/App.js
 ```
 
 ### App.js (Root)
@@ -1201,16 +1219,16 @@ navigation/linkingConfig.js
 
 ```
 services/api.js
-  (no internal imports — leaf node)
+  (no internal imports â€” leaf node)
 
 services/feedApi.js
-  → services/api.js
+  â†’ services/api.js
 
 services/newsApi.js
-  → services/api.js
+  â†’ services/api.js
 
 services/pushNotifications.js
-  → services/api.js
+  â†’ services/api.js
 
 services/imageUpload.js
   (no internal imports)
@@ -1226,116 +1244,116 @@ hooks/useSearch.js           (no internal imports)
 hooks/useAsync.js            (no internal imports)
 
 hooks/useCollectableSearchEngine.js
-  â†’ services/api.js
-  â†’ utils/searchNormalization.js
+  Ã¢â€ â€™ services/api.js
+  Ã¢â€ â€™ utils/searchNormalization.js
 
 hooks/useVisionProcessing.js
-  → context/ToastContext.js
-  → services/api.js
+  â†’ context/ToastContext.js
+  â†’ services/api.js
 
 hooks/useAuthDebug.js
-  → services/api.js
+  â†’ services/api.js
 
 hooks/useNews.js
-  → context/AuthContext.js
-  → services/api.js
+  â†’ context/AuthContext.js
+  â†’ services/api.js
 
-hooks/useShelfDetailSync.js  (no internal imports — createContext)
-hooks/useFriendSearchSync.js (no internal imports — createContext)
+hooks/useShelfDetailSync.js  (no internal imports â€” createContext)
+hooks/useFriendSearchSync.js (no internal imports â€” createContext)
 
 hooks/useMentionInput.js
-  → context/AuthContext.js
-  → services/api.js
+  â†’ context/AuthContext.js
+  â†’ services/api.js
 ```
 
 ### Components
 
 ```
 components/Toast.js
-  → context/ThemeContext.js
-  → context/ToastContext.js
+  â†’ context/ThemeContext.js
+  â†’ context/ToastContext.js
 
 components/VisionProcessingModal.js
-  → context/ThemeContext.js
+  â†’ context/ThemeContext.js
 
 components/ShelfVisionModal.js
   (no internal imports)
 
 components/FooterNav.js
-  → assets/icons/*.png (legacy, likely unused)
+  â†’ assets/icons/*.png (legacy, likely unused)
 ```
 
 ### UI Components (barrel: components/ui/index.js)
 
 ```
 ui/AccountSlideMenu.js
-  → context/AuthContext.js
-  → context/ThemeContext.js
-  → ui/Avatar.js
+  â†’ context/AuthContext.js
+  â†’ context/ThemeContext.js
+  â†’ ui/Avatar.js
 
 ui/AppLayout.js
-  → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
+  â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
 ui/Avatar.js
-  → ui/CachedImage.js
-  → theme/index.js
+  â†’ ui/CachedImage.js
+  â†’ theme/index.js
 
-ui/Badge.js → theme/index.js
-ui/Button.js → theme/index.js
-ui/Card.js → theme/index.js
-ui/Input.js → theme/index.js
-ui/Skeleton.js → theme/index.js
+ui/Badge.js â†’ theme/index.js
+ui/Button.js â†’ theme/index.js
+ui/Card.js â†’ theme/index.js
+ui/Input.js â†’ theme/index.js
+ui/Skeleton.js â†’ theme/index.js
 
 ui/CachedImage.js
-  → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
+  â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
-ui/CategoryIcon.js → utils/iconConfig.js
+ui/CategoryIcon.js â†’ utils/iconConfig.js
 
 ui/EmptyState.js
-  → theme/index.js
-  → ui/Button.js
+  â†’ theme/index.js
+  â†’ ui/Button.js
 
-ui/Grid.js → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
-ui/Hero.js → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
-ui/ShelfListItem.js → ../../../../shared/theme/tokens.js  ← CROSS-COMPONENT
+ui/Grid.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+ui/Hero.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+ui/ShelfListItem.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
-ui/StarRating.js → context/ThemeContext.js
+ui/StarRating.js â†’ context/ThemeContext.js
 
 ui/GlobalSearchBar.js
-  → context/AuthContext.js
-  → context/ThemeContext.js
-  → services/api.js
+  â†’ context/AuthContext.js
+  â†’ context/ThemeContext.js
+  â†’ services/api.js
   exports: useGlobalSearch (hook), GlobalSearchInput, GlobalSearchOverlay
 
 ui/MentionSuggestions.js
-  → context/ThemeContext.js
+  â†’ context/ThemeContext.js
 ```
 
 ### News Components
 
 ```
 components/news/NewsFeed.js
-  → context/ThemeContext.js
-  → hooks/useNews.js
-  → components/news/NewsSection.js
-  → components/news/QuickCheckInModal.js
+  â†’ context/ThemeContext.js
+  â†’ hooks/useNews.js
+  â†’ components/news/NewsSection.js
+  â†’ components/news/QuickCheckInModal.js
 
 components/news/NewsSection.js
-  → context/ThemeContext.js
-  → components/news/NewsCard.js
+  â†’ context/ThemeContext.js
+  â†’ components/news/NewsCard.js
 
 components/news/NewsCard.js
-  → components/ui/CachedImage.js
-  → context/ThemeContext.js
+  â†’ components/ui/CachedImage.js
+  â†’ context/ThemeContext.js
 
 components/news/QuickCheckInModal.js
-  → context/ThemeContext.js
-  → context/ToastContext.js
-  → context/AuthContext.js
-  → services/api.js
+  â†’ context/ThemeContext.js
+  â†’ context/ToastContext.js
+  â†’ context/AuthContext.js
+  â†’ services/api.js
 ```
 
-### Screens → Internal Dependencies
+### Screens â†’ Internal Dependencies
 
 | Screen | Imports |
 |---|---|
@@ -1384,8 +1402,8 @@ utils/iconConfig.js  (no internal imports)
 ### Theme
 
 ```
-theme/index.js       (no internal imports — dark theme tokens)
-theme/theme_light.js (no internal imports — light theme tokens)
+theme/index.js       (no internal imports â€” dark theme tokens)
+theme/theme_light.js (no internal imports â€” light theme tokens)
 ```
 
 ---
@@ -1396,18 +1414,18 @@ theme/theme_light.js (no internal imports — light theme tokens)
 
 ```
 website/src/app/layout.tsx
-  → website/src/app/globals.css
-  → website/src/content.json
+  â†’ website/src/app/globals.css
+  â†’ website/src/content.json
 
 website/src/app/page.tsx
-  → website/src/content.json
-  → website/src/app/WaitlistForm.tsx
-  → website/src/app/page.module.css
-  → website/src/app/HomeSlideshow.tsx
+  â†’ website/src/content.json
+  â†’ website/src/app/WaitlistForm.tsx
+  â†’ website/src/app/page.module.css
+  â†’ website/src/app/HomeSlideshow.tsx
 
 website/src/app/WaitlistForm.tsx
-  → website/src/app/waitlist-form.module.css
-  → (env) NEXT_PUBLIC_API_BASE
+  â†’ website/src/app/waitlist-form.module.css
+  â†’ (env) NEXT_PUBLIC_API_BASE
 
 website/src/app/about/page.tsx
   (static content page)
@@ -1419,28 +1437,28 @@ website/src/app/privacy/page.tsx
   (static content page)
 
 website/src/app/books/page.tsx
-  → website/src/app/components/CategoryPage.tsx
+  â†’ website/src/app/components/CategoryPage.tsx
 
 website/src/app/collectibles/page.tsx
-  → website/src/app/components/CategoryPage.tsx
+  â†’ website/src/app/components/CategoryPage.tsx
 
 website/src/app/movies/page.tsx
-  → website/src/app/components/CategoryPage.tsx
+  â†’ website/src/app/components/CategoryPage.tsx
 
 website/src/app/video-games/page.tsx
-  → website/src/app/components/CategoryPage.tsx
+  â†’ website/src/app/components/CategoryPage.tsx
 
 website/src/app/vinyl/page.tsx
-  → website/src/app/components/CategoryPage.tsx
+  â†’ website/src/app/components/CategoryPage.tsx
 
 website/src/app/reset-password/page.tsx
-  → website/src/app/reset-password/reset-password-client.tsx
+  â†’ website/src/app/reset-password/reset-password-client.tsx
 
 website/src/app/reset-password/reset-password-client.tsx
-  → website/src/app/reset-password/reset-password.module.css
-  → next/link
-  → (env) NEXT_PUBLIC_API_BASE
-  → (env) NEXT_PUBLIC_RESET_DEEP_LINK_BASE
+  â†’ website/src/app/reset-password/reset-password.module.css
+  â†’ next/link
+  â†’ (env) NEXT_PUBLIC_API_BASE
+  â†’ (env) NEXT_PUBLIC_RESET_DEEP_LINK_BASE
 ```
 
 ### Config
@@ -1458,40 +1476,40 @@ website/.env.example     (NEXT_PUBLIC_API_BASE, NEXT_PUBLIC_RESET_DEEP_LINK_BASE
 
 ```
 admin-dashboard/src/main.jsx
-  → src/App.jsx
-  → src/context/AuthContext.jsx (AuthProvider)
-  → src/index.css
+  â†’ src/App.jsx
+  â†’ src/context/AuthContext.jsx (AuthProvider)
+  â†’ src/index.css
 ```
 
 ### App.jsx (Router)
 
 ```
 src/App.jsx
-  → src/context/AuthContext.jsx (useAuth)
-  → src/components/Layout.jsx
-  → src/pages/Login.jsx
-  → src/pages/Dashboard.jsx
-  → src/pages/Users.jsx
-  → src/pages/Content.jsx
-  → src/pages/ActivityFeed.jsx
-  → src/pages/SocialFeed.jsx
-  → src/pages/Jobs.jsx
-  → src/pages/AuditLog.jsx
-  → src/pages/Settings.jsx
+  â†’ src/context/AuthContext.jsx (useAuth)
+  â†’ src/components/Layout.jsx
+  â†’ src/pages/Login.jsx
+  â†’ src/pages/Dashboard.jsx
+  â†’ src/pages/Users.jsx
+  â†’ src/pages/Content.jsx
+  â†’ src/pages/ActivityFeed.jsx
+  â†’ src/pages/SocialFeed.jsx
+  â†’ src/pages/Jobs.jsx
+  â†’ src/pages/AuditLog.jsx
+  â†’ src/pages/Settings.jsx
 ```
 
 ### Context
 
 ```
 src/context/AuthContext.jsx
-  → src/api/client.js (login, logout, getMe)
+  â†’ src/api/client.js (login, logout, getMe)
 ```
 
 ### API Client
 
 ```
 src/api/client.js
-  (no internal imports — leaf node, uses axios)
+  (no internal imports â€” leaf node, uses axios)
   Exports: login, getMe, logout, getStats, getDetailedStats, getSystemInfo,
     getUsers, getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium,
     getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota,
@@ -1504,91 +1522,91 @@ src/api/client.js
 
 ```
 src/pages/Login.jsx
-  → src/context/AuthContext.jsx (useAuth)
+  â†’ src/context/AuthContext.jsx (useAuth)
 
 src/pages/Dashboard.jsx
-  → src/api/client.js (getStats, getSystemInfo, getDetailedStats, getRecentFeed)
-  → src/components/StatsCard.jsx
-  → src/components/UserAvatar.jsx
-  → src/utils/errorUtils.js
+  â†’ src/api/client.js (getStats, getSystemInfo, getDetailedStats, getRecentFeed)
+  â†’ src/components/StatsCard.jsx
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/utils/errorUtils.js
 
 src/pages/Users.jsx
-  → src/api/client.js (getUsers)
-  → src/components/UserTable.jsx
-  → src/components/UserDetailModal.jsx
-  → src/components/Pagination.jsx
+  â†’ src/api/client.js (getUsers)
+  â†’ src/components/UserTable.jsx
+  â†’ src/components/UserDetailModal.jsx
+  â†’ src/components/Pagination.jsx
 
 src/pages/Content.jsx
-  → src/api/client.js (getShelves)
-  → src/components/UserAvatar.jsx
-  → src/components/Pagination.jsx
-  → src/components/ShelfDetailModal.jsx
+  â†’ src/api/client.js (getShelves)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/Pagination.jsx
+  â†’ src/components/ShelfDetailModal.jsx
 
 src/pages/ActivityFeed.jsx
-  → src/api/client.js (getRecentFeed)
-  → src/components/UserAvatar.jsx
-  → src/components/Pagination.jsx
+  â†’ src/api/client.js (getRecentFeed)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/Pagination.jsx
 
 src/pages/SocialFeed.jsx
-  → src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
-  → src/components/UserAvatar.jsx
-  → src/components/Pagination.jsx
-  → src/utils/errorUtils.js
+  â†’ src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/Pagination.jsx
+  â†’ src/utils/errorUtils.js
 
 src/pages/Jobs.jsx
-  → src/api/client.js (getJobs)
-  → src/components/Pagination.jsx
-  → src/components/JobDetailModal.jsx
+  â†’ src/api/client.js (getJobs)
+  â†’ src/components/Pagination.jsx
+  â†’ src/components/JobDetailModal.jsx
 
 src/pages/AuditLog.jsx
-  → src/api/client.js (getAuditLogs)
-  → src/components/Pagination.jsx
+  â†’ src/api/client.js (getAuditLogs)
+  â†’ src/components/Pagination.jsx
 
 src/pages/Settings.jsx
-  → src/context/AuthContext.jsx (useAuth)
-  → src/api/client.js (getSettings, updateSetting)
-  → src/utils/errorUtils.js
+  â†’ src/context/AuthContext.jsx (useAuth)
+  â†’ src/api/client.js (getSettings, updateSetting)
+  â†’ src/utils/errorUtils.js
 ```
 
 ### Components
 
 ```
 src/components/Layout.jsx
-  → src/components/Sidebar.jsx
+  â†’ src/components/Sidebar.jsx
 
 src/components/Sidebar.jsx
-  → src/context/AuthContext.jsx (useAuth)
+  â†’ src/context/AuthContext.jsx (useAuth)
 
 src/components/UserTable.jsx
-  → src/components/UserAvatar.jsx
-  → src/components/UserBadge.jsx (SuspendedBadge, AdminBadge, PremiumBadge)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/UserBadge.jsx (SuspendedBadge, AdminBadge, PremiumBadge)
 
 src/components/UserDetailModal.jsx
-  → src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota)
-  → src/components/UserAvatar.jsx
-  → src/components/UserBadge.jsx (default: UserBadge)
-  → src/utils/errorUtils.js
+  â†’ src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/UserBadge.jsx (default: UserBadge)
+  â†’ src/utils/errorUtils.js
 
 src/components/JobDetailModal.jsx
-  → src/api/client.js (getJob)
-  → src/utils/errorUtils.js
+  â†’ src/api/client.js (getJob)
+  â†’ src/utils/errorUtils.js
 
 src/components/ShelfDetailModal.jsx
-  → src/api/client.js (getShelf, getShelfItems)
-  → src/components/UserAvatar.jsx
-  → src/components/Pagination.jsx
-  → src/utils/errorUtils.js
+  â†’ src/api/client.js (getShelf, getShelfItems)
+  â†’ src/components/UserAvatar.jsx
+  â†’ src/components/Pagination.jsx
+  â†’ src/utils/errorUtils.js
 
 src/components/StatsCard.jsx     (uses react-router-dom useNavigate)
-src/components/UserBadge.jsx     (leaf — no internal imports)
-src/components/UserAvatar.jsx    (leaf — no internal imports)
-src/components/Pagination.jsx    (leaf — no internal imports)
+src/components/UserBadge.jsx     (leaf â€” no internal imports)
+src/components/UserAvatar.jsx    (leaf â€” no internal imports)
+src/components/Pagination.jsx    (leaf â€” no internal imports)
 ```
 
 ### Utils
 
 ```
-src/utils/errorUtils.js          (leaf — no internal imports)
+src/utils/errorUtils.js          (leaf â€” no internal imports)
 ```
 
 ### Reverse Dependency Map (who imports each file)
@@ -1617,42 +1635,43 @@ src/utils/errorUtils.js          (leaf — no internal imports)
 
 ```
 users (UUID PK)
-  ├─< shelves (user_id FK)
-  │     ├── game_defaults (JSONB, nullable; games shelf platform/format defaults)
-  │     ├─< user_collections (shelf_id FK)
-  │     │     ├── collectables (collectable_id FK) ──> collectables table
-  │     │     └── user_manuals (manual_id FK) ──> user_manuals table
-  │     │         (CHECK: exactly one of collectable_id or manual_id)
-  │     │         (platform_missing BOOLEAN NOT NULL DEFAULT FALSE)
-  │     └─< needs_review (shelf_id FK)
-  ├─< user_manuals (user_id FK)
-  │     └── cover_media_path (S3/local)
-  ├─< user_ratings (user_id FK)
-  │     ├── collectable_id FK ──> collectables
-  │     └── manual_id FK ──> user_manuals
-  ├─< friendships (requester_id / addressee_id FK)
-  ├─< event_aggregates (user_id FK)
-  │     ├─< event_logs (aggregate_id FK)
-  │     ├─< event_likes (aggregate_id FK, user_id FK)
-  │     └─< event_comments (aggregate_id FK, user_id FK)
-  ├─< notifications (user_id FK, actor_id FK)
-  ├─< push_device_tokens (user_id FK)
-  ├── notification_preferences (user_id PK)
-  ├── user_vision_quota (user_id PK)
-  â”œâ”€< workflow_queue_jobs (user_id FK, shelf_id FK nullable)
-  ├─< password_reset_tokens (user_id FK)
-  ├─< wishlists (user_id FK)
-  │     └─< wishlist_items (wishlist_id FK)
-  ├─< user_favorites (user_id FK)
-  │     ├── collectable_id FK ──> collectables
-  │     └── manual_id FK ──> user_manuals
-  ├─< user_lists (user_id FK)
-  │     └─< user_list_items (list_id FK)
-  ├─< user_news_seen (user_id FK)
-  ├─< user_news_dismissed (user_id FK)
-  ├── profile_media (user_id FK)
-  ├── premium_locked_by_admin (BOOLEAN, default FALSE)
-  └─< admin_action_logs (admin_id FK)
+  â”œâ”€< shelves (user_id FK)
+  â”‚     â”œâ”€â”€ game_defaults (JSONB, nullable; games shelf platform/format defaults)
+  â”‚     â”œâ”€â”€ photo_storage_* + photo_updated_at (nullable shelf-level custom photo metadata)
+  â”‚     â”œâ”€< user_collections (shelf_id FK)
+  â”‚     â”‚     â”œâ”€â”€ collectables (collectable_id FK) â”€â”€> collectables table
+  â”‚     â”‚     â””â”€â”€ user_manuals (manual_id FK) â”€â”€> user_manuals table
+  â”‚     â”‚         (CHECK: exactly one of collectable_id or manual_id)
+  â”‚     â”‚         (platform_missing BOOLEAN NOT NULL DEFAULT FALSE)
+  â”‚     â””â”€< needs_review (shelf_id FK)
+  â”œâ”€< user_manuals (user_id FK)
+  â”‚     â””â”€â”€ cover_media_path (S3/local)
+  â”œâ”€< user_ratings (user_id FK)
+  â”‚     â”œâ”€â”€ collectable_id FK â”€â”€> collectables
+  â”‚     â””â”€â”€ manual_id FK â”€â”€> user_manuals
+  â”œâ”€< friendships (requester_id / addressee_id FK)
+  â”œâ”€< event_aggregates (user_id FK)
+  â”‚     â”œâ”€< event_logs (aggregate_id FK)
+  â”‚     â”œâ”€< event_likes (aggregate_id FK, user_id FK)
+  â”‚     â””â”€< event_comments (aggregate_id FK, user_id FK)
+  â”œâ”€< notifications (user_id FK, actor_id FK)
+  â”œâ”€< push_device_tokens (user_id FK)
+  â”œâ”€â”€ notification_preferences (user_id PK)
+  â”œâ”€â”€ user_vision_quota (user_id PK)
+  Ã¢â€Å“Ã¢â€â‚¬< workflow_queue_jobs (user_id FK, shelf_id FK nullable)
+  â”œâ”€< password_reset_tokens (user_id FK)
+  â”œâ”€< wishlists (user_id FK)
+  â”‚     â””â”€< wishlist_items (wishlist_id FK)
+  â”œâ”€< user_favorites (user_id FK)
+  â”‚     â”œâ”€â”€ collectable_id FK â”€â”€> collectables
+  â”‚     â””â”€â”€ manual_id FK â”€â”€> user_manuals
+  â”œâ”€< user_lists (user_id FK)
+  â”‚     â””â”€< user_list_items (list_id FK)
+  â”œâ”€< user_news_seen (user_id FK)
+  â”œâ”€< user_news_dismissed (user_id FK)
+  â”œâ”€â”€ profile_media (user_id FK)
+  â”œâ”€â”€ premium_locked_by_admin (BOOLEAN, default FALSE)
+  â””â”€< admin_action_logs (admin_id FK)
 
 job_runs (job_id TEXT PK)
   -> user_id (FK -> users.id, nullable)
@@ -1709,26 +1728,26 @@ user_collection_platforms (SERIAL PK)
   INDEX(lower(platform_name))
 
 system_settings (key VARCHAR PK)
-  ├── value (JSONB, not null)
-  ├── description (TEXT, nullable)
-  └── updated_by (FK → users.id, nullable)
+  â”œâ”€â”€ value (JSONB, not null)
+  â”œâ”€â”€ description (TEXT, nullable)
+  â””â”€â”€ updated_by (FK â†’ users.id, nullable)
 
 collectables (SERIAL PK)
   -> max_players (INTEGER, nullable)
   -> platform_data (JSONB, default `[]`)
   -> igdb_payload (JSONB, default `NULL`)
-  ├── fingerprint (SHA1 hash, unique)
-  ├── lightweight_fingerprint
-  ├── kind ∈ {book, movie, game, album}
-  ├─< editions (collectable_id FK)
-  ├─< media (collectable_id FK)
-  └─< news_items (collectable_id FK, nullable)
+  â”œâ”€â”€ fingerprint (SHA1 hash, unique)
+  â”œâ”€â”€ lightweight_fingerprint
+  â”œâ”€â”€ kind âˆˆ {book, movie, game, album}
+  â”œâ”€< editions (collectable_id FK)
+  â”œâ”€< media (collectable_id FK)
+  â””â”€< news_items (collectable_id FK, nullable)
 
 news_items (SERIAL PK)
-  ├── category, item_type, source
-  ├── expires_at (cache TTL)
-  ├─< user_news_seen (news_item_id FK)
-  └─< user_news_dismissed (news_item_id FK)
+  â”œâ”€â”€ category, item_type, source
+  â”œâ”€â”€ expires_at (cache TTL)
+  â”œâ”€< user_news_seen (news_item_id FK)
+  â””â”€< user_news_dismissed (news_item_id FK)
 ```
 
 ### Key Constraints
@@ -1738,10 +1757,11 @@ news_items (SERIAL PK)
 - `user_collections`: UNIQUE partial index on `(user_id, shelf_id, manual_id)` when `manual_id IS NOT NULL` (prevents duplicate manual links on one shelf)
 - `user_collection_platforms`: UNIQUE index on `(collection_item_id, lower(platform_name))` (prevents duplicate owned-platform chips per shelf item)
 - `user_manuals`: UNIQUE partial index on `(user_id, shelf_id, manual_fingerprint)` when `manual_fingerprint IS NOT NULL` (prevents duplicate manual rows per shelf fingerprint)
-- `friendships`: CHECK prevents self-friendship; status ∈ {pending, accepted, blocked}
-- `shelves.type` ∈ {books, movies, games, vinyl, tv, other}
-- `shelves.visibility` ∈ {private, friends, public}
+- `friendships`: CHECK prevents self-friendship; status âˆˆ {pending, accepted, blocked}
+- `shelves.type` âˆˆ {books, movies, games, vinyl, tv, other}
+- `shelves.visibility` âˆˆ {private, friends, public}
 - `shelves.game_defaults`: nullable JSONB contract for games shelf defaults (`platformType/customPlatformText/format`)
+- `shelves_photo_storage_check`: shelf photo metadata must be fully null OR a valid complete storage record (`photo_storage_provider` in `{s3,local}` + key/type/size/dimensions/updated_at)
 - `users.email`: UNIQUE constraint
 - `collectables.title`: GIN pg_trgm index for fuzzy search
 - `collectables.cast_members`: partial GIN index (`idx_collectables_cast_members_gin`) for exact cast-name containment lookups
@@ -1777,7 +1797,7 @@ news_items (SERIAL PK)
 | `20260120_add_physical_release_date` | + `news_items.physical_release_date` |
 | `20260121_add_collectable_id_to_news` | + `news_items.collectable_id` |
 | `20260121_add_collectables_genre_runtime` | + `collectables.genre[]/runtime` |
-| `20260121_normalize_shelf_types_plural` | Data migration (shelf types → plural) |
+| `20260121_normalize_shelf_types_plural` | Data migration (shelf types â†’ plural) |
 | `20260121_create_user_news_seen` | + `user_news_seen` |
 | `20260122_add_manual_id_to_ratings` | + `user_ratings.manual_id` |
 | `20260122_add_votes_to_news` | + `news_items.votes` |
@@ -1818,7 +1838,7 @@ news_items (SERIAL PK)
 | `20260325010010_add_item_replacement_traces_rls` | RLS policies for `item_replacement_traces` (`*_isolation` + `*_admin`) |
 | `20260325201500_add_reviewed_event_link_to_user_collections` | + `user_collections.reviewed_event_*` columns for review/feed event linking |
 | `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table |
-| `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default → TRUE (flips existing users), `user_collections.owner_photo_visible` default → TRUE |
+| `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default â†’ TRUE (flips existing users), `user_collections.owner_photo_visible` default â†’ TRUE |
 | `20260328000000_add_mention_notification_type` | Expand `notifications` type CHECK constraint to include `'mention'`, + `notification_preferences.push_mentions` (BOOLEAN DEFAULT TRUE) |
 | `20260329010000_add_collectables_cast_members` | + `collectables.cast_members` (JSONB) and partial GIN index `idx_collectables_cast_members_gin` for cast containment lookups |
 | `20260330010000_create_workflow_queue_jobs` | + `workflow_queue_jobs` (durable workflow queue table, claim/active-dedupe indexes, status/attempt constraints, updated_at trigger) |
@@ -1829,6 +1849,7 @@ news_items (SERIAL PK)
 | `20260331120000_add_collectables_igdb_payload` | + `collectables.igdb_payload` (JSONB) |
 | `20260331130000_add_collectables_max_players` | + `collectables.max_players` (INTEGER) |
 | `20260331190000_add_shelf_game_defaults_and_platform_missing` | + `shelves.game_defaults` (JSONB, nullable) and + `user_collections.platform_missing` (BOOLEAN NOT NULL DEFAULT FALSE) |
+| `20260401110000_add_shelf_photo_fields` | + `shelves.photo_storage_provider/photo_storage_key/photo_content_type/photo_size_bytes/photo_width/photo_height/photo_updated_at` + `shelves_photo_storage_check` |
 ---
 
 ## External Service Integrations
@@ -1859,10 +1880,10 @@ news_items (SERIAL PK)
 
 ```
 shared/
-├── theme/
-│   └── tokens.js    (ES module: colors, spacing, radii, typography, shadow)
-└── styles/
-    └── app.css
+â”œâ”€â”€ theme/
+â”‚   â””â”€â”€ tokens.js    (ES module: colors, spacing, radii, typography, shadow)
+â””â”€â”€ styles/
+    â””â”€â”€ app.css
 ```
 
 **Consumed by:**
@@ -1893,5 +1914,6 @@ These files have the most dependents or are critical infrastructure:
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
 
 ---
+
 
 

@@ -1,6 +1,8 @@
 import React, { useCallback, useContext, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
+  Image,
   Platform,
   ScrollView,
   StyleSheet,
@@ -11,9 +13,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { CategoryIcon } from '../components/ui';
+import { apiRequest, getValidToken } from '../services/api';
+import { clearShelvesListCache } from '../services/shelvesListCache';
 
 const VISIBILITY_OPTIONS = [
   { value: 'private', label: 'Private', icon: 'lock-closed' },
@@ -62,11 +67,100 @@ export default function ShelfCreateScreen({ navigation, route }) {
   const [gamePlatformType, setGamePlatformType] = useState('');
   const [customPlatformText, setCustomPlatformText] = useState('');
   const [gameFormat, setGameFormat] = useState('');
+  const [shelfPhotoAsset, setShelfPhotoAsset] = useState(null);
   const selectedType = type || 'other';
   const isOtherShelf = selectedType === 'other';
   const isGamesShelf = selectedType === 'games';
 
   const styles = createStyles({ colors, spacing, typography, shadows, radius });
+
+  const buildShelfPhotoFilename = useCallback((asset) => {
+    const uriName = String(asset?.uri || '').split('/').pop();
+    if (uriName && uriName.includes('.')) return uriName;
+    const mime = String(asset?.mimeType || '').toLowerCase();
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    return `shelf-photo-${Date.now()}.${ext}`;
+  }, []);
+
+  const uploadShelfPhotoForShelf = useCallback(async ({ shelfId, asset }) => {
+    if (!shelfId || !asset?.uri || !apiBase) return;
+    const authToken = await getValidToken(token);
+    if (!authToken) throw new Error('Authentication required');
+
+    const formData = new FormData();
+    formData.append('photo', {
+      uri: asset.uri,
+      name: buildShelfPhotoFilename(asset),
+      type: asset.mimeType || 'image/jpeg',
+    });
+
+    const response = await fetch(`${apiBase}/api/shelves/${shelfId}/photo`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'ngrok-skip-browser-warning': 'true',
+      },
+      body: formData,
+    });
+
+    const raw = await response.text();
+    let payload = {};
+    try {
+      payload = raw ? JSON.parse(raw) : {};
+    } catch (_err) {
+      payload = {};
+    }
+    if (!response.ok) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
+    clearShelvesListCache();
+  }, [apiBase, buildShelfPhotoFilename, token]);
+
+  const handlePickShelfPhoto = useCallback(async () => {
+    if (saving) return;
+
+    const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
+    const libraryPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!cameraPermission.granted && !libraryPermission.granted) {
+      Alert.alert('Permission required', 'Camera or photo library permission is required.');
+      return;
+    }
+
+    let selectedSource = null;
+    if (cameraPermission.granted && libraryPermission.granted) {
+      selectedSource = await new Promise((resolve) => {
+        Alert.alert('Shelf Photo', 'Choose photo source', [
+          { text: 'Take Photo', onPress: () => resolve('camera') },
+          { text: 'Choose from Library', onPress: () => resolve('library') },
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+        ]);
+      });
+      if (!selectedSource) return;
+    } else if (cameraPermission.granted) {
+      selectedSource = 'camera';
+    } else {
+      selectedSource = 'library';
+    }
+
+    const pickerConfig = {
+      quality: 0.8,
+      mediaTypes: ['images'],
+      allowsMultipleSelection: false,
+      exif: false,
+    };
+
+    const result = selectedSource === 'camera'
+      ? await ImagePicker.launchCameraAsync(pickerConfig)
+      : await ImagePicker.launchImageLibraryAsync(pickerConfig);
+
+    if (result.canceled) return;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) {
+      Alert.alert('Error', 'No photo selected');
+      return;
+    }
+    setShelfPhotoAsset(asset);
+  }, [saving]);
 
   const handleCreate = useCallback(async () => {
     const trimmedName = name.trim();
@@ -104,6 +198,13 @@ export default function ShelfCreateScreen({ navigation, route }) {
         payload.gameDefaults = hasValues ? gameDefaults : null;
       }
       const data = await apiRequest({ apiBase, path: '/api/shelves', method: 'POST', token, body: payload });
+      if (shelfPhotoAsset?.uri) {
+        try {
+          await uploadShelfPhotoForShelf({ shelfId: data?.shelf?.id, asset: shelfPhotoAsset });
+        } catch (uploadErr) {
+          Alert.alert('Shelf created', uploadErr?.message || 'Shelf photo failed to upload. You can retry in Edit Shelf.');
+        }
+      }
       navigation.replace('ShelfDetail', {
         id: data.shelf.id,
         title: data.shelf.name,
@@ -126,6 +227,8 @@ export default function ShelfCreateScreen({ navigation, route }) {
     gamePlatformType,
     customPlatformText,
     gameFormat,
+    shelfPhotoAsset,
+    uploadShelfPhotoForShelf,
   ]);
 
   return (
@@ -168,6 +271,48 @@ export default function ShelfCreateScreen({ navigation, route }) {
               editable={!saving}
               autoFocus
             />
+          </View>
+
+          <View style={styles.shelfPhotoCard}>
+            <View style={styles.shelfPhotoMedia}>
+              {shelfPhotoAsset?.uri ? (
+                <Image source={{ uri: shelfPhotoAsset.uri }} style={styles.shelfPhotoImage} />
+              ) : (
+                <View style={styles.shelfPhotoFallback}>
+                  <CategoryIcon type={selectedType || 'other'} size={28} />
+                </View>
+              )}
+            </View>
+            <View style={styles.shelfPhotoContent}>
+              <Text style={styles.shelfPhotoTitle}>Shelf Photo</Text>
+              <Text style={styles.shelfPhotoSubtitle}>
+                {shelfPhotoAsset?.uri
+                  ? 'Selected photo will upload right after shelf creation.'
+                  : 'Optional. Add a custom image for this shelf.'}
+              </Text>
+              <View style={styles.shelfPhotoActions}>
+                <TouchableOpacity
+                  style={[styles.shelfPhotoButton, saving && styles.shelfPhotoButtonDisabled]}
+                  onPress={handlePickShelfPhoto}
+                  disabled={saving}
+                >
+                  <Ionicons name="image-outline" size={16} color={colors.primary} />
+                  <Text style={styles.shelfPhotoButtonText}>
+                    {shelfPhotoAsset?.uri ? 'Replace' : 'Upload'}
+                  </Text>
+                </TouchableOpacity>
+                {shelfPhotoAsset?.uri ? (
+                  <TouchableOpacity
+                    style={[styles.shelfPhotoRemoveButton, saving && styles.shelfPhotoButtonDisabled]}
+                    onPress={() => setShelfPhotoAsset(null)}
+                    disabled={saving}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={colors.error} />
+                    <Text style={styles.shelfPhotoRemoveText}>Remove</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
           </View>
 
           {/* Type Selection */}
@@ -307,7 +452,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
             disabled={saving || !name.trim()}
           >
             {saving ? (
-              <Text style={styles.createButtonText}>Creating...</Text>
+              <Text style={styles.createButtonText}>{shelfPhotoAsset?.uri ? 'Creating & Uploading...' : 'Creating...'}</Text>
             ) : (
               <>
                 <Ionicons name="add-circle" size={20} color={colors.textInverted} />
@@ -424,6 +569,88 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   chipTextActive: {
     color: colors.textInverted,
     fontWeight: '500',
+  },
+  shelfPhotoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    marginBottom: spacing.lg,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.md,
+    ...shadows.sm,
+  },
+  shelfPhotoMedia: {
+    width: 84,
+    height: 84,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: colors.surfaceElevated,
+  },
+  shelfPhotoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  shelfPhotoFallback: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.primary + '12',
+  },
+  shelfPhotoContent: {
+    flex: 1,
+  },
+  shelfPhotoTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  shelfPhotoSubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  shelfPhotoActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  shelfPhotoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.primary + '55',
+    backgroundColor: colors.primary + '10',
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  shelfPhotoButtonText: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  shelfPhotoRemoveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.error + '55',
+    backgroundColor: colors.error + '10',
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  shelfPhotoRemoveText: {
+    fontSize: 12,
+    color: colors.error,
+    fontWeight: '600',
+  },
+  shelfPhotoButtonDisabled: {
+    opacity: 0.55,
   },
   defaultsCard: {
     marginBottom: spacing.lg,

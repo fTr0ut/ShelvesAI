@@ -5,6 +5,16 @@
             "progress": 10,
             "message": "Taking a look..."
         },
+        "extractingInFlight": {
+            "step": "extracting-in-flight",
+            "progress": 20,
+            "message": "Still analyzing your photo..."
+        },
+        "extractingDeepParse": {
+            "step": "extracting-deep-parse",
+            "progress": 30,
+            "message": "Parsing detected items..."
+        },
         "extractingSecondPass": {
             "step": "extracting-second-pass",
             "progress": 40,

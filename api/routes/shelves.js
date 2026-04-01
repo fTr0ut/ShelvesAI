@@ -85,6 +85,10 @@ router.get('/search', validateStringLengths({ q: 500 }, { source: 'query' }), ct
 router.get('/:shelfId', shelfIntParam, ctrl.getShelf);
 router.put('/:shelfId', shelfIntParam, validateStringLengths({ name: 500, description: 5000 }), ctrl.updateShelf);
 router.delete('/:shelfId', shelfIntParam, ctrl.deleteShelf);
+router.get('/:shelfId/photo', shelfIntParam, ctrl.getShelfPhoto);
+router.get('/:shelfId/photo/image', shelfIntParam, ctrl.getShelfPhotoImage);
+router.post('/:shelfId/photo', shelfIntParam, upload.single('photo'), ctrl.uploadShelfPhoto);
+router.delete('/:shelfId/photo', shelfIntParam, ctrl.deleteShelfPhoto);
 
 router.get('/:shelfId/items', shelfIntParam, ctrl.listShelfItems);
 router.post('/:shelfId/manual/search', shelfIntParam, ctrl.searchManualEntry);

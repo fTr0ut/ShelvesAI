@@ -19,6 +19,8 @@
 
 -~~When shelf = 'other', the AI progress modal window only stays at 10% the entire process. Flesh out the progress status updates further to make the process seem less stale.~~ **DONE 3/25/26** - Added dedicated `other`-workflow progress stages in `visionProgressMessages.json` (`extractingSecondPass`, `matchingOther`, `reviewingOther`) and updated `VisionPipelineService` to use monotonic, `other`-specific status updates (including second-pass extraction), preventing long-running `other` scans from appearing stuck at 10%.
 
+-~~Vision scan modal appears stalled at 10% for large-item photos, then jumps to 50% once parsing returns. Add intermediate progress states between 10% and 50% during extraction.~~ **DONE 4/1/26** - Added backend extraction heartbeat progress stages in `api/config/visionProgressMessages.json` (`extractingInFlight` at 20%, `extractingDeepParse` at 30%) and wired `VisionPipelineService.processImage()` to schedule/clear timed heartbeat updates (3s/9s) only while OCR extraction is still running. Kept mobile modal rendering unchanged, preserved queue/status endpoint contracts, and added regression coverage in `api/__tests__/visionPipeline.test.js` for both long-running extraction heartbeat emission and fast-extraction no-heartbeat behavior.
+
 
 -~~Add a submit Feedback button in the Account Settings that provides a prompt for the user to fill out. Pass the details via Resend to support@shelvesai.com.~~ **DONE 3/25/26** 
 
