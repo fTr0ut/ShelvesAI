@@ -13,6 +13,7 @@ const {
 const { HardcoverClient } = require('../hardcover');
 const { supportsShelfType: shelfTypeSupports } = require('../config/shelfTypeResolver');
 const logger = require('../../logger');
+const { CatalogProvidersUnavailableError } = require('./errors');
 
 // Config-driven router (optional, for gradual migration)
 let catalogRouter = null;
@@ -81,18 +82,22 @@ class BookCatalogService {
     const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
     const results = [];
     let index = 0;
+    let fatalError = null;
 
     // Use config-driven router if enabled
     const lookupFn = this.useRouter
-      ? (item, retries) => this.routerLookup(item, retries)
+      ? (item, retries, lookupOptions) => this.routerLookup(item, retries, lookupOptions)
       : (item, retries) => this.safeLookup(item, retries);
 
     const worker = async () => {
       while (index < items.length) {
+        if (fatalError) break;
         const currentIndex = index++;
         const input = items[currentIndex];
         try {
-          const value = await lookupFn(input, options.retries);
+          const value = await lookupFn(input, options.retries, {
+            catalogContext: options.catalogContext || null,
+          });
           if (value) {
             results[currentIndex] = {
               status: 'resolved',
@@ -103,6 +108,12 @@ class BookCatalogService {
             results[currentIndex] = { status: 'unresolved', input };
           }
         } catch (err) {
+          if (err?.code === 'CATALOG_PROVIDERS_UNAVAILABLE') {
+            fatalError = err instanceof CatalogProvidersUnavailableError
+              ? err
+              : new CatalogProvidersUnavailableError(err?.message, err?.details || {});
+            break;
+          }
           logger.error('[BookCatalogService.lookupFirstPass] failed', err?.message || err);
           results[currentIndex] = { status: 'unresolved', input };
         }
@@ -110,6 +121,9 @@ class BookCatalogService {
     };
 
     await Promise.all(Array.from({ length: concurrency }, worker));
+    if (fatalError) {
+      throw fatalError;
+    }
     return results;
   }
 
@@ -117,7 +131,7 @@ class BookCatalogService {
    * Router-based lookup using config-driven API priority
    * Falls back to safeLookup if router is not available
    */
-  async routerLookup(item, retries = DEFAULT_RETRIES) {
+  async routerLookup(item, retries = DEFAULT_RETRIES, options = {}) {
     const router = getCatalogRouter();
     if (!router) {
       logger.warn('[BookCatalogService.routerLookup] Router not available, falling back to safeLookup');
@@ -125,9 +139,15 @@ class BookCatalogService {
     }
 
     try {
-      const result = await router.lookup(item, 'books', { retries });
+      const result = await router.lookup(item, 'books', {
+        retries,
+        catalogContext: options.catalogContext || null,
+      });
       return result;
     } catch (err) {
+      if (err?.code === 'CATALOG_PROVIDERS_UNAVAILABLE') {
+        throw err;
+      }
       logger.error('[BookCatalogService.routerLookup] failed:', err?.message || err);
       return null;
     }

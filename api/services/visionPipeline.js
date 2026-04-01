@@ -718,6 +718,36 @@ function buildSaveSourceKey(item, scanPhotoId = null) {
     return `scan:${scanKey}|idx:${extractionIndex}`;
 }
 
+function summarizeCatalogCircuitBreaker(catalogContext) {
+    const breaker = catalogContext?.providerCircuitBreaker;
+    if (!breaker || !(breaker.providersByContainer instanceof Map)) {
+        return null;
+    }
+
+    const containers = {};
+    breaker.providersByContainer.forEach((providerMap, containerType) => {
+        if (!(providerMap instanceof Map)) return;
+        const trippedProviders = [];
+        providerMap.forEach((state, provider) => {
+            if (state?.tripped !== true) return;
+            trippedProviders.push({
+                provider,
+                reason: state.reason || null,
+                statusCode: Number.isFinite(Number(state.statusCode)) ? Number(state.statusCode) : null,
+            });
+        });
+        if (trippedProviders.length > 0) {
+            containers[containerType] = trippedProviders;
+        }
+    });
+
+    const hasContainers = Object.keys(containers).length > 0;
+    return {
+        trippedProvidersByContainer: hasContainers ? containers : undefined,
+        diagnostics: breaker.diagnostics || undefined,
+    };
+}
+
 class VisionPipelineService {
     constructor(options = {}) {
         this.ocrEnabled = options.ocrEnabled ?? (process.env.VISION_OCR_ENABLED !== 'false');
@@ -841,10 +871,20 @@ class VisionPipelineService {
         const saveTracking = {
             savedSourceKeys: new Set(),
             firstLinkedRegionByCollectionItemId: new Map(),
+            resolvedCatalogGroupReuse: new Map(),
             attemptedSaves: 0,
             savedUniqueRegions: 0,
             duplicateSourceSkipped: 0,
             duplicateRegionLinkSkipped: 0,
+            groupReuseSkippedWrites: 0,
+        };
+        const catalogContext = (
+            resolvedOptions.catalogContext && typeof resolvedOptions.catalogContext === 'object'
+        ) ? resolvedOptions.catalogContext : {
+            jobId: jobId || null,
+            userId,
+            shelfId: shelf.id,
+            shelfType: shelf.type,
         };
         const baseHookContext = {
             jobId,
@@ -857,6 +897,7 @@ class VisionPipelineService {
             scanPhotoId,
             scanPhotoDimensions,
             saveTracking,
+            catalogContext,
         };
 
         // Step 1: Extract items from image
@@ -1251,7 +1292,9 @@ class VisionPipelineService {
         if (unmatchedHigh.length > 0) {
             if (this.catalogEnabled) {
                 logger.info('[VisionPipeline] Step 3: Catalog lookup for', unmatchedHigh.length, 'unmatched high-confidence items...');
-                catalogResults = await this.lookupCatalog(unmatchedHigh, shelf.type);
+                catalogResults = await this.lookupCatalog(unmatchedHigh, shelf.type, {
+                    catalogContext,
+                });
                 logger.info('[VisionPipeline] Step 3 Complete: Catalog resolved:', catalogResults.resolved.length, ', Still unresolved:', catalogResults.unresolved.length);
                 // Fan back out to all original extraction entries
                 catalogResults.resolved = fanOutResolvedItems(catalogResults.resolved, highGroupMap);
@@ -1393,7 +1436,9 @@ class VisionPipelineService {
             if (this.catalogEnabled) {
                 updateProgress('catalog', { count: mediumUnmatched.length });
                 logger.info('[VisionPipeline] Step 4c: Catalog lookup for', mediumUnmatched.length, 'medium-confidence items...');
-                mediumCatalogResults = await this.lookupCatalog(mediumUnmatched, shelf.type);
+                mediumCatalogResults = await this.lookupCatalog(mediumUnmatched, shelf.type, {
+                    catalogContext,
+                });
                 logger.info('[VisionPipeline] Step 4c Complete: Catalog resolved:', mediumCatalogResults.resolved.length, ', Still unresolved:', mediumCatalogResults.unresolved.length);
                 // Fan back out to all original extraction entries
                 mediumCatalogResults.resolved = fanOutResolvedItems(mediumCatalogResults.resolved, midGroupMap);
@@ -1661,6 +1706,7 @@ class VisionPipelineService {
             savedUniqueRegions: saveTracking.savedUniqueRegions,
             duplicateSourceSkipped: saveTracking.duplicateSourceSkipped,
             duplicateRegionLinkSkipped: saveTracking.duplicateRegionLinkSkipped,
+            groupReuseSkippedWrites: saveTracking.groupReuseSkippedWrites,
             duplicateItemRowsCollapsed,
             failedToReview: saveFailedItems.length,
         });
@@ -1726,6 +1772,14 @@ class VisionPipelineService {
 
         const totalNeedsReview = reviewQueueItems.length;
         const existingItemsCount = manualMatched.length;
+        const catalogDiagnostics = summarizeCatalogCircuitBreaker(catalogContext);
+        if (catalogDiagnostics?.trippedProvidersByContainer) {
+            logger.info('[VisionPipeline] Catalog provider diagnostics summary', {
+                jobId: catalogContext?.jobId || null,
+                shelfType: shelf.type,
+                ...catalogDiagnostics,
+            });
+        }
         logger.info('[VisionPipeline] === processImage Complete ===', {
             extracted: extractedCount,
             added: addedItems.length,
@@ -1735,6 +1789,7 @@ class VisionPipelineService {
             savedUniqueRegions: saveTracking.savedUniqueRegions,
             duplicateSourceSkipped: saveTracking.duplicateSourceSkipped,
             duplicateRegionLinkSkipped: saveTracking.duplicateRegionLinkSkipped,
+            groupReuseSkippedWrites: saveTracking.groupReuseSkippedWrites,
             duplicateItemRowsCollapsed,
             saveFailedToReview: saveFailedItems.length,
         });
@@ -1966,9 +2021,10 @@ class VisionPipelineService {
         };
     }
 
-    async lookupCatalog(items, shelfType) {
+    async lookupCatalog(items, shelfType, options = {}) {
         logger.info('[VisionPipeline.lookupCatalog] Starting catalog lookup for', items.length, 'items, shelfType:', shelfType);
         const catalogService = this.resolveCatalogServiceForShelf(shelfType);
+        const catalogContext = options?.catalogContext || null;
         if (!catalogService) {
             logger.info('[VisionPipeline.lookupCatalog] No catalog service available for shelfType:', shelfType);
             return { resolved: [], unresolved: items };
@@ -1980,7 +2036,9 @@ class VisionPipelineService {
             const unresolved = [];
             try {
                 logger.info('[VisionPipeline.lookupCatalog] Calling lookupFirstPass (OpenLibrary -> Hardcover)...');
-                const results = await catalogService.lookupFirstPass(items);
+                const results = await catalogService.lookupFirstPass(items, {
+                    catalogContext,
+                });
                 const entries = Array.isArray(results) ? results : [];
                 logger.info('[VisionPipeline.lookupCatalog] lookupFirstPass returned', entries.length, 'entries');
 
@@ -2046,6 +2104,14 @@ class VisionPipelineService {
                 logger.info('[VisionPipeline.lookupCatalog] Summary: resolved:', resolved.length, 'unresolved:', unresolved.length);
                 return { resolved, unresolved };
             } catch (err) {
+                if (err?.code === 'CATALOG_PROVIDERS_UNAVAILABLE') {
+                    logger.error('[VisionPipeline.lookupCatalog] all providers unavailable', {
+                        shelfType,
+                        jobId: catalogContext?.jobId || null,
+                        message: err?.message || String(err),
+                    });
+                    throw err;
+                }
                 logger.error('[VisionPipeline.lookupCatalog] lookupFirstPass failed:', err.message || err);
                 return { resolved: [], unresolved: items };
             }
@@ -2421,6 +2487,27 @@ class VisionPipelineService {
                 saveTracking.attemptedSaves += 1;
             }
 
+            const ocrGroupKey = normalizeString(item?._ocrGroupKey);
+            const canReuseGroupResult = item?._skipRematch && ocrGroupKey
+                && saveTracking?.resolvedCatalogGroupReuse instanceof Map;
+            if (canReuseGroupResult && saveTracking.resolvedCatalogGroupReuse.has(ocrGroupKey)) {
+                const reused = saveTracking.resolvedCatalogGroupReuse.get(ocrGroupKey);
+                if (saveTracking) {
+                    saveTracking.groupReuseSkippedWrites += 1;
+                    saveTracking.savedUniqueRegions += 1;
+                }
+                logger.info('[VisionPipeline.saveToShelf] Reusing prior resolved catalog item for OCR duplicate group', {
+                    shelfId,
+                    groupKey: ocrGroupKey,
+                    title: item?.title || item?.name || null,
+                    collectableId: reused?.collectableId || null,
+                    collectionItemId: reused?.collectionItemId || null,
+                });
+                await this.linkRegionToCollectable(item, reused?.collectableId || null, hookContext);
+                await this.linkRegionToCollectionItem(item, reused?.collectionItemId || null, hookContext);
+                continue;
+            }
+
             try {
                 // Check if item already has a collectable from Step 2 (database match)
                 let collectable = item.collectable || null;
@@ -2608,6 +2695,12 @@ class VisionPipelineService {
                     });
                     await this.linkRegionToCollectable(item, collectable.id, hookContext);
                     await this.linkRegionToCollectionItem(item, savedShelfItem?.id, hookContext);
+                    if (item?._skipRematch && ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
+                        saveTracking.resolvedCatalogGroupReuse.set(ocrGroupKey, {
+                            collectableId: collectable.id,
+                            collectionItemId: savedShelfItem?.id || null,
+                        });
+                    }
 
                     added.push({
                         ...item,
@@ -2668,6 +2761,12 @@ class VisionPipelineService {
                 });
                 await this.linkRegionToCollectable(item, collectable.id, hookContext);
                 await this.linkRegionToCollectionItem(item, shelfItem?.id, hookContext);
+                if (item?._skipRematch && ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
+                    saveTracking.resolvedCatalogGroupReuse.set(ocrGroupKey, {
+                        collectableId: collectable.id,
+                        collectionItemId: shelfItem?.id || null,
+                    });
+                }
 
                 added.push({
                     ...item,

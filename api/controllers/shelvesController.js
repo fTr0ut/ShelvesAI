@@ -35,6 +35,7 @@ const itemReplacementTracesQueries = require('../database/queries/itemReplacemen
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const { getWorkflowQueueService } = require('../services/workflowQueueService');
 const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
+const { CatalogProvidersUnavailableError } = require('../services/catalog/errors');
 const { extractRegionCrop } = require('../services/visionCropper');
 const { validateImageBuffer } = require('../utils/imageValidation');
 const {
@@ -3268,7 +3269,7 @@ function queueVisionCropWarmup({ userId, shelfId, shelfType = null, scanPhotoId,
   });
 }
 
-function buildPipelineOptions({ rawItems, scanPhotoId, scanPhotoDimensions, abortCheck = null }) {
+function buildPipelineOptions({ rawItems, scanPhotoId, scanPhotoDimensions, abortCheck = null, catalogContext = null }) {
   const options = {};
   if (Array.isArray(rawItems) && rawItems.length > 0) {
     options.rawItems = rawItems;
@@ -3283,7 +3284,44 @@ function buildPipelineOptions({ rawItems, scanPhotoId, scanPhotoDimensions, abor
   if (typeof abortCheck === 'function') {
     options.abortCheck = abortCheck;
   }
+  if (catalogContext && typeof catalogContext === 'object') {
+    options.catalogContext = catalogContext;
+  }
   return Object.keys(options).length > 0 ? options : null;
+}
+
+async function cleanupVisionArtifactsForRetry({ userId, shelfId, imageSha256, jobId = null }) {
+  if (!userId || !shelfId || !imageSha256) return;
+
+  try {
+    await visionResultCacheQueries.deleteByHash({
+      userId,
+      shelfId,
+      imageSha256,
+    });
+  } catch (err) {
+    logger.warn('[Vision] Failed to delete vision cache hash during retry cleanup', {
+      jobId,
+      shelfId,
+      hashPrefix: String(imageSha256).slice(0, 12),
+      message: err?.message || String(err),
+    });
+  }
+
+  try {
+    await visionScanPhotosQueries.deleteByHash({
+      userId,
+      shelfId,
+      imageSha256,
+    });
+  } catch (err) {
+    logger.warn('[Vision] Failed to delete scan photo hash during retry cleanup', {
+      jobId,
+      shelfId,
+      hashPrefix: String(imageSha256).slice(0, 12),
+      message: err?.message || String(err),
+    });
+  }
 }
 
 async function runVisionPipelineJob({
@@ -3300,78 +3338,102 @@ async function runVisionPipelineJob({
 }) {
   const hooks = getVisionPipelineHooks();
   const pipeline = new VisionPipelineService({ hooks });
+  const catalogContext = {
+    jobId: jobId || null,
+    userId,
+    shelfId: shelf.id,
+    shelfType: shelf.type,
+    imageHashPrefix: imageSha256 ? String(imageSha256).slice(0, 12) : null,
+  };
   const resolvedPipelineOptions = buildPipelineOptions({
     rawItems,
     scanPhotoId,
     scanPhotoDimensions,
     abortCheck,
+    catalogContext,
   });
+  try {
+    const result = await pipeline.processImage(
+      imageBase64,
+      shelf,
+      userId,
+      jobId,
+      resolvedPipelineOptions,
+    );
+    const counts = buildVisionCounts(result);
 
-  const result = await pipeline.processImage(
-    imageBase64,
-    shelf,
-    userId,
-    jobId,
-    resolvedPipelineOptions,
-  );
-  const counts = buildVisionCounts(result);
-
-  if (isCloudVision) {
-    try {
-      await visionQuotaQueries.incrementUsage(userId);
-    } catch (quotaErr) {
-      logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
+    if (isCloudVision) {
+      try {
+        await visionQuotaQueries.incrementUsage(userId);
+      } catch (quotaErr) {
+        logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
+      }
     }
-  }
 
-  if (isCloudVision && imageSha256) {
-    try {
-      await visionResultCacheQueries.set({
+    if (isCloudVision && imageSha256) {
+      try {
+        await visionResultCacheQueries.set({
+          userId,
+          shelfId: shelf.id,
+          imageSha256,
+          resultJson: {
+            analysis: result.analysis,
+            results: result.results,
+            addedItems: result.addedItems,
+            needsReview: result.needsReview,
+            warnings: result.warnings,
+          },
+        });
+      } catch (cacheWriteErr) {
+        if (cacheWriteErr?.code !== '42P01') {
+          logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
+        }
+      }
+    }
+
+    if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
+      processingStatus.updateJob(jobId, {
+        step: 'generating-photos',
+        progress: 95,
+        message: 'Generating item photos...',
+        status: 'processing',
+      });
+      await warmVisionScanCrops({
+        userId,
+        shelfId: shelf.id,
+        shelfType: shelf.type,
+        scanPhotoId,
+        jobId,
+      });
+    }
+
+    const output = {
+      analysis: result.analysis,
+      results: result.results,
+      addedItems: result.addedItems,
+      needsReview: result.needsReview,
+      ...counts,
+      warnings: result.warnings,
+      scanPhotoId,
+    };
+    processingStatus.completeJob(jobId, output);
+    return output;
+  } catch (err) {
+    if (isCloudVision && imageSha256 && err?.code === 'CATALOG_PROVIDERS_UNAVAILABLE') {
+      logger.warn('[Vision] All catalog providers unavailable; purging hash artifacts for retry', {
+        jobId,
+        shelfId: shelf.id,
+        hashPrefix: String(imageSha256).slice(0, 12),
+      });
+      await cleanupVisionArtifactsForRetry({
         userId,
         shelfId: shelf.id,
         imageSha256,
-        resultJson: {
-          analysis: result.analysis,
-          results: result.results,
-          addedItems: result.addedItems,
-          needsReview: result.needsReview,
-          warnings: result.warnings,
-        },
+        jobId,
       });
-    } catch (cacheWriteErr) {
-      if (cacheWriteErr?.code !== '42P01') {
-        logger.warn('[Vision] Cache write failed:', cacheWriteErr?.message || cacheWriteErr);
-      }
     }
+    throw err;
   }
-
-  if (VISION_CROP_WARMUP_ENABLED && scanPhotoId) {
-    processingStatus.updateJob(jobId, {
-      step: 'generating-photos',
-      progress: 95,
-      message: 'Generating item photos...',
-      status: 'processing',
-    });
-    await warmVisionScanCrops({
-      userId,
-      shelfId: shelf.id,
-      shelfType: shelf.type,
-      scanPhotoId,
-      jobId,
-    });
-  }
-
-  const output = {
-    analysis: result.analysis,
-    results: result.results,
-    addedItems: result.addedItems,
-    needsReview: result.needsReview,
-    ...counts,
-    warnings: result.warnings,
-    scanPhotoId,
-  };
-  processingStatus.completeJob(jobId, output);
-  return output;
 }
 
 async function processQueuedVisionWorkflowJob(job, { shouldAbort }) {
@@ -3750,6 +3812,12 @@ async function processShelfVision(req, res) {
     });
   } catch (err) {
     logger.error("Vision analysis failed", err);
+    if (err?.code === 'CATALOG_PROVIDERS_UNAVAILABLE' || err instanceof CatalogProvidersUnavailableError) {
+      return res.status(503).json({
+        error: err?.message || 'Catalog providers are temporarily unavailable. Please try this scan again later.',
+        code: 'CATALOG_PROVIDERS_UNAVAILABLE',
+      });
+    }
     return res.status(502).json({ error: "Vision analysis failed" });
   }
 }

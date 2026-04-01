@@ -7,6 +7,7 @@
 const { HardcoverClient } = require('../../hardcover');
 const { hardcoverToCollectable } = require('../../../adapters/hardcover.adapter');
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
+const { isHardProviderError } = require('../providerErrorUtils');
 const logger = require('../../../logger');
 
 function normalizeString(value) {
@@ -65,6 +66,9 @@ class HardcoverAdapter {
                 }
             } catch (err) {
                 logger.warn(`[HardcoverAdapter] ISBN lookup failed for ${isbn}:`, err.message);
+                if (isHardProviderError(err)) {
+                    throw err;
+                }
                 // Continue to next ISBN
             }
         }
@@ -82,6 +86,9 @@ class HardcoverAdapter {
                 }
             } catch (err) {
                 logger.warn('[HardcoverAdapter] Title/author lookup failed:', err.message);
+                if (isHardProviderError(err)) {
+                    throw err;
+                }
             }
         }
 
@@ -101,6 +108,9 @@ class HardcoverAdapter {
             }
         } catch (err) {
             logger.warn('[HardcoverAdapter] lookupByIsbn failed:', err.message);
+            if (isHardProviderError(err)) {
+                throw err;
+            }
         }
         return null;
     }
@@ -118,6 +128,9 @@ class HardcoverAdapter {
             }
         } catch (err) {
             logger.warn('[HardcoverAdapter] lookupByTitleAuthor failed:', err.message);
+            if (isHardProviderError(err)) {
+                throw err;
+            }
         }
         return null;
     }

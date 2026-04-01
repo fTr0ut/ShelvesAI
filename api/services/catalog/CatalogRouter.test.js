@@ -2,6 +2,7 @@
 
 const { CatalogRouter } = require('./CatalogRouter');
 const { MetadataScorer } = require('./MetadataScorer');
+const { CatalogProvidersUnavailableError } = require('./errors');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -15,6 +16,15 @@ function makeAdapter(results) {
             const result = results[callIndex] ?? null;
             callIndex++;
             return result;
+        }),
+    };
+}
+
+function makeThrowingAdapter(error) {
+    return {
+        isConfigured: () => true,
+        lookup: jest.fn(async () => {
+            throw error;
         }),
     };
 }
@@ -326,6 +336,71 @@ describe('CatalogRouter._lookupFallback — universal scoring via MetadataScorer
 
             expect(adapter1.lookup).not.toHaveBeenCalled();
             expect(result).not.toBeNull();
+        });
+    });
+
+    describe('provider circuit breaker', () => {
+        it('trips provider on first hard error and skips provider on later lookups in same context', async () => {
+            const hardError = new Error('OpenLibrary request failed with 503');
+            router = new CatalogRouter({ config: makeConfig('books') });
+            adapter1 = makeThrowingAdapter(hardError);
+            adapter2 = makeAdapter([
+                {
+                    title: 'Fallback One',
+                    primaryCreator: 'Author',
+                    publishers: ['Pub'],
+                    year: '2024',
+                    description: 'Fallback metadata with enough detail for score.',
+                    coverImageUrl: 'https://example.com/fallback-1.jpg',
+                },
+                {
+                    title: 'Fallback Two',
+                    primaryCreator: 'Author',
+                    publishers: ['Pub'],
+                    year: '2024',
+                    description: 'Fallback metadata with enough detail for score.',
+                    coverImageUrl: 'https://example.com/fallback-2.jpg',
+                },
+            ]);
+            router._adapterFactories = { api1: () => adapter1, api2: () => adapter2 };
+
+            const catalogContext = { jobId: 'job-1' };
+            await router.lookup({ title: 'Book A' }, 'books', { catalogContext });
+            await router.lookup({ title: 'Book B' }, 'books', { catalogContext });
+
+            expect(adapter1.lookup).toHaveBeenCalledTimes(1);
+            expect(adapter2.lookup).toHaveBeenCalledTimes(2);
+        });
+
+        it('does not trip provider on null no-result responses', async () => {
+            router = new CatalogRouter({ config: makeConfig('books') });
+            adapter1 = makeAdapter([null, null]);
+            adapter2 = makeAdapter([null, null]);
+            router._adapterFactories = { api1: () => adapter1, api2: () => adapter2 };
+
+            const catalogContext = { jobId: 'job-2' };
+            await router.lookup({ title: 'Book A' }, 'books', { catalogContext });
+            await router.lookup({ title: 'Book B' }, 'books', { catalogContext });
+
+            expect(adapter1.lookup).toHaveBeenCalledTimes(2);
+            expect(adapter2.lookup).toHaveBeenCalledTimes(2);
+        });
+
+        it('throws unavailable error when all configured providers are tripped', async () => {
+            router = new CatalogRouter({ config: makeConfig('books') });
+            adapter1 = makeThrowingAdapter(new Error('OpenLibrary request failed with 503'));
+            adapter2 = makeThrowingAdapter(new Error('Hardcover API failed with status 503'));
+            router._adapterFactories = { api1: () => adapter1, api2: () => adapter2 };
+
+            const catalogContext = { jobId: 'job-3' };
+
+            await expect(
+                router.lookup({ title: 'Book A' }, 'books', { catalogContext })
+            ).rejects.toMatchObject({ code: 'CATALOG_PROVIDERS_UNAVAILABLE' });
+
+            await expect(
+                router.lookup({ title: 'Book B' }, 'books', { catalogContext })
+            ).rejects.toBeInstanceOf(CatalogProvidersUnavailableError);
         });
     });
 });

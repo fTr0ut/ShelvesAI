@@ -25,11 +25,13 @@ jest.mock('../database/queries/shelves');
 jest.mock('../database/queries/visionResultCache', () => ({
     getValid: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue(null),
+    deleteByHash: jest.fn().mockResolvedValue(0),
 }));
 jest.mock('../database/queries/visionScanPhotos', () => ({
     upsertFromBuffer: jest.fn().mockResolvedValue({ id: 77 }),
     getByIdForUser: jest.fn().mockResolvedValue(null),
     loadImageBuffer: jest.fn(),
+    deleteByHash: jest.fn().mockResolvedValue({ deleted: false, deletedRows: 0 }),
 }));
 jest.mock('../database/queries/visionItemRegions', () => ({
     countForScan: jest.fn().mockResolvedValue(0),
@@ -201,9 +203,11 @@ describe('shelvesController', () => {
         itemReplacementTracesQueries.markFailed.mockReset();
         visionResultCacheQueries.getValid.mockReset();
         visionResultCacheQueries.set.mockReset();
+        visionResultCacheQueries.deleteByHash.mockReset();
         visionScanPhotosQueries.upsertFromBuffer.mockReset();
         visionScanPhotosQueries.getByIdForUser.mockReset();
         visionScanPhotosQueries.loadImageBuffer.mockReset();
+        visionScanPhotosQueries.deleteByHash.mockReset();
         workflowQueueJobsQueries.enqueueJob.mockReset();
         workflowQueueJobsQueries.findActiveByDedupeKey.mockReset();
         workflowQueueJobsQueries.getByJobIdForUser.mockReset();
@@ -235,7 +239,9 @@ describe('shelvesController', () => {
         shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'book' });
         shelvesQueries.getItems.mockResolvedValue([]);
         visionResultCacheQueries.getValid.mockResolvedValue(null);
+        visionResultCacheQueries.deleteByHash.mockResolvedValue(0);
         visionScanPhotosQueries.upsertFromBuffer.mockResolvedValue({ id: 77 });
+        visionScanPhotosQueries.deleteByHash.mockResolvedValue({ deleted: false, deletedRows: 0 });
         workflowQueueJobsQueries.enqueueJob.mockResolvedValue({
             jobId: 'test-job-id',
             status: 'queued',
@@ -1735,6 +1741,31 @@ describe('shelvesController', () => {
                 items: expect.any(Array)
             }));
             expect(shelvesQueries.getItems).toHaveBeenCalled();
+        });
+
+        it('returns 503 and purges image hash artifacts when all catalog providers are unavailable', async () => {
+            mockPipelineInstance.processImage.mockRejectedValue(
+                Object.assign(new Error('Catalog providers are temporarily unavailable. Please try this scan again later.'), {
+                    code: 'CATALOG_PROVIDERS_UNAVAILABLE',
+                }),
+            );
+
+            await shelvesController.processShelfVision(req, res);
+
+            expect(visionResultCacheQueries.deleteByHash).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                shelfId: 10,
+                imageSha256: expect.any(String),
+            }));
+            expect(visionScanPhotosQueries.deleteByHash).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                shelfId: 10,
+                imageSha256: expect.any(String),
+            }));
+            expect(res.status).toHaveBeenCalledWith(503);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                code: 'CATALOG_PROVIDERS_UNAVAILABLE',
+            }));
         });
 
         it('returns cached result and skips pipeline processing when image hash matches', async () => {

@@ -4,6 +4,7 @@ const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
 const { validateImageBuffer } = require('../../utils/imageValidation');
+const logger = require('../../logger');
 
 const API_ROOT = path.resolve(__dirname, '..', '..');
 const RAW_PRIVATE_ROOT = process.env.VISION_PRIVATE_STORAGE_DIR || path.join(API_ROOT, 'private-storage');
@@ -171,10 +172,60 @@ async function loadImageBuffer(scanPhoto) {
   throw new Error(`Unsupported scan photo storage provider: ${scanPhoto.storageProvider}`);
 }
 
+async function deleteStoredScanPhotoAsset(scanPhoto) {
+  if (!scanPhoto?.storageKey) return;
+
+  if (scanPhoto.storageProvider === 's3') {
+    await s3.deleteObject(scanPhoto.storageKey);
+    return;
+  }
+
+  if (scanPhoto.storageProvider === 'local') {
+    const absolutePath = toAbsolutePath(scanPhoto.storageKey);
+    try {
+      await fs.unlink(absolutePath);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+    }
+  }
+}
+
+async function deleteByHash({ userId, shelfId, imageSha256 }) {
+  if (!userId || !shelfId || !imageSha256) return { deleted: false, deletedRows: 0 };
+
+  const scanPhoto = await getByHash({ userId, shelfId, imageSha256 });
+  if (!scanPhoto) return { deleted: false, deletedRows: 0 };
+
+  try {
+    await deleteStoredScanPhotoAsset(scanPhoto);
+  } catch (err) {
+    logger.warn('[visionScanPhotos] Failed to delete stored scan photo asset during hash cleanup', {
+      scanPhotoId: scanPhoto.id,
+      storageProvider: scanPhoto.storageProvider,
+      storageKey: scanPhoto.storageKey,
+      message: err?.message || String(err),
+    });
+  }
+
+  const result = await query(
+    `DELETE FROM vision_scan_photos
+     WHERE user_id = $1
+       AND shelf_id = $2
+       AND image_sha256 = $3`,
+    [userId, shelfId, imageSha256],
+  );
+
+  return {
+    deleted: Number(result.rowCount || 0) > 0,
+    deletedRows: Number(result.rowCount || 0),
+  };
+}
+
 module.exports = {
   upsertFromBuffer,
   getByIdForUser,
   getByHash,
+  deleteByHash,
   loadImageBuffer,
   buildStorageKey,
   toAbsolutePath,

@@ -7,6 +7,7 @@ const visionItemRegionsQueries = require('../database/queries/visionItemRegions'
 const pg = require('../database/pg');
 const processingStatus = require('../services/processingStatus');
 const { getMetadataScorer } = require('../services/catalog/MetadataScorer');
+const { CatalogProvidersUnavailableError } = require('../services/catalog/errors');
 
 jest.mock('../services/googleGemini');
 jest.mock('../database/queries/collectables');
@@ -214,6 +215,41 @@ describe('VisionPipelineService', () => {
         expect(result.resolved).toHaveLength(1);
         expect(result.resolved[0].extractionIndex).toBe(4);
         expect(result.resolved[0].box2d).toEqual([120, 90, 870, 210]);
+    });
+
+    it('throws when catalog providers are globally unavailable', async () => {
+        const unavailableError = new CatalogProvidersUnavailableError('providers down');
+        const mockCatalog = {
+            lookupFirstPass: jest.fn().mockRejectedValue(unavailableError),
+        };
+        service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue(mockCatalog);
+
+        await expect(
+            service.lookupCatalog([{ title: 'Known Book' }], 'book', {
+                catalogContext: { jobId: 'job-down' },
+            })
+        ).rejects.toMatchObject({ code: 'CATALOG_PROVIDERS_UNAVAILABLE' });
+    });
+
+    it('does not throw provider-unavailable when catalog returns unresolved items', async () => {
+        const mockCatalog = {
+            lookupFirstPass: jest.fn().mockResolvedValue([
+                {
+                    status: 'unresolved',
+                    input: { title: 'Unknown Book' },
+                },
+            ]),
+        };
+        service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue(mockCatalog);
+
+        const result = await service.lookupCatalog([{ title: 'Unknown Book' }], 'book', {
+            catalogContext: { jobId: 'job-ok' },
+        });
+
+        expect(result).toEqual({
+            resolved: [],
+            unresolved: [{ title: 'Unknown Book' }],
+        });
     });
 
     it('should propagate vision extraction failures instead of silently succeeding with zero items', async () => {
@@ -494,6 +530,41 @@ describe('VisionPipelineService', () => {
                 collectionItemId: 501,
             });
             expect(saveTracking.duplicateRegionLinkSkipped).toBe(1);
+        });
+
+        it('reuses first catalog-resolved write for duplicate OCR group keys', async () => {
+            collectablesQueries.findByFingerprint.mockResolvedValue(null);
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            collectablesQueries.findByFuzzyFingerprint.mockResolvedValue(null);
+            collectablesQueries.upsert.mockResolvedValue({ id: 701, title: 'Shared Title', kind: 'book' });
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 1701 });
+
+            const saveTracking = {
+                savedSourceKeys: new Set(),
+                firstLinkedRegionByCollectionItemId: new Map(),
+                resolvedCatalogGroupReuse: new Map(),
+                attemptedSaves: 0,
+                savedUniqueRegions: 0,
+                duplicateSourceSkipped: 0,
+                duplicateRegionLinkSkipped: 0,
+                groupReuseSkippedWrites: 0,
+            };
+
+            const result = await service.saveToShelf(
+                [
+                    { title: 'Shared Title', extractionIndex: 2, _skipRematch: true, _ocrGroupKey: 'shared|author' },
+                    { title: 'Shared Title', extractionIndex: 3, _skipRematch: true, _ocrGroupKey: 'shared|author' },
+                ],
+                1,
+                10,
+                'book',
+                { scanPhotoId: 55, saveTracking },
+            );
+
+            expect(collectablesQueries.upsert).toHaveBeenCalledTimes(1);
+            expect(shelvesQueries.addCollectable).toHaveBeenCalledTimes(1);
+            expect(saveTracking.groupReuseSkippedWrites).toBe(1);
+            expect(result.added).toHaveLength(1);
         });
 
         it('replaces prior region link when a lower extraction index arrives later', async () => {

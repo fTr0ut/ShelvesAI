@@ -11,6 +11,7 @@ const {
 } = require('../../openLibrary');
 const { openLibraryToCollectable } = require('../../../adapters/openlibrary.adapter');
 const { makeLightweightFingerprint } = require('../../collectables/fingerprint');
+const { isHardProviderError } = require('../providerErrorUtils');
 const logger = require('../../../logger');
 
 function normalizeString(value) {
@@ -53,7 +54,7 @@ class OpenLibraryAdapter {
         // Try ISBN lookup first
         for (const isbn of isbnCandidates) {
             try {
-                const result = await lookupWorkByISBN(isbn);
+                const result = await lookupWorkByISBN(isbn, { throwOnError: true });
                 if (result) {
                     return this._normalizeResult(result, item);
                 }
@@ -61,6 +62,9 @@ class OpenLibraryAdapter {
                 // Check for 404 (not found) vs other errors
                 if (!String(err?.message).includes('404')) {
                     logger.warn(`[OpenLibraryAdapter] ISBN lookup failed for ${isbn}:`, err.message);
+                    if (isHardProviderError(err)) {
+                        throw err;
+                    }
                 }
                 // Continue to next ISBN
             }
@@ -69,12 +73,15 @@ class OpenLibraryAdapter {
         // Fall back to title/author search
         if (title || author) {
             try {
-                const result = await lookupWorkBookMetadata({ title, author });
+                const result = await lookupWorkBookMetadata({ title, author, throwOnError: true });
                 if (result) {
                     return this._normalizeResult(result, item);
                 }
             } catch (err) {
                 logger.warn('[OpenLibraryAdapter] Title/author lookup failed:', err.message);
+                if (isHardProviderError(err)) {
+                    throw err;
+                }
             }
         }
 
@@ -86,13 +93,16 @@ class OpenLibraryAdapter {
      */
     async lookupByIsbn(isbn) {
         try {
-            const result = await lookupWorkByISBN(isbn);
+            const result = await lookupWorkByISBN(isbn, { throwOnError: true });
             if (result) {
                 return this._normalizeResult(result, { identifiers: { isbn13: [isbn] } });
             }
         } catch (err) {
             if (!String(err?.message).includes('404')) {
                 logger.warn('[OpenLibraryAdapter] lookupByIsbn failed:', err.message);
+                if (isHardProviderError(err)) {
+                    throw err;
+                }
             }
         }
         return null;
@@ -103,12 +113,15 @@ class OpenLibraryAdapter {
      */
     async lookupByTitleAuthor(title, author) {
         try {
-            const result = await lookupWorkBookMetadata({ title, author });
+            const result = await lookupWorkBookMetadata({ title, author, throwOnError: true });
             if (result) {
                 return this._normalizeResult(result, { title, author });
             }
         } catch (err) {
             logger.warn('[OpenLibraryAdapter] lookupByTitleAuthor failed:', err.message);
+            if (isHardProviderError(err)) {
+                throw err;
+            }
         }
         return null;
     }

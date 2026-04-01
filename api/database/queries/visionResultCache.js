@@ -65,7 +65,20 @@ async function set({
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
+async function deleteByHash({ userId, shelfId, imageSha256 }) {
+    if (!userId || !shelfId || !imageSha256) return 0;
+    const result = await query(
+        `DELETE FROM vision_result_cache
+         WHERE user_id = $1
+           AND shelf_id = $2
+           AND image_sha256 = $3`,
+        [userId, shelfId, imageSha256],
+    );
+    return Number(result.rowCount || 0);
+}
+
 module.exports = {
     getValid,
     set,
+    deleteByHash,
 };

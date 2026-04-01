@@ -12,6 +12,8 @@
 
 const path = require('path');
 const { getMetadataScorer } = require('./MetadataScorer');
+const { CatalogProvidersUnavailableError } = require('./errors');
+const { classifyProviderError } = require('./providerErrorUtils');
 const { getApiContainerKey } = require('../config/shelfTypeResolver');
 const logger = require('../../logger');
 
@@ -185,17 +187,129 @@ class CatalogRouter {
         return this._lookupFallback(item, apis, sharedOptions);
     }
 
+    _getCircuitBreakerStore(catalogContext) {
+        if (!catalogContext || typeof catalogContext !== 'object') return null;
+        if (!catalogContext.providerCircuitBreaker || typeof catalogContext.providerCircuitBreaker !== 'object') {
+            catalogContext.providerCircuitBreaker = {
+                providersByContainer: new Map(),
+                diagnostics: {
+                    trippedCount: 0,
+                    skippedCount: 0,
+                },
+            };
+        }
+        if (!(catalogContext.providerCircuitBreaker.providersByContainer instanceof Map)) {
+            catalogContext.providerCircuitBreaker.providersByContainer = new Map();
+        }
+        return catalogContext.providerCircuitBreaker;
+    }
+
+    _getContainerProviderMap(catalogContext, containerType) {
+        const store = this._getCircuitBreakerStore(catalogContext);
+        if (!store) return null;
+        const key = String(containerType || '').toLowerCase();
+        if (!store.providersByContainer.has(key)) {
+            store.providersByContainer.set(key, new Map());
+        }
+        return store.providersByContainer.get(key);
+    }
+
+    _isProviderTripped(catalogContext, containerType, providerName) {
+        const containerMap = this._getContainerProviderMap(catalogContext, containerType);
+        if (!containerMap) return false;
+        const state = containerMap.get(providerName);
+        return state?.tripped === true;
+    }
+
+    _tripProvider(catalogContext, containerType, providerName, errorInfo = {}) {
+        const containerMap = this._getContainerProviderMap(catalogContext, containerType);
+        if (!containerMap) return;
+
+        const existing = containerMap.get(providerName) || {};
+        if (existing.tripped === true) return;
+
+        const nextState = {
+            tripped: true,
+            reason: errorInfo.reason || 'unknown',
+            message: String(errorInfo.message || ''),
+            statusCode: Number.isFinite(Number(errorInfo.statusCode)) ? Number(errorInfo.statusCode) : null,
+            trippedAt: new Date().toISOString(),
+        };
+        containerMap.set(providerName, nextState);
+
+        const store = this._getCircuitBreakerStore(catalogContext);
+        if (store?.diagnostics) {
+            store.diagnostics.trippedCount = Number(store.diagnostics.trippedCount || 0) + 1;
+        }
+
+        logger.warn('[CatalogRouter] Provider tripped by circuit breaker', {
+            containerType,
+            provider: providerName,
+            reason: nextState.reason,
+            statusCode: nextState.statusCode,
+            message: nextState.message,
+        });
+    }
+
+    _recordProviderSkip(catalogContext) {
+        const store = this._getCircuitBreakerStore(catalogContext);
+        if (store?.diagnostics) {
+            store.diagnostics.skippedCount = Number(store.diagnostics.skippedCount || 0) + 1;
+        }
+    }
+
+    _assertProvidersAvailableOrThrow(apis, options = {}) {
+        const containerType = options.containerType || '';
+        const catalogContext = options.catalogContext || null;
+        if (!catalogContext) return;
+
+        const configuredProviders = apis.filter((api) => {
+            const adapter = this.getAdapter(api.name);
+            if (!adapter) return false;
+            if (typeof adapter.isConfigured === 'function' && !adapter.isConfigured()) return false;
+            return true;
+        }).map((api) => api.name);
+
+        if (!configuredProviders.length) return;
+
+        const allTripped = configuredProviders.every((providerName) =>
+            this._isProviderTripped(catalogContext, containerType, providerName)
+        );
+        if (!allTripped) return;
+
+        throw new CatalogProvidersUnavailableError(
+            'Catalog providers are temporarily unavailable. Please try this scan again later.',
+            {
+                containerType,
+                providers: configuredProviders,
+                jobId: catalogContext.jobId || null,
+            }
+        );
+    }
+
     /**
      * Fallback mode: Stop on first successful result
      */
     async _lookupFallback(item, apis, options = {}) {
         const containerType = options.containerType || '';
+        const catalogContext = options.catalogContext || null;
         const scorer = getMetadataScorer();
         const minScore = scorer.getMinScore(containerType);
         const shouldScore = minScore !== null;
         let bestCandidate = null;
 
+        this._assertProvidersAvailableOrThrow(apis, options);
+
         for (const api of apis) {
+            if (this._isProviderTripped(catalogContext, containerType, api.name)) {
+                this._recordProviderSkip(catalogContext);
+                logger.info('[CatalogRouter] Skipping provider due open circuit breaker', {
+                    containerType,
+                    provider: api.name,
+                });
+                continue;
+            }
+
             const adapter = this.getAdapter(api.name);
             if (!adapter) continue;
 
@@ -250,8 +364,23 @@ class CatalogRouter {
 
                 logger.info(`[CatalogRouter] No result from ${api.name}`);
             } catch (err) {
-                logger.warn(`[CatalogRouter] ${api.name} failed:`, err.message);
-                // Continue to next API
+                const errorInfo = classifyProviderError(err);
+                logger.warn(`[CatalogRouter] ${api.name} failed:`, err.message, {
+                    containerType,
+                    provider: api.name,
+                    reason: errorInfo.reason,
+                    statusCode: errorInfo.statusCode,
+                    hardError: errorInfo.isHardError,
+                });
+                if (errorInfo.isHardError) {
+                    this._tripProvider(catalogContext, containerType, api.name, {
+                        reason: errorInfo.reason,
+                        statusCode: errorInfo.statusCode,
+                        message: err?.message || String(err),
+                    });
+                    this._assertProvidersAvailableOrThrow(apis, options);
+                }
+                // Continue to next API for non-hard failures
             }
         }
 
@@ -270,6 +399,7 @@ class CatalogRouter {
             });
         }
 
+        this._assertProvidersAvailableOrThrow(apis, options);
         logger.info('[CatalogRouter] All APIs exhausted, no result found');
         return null;
     }

@@ -12,6 +12,7 @@ const fetch = require('node-fetch');
 const logger = require('../logger');
 const AbortController = (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 const { limitOpenLibrary } = require('./outboundLimiterRegistry');
+const { isHardProviderError } = require('./catalog/providerErrorUtils');
 
 const DEFAULT_BASE_URL = 'https://openlibrary.org';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -67,6 +68,11 @@ function buildSearchUrl({ title, author, limit = 10, offset = 0, page = 0 }) {
   // `mode=everything` returns broader info (works + editions metadata surface)
   params.append('mode', 'everything');
   return `${base}/search.json?${params.toString()}`;
+}
+
+function shouldThrowOpenLibraryError(err, throwOnError = false) {
+  if (!throwOnError) return false;
+  return isHardProviderError(err);
 }
 
 async function fetchJson(url) {
@@ -431,7 +437,7 @@ async function hydrateDoc(doc) {
  * @param {{title?: string, author?: string, limit?: number, offset?: number}} params
  * @returns {Promise<Array<object>>}
  */
-async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0 } = {}) {
+async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0, throwOnError = false } = {}) {
   if (!title && !author) return [];
   try {
     const fetchLimit = Math.max(1, Math.min(50, Number(limit) || 5));
@@ -478,6 +484,9 @@ async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0 } = 
     return hydrated.filter(Boolean);
   } catch (err) {
     logger.warn('OpenLibrary searchAndHydrateBooks failed', err.message);
+    if (shouldThrowOpenLibraryError(err, throwOnError)) {
+      throw err;
+    }
     return [];
   }
 }
@@ -487,7 +496,7 @@ async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0 } = 
  * @param {{title?: string, author?: string}} params
  * @returns {Promise<object|null>}
  */
-async function lookupWorkBookMetadata({ title, author }) {
+async function lookupWorkBookMetadata({ title, author, throwOnError = false } = {}) {
   if (!title && !author) return null;
   try {
     const url = buildSearchUrl({ title, author, limit: 1 });
@@ -500,6 +509,9 @@ async function lookupWorkBookMetadata({ title, author }) {
     return await hydrateDoc(first);
   } catch (err) {
     logger.warn('OpenLibrary lookup failed', err.message);
+    if (shouldThrowOpenLibraryError(err, throwOnError)) {
+      throw err;
+    }
     return null;
   }
 }
@@ -508,7 +520,8 @@ async function lookupWorkBookMetadata({ title, author }) {
  * Direct hydration by Work key or ID (e.g., "/works/OL1892617W" or "OL1892617W").
  * Useful when you already know the Work ID.
  */
-async function hydrateWorkByKey(workKeyOrId) {
+async function hydrateWorkByKey(workKeyOrId, options = {}) {
+  const throwOnError = options?.throwOnError === true;
   try {
     // Get minimal doc-like object so `hydrateDoc` can reuse normalization.
     const work = await fetchWorkJson(workKeyOrId);
@@ -528,6 +541,9 @@ async function hydrateWorkByKey(workKeyOrId) {
     return await hydrateDoc(fakeDoc);
   } catch (e) {
     logger.warn('OpenLibrary hydrateWorkByKey failed', e.message);
+    if (shouldThrowOpenLibraryError(e, throwOnError)) {
+      throw e;
+    }
     return null;
   }
 }
@@ -659,7 +675,8 @@ function toCollectionDoc(h) {
 
 
 
-async function lookupWorkByISBN(isbn) {
+async function lookupWorkByISBN(isbn, options = {}) {
+  const throwOnError = options?.throwOnError === true;
   const code = (isbn || '').trim();
   if (!code) return null;
 
@@ -668,10 +685,13 @@ async function lookupWorkByISBN(isbn) {
     const edition = await fetchJson(`${base}/isbn/${encodeURIComponent(code)}.json`);
     const workKey = Array.isArray(edition?.works) && edition.works.length ? edition.works[0]?.key : null;
     if (!workKey) return null;
-    const hydrated = await hydrateWorkByKey(workKey);
+    const hydrated = await hydrateWorkByKey(workKey, { throwOnError });
     return hydrated ? toCollectionDoc(hydrated) : null;
   } catch (err) {
     if (String(err?.message).includes('404')) return null;
+    if (shouldThrowOpenLibraryError(err, throwOnError)) {
+      throw err;
+    }
     throw err;
   }
 }
