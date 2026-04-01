@@ -4,6 +4,7 @@ import {
     Image,
     Keyboard,
     Modal,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -18,6 +19,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { apiRequest } from '../../services/api';
 import { resolveCollectableCoverUrl } from '../../utils/coverUrl';
 import { formatCollectableSearchMeta } from '../../utils/collectableDisplay';
+const { getNonAuthInputProps } = require('../../utils/textInputPolicy');
 
 const SEARCH_TYPE_OPTIONS = [
     { label: 'All', value: '' },
@@ -271,6 +273,7 @@ export function useGlobalSearch(navigation) {
 export function GlobalSearchInput({ search, style }) {
     const { colors, spacing, shadows } = useTheme();
     const styles = useMemo(() => createInputStyles({ colors, spacing, shadows }), [colors, spacing, shadows]);
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
     const inputRef = useRef(null);
 
     const handleDonePress = useCallback(() => {
@@ -283,6 +286,7 @@ export function GlobalSearchInput({ search, style }) {
             <Ionicons name="search" size={16} color={colors.textMuted} />
             <TextInput
                 ref={inputRef}
+                {...nonAuthInputProps}
                 style={styles.input}
                 placeholder="Search Titles, Creators, or Friends"
                 placeholderTextColor={colors.textMuted}

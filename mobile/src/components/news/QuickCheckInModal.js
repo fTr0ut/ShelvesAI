@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -17,6 +17,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../context/ToastContext';
 import { AuthContext } from '../../context/AuthContext';
 import { apiRequest } from '../../services/api';
+const { getNonAuthInputProps } = require('../../utils/textInputPolicy');
 
 const STATUS_OPTIONS = [
     { key: 'starting', label: 'Starting', icon: 'play-circle-outline' },
@@ -30,6 +31,7 @@ const QuickCheckInModal = ({ visible, onClose, onSuccess, newsItem }) => {
     const { colors, spacing, typography, shadows } = useTheme();
     const { showToast } = useToast();
     const { token, apiBase } = useContext(AuthContext);
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     const [status, setStatus] = useState(null);
     const [visibility, setVisibility] = useState('public');
@@ -458,6 +460,7 @@ const QuickCheckInModal = ({ visible, onClose, onSuccess, newsItem }) => {
                         {/* Note Input */}
                         <Text style={styles.sectionLabel}>Add a note (optional)</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={styles.noteInput}
                             placeholder="What do you think so far?"
                             placeholderTextColor={colors.textMuted}

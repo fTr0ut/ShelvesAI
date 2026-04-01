@@ -1,7 +1,8 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  InteractionManager,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -22,6 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 import { usePush } from '../context/PushContext';
 import { apiRequest, clearToken } from '../services/api';
 import { useAsync } from '../hooks/useAsync';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 const FEEDBACK_MAX_LENGTH = 4000;
 
@@ -38,6 +40,9 @@ export default function AccountScreen({ navigation }) {
   const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const feedbackInputRef = useRef(null);
+  const feedbackFocusTaskRef = useRef(null);
+  const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
   const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
 
@@ -66,6 +71,27 @@ export default function AccountScreen({ navigation }) {
       setVisionQuota(accountData.visionQuota);
     }
   }, [accountData, setPremiumEnabled, setVisionQuota]);
+
+  useEffect(() => {
+    if (!feedbackModalVisible || feedbackSubmitting) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      feedbackInputRef.current?.focus?.();
+    });
+    feedbackFocusTaskRef.current = task;
+
+    return () => {
+      cancelled = true;
+      if (feedbackFocusTaskRef.current?.cancel) {
+        feedbackFocusTaskRef.current.cancel();
+      }
+      feedbackFocusTaskRef.current = null;
+    };
+  }, [feedbackModalVisible, feedbackSubmitting]);
 
   const handlePremiumToggle = useCallback(async (value) => {
     const previous = premiumEnabled;
@@ -133,6 +159,7 @@ export default function AccountScreen({ navigation }) {
 
   const handleCloseFeedback = useCallback(() => {
     if (feedbackSubmitting) return;
+    feedbackInputRef.current?.blur?.();
     setFeedbackModalVisible(false);
     setFeedbackMessage('');
   }, [feedbackSubmitting]);
@@ -398,6 +425,8 @@ export default function AccountScreen({ navigation }) {
                 Tell us what happened or what you want improved.
               </Text>
               <TextInput
+                ref={feedbackInputRef}
+                {...nonAuthInputProps}
                 value={feedbackMessage}
                 onChangeText={setFeedbackMessage}
                 style={styles.feedbackInput}
@@ -407,7 +436,6 @@ export default function AccountScreen({ navigation }) {
                 textAlignVertical="top"
                 maxLength={FEEDBACK_MAX_LENGTH}
                 editable={!feedbackSubmitting}
-                autoFocus
               />
               <Text style={styles.feedbackCharCount}>
                 {feedbackMessage.length}/{FEEDBACK_MAX_LENGTH}

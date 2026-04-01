@@ -20,6 +20,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
 import { shareEntityLink } from '../services/shareLinks';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 import {
     buildOwnerPhotoThumbnailUri,
     formatAddedEventHeader,
@@ -81,6 +82,7 @@ export default function ProfileScreen({ navigation, route }) {
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     const isOwnProfile = !route.params?.username || profile?.username === currentUser?.username;
 
@@ -856,6 +858,7 @@ export default function ProfileScreen({ navigation, route }) {
                     {editing ? (
                         <View style={styles.editNameRow}>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.nameInput}
                                 value={firstName}
                                 onChangeText={setFirstName}
@@ -863,6 +866,7 @@ export default function ProfileScreen({ navigation, route }) {
                                 placeholderTextColor={colors.textMuted}
                             />
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.nameInput}
                                 value={lastName}
                                 onChangeText={setLastName}
@@ -881,6 +885,7 @@ export default function ProfileScreen({ navigation, route }) {
                     {editing ? (
                         <View style={styles.bioContainer}>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.bioInput}
                                 value={bio}
                                 onChangeText={setBio}
@@ -904,6 +909,7 @@ export default function ProfileScreen({ navigation, route }) {
                         <View style={styles.locationEditRow}>
                             <TextInput
                                 ref={cityInputRef}
+                                {...nonAuthInputProps}
                                 style={styles.locationInput}
                                 value={city}
                                 onChangeText={setCity}
@@ -918,6 +924,7 @@ export default function ProfileScreen({ navigation, route }) {
                             />
                             <TextInput
                                 ref={stateInputRef}
+                                {...nonAuthInputProps}
                                 style={styles.locationInput}
                                 value={state}
                                 onChangeText={setState}
@@ -932,6 +939,7 @@ export default function ProfileScreen({ navigation, route }) {
                             />
                             <TextInput
                                 ref={countryInputRef}
+                                {...nonAuthInputProps}
                                 style={styles.locationInput}
                                 value={country}
                                 onChangeText={setCountry}

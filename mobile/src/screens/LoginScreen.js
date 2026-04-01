@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Platform,
@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, saveToken } from '../services/api';
+const { getAuthInputProps } = require('../utils/textInputPolicy');
 
 
 
@@ -27,6 +28,10 @@ export default function LoginScreen({ navigation }) {
     const [email, setEmail] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const usernameInputProps = useMemo(() => getAuthInputProps('username', Platform.OS), []);
+    const emailInputProps = useMemo(() => getAuthInputProps('email', Platform.OS), []);
+    const passwordInputProps = useMemo(() => getAuthInputProps('password', Platform.OS), []);
+    const newPasswordInputProps = useMemo(() => getAuthInputProps('newPassword', Platform.OS), []);
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
@@ -112,6 +117,7 @@ export default function LoginScreen({ navigation }) {
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Username</Text>
                         <TextInput
+                            {...usernameInputProps}
                             style={styles.input}
                             value={username}
                             onChangeText={setUsername}
@@ -129,6 +135,7 @@ export default function LoginScreen({ navigation }) {
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Email</Text>
                             <TextInput
+                                {...emailInputProps}
                                 style={styles.input}
                                 value={email}
                                 onChangeText={setEmail}
@@ -145,6 +152,7 @@ export default function LoginScreen({ navigation }) {
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Password</Text>
                         <TextInput
+                            {...(isRegister ? newPasswordInputProps : passwordInputProps)}
                             style={styles.input}
                             value={password}
                             onChangeText={setPassword}
@@ -168,6 +176,7 @@ export default function LoginScreen({ navigation }) {
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Confirm Password</Text>
                             <TextInput
+                                {...newPasswordInputProps}
                                 style={styles.input}
                                 value={confirmPassword}
                                 onChangeText={setConfirmPassword}

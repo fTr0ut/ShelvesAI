@@ -16,6 +16,7 @@ import {
     StatusBar,
     Dimensions,
     ImageBackground,
+    Pressable
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +24,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Accelerometer } from 'expo-sensors';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+
+const EXPERIMENTAL_PROTOTYPES = true;
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
@@ -164,9 +172,149 @@ function normalizeOwnedPlatforms(value) {
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(normalized);
-    }
+}
     return out;
 }
+
+const MuseumItem = ({ item, styles, colors, info, coverSource, isDark, onNavigate, spacing, windowWidth }) => {
+    const pitch = useSharedValue(0);
+    const roll = useSharedValue(0);
+
+    useEffect(() => {
+        let subscription;
+        if (EXPERIMENTAL_PROTOTYPES) {
+            Accelerometer.setUpdateInterval(50);
+            subscription = Accelerometer.addListener(({ x, y }) => {
+                pitch.value = withSpring(y * -150, { damping: 20 });
+                roll.value = withSpring(x * -150, { damping: 20 });
+            });
+        }
+        return () => subscription?.remove();
+    }, []);
+
+    const scale = useSharedValue(1);
+
+    const sheenStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: roll.value },
+            { translateY: pitch.value }
+        ]
+    }));
+
+    const animatedContainerStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: withSpring(scale.value, { damping: 12, stiffness: 200 }) }]
+    }));
+
+    const handlePressIn = () => { scale.value = 1.08; };
+    const handlePressOut = () => { scale.value = 1; };
+
+    return (
+        <View style={styles.museumContainer}>
+            <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} onPress={onNavigate}>
+                <Animated.View style={[styles.museumArtifact, { width: windowWidth * 0.70, height: windowWidth * 1.05 }, animatedContainerStyle]}>
+                    <View style={styles.museumFrame}>
+                        {coverSource ? (
+                            <View style={{ width: '100%', height: '100%' }}>
+                                <CachedImage source={coverSource} style={StyleSheet.absoluteFill} contentFit="cover" />
+                                <Animated.View style={[StyleSheet.absoluteFill, sheenStyle, { opacity: 0.85, width: '200%', height: '200%', top: '-50%', left: '-50%' }]}>
+                                    <LinearGradient
+                                        colors={['transparent', 'rgba(255,255,255,0.7)', 'transparent']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={StyleSheet.absoluteFill}
+                                    />
+                                </Animated.View>
+                            </View>
+                        ) : (
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surfaceTop }}>
+                                <CategoryIcon type={info.type} size={64} />
+                            </View>
+                        )}
+                    </View>
+                </Animated.View>
+            </Pressable>
+            <View style={[styles.museumPlaque, { width: windowWidth * 0.65 }]}>
+                <Text style={styles.museumPlaqueTitle} numberOfLines={2}>{info.title}</Text>
+                {info.subtitle || info.type ? (
+                    <Text style={styles.museumPlaqueMeta}>{info.subtitle || info.type}</Text>
+                ) : null}
+            </View>
+        </View>
+    );
+};
+
+const getSpineColor = (title, isDark) => {
+    let hash = 0;
+    const str = title || 'Unknown';
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colorPalette = isDark 
+        ? ['#1f2937', '#111827', '#312e81', '#1e3a8a', '#14532d', '#7f1d1d', '#581c87', '#064e3b', '#451a03']
+        : ['#475569', '#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
+    const idx = Math.abs(hash) % colorPalette.length;
+    return colorPalette[idx];
+};
+
+const SpineItem = ({ item, styles, colors, isDark, coverSource, info, onNavigate }) => {
+    const rawFormat = item.format || item.collectable?.format || '';
+    const fmt = String(rawFormat).toLowerCase();
+    const isPS = fmt.includes('playstation') || fmt.includes('ps4') || fmt.includes('ps5');
+    const isXbox = fmt.includes('xbox');
+    const isNintendo = fmt.includes('nintendo') || fmt.includes('switch');
+    
+    const [dominantColor, setDominantColor] = useState(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        // Bypass native extraction completely if running inside Expo Go to avoid [runtime not ready] crashes
+        if (!coverSource || typeof coverSource !== 'string' || !EXPERIMENTAL_PROTOTYPES || isExpoGo) return;
+
+        try {
+            const ImageColors = require('react-native-image-colors').default;
+            ImageColors.getColors(coverSource, {
+                fallback: '#2c2c2c',
+                cache: true,
+                key: coverSource,
+            }).then(res => {
+                if (!isMounted) return;
+                if (res.platform === 'android') {
+                    setDominantColor(res.dominant);
+                } else if (res.platform === 'ios') {
+                    setDominantColor(res.primary);
+                } else if (res.platform === 'web') {
+                    setDominantColor(res.dominant);
+                }
+            }).catch(() => {
+                // ignore
+            });
+        } catch (err) {
+            // Silently fail if native module dynamic import crashes
+        }
+
+        return () => { isMounted = false; };
+    }, [coverSource]);
+
+    let baseColor = getSpineColor(info.title, isDark);
+    if (isPS) baseColor = '#00439C';
+    else if (isXbox) baseColor = '#107C10';
+    else if (isNintendo) baseColor = '#E60012';
+    
+    if (dominantColor && !isPS && !isXbox && !isNintendo) {
+        baseColor = dominantColor;
+    }
+
+    return (
+        <TouchableOpacity activeOpacity={0.8} style={[styles.spineContainer, { backgroundColor: baseColor }]} onPress={onNavigate}>
+            <View style={styles.spineInnerShadow}>
+                <View style={styles.spineTextWrapper}>
+                    <Text style={styles.spineText} numberOfLines={1}>{info.title}</Text>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+};
+
 
 export default function ShelfDetailScreen({ route, navigation }) {
     const { id, title, readOnly: readOnlyParam, autoAddItem } = route.params || {};
@@ -985,6 +1133,44 @@ export default function ShelfDetailScreen({ route, navigation }) {
         );
     };
 
+    const renderMuseumItem = ({ item }) => {
+        if (item.isSectionHeader) return null;
+        const info = getItemInfo(item);
+        const coverSource = resolveCoverSource(item)?.source || null;
+        return (
+            <MuseumItem
+                item={item}
+                styles={styles}
+                colors={colors}
+                info={info}
+                coverSource={coverSource}
+                isDark={isDark}
+                spacing={spacing}
+                windowWidth={windowWidth}
+                onNavigate={() => navigation.navigate('CollectableDetail', {
+                    item, shelfId: id, readOnly: isReadOnly, ownerId: shelf?.ownerId, ownerUsername: shelf?.ownerUsername || null
+                })}
+            />
+        );
+    };
+
+    const renderSpineItem = ({ item }) => {
+        if (item.isSectionHeader) return null;
+        const info = getItemInfo(item);
+        return (
+            <SpineItem
+                item={item}
+                styles={styles}
+                colors={colors}
+                info={info}
+                isDark={isDark}
+                onNavigate={() => navigation.navigate('CollectableDetail', {
+                    item, shelfId: id, readOnly: isReadOnly, ownerId: shelf?.ownerId, ownerUsername: shelf?.ownerUsername || null
+                })}
+            />
+        );
+    };
+
     const renderEmpty = () => (
         <View style={styles.emptyState}>
             <Ionicons name="cube-outline" size={56} color={colors.textMuted} />
@@ -1508,6 +1694,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
             banner: 'Banner List',
             list: 'Detailed List',
             swipe: 'Swipe Cards',
+            ...(EXPERIMENTAL_PROTOTYPES ? {
+                museum: 'Museum (Interactive)',
+                spines: 'Bookshelf Spines'
+            } : {})
         };
         return modes[viewMode] || 'View';
     }, [viewMode]);
@@ -1537,6 +1727,10 @@ export default function ShelfDetailScreen({ route, navigation }) {
                             { id: 'banner', label: 'Banner List', icon: 'list-circle' },
                             { id: 'list', label: 'Detailed List', icon: 'list' },
                             { id: 'swipe', label: 'Swipe Cards', icon: 'albums' },
+                            ...(EXPERIMENTAL_PROTOTYPES ? [
+                                { id: 'museum', label: 'Museum (Interactive)', icon: 'camera-outline' },
+                                { id: 'spines', label: 'Bookshelf Spines', icon: 'library-outline' },
+                            ] : [])
                         ].map(mode => (
                             <TouchableOpacity
                                 key={mode.id}
@@ -1639,13 +1833,26 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 key={searchQuery ? 'list' : viewMode}
                 data={searchQuery ? visibleItems : layoutData}
                 keyExtractor={(item) => String(item.id)}
-                numColumns={!searchQuery && viewMode === 'tile' ? 2 : 1}
+                numColumns={!searchQuery && viewMode === 'tile' ? 2 : (!searchQuery && viewMode === 'spines' ? 8 : 1)}
                 pagingEnabled={!searchQuery && viewMode === 'swipe'}
                 snapToAlignment={(!searchQuery && viewMode === 'swipe') ? 'start' : undefined}
                 decelerationRate={(!searchQuery && viewMode === 'swipe') ? 'fast' : 'normal'}
                 horizontal={!searchQuery && viewMode === 'swipe'}
-                renderItem={!searchQuery && viewMode === 'swipe' ? renderSwipeItem : renderItem}
-                columnWrapperStyle={(!searchQuery && viewMode === 'tile') ? { justifyContent: 'space-between', paddingHorizontal: spacing.md } : undefined}
+                renderItem={
+                    !searchQuery 
+                        ? (viewMode === 'swipe' ? renderSwipeItem 
+                           : viewMode === 'museum' ? renderMuseumItem 
+                           : viewMode === 'spines' ? renderSpineItem 
+                           : renderItem) 
+                        : renderItem
+                }
+                columnWrapperStyle={
+                    (!searchQuery && viewMode === 'tile') 
+                        ? { justifyContent: 'space-between', paddingHorizontal: spacing.md } 
+                        : (!searchQuery && viewMode === 'spines') 
+                        ? { justifyContent: 'center', paddingHorizontal: spacing.sm, marginVertical: 4 } 
+                        : undefined
+                }
                 contentContainerStyle={[
                     (!searchQuery && viewMode === 'swipe') ? { paddingTop: 0, paddingBottom: 100 } : styles.listContent,
                     bottomFooterSpacer > 0 ? { paddingBottom: 100 + bottomFooterSpacer } : null,
@@ -1750,6 +1957,85 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     screen: {
         flex: 1,
         backgroundColor: colors.background,
+    },
+    museumContainer: {
+        width: '100%',
+        paddingVertical: spacing.xl,
+        alignItems: 'center',
+        backgroundColor: colors.background,
+    },
+    museumArtifact: {
+        backgroundColor: '#000',
+        borderRadius: 4,
+        padding: 12,
+        ...shadows.xl,
+        elevation: 15,
+        shadowOpacity: 0.5,
+        shadowRadius: 20,
+    },
+    museumFrame: {
+        flex: 1,
+        borderRadius: 2,
+        ...shadows.inner,
+        overflow: 'hidden',
+        backgroundColor: colors.surfaceTop,
+    },
+    museumPlaque: {
+        marginTop: spacing.xl,
+        padding: spacing.md,
+        backgroundColor: colors.surface,
+        borderRadius: 4,
+        alignItems: 'center',
+        borderLeftWidth: 2,
+        borderLeftColor: colors.primary,
+        ...shadows.md,
+    },
+    museumPlaqueTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: colors.text,
+        textAlign: 'center',
+        textTransform: 'uppercase',
+        letterSpacing: 2,
+    },
+    museumPlaqueMeta: {
+        fontSize: 12,
+        color: colors.textMuted,
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+    spineContainer: {
+        width: 42,
+        height: 180,
+        marginHorizontal: 1,
+        marginBottom: 8,
+        borderRadius: 3,
+        overflow: 'hidden',
+        ...shadows.sm,
+    },
+    spineInnerShadow: {
+        ...StyleSheet.absoluteFillObject,
+        borderLeftWidth: 2,
+        borderLeftColor: 'rgba(255,255,255,0.2)',
+        borderRightWidth: 2,
+        borderRightColor: 'rgba(0,0,0,0.3)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    spineTextWrapper: {
+        width: 170,
+        height: 42,
+        transform: [{ rotate: '90deg' }],
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    spineText: {
+        fontSize: 10,
+        fontWeight: 'bold',
+        color: '#fff',
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
     },
     centerContainer: {
         justifyContent: 'center',

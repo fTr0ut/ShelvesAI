@@ -6,6 +6,7 @@ import {
     Image,
     Keyboard,
     Modal,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -22,6 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { resolveCollectableCoverUrl } from '../utils/coverUrl';
 import { formatCollectableSearchMeta } from '../utils/collectableDisplay';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 import {
     buildCollectableItemKey,
     COLLECTABLE_SEARCH_TYPE_OPTIONS,
@@ -198,6 +200,7 @@ export default function FriendSearchScreen({ route, navigation }) {
         () => createStyles({ colors, spacing, shadows, radius }),
         [colors, spacing, shadows, radius],
     );
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     const selectedTypeOption = useMemo(() => (
         COLLECTABLE_SEARCH_TYPE_OPTIONS.find((entry) => entry.value === selectedType)
@@ -856,6 +859,7 @@ export default function FriendSearchScreen({ route, navigation }) {
                     <Ionicons name="search" size={18} color={colors.textMuted} />
                     <TextInput
                         ref={searchInputRef}
+                        {...nonAuthInputProps}
                         style={styles.searchInput}
                         value={query}
                         onChangeText={setQuery}
@@ -894,6 +898,7 @@ export default function FriendSearchScreen({ route, navigation }) {
             {(selectedType === 'games' || selectedPlatform) ? (
                 <View style={styles.platformRow}>
                     <TextInput
+                        {...nonAuthInputProps}
                         style={styles.platformInput}
                         value={selectedPlatform}
                         onChangeText={setSelectedPlatform}
@@ -1088,6 +1093,7 @@ export default function FriendSearchScreen({ route, navigation }) {
                         <Text style={styles.filterModalTitle}>{filterPickerConfig?.title || 'Filter results'}</Text>
                         <View style={styles.filterInputRow}>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.filterInput}
                                 value={filterInputValue}
                                 onChangeText={setFilterInputValue}

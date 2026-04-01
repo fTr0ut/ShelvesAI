@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -35,6 +36,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     useEffect(() => {
         let mounted = true;
@@ -176,6 +178,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>{onboardingConfig.required.fields.emailLabel}</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={styles.input}
                             value={email}
                             onChangeText={handleEmailChange}
@@ -190,6 +193,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>{onboardingConfig.required.fields.firstNameLabel}</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={styles.input}
                             value={firstName}
                             onChangeText={handleFirstNameChange}
@@ -204,6 +208,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                             <Text style={styles.label}>{onboardingConfig.required.fields.cityLabel}</Text>
                             <TextInput
                                 style={styles.input}
+                                {...nonAuthInputProps}
                                 value={city}
                                 onChangeText={handleCityChange}
                                 placeholder={onboardingConfig.required.fields.cityPlaceholder}
@@ -222,6 +227,7 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
                             <Text style={styles.label}>{onboardingConfig.required.fields.stateLabel}</Text>
                             <TextInput
                                 style={styles.input}
+                                {...nonAuthInputProps}
                                 value={state}
                                 onChangeText={handleStateChange}
                                 placeholder={onboardingConfig.required.fields.statePlaceholder}

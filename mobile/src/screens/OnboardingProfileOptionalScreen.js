@@ -20,6 +20,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, clearToken, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function OnboardingProfileOptionalScreen({ navigation }) {
     const { token, apiBase, setNeedsOnboarding, setUser, setToken, onboardingConfig, user } = useContext(AuthContext);
@@ -38,6 +39,7 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     const loadProfile = useCallback(async () => {
         try {
@@ -297,6 +299,7 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>{onboardingConfig.optional.bioLabel}</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={[styles.input, styles.textArea]}
                             value={bio}
                             onChangeText={setBio}

@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Platform,
@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+const { getAuthInputProps, getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function ResetPasswordScreen({ navigation, route }) {
     const { apiBase } = useContext(AuthContext);
@@ -29,6 +30,8 @@ export default function ResetPasswordScreen({ navigation, route }) {
     const [success, setSuccess] = useState(false);
     const [validating, setValidating] = useState(!!tokenFromParams);
     const [tokenValid, setTokenValid] = useState(null);
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
+    const newPasswordInputProps = useMemo(() => getAuthInputProps('newPassword', Platform.OS), []);
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
@@ -164,6 +167,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
                             <View style={styles.inputGroup}>
                                 <Text style={styles.label}>Reset Code</Text>
                                 <TextInput
+                                    {...nonAuthInputProps}
                                     style={styles.input}
                                     value={token}
                                     onChangeText={setToken}
@@ -179,6 +183,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>New Password</Text>
                             <TextInput
+                                {...newPasswordInputProps}
                                 style={styles.input}
                                 value={password}
                                 onChangeText={setPassword}
@@ -192,6 +197,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Confirm Password</Text>
                             <TextInput
+                                {...newPasswordInputProps}
                                 style={styles.input}
                                 value={confirmPassword}
                                 onChangeText={setConfirmPassword}

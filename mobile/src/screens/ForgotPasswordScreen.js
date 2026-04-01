@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
     KeyboardAvoidingView,
     Platform,
@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+const { getAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function ForgotPasswordScreen({ navigation }) {
     const { apiBase } = useContext(AuthContext);
@@ -23,6 +24,7 @@ export default function ForgotPasswordScreen({ navigation }) {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [sent, setSent] = useState(false);
+    const emailInputProps = useMemo(() => getAuthInputProps('email', Platform.OS), []);
 
     const styles = createStyles({ colors, spacing, typography, shadows, radius });
 
@@ -113,6 +115,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Email</Text>
                             <TextInput
+                                {...emailInputProps}
                                 style={styles.input}
                                 value={email}
                                 onChangeText={setEmail}

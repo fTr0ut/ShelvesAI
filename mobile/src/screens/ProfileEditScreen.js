@@ -19,6 +19,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { prepareProfilePhotoAsset } from '../services/imageUpload';
+const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function ProfileEditScreen({ navigation }) {
     const { token, apiBase, user: currentUser } = useContext(AuthContext);
@@ -42,6 +43,7 @@ export default function ProfileEditScreen({ navigation }) {
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
+    const nonAuthInputProps = useMemo(() => getNonAuthInputProps(Platform.OS), []);
 
     useEffect(() => {
         loadProfile();
@@ -213,6 +215,7 @@ export default function ProfileEditScreen({ navigation }) {
                     <View style={styles.inputFull}>
                         <Text style={styles.label}>Email</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={styles.input}
                             value={email}
                             onChangeText={setEmail}
@@ -227,6 +230,7 @@ export default function ProfileEditScreen({ navigation }) {
                         <View style={styles.inputHalf}>
                             <Text style={styles.label}>First Name</Text>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.input}
                                 value={firstName}
                                 onChangeText={setFirstName}
@@ -237,6 +241,7 @@ export default function ProfileEditScreen({ navigation }) {
                         <View style={styles.inputHalf}>
                             <Text style={styles.label}>Last Name</Text>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.input}
                                 value={lastName}
                                 onChangeText={setLastName}
@@ -249,6 +254,7 @@ export default function ProfileEditScreen({ navigation }) {
                     <View style={styles.inputFull}>
                         <Text style={styles.label}>Bio</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={[styles.input, styles.textArea]}
                             value={bio}
                             onChangeText={setBio}
@@ -268,6 +274,7 @@ export default function ProfileEditScreen({ navigation }) {
                     <View style={styles.inputFull}>
                         <Text style={styles.label}>City</Text>
                         <TextInput
+                            {...nonAuthInputProps}
                             style={styles.input}
                             value={city}
                             onChangeText={setCity}
@@ -280,6 +287,7 @@ export default function ProfileEditScreen({ navigation }) {
                         <View style={styles.inputHalf}>
                             <Text style={styles.label}>State/Province</Text>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.input}
                                 value={state}
                                 onChangeText={setState}
@@ -290,6 +298,7 @@ export default function ProfileEditScreen({ navigation }) {
                         <View style={styles.inputHalf}>
                             <Text style={styles.label}>Country</Text>
                             <TextInput
+                                {...nonAuthInputProps}
                                 style={styles.input}
                                 value={country}
                                 onChangeText={setCountry}
