@@ -11,7 +11,10 @@ import {
     View,
     StatusBar,
     Image,
+    Dimensions,
+    ImageBackground,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CategoryIcon, AccountSlideMenu, useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay } from '../components/ui';
@@ -48,8 +51,31 @@ export default function ShelvesScreen({ navigation }) {
     const [searchPage, setSearchPage] = useState(0);
     const [hasMoreSearch, setHasMoreSearch] = useState(true);
     const searchCache = useRef({});
-    const [viewMode, setViewMode] = useState('grid');
+    const [viewMode, setViewMode] = useState('tile');
+    const [displayModeOpen, setDisplayModeOpen] = useState(false);
     const [unmatchedCount, setUnmatchedCount] = useState(0);
+
+    useEffect(() => {
+        const loadViewMode = async () => {
+            try {
+                const storedMode = await AsyncStorage.getItem('@ShelvesScreen:viewMode');
+                if (storedMode) setViewMode(storedMode);
+            } catch (e) {
+                console.warn('Failed to load view mode', e);
+            }
+        };
+        loadViewMode();
+    }, []);
+
+    const handleChangeViewMode = async (mode) => {
+        setViewMode(mode);
+        setDisplayModeOpen(false);
+        try {
+            await AsyncStorage.setItem('@ShelvesScreen:viewMode', mode);
+        } catch (e) {
+            console.warn('Failed to save view mode', e);
+        }
+    };
     const [totalShelves, setTotalShelves] = useState(0);
     const [hasMoreShelves, setHasMoreShelves] = useState(false);
     const [loadingMoreShelves, setLoadingMoreShelves] = useState(false);
@@ -222,6 +248,24 @@ export default function ShelvesScreen({ navigation }) {
 
     const listData = useMemo(() => {
         if (!debouncedSearchQuery.trim() || debouncedSearchQuery.trim().length < 2) {
+            if (viewMode === 'banner') {
+                const grouped = shelves.reduce((acc, shelf) => {
+                    const type = shelf.type || 'other';
+                    if (!acc[type]) acc[type] = [];
+                    acc[type].push(shelf);
+                    return acc;
+                }, {});
+
+                const types = Object.keys(grouped).sort();
+                const bannerData = [];
+                types.forEach(type => {
+                    bannerData.push({ id: `header-banner-${type}`, isHeader: true, layout: 'banner', title: type.toUpperCase() });
+                    grouped[type].forEach(shelf => bannerData.push({ ...shelf, layout: 'banner' }));
+                });
+                
+                bannerData.push({ id: 'create-shelf', type: 'special-create', name: 'New Shelf', layout: 'banner' });
+                return bannerData;
+            }
             return [...shelves, { id: 'create-shelf', type: 'special-create', name: 'New Shelf' }];
         }
 
@@ -245,7 +289,7 @@ export default function ShelvesScreen({ navigation }) {
         }
 
         return finalData;
-    }, [debouncedSearchQuery, shelves, searchResults, isSearchingItems]);
+    }, [debouncedSearchQuery, shelves, searchResults, isSearchingItems, viewMode]);
 
     const showTopCreateShelfButton = useMemo(
         () => totalShelves > 6 && !searchQuery.trim(),
@@ -271,7 +315,6 @@ export default function ShelvesScreen({ navigation }) {
     };
 
     const handleOpenItem = (item) => {
-        // Restore the original database ID into the item payload for the detail screen
         const contextItem = {
             ...item,
             id: item.originalId || item.id
@@ -323,8 +366,8 @@ export default function ShelvesScreen({ navigation }) {
     const renderListItem = ({ item }) => {
         if (item.isHeader) {
             return (
-                <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionHeaderText}>{item.title}</Text>
+                <View style={[styles.sectionHeader, item.layout === 'banner' && styles.bannerHeader]}>
+                    <Text style={[styles.sectionHeaderText, item.layout === 'banner' && styles.bannerHeaderText]}>{item.title}</Text>
                 </View>
             );
         }
@@ -356,7 +399,6 @@ export default function ShelvesScreen({ navigation }) {
             }
             if (item.coverUrl && typeof item.coverUrl === 'string' && item.coverUrl !== 'null') {
                 const url = item.coverUrl.trim();
-                // Replace invalid URI characters
                 return (url.startsWith('http') ? url : `${apiBase}${url.startsWith('/') ? '' : '/'}${url}`).replace(/ /g, '%20');
             }
             if (item.coverMediaPath && typeof item.coverMediaPath === 'string' && item.coverMediaPath !== 'null') {
@@ -455,11 +497,90 @@ export default function ShelvesScreen({ navigation }) {
                     {item.isGlobalResult ? (
                         <Text style={styles.listMeta}>Shelf</Text>
                     ) : (
-                        <Text style={styles.listMeta}>{item.itemCount || 0} items • {item.type || 'Collection'}</Text>
+                        <Text style={styles.listMeta}>
+                            {item.itemCount || 0} items • {item.type || 'Collection'}
+                            {item.updatedAt ? ` • Updated ${new Date(item.updatedAt).toLocaleDateString()}` : ''}
+                        </Text>
                     )}
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
+        );
+    };
+
+    const { width: windowWidth } = Dimensions.get('window');
+
+    const renderSwipeItem = ({ item }) => {
+        if (item.type === 'special-create') {
+            return (
+                <View style={{ width: windowWidth, padding: spacing.md }}>
+                    <TouchableOpacity
+                        style={[styles.swipeCardItem, styles.createCard, { backgroundColor: colors.surface }]}
+                        onPress={() => handleOpenShelf(item)}
+                        activeOpacity={0.8}
+                    >
+                        <View style={styles.createIconBox}>
+                            <Ionicons name="add" size={48} color={colors.primary} />
+                        </View>
+                        <Text style={[styles.createTitle, { fontSize: 20, marginTop: spacing.md }]}>New Shelf</Text>
+                        <Text style={styles.createMeta}>Create a new collection</Text>
+                    </TouchableOpacity>
+                    <View style={styles.swipeHintContainer}>
+                        <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
+                        <Text style={styles.swipeHint}>Swipe left or right to browse shelves</Text>
+                    </View>
+                </View>
+            );
+        }
+
+        const coverUri = item.coverImageUrl ? { uri: item.coverImageUrl.startsWith('http') ? item.coverImageUrl : `${apiBase}${item.coverImageUrl}` } : null;
+
+        return (
+            <View style={{ width: windowWidth, padding: spacing.md }}>
+                <TouchableOpacity
+                    style={styles.swipeCardItem}
+                    onPress={() => handleOpenShelf(item)}
+                    activeOpacity={0.8}
+                >
+                    {coverUri ? (
+                        <ImageBackground
+                            source={coverUri}
+                            style={styles.swipeBackground}
+                            imageStyle={styles.swipeBackgroundImage}
+                            blurRadius={10}
+                        >
+                            <View style={[styles.swipeOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)' }]} />
+                            <View style={styles.swipeContent}>
+                                <View style={styles.swipeIconBox}>
+                                    <CategoryIcon type={item.type} size={40} />
+                                </View>
+                                <Text style={styles.swipeTitle} numberOfLines={2}>{item.name}</Text>
+                                <Text style={styles.swipeMeta}>
+                                    {item.itemCount || 0} items • {item.type}
+                                    {item.updatedAt ? `\nUpdated ${new Date(item.updatedAt).toLocaleDateString()}` : ''}
+                                </Text>
+                            </View>
+                        </ImageBackground>
+                    ) : (
+                        <View style={[styles.swipeBackground, { backgroundColor: colors.surfaceTop }]}>
+                            <View style={styles.swipeContent}>
+                                <View style={styles.swipeIconBox}>
+                                    <CategoryIcon type={item.type} size={40} />
+                                </View>
+                                <Text style={[styles.swipeTitle, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+                                <Text style={[styles.swipeMeta, { color: colors.textSecondary }]}>
+                                    {item.itemCount || 0} items • {item.type}
+                                    {item.updatedAt ? `\nUpdated ${new Date(item.updatedAt).toLocaleDateString()}` : ''}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+                </TouchableOpacity>
+                <View style={styles.swipeHintContainer}>
+                    <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <Text style={styles.swipeHint}>Swipe left or right to browse shelves</Text>
+                </View>
+            </View>
         );
     };
 
@@ -474,7 +595,7 @@ export default function ShelvesScreen({ navigation }) {
     const renderLoading = () => (
         <View style={styles.loadingContainer}>
             {[1, 2, 3, 4, 5, 6].map(i => (
-                <View key={i} style={[styles.skeleton, viewMode === 'grid' ? styles.skeletonGrid : styles.skeletonList]} />
+                <View key={i} style={[styles.skeleton, viewMode === 'tile' ? styles.skeletonGrid : styles.skeletonList]} />
             ))}
         </View>
     );
@@ -508,7 +629,6 @@ export default function ShelvesScreen({ navigation }) {
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            {/* Header with global search */}
             <View style={styles.header}>
                 <GlobalSearchInput search={search} />
                 <View style={styles.headerRight}>
@@ -533,9 +653,7 @@ export default function ShelvesScreen({ navigation }) {
                 </View>
             </View>
 
-            {/* Body: sub-header, shelf search, content — wrapped so overlay covers this area */}
             <View style={styles.body}>
-                {/* Sub-header: title + view toggle */}
                 <View style={styles.subHeader}>
                     <View>
                         <Text style={styles.headerTitle}>My Shelves</Text>
@@ -555,15 +673,16 @@ export default function ShelvesScreen({ navigation }) {
                             </TouchableOpacity>
                         )}
                         <TouchableOpacity
-                            style={styles.viewToggle}
-                            onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
+                            style={styles.sortTrigger}
+                            onPress={() => setDisplayModeOpen(true)}
+                            accessibilityLabel="Change view mode"
                         >
-                            <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
+                            <Ionicons name={viewMode === 'tile' ? 'grid' : viewMode === 'swipe' ? 'albums' : 'list'} size={16} color={colors.textMuted} />
+                            <Text numberOfLines={1} style={styles.sortTriggerText}>View</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
 
-                {/* Shelf filter search */}
                 <View style={styles.shelfSearchContainer}>
                     <View style={styles.searchBox}>
                         <Ionicons name="search" size={18} color={colors.textMuted} />
@@ -582,7 +701,6 @@ export default function ShelvesScreen({ navigation }) {
                     </View>
                 </View>
 
-                {/* Unmatched Entry (shown when count > 0) */}
                 {unmatchedCount > 0 && (
                     <TouchableOpacity
                         style={styles.unmatchedEntry}
@@ -600,17 +718,27 @@ export default function ShelvesScreen({ navigation }) {
                     </TouchableOpacity>
                 )}
 
-                {/* Content */}
                 {loading && !refreshing ? renderLoading() : (
                     <FlatList
                         data={listData}
                         keyExtractor={(item) => String(item.id)}
-                        renderItem={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? renderGridItem : renderListItem}
-                        numColumns={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? 2 : 1}
-                        key={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? 'grid' : 'list'}
-                        contentContainerStyle={styles.listContainer}
-                        ListHeaderComponent={showTopCreateShelfButton ? renderTopCreateShelf : null}
-                        columnWrapperStyle={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'grid') ? styles.gridRow : undefined}
+                        renderItem={
+                            (!isSearchingItems && debouncedSearchQuery.trim().length < 2)
+                                ? (viewMode === 'tile' ? renderGridItem : viewMode === 'swipe' ? renderSwipeItem : renderListItem)
+                                : renderListItem
+                        }
+                        numColumns={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'tile') ? 2 : 1}
+                        key={(!isSearchingItems && debouncedSearchQuery.trim().length < 2) ? viewMode : 'list'}
+                        contentContainerStyle={
+                            (!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe')
+                                ? styles.swipeListContainer
+                                : styles.listContainer
+                        }
+                        ListHeaderComponent={(showTopCreateShelfButton && viewMode !== 'swipe') ? renderTopCreateShelf : null}
+                        columnWrapperStyle={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'tile') ? styles.gridRow : undefined}
+                        horizontal={!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe'}
+                        pagingEnabled={!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe'}
+                        showsHorizontalScrollIndicator={false}
                         refreshControl={
                             <RefreshControl
                                 refreshing={refreshing}
@@ -631,7 +759,6 @@ export default function ShelvesScreen({ navigation }) {
                     />
                 )}
 
-                {/* Search overlay — absolutely positioned over body */}
                 <GlobalSearchOverlay search={search} />
             </View>
 
@@ -691,7 +818,52 @@ export default function ShelvesScreen({ navigation }) {
                 </TouchableOpacity>
             </Modal>
 
-            {/* Account Slide Menu */}
+            <Modal
+                visible={displayModeOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setDisplayModeOpen(false)}
+            >
+                <TouchableOpacity
+                    style={styles.sortModalBackdrop}
+                    activeOpacity={1}
+                    onPress={() => setDisplayModeOpen(false)}
+                >
+                    <TouchableOpacity activeOpacity={1} style={styles.sortModalCard} onPress={() => { }}>
+                        <Text style={styles.sortModalTitle}>Display View</Text>
+                        <Text style={styles.sortModalSubtitle} numberOfLines={2}>Select how shelves are displayed</Text>
+                        <View style={styles.sortSection}>
+                            {[
+                                { key: 'tile', label: 'Tile', icon: 'grid' },
+                                { key: 'banner', label: 'Banner List', icon: 'list' },
+                                { key: 'list', label: 'List', icon: 'menu' },
+                                { key: 'swipe', label: 'Swipe', icon: 'albums' },
+                            ].map((option) => {
+                                const selected = option.key === viewMode;
+                                return (
+                                    <TouchableOpacity
+                                        key={option.key}
+                                        style={[styles.sortOptionRow, selected && styles.sortOptionSelected]}
+                                        onPress={() => handleChangeViewMode(option.key)}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                                            <Ionicons name={option.icon} size={20} color={selected ? colors.primary : colors.textMuted} />
+                                            <Text style={[styles.sortOptionText, selected && styles.sortOptionTextSelected]}>
+                                                {option.label}
+                                            </Text>
+                                        </View>
+                                        {selected ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                        <TouchableOpacity style={styles.sortDoneButton} onPress={() => setDisplayModeOpen(false)}>
+                            <Text style={styles.sortDoneButtonText}>Close</Text>
+                        </TouchableOpacity>
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
+
             {!ENABLE_PROFILE_IN_TAB_BAR && (
                 <AccountSlideMenu
                     isVisible={isMenuOpen}
@@ -752,15 +924,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         alignItems: 'center',
         gap: spacing.sm,
         maxWidth: '58%',
-    },
-    viewToggle: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: colors.surface,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...shadows.sm,
     },
     sortTrigger: {
         height: 40,
@@ -860,7 +1023,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     gridRow: {
         justifyContent: 'space-between',
     },
-    // Grid View
     gridCard: {
         width: '48%',
         backgroundColor: colors.surface,
@@ -938,7 +1100,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textMuted,
         marginTop: 2,
     },
-    // List View
     listCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -970,7 +1131,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textMuted,
         marginTop: 2,
     },
-    // Empty State
     emptyState: {
         alignItems: 'center',
         paddingTop: spacing['3xl'],
@@ -989,22 +1149,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginTop: spacing.xs,
         lineHeight: 20,
     },
-    emptyButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        marginTop: spacing.lg,
-        paddingHorizontal: spacing.lg,
-        paddingVertical: spacing.sm + 2,
-        backgroundColor: colors.primary,
-        borderRadius: 24,
-    },
-    emptyButtonText: {
-        color: colors.textInverted,
-        fontWeight: '600',
-        fontSize: 15,
-    },
-    // Loading
     loadingContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1026,6 +1170,86 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     skeletonList: {
         width: '100%',
         height: 72,
+    },
+    bannerHeader: {
+        marginTop: spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        paddingBottom: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    bannerHeaderText: {
+        fontSize: 16,
+        letterSpacing: 2,
+        color: colors.primary,
+        fontWeight: '700',
+    },
+    swipeListContainer: {
+        paddingTop: 0,
+        paddingBottom: 100,
+    },
+    swipeCardItem: {
+        flex: 1,
+        height: Dimensions.get('window').height * 0.55,
+        borderRadius: radius.xl,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...shadows.lg,
+    },
+    swipeBackground: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'flex-end',
+    },
+    swipeBackgroundImage: {
+        resizeMode: 'cover',
+    },
+    swipeOverlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    swipeContent: {
+        padding: spacing.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 1,
+    },
+    swipeTitle: {
+        fontSize: 32,
+        fontWeight: 'bold',
+        color: '#fff',
+        textAlign: 'center',
+        marginTop: spacing.md,
+        marginBottom: spacing.xs,
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 4,
+    },
+    swipeMeta: {
+        fontSize: 15,
+        color: 'rgba(255,255,255,0.9)',
+        textAlign: 'center',
+        lineHeight: 22,
+    },
+    swipeIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: radius.full,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    swipeHintContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: spacing.lg,
+    },
+    swipeHint: {
+        fontSize: 14,
+        color: colors.textMuted,
+        fontWeight: '500',
     },
     // Unmatched Entry
     unmatchedEntry: {
