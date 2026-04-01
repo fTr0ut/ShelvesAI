@@ -14,7 +14,10 @@ import {
     TouchableOpacity,
     View,
     StatusBar,
+    Dimensions,
+    ImageBackground,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -180,6 +183,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const [sortKey, setSortKey] = useState('date_desc');
     const [sortOpen, setSortOpen] = useState(false);
     const [shareBusy, setShareBusy] = useState(false);
+    const [viewMode, setViewMode] = useState('list');
+    const [displayModeOpen, setDisplayModeOpen] = useState(false);
     const autoAddHandledRef = useRef(false);
     const isMountedRef = useRef(true);
     const loadingMoreRef = useRef(false);
@@ -215,6 +220,28 @@ export default function ShelfDetailScreen({ route, navigation }) {
             isMountedRef.current = false;
         };
     }, []);
+
+    useEffect(() => {
+        const loadViewMode = async () => {
+            try {
+                const storedMode = await AsyncStorage.getItem('@ShelfDetailScreen:viewMode');
+                if (storedMode) setViewMode(storedMode);
+            } catch (e) {
+                console.warn('Failed to load view mode', e);
+            }
+        };
+        loadViewMode();
+    }, []);
+
+    const handleChangeViewMode = async (mode) => {
+        setViewMode(mode);
+        setDisplayModeOpen(false);
+        try {
+            await AsyncStorage.setItem('@ShelfDetailScreen:viewMode', mode);
+        } catch (e) {
+            console.warn('Failed to save view mode', e);
+        }
+    };
 
     useEffect(() => {
         hasLoadedShelfRef.current = false;
@@ -603,6 +630,52 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return base;
     }, [items, searchQuery, sortKey]);
 
+    const layoutData = useMemo(() => {
+        if (searchQuery.trim().length > 0) return visibleItems;
+        if (viewMode === 'banner') {
+            const out = [];
+            let lastSection = null;
+            visibleItems.forEach(item => {
+                const collectable = item.collectable || item.collectableSnapshot;
+                const manual = item.manual || item.manualSnapshot;
+                
+                const ownedPlatforms = normalizeOwnedPlatforms(item.ownedPlatforms);
+                let rawFormat = item.format || collectable?.format || manual?.format;
+                if (!rawFormat && ownedPlatforms.length > 0) {
+                    rawFormat = ownedPlatforms[0];
+                }
+                rawFormat = rawFormat || 'Unknown';
+                
+                let format = String(rawFormat).trim();
+                format = format.charAt(0).toUpperCase() + format.slice(1);
+
+                const yearMatch = (collectable?.year || manual?.year || collectable?.publishYear || collectable?.releaseYear || '');
+                const year = yearMatch ? String(yearMatch).match(/\b(\d{4})\b/)?.[1] || 'Unknown' : 'Unknown';
+                
+                let sectionTitle = format;
+                if (sortKey === 'year_desc') {
+                    if (format === 'Unknown' && year === 'Unknown') {
+                        sectionTitle = 'Unknown';
+                    } else if (format === 'Unknown') {
+                        sectionTitle = year;
+                    } else if (year === 'Unknown') {
+                        sectionTitle = format;
+                    } else {
+                        sectionTitle = `${format} - ${year}`;
+                    }
+                }
+                
+                if (sectionTitle !== lastSection) {
+                    out.push({ isSectionHeader: true, title: sectionTitle, id: `header-${sectionTitle}` });
+                    lastSection = sectionTitle;
+                }
+                out.push(item);
+            });
+            return out;
+        }
+        return visibleItems;
+    }, [visibleItems, viewMode, sortKey, searchQuery]);
+
     const getItemInfo = (item) => {
         const collectable = item.collectable || item.collectableSnapshot;
         const manual = item.manual || item.manualSnapshot;
@@ -689,7 +762,19 @@ export default function ShelfDetailScreen({ route, navigation }) {
         return fallback;
     };
 
+    const { width: windowWidth } = Dimensions.get('window');
+
     const renderItem = ({ item }) => {
+        if (item.isSectionHeader) {
+            return (
+                <View style={styles.bannerHeader}>
+                    <Text style={[styles.bannerHeaderText, { color: colors.primary }]}>
+                        {item.title.toUpperCase()}
+                    </Text>
+                </View>
+            );
+        }
+
         const info = getItemInfo(item);
         const coverEntry = resolveCoverSource(item);
         const coverSource = coverEntry?.source || null;
@@ -698,16 +783,48 @@ export default function ShelfDetailScreen({ route, navigation }) {
         const isFavorited = collectableId ? favorites[collectableId] : false;
         const ownedPlatforms = normalizeOwnedPlatforms(item.ownedPlatforms);
 
+        const handlePress = () => navigation.navigate('CollectableDetail', {
+            item,
+            shelfId: id,
+            readOnly: isReadOnly,
+            ownerId: shelf?.ownerId,
+            ownerUsername: shelf?.ownerUsername || null,
+        });
+
+        if (!searchQuery && viewMode === 'tile') {
+            return (
+                <TouchableOpacity
+                    style={styles.gridCard}
+                    onPress={handlePress}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.gridCoverWrapper}>
+                        {coverSource ? (
+                            <CachedImage
+                                source={coverSource}
+                                style={styles.gridCoverImage}
+                                contentFit="cover"
+                                onError={() => {
+                                    if (coverEntry?.kind === 'owner_thumb') setOwnerPhotoSourceFailures((prev) => ({ ...prev, [item.id]: 'thumb_failed' }));
+                                    if (coverEntry?.kind === 'owner_image') setOwnerPhotoSourceFailures((prev) => ({ ...prev, [item.id]: 'image_failed' }));
+                                }}
+                            />
+                        ) : (
+                            <View style={styles.gridCoverFallback}>
+                                <CategoryIcon type={info.type} size={24} />
+                            </View>
+                        )}
+                    </View>
+                    <Text style={styles.gridTitle} numberOfLines={2}>{info.title}</Text>
+                    {info.subtitle ? <Text style={styles.gridSubtitle} numberOfLines={1}>{info.subtitle}</Text> : null}
+                </TouchableOpacity>
+            );
+        }
+
         return (
             <TouchableOpacity
                 style={styles.itemCard}
-                onPress={() => navigation.navigate('CollectableDetail', {
-                    item,
-                    shelfId: id,
-                    readOnly: isReadOnly,
-                    ownerId: shelf?.ownerId,
-                    ownerUsername: shelf?.ownerUsername || null,
-                })}
+                onPress={handlePress}
                 activeOpacity={0.7}
             >
                 <View style={styles.itemCover}>
@@ -782,6 +899,59 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     ) : null}
                 </View>
             </TouchableOpacity>
+        );
+    };
+
+    const renderSwipeItem = ({ item }) => {
+        if (item.isSectionHeader) return null;
+        const info = getItemInfo(item);
+        const coverEntry = resolveCoverSource(item);
+        const coverSource = coverEntry?.source || null;
+        
+        return (
+            <View style={{ width: windowWidth, padding: spacing.md }}>
+                <TouchableOpacity
+                    style={styles.swipeCardItem}
+                    onPress={() => navigation.navigate('CollectableDetail', {
+                        item,
+                        shelfId: id,
+                        readOnly: isReadOnly,
+                        ownerId: shelf?.ownerId,
+                        ownerUsername: shelf?.ownerUsername || null,
+                    })}
+                    activeOpacity={0.8}
+                >
+                    {coverSource ? (
+                        <ImageBackground
+                            source={coverSource}
+                            style={styles.swipeBackground}
+                            imageStyle={styles.swipeBackgroundImage}
+                            blurRadius={10}
+                        >
+                            <View style={[styles.swipeOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.4)' }]} />
+                            <View style={styles.swipeContent}>
+                                <CachedImage source={coverSource} style={styles.swipeCoverImage} contentFit="cover" />
+                                <Text style={styles.swipeTitle} numberOfLines={2}>{info.title}</Text>
+                                <Text style={styles.swipeMeta}>{info.subtitle || info.type}</Text>
+                            </View>
+                        </ImageBackground>
+                    ) : (
+                        <View style={[styles.swipeBackground, { backgroundColor: colors.surfaceTop }]}>
+                            <View style={styles.swipeContent}>
+                                <View style={styles.swipeIconBox}>
+                                    <CategoryIcon type={info.type} size={40} />
+                                </View>
+                                <Text style={[styles.swipeTitle, { color: colors.text }]} numberOfLines={2}>{info.title}</Text>
+                                <Text style={[styles.swipeMeta, { color: colors.textSecondary }]}>{info.subtitle || info.type}</Text>
+                            </View>
+                        </View>
+                    )}
+                </TouchableOpacity>
+                <View style={styles.swipeHintContainer}>
+                    <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <Text style={styles.swipeHint}>Swipe left or right to browse items</Text>
+                </View>
+            </View>
         );
     };
 
@@ -1310,8 +1480,52 @@ export default function ShelfDetailScreen({ route, navigation }) {
         );
     }
 
+    const renderDisplayModeModal = () => (
+        <Modal visible={displayModeOpen} transparent animationType="fade">
+            <View style={styles.modalOverlay}>
+                <TouchableOpacity style={styles.modalBg} activeOpacity={1} onPress={() => setDisplayModeOpen(false)} />
+                <View style={styles.modalContent}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Display Mode</Text>
+                        <TouchableOpacity onPress={() => setDisplayModeOpen(false)}>
+                            <Ionicons name="close" size={24} color={colors.textMuted} />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.sortOptions}>
+                        {[
+                            { id: 'tile', label: 'Tile View', icon: 'grid' },
+                            { id: 'banner', label: 'Banner List', icon: 'list-circle' },
+                            { id: 'list', label: 'Detailed List', icon: 'list' },
+                            { id: 'swipe', label: 'Swipe Cards', icon: 'albums' },
+                        ].map(mode => (
+                            <TouchableOpacity
+                                key={mode.id}
+                                style={[styles.sortOption, viewMode === mode.id && styles.sortOptionActive]}
+                                onPress={() => handleChangeViewMode(mode.id)}
+                            >
+                                <Ionicons
+                                    name={mode.icon}
+                                    size={20}
+                                    color={viewMode === mode.id ? colors.primary : colors.text}
+                                    style={{ marginRight: spacing.md }}
+                                />
+                                <Text style={[styles.sortOptionText, viewMode === mode.id && styles.sortOptionTextActive]}>
+                                    {mode.label}
+                                </Text>
+                                {viewMode === mode.id && (
+                                    <Ionicons name="checkmark" size={20} color={colors.primary} />
+                                )}
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
+            {renderDisplayModeModal()}
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
             {/* Header */}
@@ -1357,23 +1571,40 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         />
                     </View>
                 )}
-                <TouchableOpacity
-                    style={styles.sortButton}
-                    onPress={() => setSortOpen(true)}
-                    accessibilityLabel="Sort items"
-                >
-                    <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
-                    <Text style={styles.sortButtonText} numberOfLines={1}>{sortLabel}</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity
+                        style={styles.sortButton}
+                        onPress={() => setSortOpen(true)}
+                        accessibilityLabel="Sort items"
+                    >
+                        <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
+                        <Text style={styles.sortButtonText} numberOfLines={1}>{sortLabel}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.sortButton, { marginLeft: spacing.sm }]}
+                        onPress={() => setDisplayModeOpen(true)}
+                        accessibilityLabel="Change view mode"
+                    >
+                        <Ionicons name="grid-outline" size={16} color={colors.textMuted} />
+                        <Text style={styles.sortButtonText} numberOfLines={1}>View</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Items List */}
             <FlatList
-                data={visibleItems}
+                key={searchQuery ? 'list' : viewMode}
+                data={searchQuery ? visibleItems : layoutData}
                 keyExtractor={(item) => String(item.id)}
-                renderItem={renderItem}
+                numColumns={!searchQuery && viewMode === 'tile' ? 2 : 1}
+                pagingEnabled={!searchQuery && viewMode === 'swipe'}
+                snapToAlignment={(!searchQuery && viewMode === 'swipe') ? 'start' : undefined}
+                decelerationRate={(!searchQuery && viewMode === 'swipe') ? 'fast' : 'normal'}
+                horizontal={!searchQuery && viewMode === 'swipe'}
+                renderItem={!searchQuery && viewMode === 'swipe' ? renderSwipeItem : renderItem}
+                columnWrapperStyle={(!searchQuery && viewMode === 'tile') ? { justifyContent: 'space-between', paddingHorizontal: spacing.md } : undefined}
                 contentContainerStyle={[
-                    styles.listContent,
+                    (!searchQuery && viewMode === 'swipe') ? { paddingTop: 0, paddingBottom: 100 } : styles.listContent,
                     bottomFooterSpacer > 0 ? { paddingBottom: 100 + bottomFooterSpacer } : null,
                 ]}
                 refreshControl={
@@ -1386,6 +1617,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 }
                 ListEmptyComponent={renderEmpty}
                 showsVerticalScrollIndicator={false}
+                showsHorizontalScrollIndicator={false}
                 onEndReached={loadMore}
                 onEndReachedThreshold={0.3}
                 ListFooterComponent={
@@ -1758,5 +1990,158 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     sortCancelText: {
         fontSize: 14,
         color: colors.textMuted,
+    },
+    // Display Mode Modal & Layouts
+    modalBg: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    modalContent: {
+        width: '85%',
+        maxWidth: 340,
+        backgroundColor: colors.surface,
+        borderRadius: radius.xl,
+        padding: spacing.lg,
+        ...shadows.xl,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: colors.text,
+    },
+    sortOptions: {
+        paddingTop: spacing.sm,
+    },
+    sortOptionActive: {
+        backgroundColor: colors.primary + '15',
+    },
+    sortOptionTextActive: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    bannerHeader: {
+        marginTop: spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        paddingBottom: spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    bannerHeaderText: {
+        fontSize: 14,
+        letterSpacing: 1.5,
+        fontWeight: '700',
+    },
+    swipeCardItem: {
+        flex: 1,
+        height: Dimensions.get('window').height * 0.55,
+        borderRadius: radius.xl,
+        overflow: 'hidden',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...shadows.lg,
+    },
+    swipeBackground: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'flex-end',
+    },
+    swipeBackgroundImage: {
+        resizeMode: 'cover',
+    },
+    swipeOverlay: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    swipeContent: {
+        padding: spacing.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 1,
+    },
+    swipeCoverImage: {
+        width: 140,
+        height: 200,
+        borderRadius: radius.md,
+        marginBottom: spacing.md,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    swipeTitle: {
+        fontSize: 26,
+        fontWeight: 'bold',
+        color: '#fff',
+        textAlign: 'center',
+        marginTop: spacing.md,
+        marginBottom: spacing.xs,
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 4,
+    },
+    swipeMeta: {
+        fontSize: 15,
+        color: 'rgba(255,255,255,0.9)',
+        textAlign: 'center',
+    },
+    swipeIconBox: {
+        width: 80,
+        height: 80,
+        borderRadius: radius.full,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    swipeHintContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: spacing.lg,
+    },
+    swipeHint: {
+        fontSize: 14,
+        color: colors.textMuted,
+        fontWeight: '500',
+    },
+    gridCard: {
+        width: '48%',
+        backgroundColor: colors.surface,
+        borderRadius: radius.lg,
+        padding: spacing.sm,
+        marginBottom: spacing.md,
+        ...shadows.sm,
+    },
+    gridCoverWrapper: {
+        width: '100%',
+        aspectRatio: 0.75,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+        backgroundColor: colors.surfaceElevated,
+        marginBottom: spacing.sm,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    gridCoverImage: {
+        width: '100%',
+        height: '100%',
+    },
+    gridCoverFallback: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    gridTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
+        marginBottom: 2,
+    },
+    gridSubtitle: {
+        fontSize: 12,
+        color: colors.textSecondary,
     },
 });
