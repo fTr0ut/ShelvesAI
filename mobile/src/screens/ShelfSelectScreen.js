@@ -14,7 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { CategoryIcon } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest } from '../services/api';
+import { clearShelvesListCache } from '../services/shelvesListCache';
+import { fetchAllShelves } from '../services/shelvesListService';
 
 export default function ShelfSelectScreen({ navigation }) {
     const { token, apiBase } = useContext(AuthContext);
@@ -33,7 +34,13 @@ export default function ShelfSelectScreen({ navigation }) {
         try {
             if (!refreshing) setLoading(true);
             setError('');
-            const data = await apiRequest({ apiBase, path: '/api/shelves', token });
+            const data = await fetchAllShelves({
+                apiBase,
+                token,
+                limit: 50,
+                sortBy: 'createdAt',
+                sortDir: 'desc',
+            });
             setShelves(Array.isArray(data?.shelves) ? data.shelves : []);
         } catch (e) {
             setError(e.message || 'Failed to load shelves.');
@@ -60,6 +67,7 @@ export default function ShelfSelectScreen({ navigation }) {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
+        clearShelvesListCache();
         loadShelves();
     }, [loadShelves]);
 

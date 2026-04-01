@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { CommonActions, useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -247,6 +247,37 @@ export default function ShelfEditScreen({ route, navigation }) {
         shelf?.gameDefaults,
     ]);
 
+    const routeBackToShelvesAfterDelete = useCallback(() => {
+        let currentNavigation = navigation;
+        while (currentNavigation) {
+            const state = currentNavigation.getState?.();
+            const routeNames = Array.isArray(state?.routeNames) ? state.routeNames : [];
+            if (routeNames.includes('Main')) {
+                currentNavigation.dispatch(
+                    CommonActions.reset({
+                        index: 0,
+                        routes: [
+                            {
+                                name: 'Main',
+                                params: {
+                                    screen: 'Shelves',
+                                    params: { screen: 'ShelvesHome' },
+                                },
+                            },
+                        ],
+                    }),
+                );
+                return;
+            }
+            currentNavigation = currentNavigation.getParent?.();
+        }
+
+        navigation.navigate('Main', {
+            screen: 'Shelves',
+            params: { screen: 'ShelvesHome' },
+        });
+    }, [navigation]);
+
     const handleDelete = useCallback(() => {
         Alert.alert(
             'Delete Shelf',
@@ -265,7 +296,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                                 method: 'DELETE',
                                 token,
                             });
-                            navigation.navigate('Main', { screen: 'Shelves' });
+                            routeBackToShelvesAfterDelete();
                         } catch (e) {
                             Alert.alert('Error', e.message);
                             setDeleting(false);
@@ -274,7 +305,7 @@ export default function ShelfEditScreen({ route, navigation }) {
                 },
             ]
         );
-    }, [apiBase, shelfId, shelf, name, token, navigation]);
+    }, [apiBase, shelfId, shelf, name, token, routeBackToShelvesAfterDelete]);
 
     if (loading) {
         return (

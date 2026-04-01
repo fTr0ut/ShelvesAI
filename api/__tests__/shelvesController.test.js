@@ -143,6 +143,7 @@ describe('shelvesController', () => {
             send: jest.fn(),
             setHeader: jest.fn(),
             status: jest.fn().mockReturnThis(),
+            end: jest.fn(),
         };
 
         mockPipelineInstance = {
@@ -334,6 +335,163 @@ describe('shelvesController', () => {
                 error: expect.stringContaining('customPlatformText is required'),
             }));
             expect(shelvesQueries.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('listShelves', () => {
+        it('uses default sorting and pagination when params are missing', async () => {
+            req.query = {};
+            query.mockResolvedValueOnce({
+                rows: [{ id: 2, name: 'B', type: 'books', item_count: '3' }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '1' }],
+                rowCount: 1,
+            });
+
+            await shelvesController.listShelves(req, res);
+
+            const [sql, params] = query.mock.calls[0];
+            expect(sql).toContain('ORDER BY s.created_at DESC, s.id DESC');
+            expect(params).toEqual([1, 50, 0]);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                pagination: expect.objectContaining({
+                    limit: 50,
+                    skip: 0,
+                    total: 1,
+                    hasMore: false,
+                }),
+                sort: { sortBy: 'createdAt', sortDir: 'desc' },
+            }));
+            expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, max-age=0, must-revalidate');
+            expect(res.setHeader).toHaveBeenCalledWith('ETag', expect.any(String));
+        });
+
+        it('accepts explicit sortBy/sortDir and returns pagination metadata', async () => {
+            req.query = { sortBy: 'name', sortDir: 'asc', limit: '10', skip: '20' };
+            query.mockResolvedValueOnce({
+                rows: [{ id: 10, name: 'Alpha', type: 'books', item_count: '2' }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '30' }],
+                rowCount: 1,
+            });
+
+            await shelvesController.listShelves(req, res);
+
+            const [sql, params] = query.mock.calls[0];
+            expect(sql).toContain('ORDER BY LOWER(s.name) ASC, s.id ASC');
+            expect(params).toEqual([1, 10, 20]);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                pagination: expect.objectContaining({
+                    limit: 10,
+                    skip: 20,
+                    total: 30,
+                    hasMore: true,
+                }),
+                sort: { sortBy: 'name', sortDir: 'asc' },
+            }));
+        });
+
+        it('accepts all supported sortBy + sortDir combinations', async () => {
+            const expectedSqlBySort = {
+                type: 'ORDER BY s.type',
+                name: 'ORDER BY LOWER(s.name)',
+                createdAt: 'ORDER BY s.created_at',
+                updatedAt: 'ORDER BY s.updated_at',
+            };
+            const sortFields = ['type', 'name', 'createdAt', 'updatedAt'];
+            const sortDirections = ['asc', 'desc'];
+
+            for (const sortField of sortFields) {
+                for (const direction of sortDirections) {
+                    query.mockReset();
+                    query.mockResolvedValueOnce({
+                        rows: [{ id: 1, name: 'Shelf', type: 'games', item_count: '1' }],
+                        rowCount: 1,
+                    });
+                    query.mockResolvedValueOnce({
+                        rows: [{ total: '1' }],
+                        rowCount: 1,
+                    });
+                    req.query = { sortBy: sortField, sortDir: direction, limit: '5', skip: '0' };
+                    res.json.mockClear();
+
+                    await shelvesController.listShelves(req, res);
+
+                    const [sql] = query.mock.calls[0];
+                    expect(sql).toContain(expectedSqlBySort[sortField]);
+                    if (direction === 'asc') {
+                        expect(sql).toContain('s.id ASC');
+                    } else {
+                        expect(sql).toContain('s.id DESC');
+                    }
+                    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                        sort: { sortBy: sortField, sortDir: direction },
+                    }));
+                }
+            }
+        });
+
+        it('falls back to default sort when invalid sort params are provided', async () => {
+            req.query = { sortBy: 'bad', sortDir: 'up' };
+            query.mockResolvedValueOnce({
+                rows: [{ id: 1, name: 'Shelf', type: 'games', item_count: '0' }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '1' }],
+                rowCount: 1,
+            });
+
+            await shelvesController.listShelves(req, res);
+
+            const [sql] = query.mock.calls[0];
+            expect(sql).toContain('ORDER BY s.created_at DESC, s.id DESC');
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                sort: { sortBy: 'createdAt', sortDir: 'desc' },
+            }));
+        });
+
+        it('returns 304 when if-none-match matches computed ETag', async () => {
+            req.query = { sortBy: 'updatedAt', sortDir: 'desc', limit: '5', skip: '0' };
+            query.mockResolvedValueOnce({
+                rows: [{ id: 9, name: 'Recent', type: 'movies', item_count: '5' }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '1' }],
+                rowCount: 1,
+            });
+
+            await shelvesController.listShelves(req, res);
+
+            const etagCall = res.setHeader.mock.calls.find(([key]) => key === 'ETag');
+            expect(etagCall).toBeTruthy();
+            const etagValue = etagCall[1];
+
+            query.mockReset();
+            query.mockResolvedValueOnce({
+                rows: [{ id: 9, name: 'Recent', type: 'movies', item_count: '5' }],
+                rowCount: 1,
+            });
+            query.mockResolvedValueOnce({
+                rows: [{ total: '1' }],
+                rowCount: 1,
+            });
+            req.headers = { 'if-none-match': etagValue };
+            res.json.mockClear();
+            res.status.mockClear();
+            res.end.mockClear();
+            res.setHeader.mockClear();
+
+            await shelvesController.listShelves(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(304);
+            expect(res.end).toHaveBeenCalled();
+            expect(res.json).not.toHaveBeenCalled();
         });
     });
 

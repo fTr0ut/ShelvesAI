@@ -32,5 +32,13 @@
             },
             "autoIncrement": true
         }
+    },
+    "submit": {
+        "production": {       
+            "android":{
+                "track": "internal",
+                "releaseStatus": "draft"
+            }
+        }
     }
 }

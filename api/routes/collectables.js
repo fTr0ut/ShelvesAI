@@ -926,7 +926,7 @@ router.post("/", requireAdmin, async (req, res) => {
 });
 
 // Resolve a news item to a collectable (find existing or create minimal)
-router.post("/from-news", requireAdmin, async (req, res) => {
+router.post("/from-news", async (req, res) => {
   try {
     const {
       externalId,

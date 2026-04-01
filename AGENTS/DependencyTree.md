@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-03-31
+Last updated: 2026-04-01
 
 ---
 
@@ -49,6 +49,8 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-01 | shelf-delete-post-success-navigation-reset | Updated `mobile/src/screens/ShelfEditScreen.js` shelf deletion flow to keep the confirmation alert, await successful `DELETE /api/shelves/:shelfId`, and then perform a root-level navigation reset (`Main -> Shelves -> ShelvesHome`) via `CommonActions.reset` so users reliably land on their Shelves list after deletion instead of remaining on stale nested `ShelfEdit` state.
+- 2026-04-01 | shelves-list-pagination-sorting-and-etag-caching | Extended `GET /api/shelves` in `api/controllers/shelvesController.js` to support paged sorting (`limit`, `skip`, `sortBy`, `sortDir`) with safe sort whitelist mapping (`type`, `name`, `createdAt`, `updatedAt`), deterministic tie-break ordering (`s.id`), response sort metadata, and conditional requests via ETag + `If-None-Match` (`304` + `Cache-Control: private, max-age=0, must-revalidate`). Added controller coverage in `api/__tests__/shelvesController.test.js` for default/invalid sort fallback, all supported sort combinations, pagination metadata, and 304 behavior. Mobile now has shared shelves list cache/service (`mobile/src/services/shelvesListCache.js`, `mobile/src/services/shelvesListService.js`) with 60s in-memory cache keyed by page+sort and ETag-aware fetches, `apiRequest` 304/meta support plus centralized shelves-cache invalidation on successful non-GET `/api/shelves*` writes (`mobile/src/services/api.js`), `ShelvesScreen` browse-mode pagination + sort modal + search-mode sort disable (`mobile/src/screens/ShelvesScreen.js`), and paged full-shelf loading in `mobile/src/screens/ShelfSelectScreen.js` and `mobile/src/components/AddToShelfModal.js`.
 - 2026-03-31 | owned-platform-format-required-and-row-badge | Tightened game-owned-platform editing contract. `mobile/src/screens/CollectableDetailScreen.js` now blocks save until ownership format is selected (`Physical`/`Digital`), shows a required prompt when unset, and renders ownership format badges in each Owned Platforms row after save. Backend `api/controllers/shelvesController.updateOwnedPlatforms` now requires `format` for game collectables and returns 400 when missing/empty/invalid. Extended coverage in `api/__tests__/shelvesController.test.js` with missing-format rejection and required-format success assertions.
 - 2026-03-31 | metadata-score-persistence-and-igdb-rating-separation | Fixed metadata score persistence so DB `collectables.metascore` now stores only metadata-quality scoring payloads (`score/maxScore/missing/scoredAt`) and no longer accepts IGDB rating objects. `api/services/catalog/GameCatalogService.mapIgdbGameToCollectable()` no longer maps IGDB ratings into `metascore`; ratings remain under `extras.igdb.ratings`. `api/services/visionPipeline.saveToShelf()` now computes metadata scores via `MetadataScorer` for new scan saves, merges with carried `_metadata*` values, and persists the highest score. `api/routes/collectables.buildCollectableUpsertPayloadFromCandidate()` and `api/controllers/shelvesController.buildCollectableUpsertPayload()` now prioritize scorer-derived `_metadata*` fields and reject non-metadata-shaped `metascore` payloads. `CatalogRouter`/`CollectableMatchingService` now propagate `_metadataMaxScore` and `_metadataScoredAt` alongside `_metadataScore`/`_metadataMissing`. Added/updated tests in `api/services/catalog/GameCatalogService.test.js`, `api/__tests__/collectablesRoute.helpers.test.js`, and `api/__tests__/visionPipeline.test.js`.
 - 2026-03-31 | platform-missing-insert-default-fix | Fixed `user_collections.platform_missing` NOT NULL insert failures for non-game add flows (including vision bulk saves) by updating `api/database/queries/shelves.addCollectable` to persist `FALSE` when platform missing is omitted and to only mutate `platform_missing` on conflict updates when explicitly provided. Added query regression coverage in `api/database/queries/shelves.test.js`.
@@ -677,6 +679,10 @@ routes/checkin.js
   → database/pg.js
   → database/queries/utils.js
   -> routes/collectables.js (_helpers: API fallback/container resolution helpers)
+
+Mobile check-in flows that resolve external items before POST /api/checkin:
+  CheckInScreen       → POST /api/collectables/resolve-search-hit (auth only)
+  QuickCheckInModal   → POST /api/collectables/from-news (auth only)
 ```
 
 #### onboarding

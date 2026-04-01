@@ -1,6 +1,8 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import {
+    ActivityIndicator,
     FlatList,
+    Modal,
     RefreshControl,
     StyleSheet,
     Text,
@@ -17,6 +19,20 @@ import { ENABLE_PROFILE_IN_TAB_BAR } from '../config/featureFlags';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { clearShelvesListCache } from '../services/shelvesListCache';
+import { fetchShelvesPage } from '../services/shelvesListService';
+
+const SHELVES_PAGE_LIMIT = 50;
+const SHELF_SORT_OPTIONS = [
+    { key: 'type', label: 'Shelf Type' },
+    { key: 'name', label: 'Alphabetical' },
+    { key: 'createdAt', label: 'Date Created' },
+    { key: 'updatedAt', label: 'Last Updated' },
+];
+const SHELF_SORT_DIRECTIONS = [
+    { key: 'desc', label: 'Descending' },
+    { key: 'asc', label: 'Ascending' },
+];
 
 export default function ShelvesScreen({ navigation }) {
     const { token, apiBase, user } = useContext(AuthContext);
@@ -34,18 +50,36 @@ export default function ShelvesScreen({ navigation }) {
     const searchCache = useRef({});
     const [viewMode, setViewMode] = useState('grid');
     const [unmatchedCount, setUnmatchedCount] = useState(0);
+    const [totalShelves, setTotalShelves] = useState(0);
+    const [hasMoreShelves, setHasMoreShelves] = useState(false);
+    const [loadingMoreShelves, setLoadingMoreShelves] = useState(false);
+    const [sortBy, setSortBy] = useState('createdAt');
+    const [sortDir, setSortDir] = useState('desc');
+    const [sortOpen, setSortOpen] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const search = useGlobalSearch(navigation);
 
-    const loadShelves = useCallback(async () => {
+    const loadShelves = useCallback(async ({ forceRefresh = false, showBlockingLoader = true } = {}) => {
         try {
-            if (!refreshing) setLoading(true);
+            if (showBlockingLoader) setLoading(true);
             const [data, unmatchedData] = await Promise.all([
-                apiRequest({ apiBase, path: '/api/shelves', token }),
+                fetchShelvesPage({
+                    apiBase,
+                    token,
+                    limit: SHELVES_PAGE_LIMIT,
+                    skip: 0,
+                    sortBy,
+                    sortDir,
+                    forceRefresh,
+                }),
                 apiRequest({ apiBase, path: '/api/unmatched/count', token }).catch(() => ({ count: 0 })),
             ]);
-            setShelves(Array.isArray(data.shelves) ? data.shelves : []);
+            const fetchedShelves = Array.isArray(data.shelves) ? data.shelves : [];
+            const pagination = data?.pagination || {};
+            setShelves(fetchedShelves);
+            setTotalShelves(Number.isFinite(Number(pagination.total)) ? Number(pagination.total) : fetchedShelves.length);
+            setHasMoreShelves(Boolean(pagination.hasMore));
             setUnmatchedCount(unmatchedData.count || 0);
         } catch (e) {
             console.warn('Failed to load shelves:', e);
@@ -53,7 +87,42 @@ export default function ShelvesScreen({ navigation }) {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [apiBase, token, refreshing]);
+    }, [apiBase, token, sortBy, sortDir]);
+
+    const loadMoreShelves = useCallback(async () => {
+        if (loadingMoreShelves || !hasMoreShelves) return;
+        try {
+            setLoadingMoreShelves(true);
+            const skip = shelves.length;
+            const data = await fetchShelvesPage({
+                apiBase,
+                token,
+                limit: SHELVES_PAGE_LIMIT,
+                skip,
+                sortBy,
+                sortDir,
+            });
+            const incoming = Array.isArray(data?.shelves) ? data.shelves : [];
+            const pagination = data?.pagination || {};
+            setShelves((prev) => {
+                const merged = [...prev];
+                const seen = new Set(prev.map((entry) => String(entry?.id)));
+                for (const shelf of incoming) {
+                    const key = String(shelf?.id ?? '');
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    merged.push(shelf);
+                }
+                return merged;
+            });
+            setTotalShelves(Number.isFinite(Number(pagination.total)) ? Number(pagination.total) : (skip + incoming.length));
+            setHasMoreShelves(Boolean(pagination.hasMore));
+        } catch (e) {
+            console.warn('Failed to load more shelves:', e);
+        } finally {
+            setLoadingMoreShelves(false);
+        }
+    }, [apiBase, token, sortBy, sortDir, shelves, hasMoreShelves, loadingMoreShelves]);
 
     const loadUnreadCount = useCallback(async () => {
         if (!token) {
@@ -70,13 +139,13 @@ export default function ShelvesScreen({ navigation }) {
     }, [apiBase, token]);
 
     useEffect(() => {
-        loadShelves();
+        loadShelves({ forceRefresh: false, showBlockingLoader: true });
         loadUnreadCount();
     }, [loadShelves, loadUnreadCount]);
 
     useEffect(() => {
         const unsubscribe = navigation.addListener('focus', () => {
-            loadShelves();
+            loadShelves({ forceRefresh: false, showBlockingLoader: false });
             loadUnreadCount();
         });
         return unsubscribe;
@@ -84,7 +153,8 @@ export default function ShelvesScreen({ navigation }) {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        loadShelves();
+        clearShelvesListCache();
+        loadShelves({ forceRefresh: true, showBlockingLoader: false });
         loadUnreadCount();
     }, [loadShelves, loadUnreadCount]);
 
@@ -148,6 +218,8 @@ export default function ShelvesScreen({ navigation }) {
         }
     };
 
+    const isSearchActive = debouncedSearchQuery.trim().length >= 2;
+
     const listData = useMemo(() => {
         if (!debouncedSearchQuery.trim() || debouncedSearchQuery.trim().length < 2) {
             return [...shelves, { id: 'create-shelf', type: 'special-create', name: 'New Shelf' }];
@@ -176,9 +248,15 @@ export default function ShelvesScreen({ navigation }) {
     }, [debouncedSearchQuery, shelves, searchResults, isSearchingItems]);
 
     const showTopCreateShelfButton = useMemo(
-        () => shelves.length > 6 && !searchQuery.trim(),
-        [shelves.length, searchQuery]
+        () => totalShelves > 6 && !searchQuery.trim(),
+        [totalShelves, searchQuery]
     );
+
+    const sortSelectionLabel = useMemo(() => {
+        const field = SHELF_SORT_OPTIONS.find((option) => option.key === sortBy)?.label || 'Date Created';
+        const dir = SHELF_SORT_DIRECTIONS.find((option) => option.key === sortDir)?.label || 'Descending';
+        return `${field} (${dir})`;
+    }, [sortBy, sortDir]);
 
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
@@ -418,6 +496,14 @@ export default function ShelvesScreen({ navigation }) {
         </TouchableOpacity>
     );
 
+    const handleEndReached = () => {
+        if (isSearchActive) {
+            handleLoadMoreSearch();
+            return;
+        }
+        loadMoreShelves();
+    };
+
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
@@ -453,14 +539,28 @@ export default function ShelvesScreen({ navigation }) {
                 <View style={styles.subHeader}>
                     <View>
                         <Text style={styles.headerTitle}>My Shelves</Text>
-                        <Text style={styles.headerSubtitle}>{shelves.length} collection{shelves.length !== 1 ? 's' : ''}</Text>
+                        <Text style={styles.headerSubtitle}>
+                            {totalShelves} collection{totalShelves !== 1 ? 's' : ''}{(!isSearchActive && hasMoreShelves) ? ` (${shelves.length} loaded)` : ''}
+                        </Text>
                     </View>
-                    <TouchableOpacity
-                        style={styles.viewToggle}
-                        onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
-                    >
-                        <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
-                    </TouchableOpacity>
+                    <View style={styles.subHeaderActions}>
+                        {!isSearchActive && (
+                            <TouchableOpacity
+                                style={styles.sortTrigger}
+                                onPress={() => setSortOpen(true)}
+                                accessibilityLabel="Sort shelves"
+                            >
+                                <Ionicons name="swap-vertical" size={16} color={colors.textMuted} />
+                                <Text numberOfLines={1} style={styles.sortTriggerText}>Sort</Text>
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                            style={styles.viewToggle}
+                            onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}
+                        >
+                            <Ionicons name={viewMode === 'grid' ? 'list' : 'grid'} size={22} color={colors.text} />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {/* Shelf filter search */}
@@ -519,9 +619,14 @@ export default function ShelvesScreen({ navigation }) {
                                 colors={[colors.primary]}
                             />
                         }
-                        onEndReached={handleLoadMoreSearch}
+                        onEndReached={handleEndReached}
                         onEndReachedThreshold={0.5}
                         showsVerticalScrollIndicator={false}
+                        ListFooterComponent={loadingMoreShelves && !isSearchActive ? (
+                            <View style={styles.listFooterLoading}>
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            </View>
+                        ) : null}
                         ListEmptyComponent={renderEmpty}
                     />
                 )}
@@ -529,6 +634,62 @@ export default function ShelvesScreen({ navigation }) {
                 {/* Search overlay — absolutely positioned over body */}
                 <GlobalSearchOverlay search={search} />
             </View>
+
+            <Modal
+                visible={sortOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setSortOpen(false)}
+            >
+                <TouchableOpacity
+                    style={styles.sortModalBackdrop}
+                    activeOpacity={1}
+                    onPress={() => setSortOpen(false)}
+                >
+                    <TouchableOpacity activeOpacity={1} style={styles.sortModalCard} onPress={() => { }}>
+                        <Text style={styles.sortModalTitle}>Sort Shelves</Text>
+                        <Text style={styles.sortModalSubtitle} numberOfLines={2}>{sortSelectionLabel}</Text>
+                        <View style={styles.sortSection}>
+                            <Text style={styles.sortSectionTitle}>Field</Text>
+                            {SHELF_SORT_OPTIONS.map((option) => {
+                                const selected = option.key === sortBy;
+                                return (
+                                    <TouchableOpacity
+                                        key={option.key}
+                                        style={[styles.sortOptionRow, selected && styles.sortOptionSelected]}
+                                        onPress={() => setSortBy(option.key)}
+                                    >
+                                        <Text style={[styles.sortOptionText, selected && styles.sortOptionTextSelected]}>{option.label}</Text>
+                                        {selected ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                        <View style={styles.sortSection}>
+                            <Text style={styles.sortSectionTitle}>Direction</Text>
+                            <View style={styles.sortDirectionRow}>
+                                {SHELF_SORT_DIRECTIONS.map((option) => {
+                                    const selected = option.key === sortDir;
+                                    return (
+                                        <TouchableOpacity
+                                            key={option.key}
+                                            style={[styles.sortDirectionChip, selected && styles.sortDirectionChipSelected]}
+                                            onPress={() => setSortDir(option.key)}
+                                        >
+                                            <Text style={[styles.sortDirectionText, selected && styles.sortDirectionTextSelected]}>
+                                                {option.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                        <TouchableOpacity style={styles.sortDoneButton} onPress={() => setSortOpen(false)}>
+                            <Text style={styles.sortDoneButtonText}>Done</Text>
+                        </TouchableOpacity>
+                    </TouchableOpacity>
+                </TouchableOpacity>
+            </Modal>
 
             {/* Account Slide Menu */}
             {!ENABLE_PROFILE_IN_TAB_BAR && (
@@ -586,6 +747,12 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         paddingTop: spacing.sm,
         paddingBottom: spacing.md,
     },
+    subHeaderActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        maxWidth: '58%',
+    },
     viewToggle: {
         width: 40,
         height: 40,
@@ -594,6 +761,22 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'center',
         alignItems: 'center',
         ...shadows.sm,
+    },
+    sortTrigger: {
+        height: 40,
+        borderRadius: 20,
+        paddingHorizontal: spacing.md,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.xs,
+    },
+    sortTriggerText: {
+        fontSize: 13,
+        color: colors.text,
+        fontWeight: '600',
     },
     badge: {
         position: 'absolute',
@@ -828,6 +1011,9 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         justifyContent: 'space-between',
         padding: spacing.md,
     },
+    listFooterLoading: {
+        paddingVertical: spacing.md,
+    },
     skeleton: {
         backgroundColor: colors.surface,
         borderRadius: radius.lg,
@@ -978,5 +1164,100 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 12,
         color: colors.textMuted,
         fontStyle: 'italic',
+    },
+    sortModalBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'center',
+        paddingHorizontal: spacing.lg,
+    },
+    sortModalCard: {
+        backgroundColor: colors.background,
+        borderRadius: radius.xl,
+        padding: spacing.lg,
+        borderWidth: 1,
+        borderColor: colors.border,
+        ...shadows.md,
+    },
+    sortModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: colors.text,
+    },
+    sortModalSubtitle: {
+        marginTop: spacing.xs,
+        fontSize: 12,
+        color: colors.textMuted,
+    },
+    sortSection: {
+        marginTop: spacing.md,
+    },
+    sortSectionTitle: {
+        fontSize: 12,
+        color: colors.textMuted,
+        textTransform: 'uppercase',
+        marginBottom: spacing.xs,
+    },
+    sortOptionRow: {
+        borderRadius: radius.md,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderWidth: 1,
+        borderColor: colors.border,
+        marginBottom: spacing.xs,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    sortOptionSelected: {
+        borderColor: colors.primary,
+        backgroundColor: colors.primary + '14',
+    },
+    sortOptionText: {
+        fontSize: 14,
+        color: colors.text,
+        fontWeight: '500',
+    },
+    sortOptionTextSelected: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    sortDirectionRow: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+    },
+    sortDirectionChip: {
+        flex: 1,
+        borderRadius: radius.full,
+        borderWidth: 1,
+        borderColor: colors.border,
+        paddingVertical: spacing.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    sortDirectionChipSelected: {
+        borderColor: colors.primary,
+        backgroundColor: colors.primary + '14',
+    },
+    sortDirectionText: {
+        fontSize: 13,
+        color: colors.text,
+        fontWeight: '500',
+    },
+    sortDirectionTextSelected: {
+        color: colors.primary,
+        fontWeight: '600',
+    },
+    sortDoneButton: {
+        marginTop: spacing.lg,
+        borderRadius: radius.full,
+        backgroundColor: colors.primary,
+        paddingVertical: spacing.sm + 2,
+        alignItems: 'center',
+    },
+    sortDoneButtonText: {
+        color: colors.textInverted,
+        fontSize: 14,
+        fontWeight: '700',
     },
 });

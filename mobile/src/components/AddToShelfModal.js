@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { fetchAllShelves } from '../services/shelvesListService';
 
 export default function AddToShelfModal({ visible, onClose, onSuccess, apiBase, token, collectableId, manualId }) {
     const { colors, spacing, typography, shadows, radius } = useTheme();
@@ -36,7 +37,13 @@ export default function AddToShelfModal({ visible, onClose, onSuccess, apiBase, 
     const fetchShelves = async () => {
         setLoading(true);
         try {
-            const data = await apiRequest({ apiBase, path: '/api/shelves', token });
+            const data = await fetchAllShelves({
+                apiBase,
+                token,
+                limit: 50,
+                sortBy: 'createdAt',
+                sortDir: 'desc',
+            });
             setShelves(data?.shelves ?? []);
         } catch (e) {
             console.warn('Failed to fetch shelves', e);

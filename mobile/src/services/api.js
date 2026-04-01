@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as SecureStore from 'expo-secure-store'
 import * as Sentry from '@sentry/react-native'
 import { Buffer } from 'buffer'
+import { clearShelvesListCache } from './shelvesListCache'
 
 const TOKEN_KEY = 'token'
 const TOKEN_EXPIRY_SKEW_SECONDS = 30
@@ -219,28 +220,54 @@ export async function exchangeAuth0Token({ apiBase, accessToken }) {
   })
 }
 
-export async function apiRequest({ apiBase, path, method = 'GET', token, body, headers = {} }) {
+function headersToObject(inputHeaders) {
+  if (!inputHeaders || typeof inputHeaders.forEach !== 'function') return {}
+  const out = {}
+  inputHeaders.forEach((value, key) => {
+    out[String(key).toLowerCase()] = value
+  })
+  return out
+}
+
+export async function apiRequest({
+  apiBase,
+  path,
+  method = 'GET',
+  token,
+  body,
+  headers = {},
+  allowNotModified = false,
+  ifNoneMatch = '',
+  onNotModified = null,
+  returnMeta = false,
+}) {
   if (!apiBase) throw new Error('Missing apiBase for apiRequest')
   if (!path) throw new Error('Missing path for apiRequest')
 
+  const normalizedMethod = String(method || 'GET').toUpperCase()
   const authToken = await getValidToken(token)
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...headers,
+  }
+  if (ifNoneMatch) {
+    requestHeaders['If-None-Match'] = ifNoneMatch
+  }
+
   let res
   try {
     res = await fetch(`${apiBase}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        ...headers,
-      },
+      method: normalizedMethod,
+      headers: requestHeaders,
       body: body ? JSON.stringify(body) : undefined,
     })
   } catch (err) {
     Sentry.captureException(err, {
       tags: {
         area: 'api_network',
-        method,
+        method: normalizedMethod,
       },
       extra: {
         path,
@@ -248,6 +275,17 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
       },
     })
     throw err
+  }
+
+  if (res.status === 304 && allowNotModified) {
+    const fallback = typeof onNotModified === 'function' ? await onNotModified() : null
+    const metaPayload = {
+      data: fallback,
+      status: 304,
+      notModified: true,
+      headers: headersToObject(res.headers),
+    }
+    return returnMeta ? metaPayload : fallback
   }
 
   const text = await res.text()
@@ -273,7 +311,7 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
       Sentry.captureException(err, {
         tags: {
           area: 'api_server',
-          method,
+          method: normalizedMethod,
         },
         extra: {
           path,
@@ -285,5 +323,19 @@ export async function apiRequest({ apiBase, path, method = 'GET', token, body, h
 
     throw err
   }
+
+  if (normalizedMethod !== 'GET' && String(path || '').startsWith('/api/shelves')) {
+    clearShelvesListCache()
+  }
+
+  if (returnMeta) {
+    return {
+      data,
+      status: res.status,
+      notModified: false,
+      headers: headersToObject(res.headers),
+    }
+  }
+
   return data
 }

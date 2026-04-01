@@ -736,6 +736,50 @@ function parsePaginationParams(reqQuery, { defaultLimit = 20, maxLimit = 100 } =
   return { limit, skip };
 }
 
+const SHELF_SORT_COLUMNS = Object.freeze({
+  type: 's.type',
+  name: 'LOWER(s.name)',
+  createdAt: 's.created_at',
+  updatedAt: 's.updated_at',
+});
+
+function parseShelfSortParams(reqQuery) {
+  const rawSortBy = String(reqQuery?.sortBy ?? '').trim();
+  const rawSortDir = String(reqQuery?.sortDir ?? '').trim().toLowerCase();
+  const sortBy = Object.prototype.hasOwnProperty.call(SHELF_SORT_COLUMNS, rawSortBy)
+    ? rawSortBy
+    : 'createdAt';
+  const sortDir = rawSortDir === 'asc' ? 'asc' : 'desc';
+  return {
+    sortBy,
+    sortDir,
+    sortColumn: SHELF_SORT_COLUMNS[sortBy],
+  };
+}
+
+function buildEtagFromPayload(payload) {
+  const digest = crypto
+    .createHash('sha1')
+    .update(JSON.stringify(payload))
+    .digest('hex');
+  return `"${digest}"`;
+}
+
+function normalizeEtagToken(value) {
+  return String(value || '').trim().replace(/^W\//i, '');
+}
+
+function doesIfNoneMatchHeaderMatch(ifNoneMatchHeader, etag) {
+  if (!ifNoneMatchHeader || !etag) return false;
+  const target = normalizeEtagToken(etag);
+  const tokens = String(ifNoneMatchHeader)
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.includes('*')) return true;
+  return tokens.some((token) => normalizeEtagToken(token) === target);
+}
+
 function formatItemCount(count) {
   return `${count} item${count === 1 ? '' : 's'}`;
 }
@@ -1235,7 +1279,9 @@ const structuredVisionFormat = {
 // Controller functions
 async function listShelves(req, res) {
   try {
-    const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 20, maxLimit: 100 });
+    const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 50, maxLimit: 100 });
+    const { sortBy, sortDir, sortColumn } = parseShelfSortParams(req.query);
+    const sortDirectionSql = sortDir === 'asc' ? 'ASC' : 'DESC';
 
     const result = await query(
       `SELECT s.*, COUNT(uc.id) as item_count
@@ -1243,7 +1289,7 @@ async function listShelves(req, res) {
        LEFT JOIN user_collections uc ON uc.shelf_id = s.id
        WHERE s.owner_id = $1
        GROUP BY s.id
-       ORDER BY s.created_at DESC
+       ORDER BY ${sortColumn} ${sortDirectionSql}, s.id ${sortDirectionSql}
        LIMIT $2 OFFSET $3`,
       [req.user.id, limit, skip]
     );
@@ -1254,10 +1300,21 @@ async function listShelves(req, res) {
     );
     const total = parseInt(countResult.rows[0].total);
 
-    res.json({
+    const payload = {
       shelves: result.rows.map(rowToCamelCase).map(formatShelfResponse),
       pagination: { limit, skip, total, hasMore: skip + result.rows.length < total },
-    });
+      sort: { sortBy, sortDir },
+    };
+
+    const etag = buildEtagFromPayload(payload);
+    res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
+    res.setHeader('ETag', etag);
+
+    if (doesIfNoneMatchHeaderMatch(req.headers?.['if-none-match'], etag)) {
+      return res.status(304).end();
+    }
+
+    res.json(payload);
   } catch (err) {
     logger.error('listShelves error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -3799,7 +3856,7 @@ async function getVisionStatus(req, res) {
             : status === 'aborted'
               ? 'Processing cancelled by user'
               : queueJob?.error?.message
-                || 'Processing failed');
+              || 'Processing failed');
     const result = inMemory?.result || queueJob?.result || null;
 
     let queuePosition = null;
@@ -4622,7 +4679,7 @@ async function searchUserCollection(req, res) {
   try {
     const userId = req.user.id;
     const q = req.query.q || '';
-    
+
     // We already use validateStringLengths for `q`, but enforce minimum length here to save DB cost
     if (q.trim().length < 2) {
       return res.json({ results: [] });

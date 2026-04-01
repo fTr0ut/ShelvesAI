@@ -70,8 +70,11 @@
 
 -~~GlobalSearch doesn't appear to recongize TV API for searching. iOS v1 build 3 3/29/26~~ **DONE 3/30/26** - Fixed API-container TV fallback wiring by including shared `TvCatalogService` in `CollectableMatchingService` catalog resolution, so typed/global searches using container `tv` now call TMDB TV lookup instead of short-circuiting with no provider.
 
--
+-~~Deleting a shelf in the Shelf's settings will delete it, but the screen does not update and it does not navigate the user back to their main Shelves page. We also need to add in a confirmation modal. iOS v1 build 4 3/30/2026~~ **DONE 4/1/26** - `ShelfEditScreen` now keeps delete confirmation, waits for successful `DELETE /api/shelves/:shelfId`, then resets navigation to `Main -> Shelves -> ShelvesHome` so users always return to their Shelves list after deletion (fixes stale nested `ShelfEdit` stack state).
 
+-~~shelvesController only allows a specified range of shelves to be displayed, with a limit of 100. This limit needs to be lifted or refractored smartly. iOS v1 build 4 3/30/2026~~ **DONE 4/1/26** - Implemented paginated + sortable shelves listing (`GET /api/shelves` now supports `limit`, `skip`, `sortBy`, `sortDir` with deterministic ordering and response `sort` metadata), added conditional shelf-list caching via ETag/304 (`Cache-Control: private, max-age=0, must-revalidate`), and updated mobile shelves consumers to load all pages as needed (`ShelvesScreen` infinite-scroll browse mode with sort modal + search-mode sort disable, plus paged-all fetches for `ShelfSelectScreen` and `AddToShelfModal`).
+
+-~~User reported getting an "admin access denied" error when attempting to check-in on an item and create a new event on their feed.~~ **DONE 4/1/26** - `POST /api/collectables/from-news` had `requireAdmin` middleware incorrectly applied (copy-paste from the admin-only `POST /api/collectables` catalog-write route above it), blocking non-admin users from the `QuickCheckInModal` news-item check-in flow. Removed `requireAdmin` from the route; standard `auth` middleware (applied at the router level) still enforces authentication.
 
 
 
