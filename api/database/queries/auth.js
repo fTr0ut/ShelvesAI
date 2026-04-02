@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query } = require('../pg');
 const { rowToCamelCase, formatUserForResponse } = require('./utils');
+const logger = require('../../logger');
 
 // Pre-computed hash so bcrypt.compare always runs even for non-existent users,
 // preventing timing-based username enumeration.
@@ -28,6 +29,32 @@ async function findByEmail(email) {
         [email]
     );
     return result.rows[0] || null;
+}
+
+/**
+ * Find a user by login identifier (username or email, case-insensitive).
+ * Returns a status so callers can safely reject ambiguous username/email collisions.
+ * @param {string} identifier
+ * @returns {Promise<{ status: 'found', user: object } | { status: 'ambiguous', users: object[] } | { status: 'not_found' }>}
+ */
+async function findByLoginIdentifier(identifier) {
+    const result = await query(
+        `SELECT *
+           FROM users
+          WHERE LOWER(username) = LOWER($1)
+             OR LOWER(email) = LOWER($1)`,
+        [identifier]
+    );
+
+    if (result.rows.length === 1) {
+        return { status: 'found', user: result.rows[0] };
+    }
+
+    if (result.rows.length > 1) {
+        return { status: 'ambiguous', users: result.rows };
+    }
+
+    return { status: 'not_found' };
 }
 
 /**
@@ -66,14 +93,22 @@ async function register({ username, password, email }) {
 }
 
 /**
- * Login user with username/password
+ * Login user with username-or-email/password using the legacy `username` request field.
  * @returns {{ user: object, token: string, suspended?: boolean, suspensionReason?: string } | null}
  */
 async function login({ username, password }) {
-    const user = await findByUsername(username);
+    const lookup = await findByLoginIdentifier(username);
+    const user = lookup.status === 'found' ? lookup.user : null;
 
-    // Always run bcrypt to prevent timing-based username enumeration
+    // Always run bcrypt to prevent timing-based identifier enumeration
     const valid = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
+    if (lookup.status === 'ambiguous') {
+        logger.warn('Ambiguous login identifier match rejected', {
+            loginIdentifier: username,
+            matchedUserIds: lookup.users.map((entry) => entry.id),
+        });
+        return null;
+    }
     if (!user || !valid) return null;
 
     if (user.is_suspended) {
@@ -216,6 +251,7 @@ async function refreshToken(userId) {
 module.exports = {
     findByUsername,
     findByEmail,
+    findByLoginIdentifier,
     findById,
     register,
     login,

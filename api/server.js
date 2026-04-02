@@ -1,8 +1,7 @@
 const path = require('path');
-// Load .env from this folder explicitly so it works no matter CWD
-require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
-// .env.local overrides for local development (gitignored, highest priority)
-require('dotenv').config({ path: path.join(__dirname, '.env.local'), override: true });
+const { loadApiEnv } = require('./loadEnv');
+
+loadApiEnv();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

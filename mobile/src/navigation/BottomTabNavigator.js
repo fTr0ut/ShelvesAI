@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useState, useEffect } from 'react';
-import { View, Pressable, StyleSheet, Text } from 'react-native';
+import { View, Pressable, StyleSheet, Text, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
@@ -116,8 +116,8 @@ export default function BottomTabNavigator() {
     const addItemPulse = useSharedValue(1);
 
     const overlayColor = isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)';
-    const tabBarHeight = TAB_BAR_HEIGHT + insets.bottom;
-    const tabBarPaddingBottom = spacing.sm + insets.bottom;
+    const bottomInset = Platform.OS === 'android' ? 0 : insets.bottom;
+    const tabBarHeight = TAB_BAR_HEIGHT + bottomInset;
     const actionBottom = tabBarHeight + spacing.lg;
 
     const overlayAnimatedStyle = useAnimatedStyle(() => ({
@@ -234,6 +234,7 @@ export default function BottomTabNavigator() {
         <View style={styles.screen}>
             <Tab.Navigator
                 initialRouteName="Home"
+                safeAreaInsets={{ bottom: bottomInset }}
                 screenOptions={{
                     headerShown: false,
                     tabBarStyle: {
@@ -241,7 +242,6 @@ export default function BottomTabNavigator() {
                         borderTopColor: colors.border,
                         borderTopWidth: 1,
                         height: tabBarHeight,
-                        paddingBottom: tabBarPaddingBottom,
                         paddingTop: spacing.xs,
                         ...shadows.sm,
                     },

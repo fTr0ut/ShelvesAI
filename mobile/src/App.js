@@ -58,6 +58,7 @@ import { PushProvider } from './context/PushContext'
 import { apiRequest, setAuthErrorHandler, setApiBase, getStoredToken, clearToken, getValidToken } from './services/api'
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
+import { isOnboardingRequiredForUser } from './utils/onboarding'
 
 const Stack = createNativeStackNavigator()
 const PREMIUM_STORAGE_KEY = 'premiumEnabled'
@@ -276,9 +277,7 @@ export default Sentry.wrap(function App() {
       try {
         const data = await apiRequest({ apiBase, path: '/api/account', token })
         if (!cancelled) {
-          const missingRequired = !data?.user?.email || !data?.user?.firstName || !data?.user?.city || !data?.user?.state
-          const onboardingCompleted = !!data?.user?.onboardingCompleted
-          setNeedsOnboarding(!onboardingCompleted || missingRequired)
+          setNeedsOnboarding(isOnboardingRequiredForUser(data?.user))
           setUser(data.user || null)
           if (typeof data?.user?.isPremium === 'boolean') {
             setPremiumEnabled(data.user.isPremium)

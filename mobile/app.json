@@ -4,7 +4,7 @@
     "slug": "shelves-ai",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo.png",
+    "icon": "./assets/icon.png",
     "scheme": "shelvesai",
     "userInterfaceStyle": "automatic",
     "splash": {

@@ -3,31 +3,13 @@ const { auth } = require('../middleware/auth');
 const { validateIntParam } = require('../middleware/validate');
 const needsReviewQueries = require('../database/queries/needsReview');
 const shelvesQueries = require('../database/queries/shelves');
-const collectablesQueries = require('../database/queries/collectables');
-const {
-    makeLightweightFingerprint,
-    makeCollectableFingerprint,
-    makeManualFingerprint,
-} = require('../services/collectables/fingerprint');
-const {
-    normalizeOtherManualItem,
-    buildOtherManualPayload,
-    hasRequiredOtherFields,
-    evaluateOtherManualFuzzyCandidate,
-    OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
-} = require('../services/manuals/otherManual');
+const { completeReviewItemInternal } = require('../controllers/shelvesController');
 const logger = require('../logger');
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(auth);
-
-function normalizeString(value) {
-    if (value == null) return null;
-    const trimmed = String(value).trim();
-    return trimmed || null;
-}
 
 /**
  * GET /api/unmatched
@@ -94,13 +76,7 @@ router.get('/:id', unmatchedIntParam, async (req, res) => {
 
 /**
  * PUT /api/unmatched/:id
- * Complete a review item - add it to the shelf with user-provided edits
- * 
- * Matching order:
- * 1. Fingerprint lookup (exact hash match)
- * 2. Fuzzy match (pg_trgm similarity)
- * 3. Catalog API lookup (external APIs)
- * 4. Create new collectable (if all above fail)
+ * Complete a review item using the shared shelf review workflow.
  */
 router.put('/:id', unmatchedIntParam, async (req, res) => {
     try {
@@ -109,231 +85,33 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
             return res.status(404).json({ error: 'Item not found' });
         }
 
-        // Merge user edits with raw data (user edits take priority)
-        const completedData = { ...reviewItem.rawData, ...req.body };
-        const userFormat = normalizeString(completedData?.format || completedData?.physical?.format);
-        let matchSource = null;
-
-        // Get shelf for type info
         const shelf = await shelvesQueries.getById(reviewItem.shelfId, req.user.id);
-        const shelfType = shelf?.type || reviewItem.shelfType || 'item';
-
-        const isOtherShelf = String(shelfType || '').toLowerCase() === 'other';
-
-        if (isOtherShelf) {
-            const normalized = normalizeOtherManualItem(completedData, shelfType);
-            if (!hasRequiredOtherFields(normalized)) {
-                return res.status(400).json({ error: 'title and primaryCreator are required' });
-            }
-
-            const fingerprintData = { ...normalized, kind: shelfType };
-            const lwf = makeLightweightFingerprint(fingerprintData);
-            let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-            if (collectable) {
-                matchSource = 'fingerprint';
-
-                const shelfItem = await shelvesQueries.addCollectable({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    collectableId: collectable.id,
-                });
-
-                await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-                return res.json({
-                    success: true,
-                    matchSource,
-                    item: {
-                        id: shelfItem.id,
-                        collectable,
-                        position: shelfItem.position,
-                    },
-                });
-            }
-
-            const manualFingerprint = makeManualFingerprint({
-                title: normalized.title,
-                primaryCreator: normalized.primaryCreator,
-                kind: shelfType,
-            }, 'manual-other');
-
-            let manualResult = null;
-            let alreadyOnShelf = false;
-            let matchedManual = null;
-            let matchSimilarity = null;
-
-            if (manualFingerprint) {
-                matchedManual = await shelvesQueries.findManualByFingerprint({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    manualFingerprint,
-                });
-                if (matchedManual) {
-                    matchSource = 'manual-fingerprint';
-                }
-            }
-
-            if (!matchedManual) {
-                matchedManual = await shelvesQueries.findManualByBarcode({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    barcode: normalized.normalizedBarcode || normalized.barcode,
-                });
-                if (matchedManual) {
-                    matchSource = 'manual-barcode';
-                }
-            }
-
-            if (!matchedManual) {
-                const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    canonicalTitle: normalized.canonicalTitle || normalized.title,
-                    canonicalCreator: normalized.canonicalCreator || normalized.primaryCreator,
-                    minCombinedSim: OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
-                });
-                const fuzzyDecision = evaluateOtherManualFuzzyCandidate(fuzzyCandidate);
-                if (fuzzyDecision.decision === 'fuzzy_auto' || fuzzyDecision.decision === 'fuzzy_review') {
-                    matchedManual = fuzzyCandidate;
-                    matchSimilarity = fuzzyDecision;
-                    matchSource = fuzzyDecision.decision;
-                }
-            }
-
-            if (matchedManual) {
-                const existingCollection = await shelvesQueries.findManualCollection({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    manualId: matchedManual.id,
-                });
-
-                if (existingCollection) {
-                    manualResult = { collection: existingCollection, manual: matchedManual };
-                    alreadyOnShelf = true;
-                } else {
-                    const collection = await shelvesQueries.addManualCollection({
-                        userId: req.user.id,
-                        shelfId: reviewItem.shelfId,
-                        manualId: matchedManual.id,
-                    });
-                    manualResult = { collection, manual: matchedManual };
-                }
-
-                logger.info('[PUT /api/unmatched/:id] Matched review item to existing manual', {
-                    reviewItemId: reviewItem.id,
-                    shelfId: reviewItem.shelfId,
-                    matchSource,
-                    sourceId: matchedManual.id,
-                    combinedSim: matchSimilarity?.combinedSim ?? null,
-                    titleSim: matchSimilarity?.titleSim ?? null,
-                    creatorSim: matchSimilarity?.creatorSim ?? null,
-                    alreadyOnShelf,
-                });
-            }
-
-            if (!manualResult) {
-                const payload = buildOtherManualPayload(normalized, shelfType, manualFingerprint);
-                manualResult = await shelvesQueries.addManual({
-                    userId: req.user.id,
-                    shelfId: reviewItem.shelfId,
-                    ...payload,
-                    tags: completedData.tags,
-                });
-                matchSource = 'manual';
-            } else {
-                matchSource = alreadyOnShelf ? `${matchSource || 'manual'}-existing` : (matchSource || 'manual-existing');
-            }
-
-            await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-            return res.json({
-                success: true,
-                matchSource,
-                item: {
-                    id: manualResult.collection.id,
-                    manual: manualResult.manual,
-                    position: manualResult.collection.position,
-                },
-            });
+        if (!shelf) {
+            return res.status(404).json({ error: 'Shelf not found' });
         }
 
-        // 1. Check for existing collectable by fingerprint
-        const { format: _format, formats: _formats, ...fingerprintData } = completedData || {};
-        fingerprintData.kind = shelfType;
-        const lwf = makeLightweightFingerprint(fingerprintData);
-        let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-        if (collectable) {
-            matchSource = 'fingerprint';
-        }
-
-        // 2. Fuzzy match
-        if (!collectable && collectablesQueries.fuzzyMatch) {
-            collectable = await collectablesQueries.fuzzyMatch(
-                completedData.title,
-                completedData.primaryCreator,
-                shelfType
-            );
-            if (collectable) {
-                matchSource = 'fuzzy';
-            }
-        }
-
-        // 3. Catalog API lookup (new fallback)
-        if (!collectable) {
-            try {
-                const { getCollectableMatchingService } = require('../services/collectableMatchingService');
-                const matchingService = getCollectableMatchingService();
-                const apiResult = await matchingService.searchCatalogAPI(completedData, shelfType);
-                if (apiResult) {
-                    // API returned a result - upsert it to our database
-                    const { format: _apiFormat, formats: _apiFormats, ...apiFingerprintData } = apiResult || {};
-                    apiFingerprintData.kind = shelfType;
-                    collectable = await collectablesQueries.upsert({
-                        ...apiResult,
-                        kind: shelfType,
-                        fingerprint: makeCollectableFingerprint(apiFingerprintData),
-                        lightweightFingerprint: makeLightweightFingerprint(apiFingerprintData),
-                    });
-                    matchSource = 'api';
-                }
-            } catch (apiErr) {
-                logger.warn('[PUT /api/unmatched/:id] API lookup failed:', apiErr?.message);
-                // Continue to create new collectable
-            }
-        }
-
-        // 4. Create new collectable if no match found
-        if (!collectable) {
-            collectable = await collectablesQueries.upsert({
-                ...completedData,
-                kind: shelfType,
-                fingerprint: makeCollectableFingerprint(fingerprintData),
-                lightweightFingerprint: lwf,
-            });
-            matchSource = 'new';
-        }
-
-        // Add to user's shelf
-        const shelfItem = await shelvesQueries.addCollectable({
+        const result = await completeReviewItemInternal({
             userId: req.user.id,
-            shelfId: reviewItem.shelfId,
-            collectableId: collectable.id,
-            format: userFormat || null,
+            shelf,
+            reviewItem,
+            body: req.body,
         });
 
-        // Mark review item as completed
-        await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-        res.json({
+        return res.json({
             success: true,
-            matchSource,
+            matchSource: result.matchSource,
             item: {
-                id: shelfItem.id,
-                collectable,
-                position: shelfItem.position,
+                id: result.item.id,
+                ...(result.kind === 'manual'
+                    ? { manual: result.manual }
+                    : { collectable: result.collectable }),
+                position: result.item.position ?? null,
             },
         });
     } catch (err) {
+        if (err?.statusCode) {
+            return res.status(err.statusCode).json({ error: err.message || 'Server error' });
+        }
         logger.error('PUT /api/unmatched/:id error:', err);
         res.status(500).json({ error: 'Server error' });
     }

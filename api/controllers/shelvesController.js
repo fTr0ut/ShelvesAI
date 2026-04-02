@@ -4281,6 +4281,375 @@ async function listReviewItems(req, res) {
   }
 }
 
+function getReviewQueueContext(rawData = {}, shelf = null) {
+  const reviewContext = rawData && typeof rawData.reviewContext === 'object'
+    ? rawData.reviewContext
+    : null;
+  if (!reviewContext) return null;
+
+  const scanPhotoId = Number.parseInt(String(reviewContext.scanPhotoId ?? ''), 10);
+  const extractionIndex = Number.parseInt(String(reviewContext.extractionIndex ?? ''), 10);
+
+  if (!Number.isInteger(scanPhotoId) || scanPhotoId <= 0) return null;
+  if (!Number.isInteger(extractionIndex) || extractionIndex < 0) return null;
+
+  return {
+    scanPhotoId,
+    extractionIndex,
+    shelfType: normalizeString(reviewContext.shelfType) || normalizeString(shelf?.type) || null,
+    reason: normalizeString(reviewContext.reason) || null,
+  };
+}
+
+async function relinkReviewItemArtifacts({
+  userId,
+  shelf,
+  reviewItem,
+  collectionItemId = null,
+  collectableId = null,
+  manualId = null,
+}) {
+  const reviewContext = getReviewQueueContext(reviewItem?.rawData, shelf);
+  if (!reviewContext) {
+    return { relinked: false, attachedCrop: false, reviewContext: null };
+  }
+
+  const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
+    id: reviewContext.scanPhotoId,
+    userId,
+    shelfId: shelf.id,
+  });
+  if (!scanPhoto) {
+    return { relinked: false, attachedCrop: false, reviewContext };
+  }
+
+  if (typeof visionItemRegionsQueries.getByExtractionIndexForScan !== 'function') {
+    return { relinked: false, attachedCrop: false, reviewContext };
+  }
+
+  const region = await visionItemRegionsQueries.getByExtractionIndexForScan({
+    userId,
+    shelfId: shelf.id,
+    scanPhotoId: scanPhoto.id,
+    extractionIndex: reviewContext.extractionIndex,
+  });
+  if (!region) {
+    return { relinked: false, attachedCrop: false, reviewContext };
+  }
+
+  if (collectableId) {
+    await visionItemRegionsQueries.linkCollectable({
+      scanPhotoId: scanPhoto.id,
+      extractionIndex: reviewContext.extractionIndex,
+      collectableId,
+    });
+  }
+  if (manualId) {
+    await visionItemRegionsQueries.linkManual({
+      scanPhotoId: scanPhoto.id,
+      extractionIndex: reviewContext.extractionIndex,
+      manualId,
+    });
+  }
+  if (collectionItemId) {
+    await visionItemRegionsQueries.linkCollectionItem({
+      scanPhotoId: scanPhoto.id,
+      extractionIndex: reviewContext.extractionIndex,
+      collectionItemId,
+    });
+  }
+
+  let attachedCrop = false;
+  try {
+    await getOrCreateVisionRegionCrop({
+      userId,
+      shelfId: shelf.id,
+      shelfType: shelf.type,
+      scanPhoto,
+      region: {
+        ...region,
+        scanPhotoId: scanPhoto.id,
+        collectableId: collectableId || region.collectableId || null,
+        manualId: manualId || region.manualId || null,
+        collectionItemId: collectionItemId || region.collectionItemId || null,
+      },
+    });
+    attachedCrop = true;
+  } catch (err) {
+    logger.warn('[Review] Failed to restore crop linkage for completed review item', {
+      shelfId: shelf.id,
+      reviewItemId: reviewItem?.id || null,
+      scanPhotoId: scanPhoto.id,
+      extractionIndex: reviewContext.extractionIndex,
+      message: err?.message || String(err),
+    });
+    throw err;
+  }
+
+  return {
+    relinked: true,
+    attachedCrop,
+    reviewContext,
+  };
+}
+
+async function completeReviewItemInternal({
+  userId,
+  shelf,
+  reviewItem,
+  body = {},
+}) {
+  const completedData = { ...reviewItem.rawData, ...body };
+  const userFormat = normalizeString(completedData?.format || completedData?.physical?.format);
+  const isOtherShelf = String(shelf.type || '').toLowerCase() === 'other';
+
+  if (isOtherShelf) {
+    const normalized = normalizeOtherManualItem(completedData, shelf.type);
+    if (!hasRequiredOtherFields(normalized, { requireCreator: false })) {
+      const error = new Error('title is required');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const hasCreator = !!normalizeString(normalized.primaryCreator);
+    const fingerprintData = { ...normalized, kind: shelf.type };
+    let collectable = null;
+    let matchSource = null;
+
+    if (hasCreator) {
+      const lwf = makeLightweightFingerprint(fingerprintData);
+      collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+      if (collectable) {
+        matchSource = 'fingerprint';
+      }
+    }
+
+    if (collectable) {
+      const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
+      const item = await shelvesQueries.addCollectable({
+        userId,
+        shelfId: shelf.id,
+        collectableId: collectable.id,
+        format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+        platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
+      });
+      const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+        userId,
+        shelf,
+        itemId: item?.id,
+        collectable,
+      });
+
+      await relinkReviewItemArtifacts({
+        userId,
+        shelf,
+        reviewItem,
+        collectionItemId: item?.id || null,
+        collectableId: collectable.id,
+      });
+      await needsReviewQueries.markCompleted(reviewItem.id, userId);
+
+      return {
+        kind: 'collectable',
+        matchSource,
+        item,
+        collectable,
+        appliedDefaults,
+      };
+    }
+
+    const manualFingerprint = hasCreator
+      ? makeManualFingerprint({
+        title: normalized.title,
+        primaryCreator: normalized.primaryCreator,
+        kind: shelf.type,
+      }, 'manual-other')
+      : null;
+
+    let manualResult = null;
+    let alreadyOnShelf = false;
+    let matchedManual = null;
+    let manualMatchSource = null;
+    let fuzzySimilarity = null;
+
+    if (manualFingerprint) {
+      matchedManual = await shelvesQueries.findManualByFingerprint({
+        userId,
+        shelfId: shelf.id,
+        manualFingerprint,
+      });
+      if (matchedManual) {
+        manualMatchSource = 'fingerprint';
+      }
+    }
+
+    if (!matchedManual) {
+      matchedManual = await shelvesQueries.findManualByBarcode({
+        userId,
+        shelfId: shelf.id,
+        barcode: normalized.normalizedBarcode || normalized.barcode,
+      });
+      if (matchedManual) {
+        manualMatchSource = 'barcode';
+      }
+    }
+
+    if (!matchedManual && hasCreator) {
+      const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
+        userId,
+        shelfId: shelf.id,
+        canonicalTitle: normalized.canonicalTitle || normalized.title,
+        canonicalCreator: normalized.canonicalCreator || normalized.primaryCreator,
+        minCombinedSim: OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
+      });
+      const fuzzyDecision = evaluateOtherManualFuzzyCandidate(fuzzyCandidate);
+      if (fuzzyDecision.decision === 'fuzzy_auto' || fuzzyDecision.decision === 'fuzzy_review') {
+        matchedManual = fuzzyCandidate;
+        manualMatchSource = fuzzyDecision.decision;
+        fuzzySimilarity = fuzzyDecision;
+      }
+    }
+
+    if (matchedManual) {
+      const existingCollection = await shelvesQueries.findManualCollection({
+        userId,
+        shelfId: shelf.id,
+        manualId: matchedManual.id,
+      });
+
+      if (existingCollection) {
+        manualResult = { collection: existingCollection, manual: matchedManual };
+        alreadyOnShelf = true;
+      } else {
+        const collection = await shelvesQueries.addManualCollection({
+          userId,
+          shelfId: shelf.id,
+          manualId: matchedManual.id,
+        });
+        manualResult = { collection, manual: matchedManual };
+      }
+
+      logger.info('[shelves.completeReviewItemInternal] Matched other-review item to existing manual', {
+        shelfId: shelf.id,
+        reviewItemId: reviewItem.id,
+        sourceTable: 'user_manuals',
+        sourceId: matchedManual.id,
+        matchSource: manualMatchSource,
+        combinedSim: fuzzySimilarity?.combinedSim ?? null,
+        titleSim: fuzzySimilarity?.titleSim ?? null,
+        creatorSim: fuzzySimilarity?.creatorSim ?? null,
+        alreadyOnShelf,
+      });
+    }
+
+    if (!manualResult) {
+      const payload = buildOtherManualPayload(normalized, shelf.type, manualFingerprint);
+      manualResult = await shelvesQueries.addManual({
+        userId,
+        shelfId: shelf.id,
+        ...payload,
+        tags: completedData.tags,
+      });
+      manualMatchSource = 'manual';
+      logger.info('[shelves.completeReviewItemInternal] Created new manual from review completion', {
+        shelfId: shelf.id,
+        reviewItemId: reviewItem.id,
+        matchSource: 'new_insert',
+        title: normalized.title,
+        primaryCreator: normalized.primaryCreator || null,
+      });
+    } else {
+      manualMatchSource = alreadyOnShelf
+        ? `${manualMatchSource || 'manual'}-existing`
+        : (manualMatchSource || 'manual-existing');
+    }
+
+    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+      userId,
+      shelf,
+      itemId: manualResult?.collection?.id,
+      collectable: null,
+    });
+
+    await relinkReviewItemArtifacts({
+      userId,
+      shelf,
+      reviewItem,
+      collectionItemId: manualResult?.collection?.id || null,
+      manualId: manualResult?.manual?.id || null,
+    });
+    await needsReviewQueries.markCompleted(reviewItem.id, userId);
+
+    return {
+      kind: 'manual',
+      matchSource: manualMatchSource,
+      item: manualResult.collection,
+      manual: manualResult.manual,
+      appliedDefaults,
+      alreadyOnShelf,
+    };
+  }
+
+  const { format: _format, formats: _formats, ...fingerprintData } = completedData || {};
+  fingerprintData.kind = shelf.type;
+  const lwf = makeLightweightFingerprint(fingerprintData);
+  let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
+  let matchSource = collectable ? 'fingerprint' : null;
+
+  if (!collectable) {
+    collectable = await collectablesQueries.fuzzyMatch(
+      completedData.title,
+      completedData.primaryCreator,
+      shelf.type
+    );
+    if (collectable) {
+      matchSource = 'fuzzy';
+    }
+  }
+
+  if (!collectable) {
+    collectable = await collectablesQueries.upsert({
+      ...completedData,
+      kind: shelf.type,
+      fingerprint: makeCollectableFingerprint(fingerprintData),
+      lightweightFingerprint: lwf,
+    });
+    matchSource = 'new';
+  }
+
+  const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
+  const item = await shelvesQueries.addCollectable({
+    userId,
+    shelfId: shelf.id,
+    collectableId: collectable.id,
+    format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
+    platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
+  });
+  const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
+    userId,
+    shelf,
+    itemId: item?.id,
+    collectable,
+  });
+
+  await relinkReviewItemArtifacts({
+    userId,
+    shelf,
+    reviewItem,
+    collectionItemId: item?.id || null,
+    collectableId: collectable.id,
+  });
+  await needsReviewQueries.markCompleted(reviewItem.id, userId);
+
+  return {
+    kind: 'collectable',
+    matchSource,
+    item,
+    collectable,
+    appliedDefaults,
+  };
+}
+
 async function completeReviewItem(req, res) {
   try {
     const shelf = await loadShelfForUser(req.user.id, req.params.shelfId);
@@ -4288,183 +4657,22 @@ async function completeReviewItem(req, res) {
 
     const reviewItem = await needsReviewQueries.getById(req.params.id, req.user.id);
     if (!reviewItem) return res.status(404).json({ error: "Review item not found" });
+    const result = await completeReviewItemInternal({
+      userId: req.user.id,
+      shelf,
+      reviewItem,
+      body: req.body,
+    });
 
-    // Merge user edits with raw data
-    // Prioritize user body over rawData
-    const completedData = { ...reviewItem.rawData, ...req.body };
-    const userFormat = normalizeString(completedData?.format || completedData?.physical?.format);
-    const isOtherShelf = String(shelf.type || '').toLowerCase() === 'other';
-
-    if (isOtherShelf) {
-      const normalized = normalizeOtherManualItem(completedData, shelf.type);
-      if (!hasRequiredOtherFields(normalized)) {
-        return res.status(400).json({ error: 'title and primaryCreator are required' });
-      }
-
-      const fingerprintData = { ...normalized, kind: shelf.type };
-      const lwf = makeLightweightFingerprint(fingerprintData);
-      let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-
-      if (collectable) {
-        const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
-        const item = await shelvesQueries.addCollectable({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          collectableId: collectable.id,
-          format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
-          platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
-        });
-        const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
-          userId: req.user.id,
-          shelf,
-          itemId: item?.id,
-          collectable,
-        });
-
-        await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-        await logShelfEvent({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          type: "item.collectable_added",
-          payload: buildCollectableAddedEventPayload({
-            itemId: item.id,
-            collectable,
-            shelfType: shelf.type,
-            source: 'review',
-            reviewItemId: reviewItem.id,
-          }),
-        });
-
-        return res.json({
-          item: {
-            id: item.id,
-            collectable: omitMarketValueSources(collectable),
-            position: item.position,
-            format: appliedDefaults.format,
-            platformMissing: appliedDefaults.platformMissing,
-            notes: item.notes,
-            rating: item.rating,
-            ownedPlatforms: appliedDefaults.ownedPlatforms,
-          },
-        });
-      }
-
-      const manualFingerprint = makeManualFingerprint({
-        title: normalized.title,
-        primaryCreator: normalized.primaryCreator,
-        kind: shelf.type,
-      }, 'manual-other');
-
-      let manualResult = null;
-      let alreadyOnShelf = false;
-      let matchedManual = null;
-      let manualMatchSource = null;
-      let fuzzySimilarity = null;
-
-      if (manualFingerprint) {
-        matchedManual = await shelvesQueries.findManualByFingerprint({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          manualFingerprint,
-        });
-        if (matchedManual) {
-          manualMatchSource = 'fingerprint';
-        }
-      }
-
-      if (!matchedManual) {
-        matchedManual = await shelvesQueries.findManualByBarcode({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          barcode: normalized.normalizedBarcode || normalized.barcode,
-        });
-        if (matchedManual) {
-          manualMatchSource = 'barcode';
-        }
-      }
-
-      if (!matchedManual) {
-        const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          canonicalTitle: normalized.canonicalTitle || normalized.title,
-          canonicalCreator: normalized.canonicalCreator || normalized.primaryCreator,
-          minCombinedSim: OTHER_MANUAL_FUZZY_REVIEW_MIN_THRESHOLD,
-        });
-        const fuzzyDecision = evaluateOtherManualFuzzyCandidate(fuzzyCandidate);
-        if (fuzzyDecision.decision === 'fuzzy_auto' || fuzzyDecision.decision === 'fuzzy_review') {
-          matchedManual = fuzzyCandidate;
-          manualMatchSource = fuzzyDecision.decision;
-          fuzzySimilarity = fuzzyDecision;
-        }
-      }
-
-      if (matchedManual) {
-        const existingCollection = await shelvesQueries.findManualCollection({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          manualId: matchedManual.id,
-        });
-
-        if (existingCollection) {
-          manualResult = { collection: existingCollection, manual: matchedManual };
-          alreadyOnShelf = true;
-        } else {
-          const collection = await shelvesQueries.addManualCollection({
-            userId: req.user.id,
-            shelfId: shelf.id,
-            manualId: matchedManual.id,
-          });
-          manualResult = { collection, manual: matchedManual };
-        }
-
-        logger.info('[shelves.completeReviewItem] Matched other-review item to existing manual', {
-          shelfId: shelf.id,
-          reviewItemId: reviewItem.id,
-          sourceTable: 'user_manuals',
-          sourceId: matchedManual.id,
-          matchSource: manualMatchSource,
-          combinedSim: fuzzySimilarity?.combinedSim ?? null,
-          titleSim: fuzzySimilarity?.titleSim ?? null,
-          creatorSim: fuzzySimilarity?.creatorSim ?? null,
-          alreadyOnShelf,
-        });
-      }
-
-      if (!manualResult) {
-        const payload = buildOtherManualPayload(normalized, shelf.type, manualFingerprint);
-        manualResult = await shelvesQueries.addManual({
-          userId: req.user.id,
-          shelfId: shelf.id,
-          ...payload,
-          tags: completedData.tags,
-        });
-        logger.info('[shelves.completeReviewItem] Created new manual from review completion', {
-          shelfId: shelf.id,
-          reviewItemId: reviewItem.id,
-          matchSource: 'new_insert',
-          title: normalized.title,
-          primaryCreator: normalized.primaryCreator,
-        });
-      }
-      const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
-        userId: req.user.id,
-        shelf,
-        itemId: manualResult?.collection?.id,
-        collectable: null,
-      });
-
-      await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-      if (!alreadyOnShelf) {
+    if (result.kind === 'manual') {
+      if (!result.alreadyOnShelf) {
         await logShelfEvent({
           userId: req.user.id,
           shelfId: shelf.id,
           type: "item.manual_added",
           payload: buildManualAddedEventPayload({
-            itemId: manualResult.collection.id,
-            manual: manualResult.manual,
+            itemId: result.item.id,
+            manual: result.manual,
             shelfType: shelf.type,
             source: 'review',
             reviewItemId: reviewItem.id,
@@ -4474,88 +4682,47 @@ async function completeReviewItem(req, res) {
 
       return res.json({
         item: {
-          id: manualResult.collection.id,
-          manual: omitMarketValueSources(manualResult.manual),
-          position: manualResult.collection.position ?? null,
-          format: appliedDefaults.format,
-          platformMissing: appliedDefaults.platformMissing,
-          notes: manualResult.collection.notes ?? null,
-          rating: manualResult.collection.rating ?? null,
-          ownedPlatforms: appliedDefaults.ownedPlatforms,
+          id: result.item.id,
+          manual: omitMarketValueSources(result.manual),
+          position: result.item.position ?? null,
+          format: result.appliedDefaults.format,
+          platformMissing: result.appliedDefaults.platformMissing,
+          notes: result.item.notes ?? null,
+          rating: result.item.rating ?? null,
+          ownedPlatforms: result.appliedDefaults.ownedPlatforms,
         },
       });
     }
 
-    // RE-MATCH: Run fingerprint + fuzzy match to prevent duplicates
-    const { format: _format, formats: _formats, ...fingerprintData } = completedData || {};
-    fingerprintData.kind = shelf.type;
-    const lwf = makeLightweightFingerprint(fingerprintData);
-    let collectable = await collectablesQueries.findByLightweightFingerprint(lwf);
-
-    if (!collectable) {
-      collectable = await collectablesQueries.fuzzyMatch(
-        completedData.title,
-        completedData.primaryCreator,
-        shelf.type
-      );
-    }
-
-    if (!collectable) {
-      // No match found - create new collectable
-      collectable = await collectablesQueries.upsert({
-        ...completedData,
-        kind: shelf.type,
-        fingerprint: makeCollectableFingerprint(fingerprintData),
-        lightweightFingerprint: lwf,
-      });
-    }
-
-    // Add to user's shelf
-    const resolvedDefaults = resolveCollectionDefaultsForShelfItem({ shelf, collectable });
-    const item = await shelvesQueries.addCollectable({
-      userId: req.user.id,
-      shelfId: shelf.id,
-      collectableId: collectable.id,
-      format: isGamesShelfType(shelf.type) ? resolvedDefaults.format : (userFormat || null),
-      platformMissing: isGamesShelfType(shelf.type) ? resolvedDefaults.platformMissing : undefined,
-    });
-    const appliedDefaults = await applyShelfGameDefaultsToCollectionItem({
-      userId: req.user.id,
-      shelf,
-      itemId: item?.id,
-      collectable,
-    });
-
-    // Mark review item as completed
-    await needsReviewQueries.markCompleted(reviewItem.id, req.user.id);
-
-    // Log event
     await logShelfEvent({
       userId: req.user.id,
       shelfId: shelf.id,
       type: "item.collectable_added",
       payload: buildCollectableAddedEventPayload({
-        itemId: item.id,
-        collectable,
+        itemId: result.item.id,
+        collectable: result.collectable,
         shelfType: shelf.type,
         source: 'review',
         reviewItemId: reviewItem.id,
       }),
     });
 
-    res.json({
+    return res.json({
       item: {
-        id: item.id,
-        collectable: omitMarketValueSources(collectable),
-        position: item.position,
-        format: appliedDefaults.format,
-        platformMissing: appliedDefaults.platformMissing,
-        notes: item.notes,
-        rating: item.rating,
-        ownedPlatforms: appliedDefaults.ownedPlatforms,
+        id: result.item.id,
+        collectable: omitMarketValueSources(result.collectable),
+        position: result.item.position,
+        format: result.appliedDefaults.format,
+        platformMissing: result.appliedDefaults.platformMissing,
+        notes: result.item.notes,
+        rating: result.item.rating,
+        ownedPlatforms: result.appliedDefaults.ownedPlatforms,
       },
     });
   } catch (err) {
+    if (err?.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message || 'Server error' });
+    }
     logger.error('completeReviewItem error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -5016,6 +5183,7 @@ module.exports = {
   updateShelfItemOwnerPhotoThumbnail,
   deleteShelfItemOwnerPhoto,
   listReviewItems,
+  completeReviewItemInternal,
   completeReviewItem,
   dismissReviewItem,
   rateShelfItem,

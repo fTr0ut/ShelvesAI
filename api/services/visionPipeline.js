@@ -418,6 +418,20 @@ function buildGenericManualPayload(item, shelfType, manualFingerprint) {
     };
 }
 
+function buildReviewQueueRawData(item, context = {}) {
+    const reviewContext = {
+        scanPhotoId: Number.isInteger(context?.scanPhotoId) ? context.scanPhotoId : null,
+        extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
+        shelfType: normalizeString(context?.shelfType) || null,
+        reason: normalizeString(context?.reason) || null,
+    };
+
+    return {
+        ...(item && typeof item === 'object' ? item : {}),
+        reviewContext,
+    };
+}
+
 function pickCoverUrl(images, fallback) {
     if (fallback) return fallback;
     if (!Array.isArray(images)) return null;
@@ -1135,7 +1149,7 @@ class VisionPipelineService {
             const itemsToReview = [];
 
             for (const item of dedupedCandidates) {
-                if (hasRequiredOtherFields(item)) {
+                if (hasRequiredOtherFields(item, { requireCreator: false })) {
                     itemsToSave.push(item);
                 } else {
                     itemsToReview.push(item);
@@ -1156,7 +1170,7 @@ class VisionPipelineService {
             logger.info('[VisionPipeline] Saving', itemsToSave.length, 'other items to shelf...');
             updateProgress('saving', { count: itemsToSave.length });
             const manualResult = await this.saveManualToShelf(itemsToSave, userId, shelf.id, shelf.type, {
-                requireCreator: true,
+                requireCreator: false,
                 hookContext: { ...baseHookContext, tier: 'other' },
             });
             const addedItems = manualResult.added || [];
@@ -2817,6 +2831,9 @@ class VisionPipelineService {
     }
 
     async resolveOtherManualMatch(item, userId, shelfId, manualFingerprint) {
+        const hasCreator = !!normalizeString(
+            item?.primaryCreator || item?.author || item?.creator || item?.brand || item?.publisher || item?.manufacturer,
+        );
         if (manualFingerprint) {
             const byFingerprint = await shelvesQueries.findManualByFingerprint({
                 userId,
@@ -2835,6 +2852,10 @@ class VisionPipelineService {
         });
         if (byBarcode) {
             return { status: 'matched', matchSource: 'barcode', manual: byBarcode };
+        }
+
+        if (!hasCreator) {
+            return { status: 'none', matchSource: null, manual: null, similarity: null };
         }
 
         const fuzzyCandidate = await shelvesQueries.fuzzyFindManualForOther({
@@ -3127,7 +3148,7 @@ class VisionPipelineService {
                     await needsReviewQueries.create({
                         userId,
                         shelfId,
-                        rawData: item,
+                        rawData: buildReviewQueueRawData(item, context),
                         confidence: item.confidence,
                     }, txClient);
                     saved.push(item);
@@ -3154,5 +3175,4 @@ class VisionPipelineService {
 }
 
 module.exports = { VisionPipelineService };
-
 

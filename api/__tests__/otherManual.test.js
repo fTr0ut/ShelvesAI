@@ -22,6 +22,11 @@ describe('otherManual helpers', () => {
         expect(hasRequiredOtherFields({ title: '', primaryCreator: 'Buffalo Trace' })).toBe(false);
     });
 
+    it('can allow title-only other-manual save when creator is optional', () => {
+        expect(hasRequiredOtherFields({ title: 'Mystery Bottle', primaryCreator: '' }, { requireCreator: false })).toBe(true);
+        expect(hasRequiredOtherFields({ title: '', primaryCreator: '' }, { requireCreator: false })).toBe(false);
+    });
+
     it('builds dedupe key with barcode priority over fingerprint/canonical fields', () => {
         const key = getOtherManualDedupKey({
             title: 'Any',

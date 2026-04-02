@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 const ASSETS_DIR = path.resolve('./assets');
+const WEB_APP_ICON = path.resolve('./../website/public/logo-v2.png');
+const WEB_ANDROID_ICON = path.resolve('./../website/public/logo-android.png');
 const PRIMARY_COLOR = '#CA8A04';
 const LIGHT_BG = '#F4F1EA';
 
@@ -16,31 +18,6 @@ const ioniconsPaths = `
 `;
 
 async function generate() {
-    // 1. App Icon (1024x1024)
-    // Box: 768x768, Radius: 192, offset 128
-    // Icon inside: 418x418 => scale 0.816, offset 303
-    const iconSvg = `
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" fill="${LIGHT_BG}" />
-  <rect x="128" y="128" width="768" height="768" rx="192" ry="192" fill="${PRIMARY_COLOR}" fill-opacity="0.15" />
-  <g transform="translate(303, 303) scale(0.816)">
-    ${ioniconsPaths}
-  </g>
-</svg>`;
-
-    // 2. Adaptive Icon Foreground (1024x1024)
-    // Needs to fit in Android safe zone (~625 px)
-    // Box: 600x600, Radius: 150, offset 212
-    // Icon inside: 327x327 => scale 0.638, offset 348
-    // NO background fill to let Android color through
-    const adaptiveIconSvg = `
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <rect x="212" y="212" width="600" height="600" rx="150" ry="150" fill="${PRIMARY_COLOR}" fill-opacity="0.15" />
-  <g transform="translate(348, 348) scale(0.638)">
-    ${ioniconsPaths}
-  </g>
-</svg>`;
-
     // 3. Splash Screen Image (1024x1024 as transparent foreground)
     // Same as icon but transparent background
     const splashSvg = `
@@ -51,15 +28,20 @@ async function generate() {
   </g>
 </svg>`;
 
-    console.log('Generating icon.png...');
-    await sharp(Buffer.from(iconSvg))
+    console.log('Syncing icon.png from website/public/logo-v2.png...');
+    await sharp(WEB_APP_ICON)
         .png()
         .toFile(path.join(ASSETS_DIR, 'icon.png'));
 
-    console.log('Generating adaptive-icon.png...');
-    await sharp(Buffer.from(adaptiveIconSvg))
+    console.log('Syncing adaptive-icon.png from website/public/logo-android.png...');
+    await sharp(WEB_ANDROID_ICON)
         .png()
         .toFile(path.join(ASSETS_DIR, 'adaptive-icon.png'));
+
+    console.log('Syncing logo-android.png from website/public/logo-android.png...');
+    await sharp(WEB_ANDROID_ICON)
+        .png()
+        .toFile(path.join(ASSETS_DIR, 'logo-android.png'));
 
     console.log('Generating splash.png...');
     await sharp(Buffer.from(splashSvg))

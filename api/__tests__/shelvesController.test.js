@@ -37,6 +37,10 @@ jest.mock('../database/queries/visionItemRegions', () => ({
     countForScan: jest.fn().mockResolvedValue(0),
     listForScan: jest.fn().mockResolvedValue([]),
     getByIdForScan: jest.fn().mockResolvedValue(null),
+    getByExtractionIndexForScan: jest.fn().mockResolvedValue(null),
+    linkCollectable: jest.fn().mockResolvedValue(null),
+    linkManual: jest.fn().mockResolvedValue(null),
+    linkCollectionItem: jest.fn().mockResolvedValue(null),
     hasCollectionItemLinkForReference: jest.fn().mockResolvedValue(false),
 }));
 jest.mock('../database/queries/visionItemCrops', () => ({
@@ -181,6 +185,24 @@ describe('shelvesController', () => {
             shelvesQueries.listCollectionItemsForDefaults.mockReset();
         }
         shelvesQueries.addManual.mockReset();
+        if (shelvesQueries.addManualCollection) {
+            shelvesQueries.addManualCollection.mockReset();
+        }
+        if (shelvesQueries.findManualByFingerprint) {
+            shelvesQueries.findManualByFingerprint.mockReset();
+        }
+        if (shelvesQueries.findManualByBarcode) {
+            shelvesQueries.findManualByBarcode.mockReset();
+        }
+        if (shelvesQueries.fuzzyFindManualForOther) {
+            shelvesQueries.fuzzyFindManualForOther.mockReset();
+        }
+        if (shelvesQueries.findManualCollection) {
+            shelvesQueries.findManualCollection.mockReset();
+        }
+        if (shelvesQueries.getCollectionItemByIdForShelf) {
+            shelvesQueries.getCollectionItemByIdForShelf.mockReset();
+        }
         shelvesQueries.updateItemRating.mockReset();
         if (shelvesQueries.updateReviewedEventLink) {
             shelvesQueries.updateReviewedEventLink.mockReset();
@@ -208,6 +230,14 @@ describe('shelvesController', () => {
         visionScanPhotosQueries.getByIdForUser.mockReset();
         visionScanPhotosQueries.loadImageBuffer.mockReset();
         visionScanPhotosQueries.deleteByHash.mockReset();
+        visionItemRegionsQueries.countForScan.mockReset();
+        visionItemRegionsQueries.listForScan.mockReset();
+        visionItemRegionsQueries.getByIdForScan.mockReset();
+        visionItemRegionsQueries.getByExtractionIndexForScan.mockReset();
+        visionItemRegionsQueries.linkCollectable.mockReset();
+        visionItemRegionsQueries.linkManual.mockReset();
+        visionItemRegionsQueries.linkCollectionItem.mockReset();
+        visionItemRegionsQueries.hasCollectionItemLinkForReference.mockReset();
         workflowQueueJobsQueries.enqueueJob.mockReset();
         workflowQueueJobsQueries.findActiveByDedupeKey.mockReset();
         workflowQueueJobsQueries.getByJobIdForUser.mockReset();
@@ -238,10 +268,22 @@ describe('shelvesController', () => {
         // Controller calls loadShelfForUser which calls shelvesQueries.getById
         shelvesQueries.getById.mockResolvedValue({ id: 10, type: 'book' });
         shelvesQueries.getItems.mockResolvedValue([]);
+        if (shelvesQueries.getCollectionItemByIdForShelf) {
+            shelvesQueries.getCollectionItemByIdForShelf.mockResolvedValue(null);
+        }
         visionResultCacheQueries.getValid.mockResolvedValue(null);
         visionResultCacheQueries.deleteByHash.mockResolvedValue(0);
         visionScanPhotosQueries.upsertFromBuffer.mockResolvedValue({ id: 77 });
+        visionScanPhotosQueries.getByIdForUser.mockResolvedValue(null);
         visionScanPhotosQueries.deleteByHash.mockResolvedValue({ deleted: false, deletedRows: 0 });
+        visionItemRegionsQueries.countForScan.mockResolvedValue(0);
+        visionItemRegionsQueries.listForScan.mockResolvedValue([]);
+        visionItemRegionsQueries.getByIdForScan.mockResolvedValue(null);
+        visionItemRegionsQueries.getByExtractionIndexForScan.mockResolvedValue(null);
+        visionItemRegionsQueries.linkCollectable.mockResolvedValue(null);
+        visionItemRegionsQueries.linkManual.mockResolvedValue(null);
+        visionItemRegionsQueries.linkCollectionItem.mockResolvedValue(null);
+        visionItemRegionsQueries.hasCollectionItemLinkForReference.mockResolvedValue(false);
         workflowQueueJobsQueries.enqueueJob.mockResolvedValue({
             jobId: 'test-job-id',
             status: 'queued',
@@ -2328,6 +2370,155 @@ describe('shelvesController', () => {
                     creator: 'Manual Review Creator',
                     year: 2020,
                     coverMediaPath: 'manuals/1301.jpg',
+                }),
+            }));
+        });
+
+        it('allows title-only other review completion and restores region/crop linkage', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other', visibility: 'public' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: {
+                    title: 'Mystery Bottle',
+                    reviewContext: {
+                        scanPhotoId: 77,
+                        extractionIndex: 4,
+                        shelfType: 'other',
+                        reason: 'missing_fields',
+                    },
+                },
+            });
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: {
+                    id: 1201,
+                    position: null,
+                    format: null,
+                    notes: null,
+                    rating: null,
+                },
+                manual: {
+                    id: 1301,
+                    name: 'Mystery Bottle',
+                    author: null,
+                    type: 'other',
+                },
+            });
+            visionScanPhotosQueries.getByIdForUser.mockResolvedValue({
+                id: 77,
+                width: 1000,
+                height: 1000,
+            });
+            visionItemRegionsQueries.getByExtractionIndexForScan.mockResolvedValue({
+                id: 880,
+                scanPhotoId: 77,
+                extractionIndex: 4,
+            });
+            if (shelvesQueries.getCollectionItemByIdForShelf) {
+                shelvesQueries.getCollectionItemByIdForShelf.mockResolvedValue({ id: 1201, userId: 1 });
+            }
+            visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue({
+                id: 990,
+                contentType: 'image/jpeg',
+                sizeBytes: 123,
+                width: 40,
+                height: 60,
+            });
+            visionItemCropsQueries.loadImageBuffer.mockResolvedValue({
+                buffer: Buffer.from('crop'),
+                contentType: 'image/jpeg',
+            });
+            userCollectionPhotosQueries.attachVisionCropToItem.mockResolvedValue({
+                ownerPhotoSource: 'vision_crop',
+                ownerPhotoVisible: true,
+            });
+            query
+                .mockResolvedValueOnce({ rows: [{ cover_media_path: null }], rowCount: 1 });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(collectablesQueries.findByLightweightFingerprint).not.toHaveBeenCalled();
+            expect(shelvesQueries.findManualByFingerprint).not.toHaveBeenCalled();
+            expect(shelvesQueries.fuzzyFindManualForOther).not.toHaveBeenCalled();
+            expect(visionItemRegionsQueries.getByExtractionIndexForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 77,
+                extractionIndex: 4,
+            });
+            expect(visionItemRegionsQueries.linkManual).toHaveBeenCalledWith({
+                scanPhotoId: 77,
+                extractionIndex: 4,
+                manualId: 1301,
+            });
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledWith({
+                scanPhotoId: 77,
+                extractionIndex: 4,
+                collectionItemId: 1201,
+            });
+            expect(userCollectionPhotosQueries.attachVisionCropToItem).toHaveBeenCalledWith(expect.objectContaining({
+                itemId: 1201,
+                cropId: 990,
+            }));
+            expect(manualMediaQueries.uploadFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                manualId: 1301,
+            }));
+            expect(needsReviewQueries.markCompleted).toHaveBeenCalledWith(55, 1);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 1201,
+                    manual: expect.objectContaining({
+                        id: 1301,
+                        author: null,
+                    }),
+                }),
+            }));
+        });
+
+        it('keeps legacy review rows without reviewContext backward compatible', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other', visibility: 'public' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: {
+                    title: 'Legacy Manual Review',
+                    author: 'Legacy Creator',
+                },
+            });
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue(null);
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: {
+                    id: 1202,
+                    position: null,
+                    format: null,
+                    notes: null,
+                    rating: null,
+                },
+                manual: {
+                    id: 1302,
+                    name: 'Legacy Manual Review',
+                    author: 'Legacy Creator',
+                    type: 'other',
+                },
+            });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(visionScanPhotosQueries.getByIdForUser).not.toHaveBeenCalled();
+            expect(visionItemRegionsQueries.getByExtractionIndexForScan).not.toHaveBeenCalled();
+            expect(needsReviewQueries.markCompleted).toHaveBeenCalledWith(55, 1);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 1202,
+                    manual: expect.objectContaining({ id: 1302 }),
                 }),
             }));
         });

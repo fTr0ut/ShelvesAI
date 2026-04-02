@@ -197,8 +197,12 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
   };
 }
 
-function hasRequiredOtherFields(item) {
-  return !!(normalizeString(item?.title) && normalizeString(item?.primaryCreator));
+function hasRequiredOtherFields(item, options = {}) {
+  const requireCreator = options.requireCreator !== false;
+  const hasTitle = !!normalizeString(item?.title);
+  if (!hasTitle) return false;
+  if (!requireCreator) return true;
+  return !!normalizeString(item?.primaryCreator);
 }
 
 function getOtherManualDedupKey(item = {}) {

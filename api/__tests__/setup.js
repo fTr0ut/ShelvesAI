@@ -1,4 +1,10 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') })
+try {
+  require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') })
+} catch (err) {
+  if (err?.code !== 'MODULE_NOT_FOUND') {
+    throw err
+  }
+}
 
 // Mock the pg pool for tests that don't need a real connection
 // Tests that need real DB access can unmock this

@@ -280,6 +280,21 @@ async function getByIdForScan({ userId, shelfId, scanPhotoId, regionId }) {
   return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
 }
 
+async function getByExtractionIndexForScan({ userId, shelfId, scanPhotoId, extractionIndex }) {
+  if (!userId || !shelfId || !scanPhotoId || normalizeExtractionIndex(extractionIndex) == null) return null;
+  const result = await query(
+    `SELECT *
+     FROM vision_item_regions
+     WHERE user_id = $1
+       AND shelf_id = $2
+       AND scan_photo_id = $3
+       AND extraction_index = $4
+     LIMIT 1`,
+    [userId, shelfId, scanPhotoId, extractionIndex],
+  );
+  return result.rows[0] ? mapRegionRow(result.rows[0]) : null;
+}
+
 module.exports = {
   upsertRegionsForScan,
   linkCollectable,
@@ -290,6 +305,7 @@ module.exports = {
   listForScan,
   countForScan,
   getByIdForScan,
+  getByExtractionIndexForScan,
   isValidBox2d,
   resolveBox2d,
 };

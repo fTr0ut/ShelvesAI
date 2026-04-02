@@ -39,6 +39,7 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/cove
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
+import useOptionalBottomTabBarHeight from '../navigation/useOptionalBottomTabBarHeight';
 import { normalizeSearchText } from '../utils/searchNormalization';
 
 const CAMERA_QUALITY = 0.6;
@@ -59,8 +60,6 @@ const SORT_OPTIONS = [
     { key: 'year_desc', label: 'Year' },
     { key: 'date_desc', label: 'Date Added to Collection' },
 ];
-const PERSISTENT_TAB_FOOTER_SPACER = 88;
-
 function normalizeImageMime(mimeType) {
     if (!mimeType) return null;
     const normalized = String(mimeType).toLowerCase();
@@ -352,16 +351,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
     const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
-    const isInsideBottomTab = useMemo(() => {
-        let parent = navigation?.getParent?.();
-        while (parent) {
-            const parentState = parent.getState?.();
-            if (parentState?.type === 'tab') return true;
-            parent = parent.getParent?.();
-        }
-        return false;
-    }, [navigation]);
-    const bottomFooterSpacer = isInsideBottomTab ? PERSISTENT_TAB_FOOTER_SPACER : 0;
+    const { tabBarHeight: bottomFooterSpacer } = useOptionalBottomTabBarHeight();
 
     useEffect(() => {
         return () => {

@@ -14,15 +14,16 @@ function isValidEmail(value) {
   return emailPattern.test(value);
 }
 
-// POST /api/login
+// POST /api/login and /api/auth/login
 async function login(req, res) {
   try {
     const { username, password } = req.body ?? {};
-    if (!username || !password) {
+    const loginIdentifier = typeof username === 'string' ? username.trim() : '';
+    if (!loginIdentifier || !password) {
       return res.status(400).json({ error: 'Missing credentials' });
     }
 
-    const result = await authQueries.login({ username, password });
+    const result = await authQueries.login({ username: loginIdentifier, password });
     if (!result) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }

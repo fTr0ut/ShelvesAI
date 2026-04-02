@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-04-01
+Last updated: 2026-04-02
 
 ---
 
@@ -49,6 +49,12 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-02 | vision-review-retention-and-other-gating | Relaxed `'other'` shelf review gating so high-confidence title-only items can auto-save as manuals without creator metadata, while keeping barcode-safe duplicate detection and skipping creator-dependent fingerprint/fuzzy matching when creator is absent. `api/services/visionPipeline.js` now persists `rawData.reviewContext` (`scanPhotoId`, `extractionIndex`, `shelfType`, `reason`) on all `needs_review` writes, `api/database/queries/visionItemRegions.js` adds `getByExtractionIndexForScan()`, and `api/controllers/shelvesController.js` now centralizes review completion via shared helper exported to `api/routes/unmatched.js`, relinking vision regions/crops back onto completed review items so crop-backed owner photos and other persisted scan metadata survive review completion. Added regression coverage in `api/__tests__/{otherManual,visionPipeline,shelvesController,unmatchedRoutes}.test.js`.
+- 2026-04-02 | mobile-android-expo-go-tab-safe-area-clamp | Revised bottom-tab Android handling for Expo Go/runtime parity. `mobile/src/navigation/BottomTabNavigator.js` now clamps React Navigation bottom tab safe-area inset to `0` on Android while preserving iOS bottom inset handling, and derives the custom tab/action-stack height from that same platform-specific inset so Android tabs render at a fixed visual height without the oversized dead band above system controls.
+- 2026-04-01 | mobile-android-bottom-tab-inset-fix | Fixed Android bottom-tab footer spacing for edge-to-edge devices by removing custom tab-bar bottom padding override from `mobile/src/navigation/BottomTabNavigator.js` so React Navigation owns the safe-area inset, and replaced fixed `88` px persistent-footer assumptions in `mobile/src/screens/ShelfDetailScreen.js` and `mobile/src/screens/CollectableDetailScreen.js` with shared helper `mobile/src/navigation/useOptionalBottomTabBarHeight.js` that reads the live bottom tab bar height from navigation context.
+- 2026-04-02 | mobile-android-onboarding-and-icon-alignment | Hardened mobile onboarding routing so post-login auth now refreshes `/api/account` before deciding whether onboarding is required, using shared helper `mobile/src/utils/onboarding.js` in both `mobile/src/App.js` bootstrap and `mobile/src/screens/LoginScreen.js` to prevent incomplete auth payloads from skipping the intro/profile flow. Aligned Expo icon config in `mobile/app.json` to canonical `mobile/assets/icon.png`, synced `mobile/assets/{icon,logo-android,adaptive-icon}.png` to the current iOS app icon, and updated `mobile/generate-icons.js` to keep those Android-facing assets sourced from the current iOS icon instead of regenerating the legacy camera artwork.
+- 2026-04-02 | mobile-icon-source-correction | Corrected the mobile icon source after identifying the purple shelf mark was itself stale. `mobile/assets/icon.png` and `mobile/ios/ShelvesAI/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png` now use `website/public/logo-v2.png`, while Android adaptive assets `mobile/assets/{logo-android,adaptive-icon}.png` now use `website/public/logo-android.png`. `mobile/app.json` again points Android adaptive foreground at `mobile/assets/logo-android.png`, and `mobile/generate-icons.js` now syncs from the website logo assets instead of the retired purple iOS icon.
+- 2026-04-01 | auth-username-or-email-login | Updated consumer auth login to keep the existing `{ username, password }` request contract while allowing `/api/login` and `/api/auth/login` to authenticate by case-insensitive username or email. `api/database/queries/auth.js` now resolves login identifiers across both fields, rejects ambiguous cross-user username/email collisions with a generic invalid-credentials response, and logs ambiguity for follow-up while preserving bcrypt timing padding. `api/controllers/authController.js` now trims the incoming login identifier before validation. Added rollout audit script `api/scripts/audit-login-identifier-collisions.js` plus `npm run audit:login-identifiers`, added regression coverage in `api/__tests__/authQueries.login.test.js`, `api/__tests__/authController.login.test.js`, and `api/__tests__/authLoginRoutes.test.js`, and made `api/__tests__/setup.js` tolerate missing local `dotenv` installs in minimal test environments.
 - 2026-04-01 | mobile-ios-textinput-autofill-stability-policy | Added shared mobile text-input policy helper `mobile/src/utils/textInputPolicy.js` with explicit iOS non-auth suppression (`autoCorrect=false`, `spellCheck=false`, `autoComplete='off'`, `textContentType='none'`) and auth semantics (`username`, `email`, `password`, `newPassword`) retained for credential fields. Wired helper into high-traffic non-auth input surfaces (`GlobalSearchBar`, `FriendSearchScreen`, `ProfileScreen`, `ProfileEditScreen`, `OnboardingProfileRequiredScreen`, `OnboardingProfileOptionalScreen`, `AccountScreen` feedback modal, `QuickCheckInModal`) plus auth flows (`LoginScreen`, `ForgotPasswordScreen`, `ResetPasswordScreen`). Replaced `AccountScreen` feedback modal `autoFocus` with deferred `InteractionManager.runAfterInteractions` focus and cancellation cleanup to reduce UIKit keyboard queue contention during modal transitions. Added pure-JS regression test `mobile/src/utils/textInputPolicy.test.js`.
 - 2026-04-01 | vision-extraction-heartbeat-progress | Added extraction heartbeat progress stages between 10% and 50% for long-running vision OCR scans. `api/config/visionProgressMessages.json` now includes `extractingInFlight` (`extracting-in-flight`, 20%) and `extractingDeepParse` (`extracting-deep-parse`, 30%). `api/services/visionPipeline.processImage()` now schedules timed heartbeat updates at 3s/9s while extraction is in-flight and clears timers in `finally` to prevent stale updates. Progress updates are now monotonic (never regress percent when later stages report lower configured values). Added test coverage in `api/__tests__/visionPipeline.test.js` for long-running extraction heartbeat emission and fast-extraction heartbeat suppression.
 - 2026-04-01 | vision-catalog-circuit-breaker-and-hash-retry-cleanup | Added per-scan-job catalog provider circuit breaker for router-based lookup (`api/services/catalog/CatalogRouter.js`) with hard-error tripping (abort/timeout, 5xx, 429, network/transport), provider skip diagnostics, and `CATALOG_PROVIDERS_UNAVAILABLE` failure (`api/services/catalog/errors.js`, `api/services/catalog/providerErrorUtils.js`). Book catalog first-pass now forwards shared `catalogContext` and propagates provider-outage failures (`api/services/catalog/BookCatalogService.js`). Vision pipeline now passes catalog context into high/medium catalog passes, rethrows global provider outages, logs catalog diagnostics, and reduces duplicate save writes by reusing first `_ocrGroupKey` catalog result within a scan (`api/services/visionPipeline.js`). Vision job execution now purges hash artifacts on provider-outage failure via new query helpers (`vision_result_cache.deleteByHash`, `vision_scan_photos.deleteByHash`) and sync scan endpoint returns HTTP 503 with `{ code: "CATALOG_PROVIDERS_UNAVAILABLE" }` (`api/controllers/shelvesController.js`, `api/database/queries/visionResultCache.js`, `api/database/queries/visionScanPhotos.js`). Added/updated tests in `api/services/catalog/CatalogRouter.test.js`, `api/services/catalog/BookCatalogService.test.js`, `api/__tests__/visionPipeline.test.js`, and `api/__tests__/shelvesController.test.js`.
@@ -414,6 +420,7 @@ routes/auth.js
   â†’ controllers/authController.js
   â†’ middleware/auth.js
   â†’ middleware/validate.js
+  Routes: POST /login (consumer username-or-email via `username` field), /register, /refresh, /forgot-password, /reset-password; GET /me, /validate-reset-token
 
 controllers/authController.js
   â†’ database/queries/auth.js
@@ -1060,6 +1067,11 @@ scripts/backfill-missing-cover-media.js
 scripts/get-bearer-token.ps1
   (standalone PowerShell HTTP client for local auth token retrieval)
 
+scripts/audit-login-identifier-collisions.js
+  â†’ database/pg.js
+  â†’ logger.js
+  Behavior: audits cross-user collisions where `LOWER(users.username) = LOWER(other_user.email)` so consumer username-or-email login can fail safely on ambiguous identifiers
+
 scripts/fetch-api-payload.ps1
   (standalone PowerShell HTTP client for authenticated API payload retrieval)
 
@@ -1080,7 +1092,7 @@ database/pg.js
 database/queries/utils.js
   (no internal imports â€” pure helpers)
 
-database/queries/auth.js â†’ database/pg.js, database/queries/utils.js
+database/queries/auth.js â†’ database/pg.js, database/queries/utils.js, logger.js
 database/queries/shelves.js â†’ database/pg.js, database/queries/utils.js
 database/queries/itemReplacementTraces.js -> database/pg.js, database/queries/utils.js
 database/queries/collectables.js â†’ database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
@@ -1175,8 +1187,27 @@ mobile/src/App.js
   -> navigation/BottomTabNavigator.js
   -> navigation/linkingConfig.js
   -> services/api.js
+  -> utils/onboarding.js
   -> components/Toast.js
   -> screens/* (all 33 screens listed below)
+```
+
+### Expo / Native Config
+
+```
+mobile/app.json
+  -> assets/icon.png
+  -> assets/splash.png
+  -> Android adaptive icon foreground: assets/logo-android.png
+  -> Android app-link intent filters for `https://shelvesai.com/app/*` and `/reset-password`
+
+mobile/android/app/src/main/AndroidManifest.xml
+  -> launcher icons: @mipmap/ic_launcher, @mipmap/ic_launcher_round
+  -> HTTPS and custom-scheme deep link intent filters
+  -> Expo updates disabled in native Android manifest metadata
+
+mobile/ios/ShelvesAI/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
+  -> sourced from website/public/logo-v2.png
 ```
 
 ### Context Providers
@@ -1359,7 +1390,7 @@ components/news/QuickCheckInModal.js
 
 | Screen | Imports |
 |---|---|
-| LoginScreen | AuthContext, ThemeContext, api |
+| LoginScreen | AuthContext, ThemeContext, api, utils/onboarding |
 | ForgotPasswordScreen | AuthContext, ThemeContext, api |
 | ResetPasswordScreen | AuthContext, ThemeContext, api |
 | OnboardingPagerScreen | AuthContext, ThemeContext, api |
@@ -1399,6 +1430,7 @@ components/news/QuickCheckInModal.js
 utils/coverUrl.js    (no internal imports)
 utils/mediaUrl.js    (no internal imports)
 utils/iconConfig.js  (no internal imports)
+utils/onboarding.js  (no internal imports)
 ```
 
 ### Theme
@@ -1916,6 +1948,3 @@ These files have the most dependents or are critical infrastructure:
 | `admin-dashboard/src/context/AuthContext.jsx` | All admin auth state flows through it |
 
 ---
-
-
-

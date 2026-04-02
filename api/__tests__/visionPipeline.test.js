@@ -25,7 +25,10 @@ jest.mock('../services/collectables/fingerprint', () => ({
     makeLightweightFingerprint: jest.fn(item => 'fingerprint-' + item.title),
     makeVisionOcrFingerprint: jest.fn(() => 'ocr-fingerprint'),
     makeCollectableFingerprint: jest.fn(() => 'collectable-fingerprint'),
-    makeManualFingerprint: jest.fn(() => 'manual-fingerprint'),
+    makeManualFingerprint: jest.fn((input) => {
+        const creator = input?.primaryCreator || input?.author || input?.creator;
+        return input?.title && creator ? 'manual-fingerprint' : null;
+    }),
 }));
 jest.mock('../services/catalog/BookCatalogService');
 jest.mock('../services/catalog/MetadataScorer', () => ({
@@ -902,6 +905,147 @@ describe('VisionPipelineService', () => {
             expect(result.results.needsReview).toBe(0);
             expect(shelvesQueries.addManual).not.toHaveBeenCalled();
             expect(needsReviewQueries.create).not.toHaveBeenCalled();
+        });
+
+        it('saves high-confidence other items without a creator when title meets the threshold', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Mystery Bottle', confidence: 0.95, extractionIndex: 0 }],
+            });
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: { id: 333 },
+                manual: { id: 222, name: 'Mystery Bottle', author: null },
+            });
+
+            const result = await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(result.results.added).toBe(1);
+            expect(result.results.needsReview).toBe(0);
+            expect(shelvesQueries.findManualByFingerprint).not.toHaveBeenCalled();
+            expect(shelvesQueries.fuzzyFindManualForOther).not.toHaveBeenCalled();
+            expect(shelvesQueries.addManual).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    name: 'Mystery Bottle',
+                    author: null,
+                }),
+            );
+            expect(needsReviewQueries.create).not.toHaveBeenCalled();
+        });
+
+        it('skips creator-dependent matching but still uses barcode matching for title-only other items', async () => {
+            shelvesQueries.findManualByBarcode.mockResolvedValue({ id: 555, name: 'Mystery Bottle', author: null });
+            shelvesQueries.findManualCollection.mockResolvedValue({ id: 901, manualId: 555 });
+
+            const result = await service.saveManualToShelf(
+                [{ title: 'Mystery Bottle', barcode: '12345', extractionIndex: 1 }],
+                1,
+                10,
+                'other',
+                { requireCreator: false },
+            );
+
+            expect(shelvesQueries.findManualByFingerprint).not.toHaveBeenCalled();
+            expect(shelvesQueries.fuzzyFindManualForOther).not.toHaveBeenCalled();
+            expect(shelvesQueries.findManualByBarcode).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                barcode: '12345',
+            });
+            expect(result.matched).toHaveLength(1);
+            expect(result.matched[0]).toMatchObject({
+                itemId: 901,
+                manualId: 555,
+            });
+        });
+    });
+
+    describe('review queue context retention', () => {
+        beforeEach(() => {
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.findManualCollection.mockResolvedValue(null);
+            shelvesQueries.addManualCollection.mockResolvedValue({ id: 444 });
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: { id: 333 },
+                manual: { id: 222, name: 'Bottle A', author: 'Distillery' },
+            });
+            needsReviewQueries.create.mockResolvedValue({ id: 1 });
+        });
+
+        it('stores reviewContext for low-confidence items', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Blurry Bottle', confidence: 0.5, extractionIndex: 4 }],
+            });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100, null, { scanPhotoId: 77 });
+
+            expect(needsReviewQueries.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    rawData: expect.objectContaining({
+                        title: 'Blurry Bottle',
+                        reviewContext: expect.objectContaining({
+                            scanPhotoId: 77,
+                            extractionIndex: 4,
+                            shelfType: 'other',
+                            reason: 'low_confidence',
+                        }),
+                    }),
+                }),
+                expect.any(Object),
+            );
+        });
+
+        it('stores reviewContext for missing-field review items', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: '', author: 'Unknown Maker', confidence: 0.95, extractionIndex: 5 }],
+            });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100, null, { scanPhotoId: 78 });
+
+            expect(needsReviewQueries.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    rawData: expect.objectContaining({
+                        author: 'Unknown Maker',
+                        reviewContext: expect.objectContaining({
+                            scanPhotoId: 78,
+                            extractionIndex: 5,
+                            shelfType: 'other',
+                            reason: 'missing_fields',
+                        }),
+                    }),
+                }),
+                expect.any(Object),
+            );
+        });
+
+        it('stores reviewContext for possible-duplicate review items', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Weller Twelve', author: 'Buffalo Trace Distillery', confidence: 0.95, extractionIndex: 6 }],
+            });
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue({
+                id: 555,
+                name: 'Weller 12',
+                author: 'Buffalo Trace',
+                titleSim: 0.86,
+                creatorSim: 0.82,
+                combinedSim: 0.85,
+            });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100, null, { scanPhotoId: 79 });
+
+            expect(needsReviewQueries.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    rawData: expect.objectContaining({
+                        duplicateReason: 'possible_duplicate',
+                        reviewContext: expect.objectContaining({
+                            scanPhotoId: 79,
+                            extractionIndex: 6,
+                            shelfType: 'other',
+                            reason: 'possible_duplicate',
+                        }),
+                    }),
+                }),
+                expect.any(Object),
+            );
         });
     });
 

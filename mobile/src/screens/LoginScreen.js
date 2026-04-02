@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, saveToken } from '../services/api';
+import { isOnboardingRequiredForUser } from '../utils/onboarding';
 const { getAuthInputProps } = require('../utils/textInputPolicy');
 
 
@@ -66,14 +67,31 @@ export default function LoginScreen({ navigation }) {
 
             if (data.token) {
                 await saveToken(data.token);
-                if (data.user) {
-                    setUser(data.user);
+
+                let resolvedUser = data.user || null;
+                let resolvedNeedsOnboarding = typeof data.onboardingCompleted === 'boolean'
+                    ? !data.onboardingCompleted
+                    : !!data.needsOnboarding;
+
+                try {
+                    const accountData = await apiRequest({
+                        apiBase,
+                        path: '/api/account',
+                        token: data.token,
+                    });
+
+                    if (accountData?.user) {
+                        resolvedUser = accountData.user;
+                        resolvedNeedsOnboarding = isOnboardingRequiredForUser(accountData.user);
+                    }
+                } catch (accountErr) {
+                    // Fall back to the auth response when the post-login account refresh fails.
                 }
-                if (typeof data.onboardingCompleted === 'boolean') {
-                    setNeedsOnboarding(!data.onboardingCompleted);
-                } else {
-                    setNeedsOnboarding(!!data.needsOnboarding);
+
+                if (resolvedUser) {
+                    setUser(resolvedUser);
                 }
+                setNeedsOnboarding(resolvedNeedsOnboarding);
                 setToken(data.token);
             } else {
                 setError('Authentication failed');

@@ -30,6 +30,7 @@ import { apiRequest, getValidToken } from '../services/api';
 import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 import AddToShelfModal from '../components/AddToShelfModal';
+import useOptionalBottomTabBarHeight from '../navigation/useOptionalBottomTabBarHeight';
 import {
     resolveCollectableMaxPlayers,
     resolveCollectableRating,
@@ -41,7 +42,6 @@ import {
 // Logo assets for provider attribution (imported as React components via react-native-svg-transformer)
 import TmdbLogo from '../assets/tmdb-logo.svg';
 
-const PERSISTENT_TAB_FOOTER_SPACER = 88;
 const MAX_OWNED_PLATFORMS = 25;
 const OWNED_GAME_FORMAT_OPTIONS = ['physical', 'digital'];
 
@@ -226,16 +226,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     ), [item?.addedAt, item?.createdAt, item?.updatedAt]);
     const hasNoteChanges = (notesDraft || '').trim() !== (collectionNotes || '').trim();
     const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
-    const isInsideBottomTab = useMemo(() => {
-        let parent = navigation?.getParent?.();
-        while (parent) {
-            const parentState = parent.getState?.();
-            if (parentState?.type === 'tab') return true;
-            parent = parent.getParent?.();
-        }
-        return false;
-    }, [navigation]);
-    const bottomFooterSpacer = isInsideBottomTab ? PERSISTENT_TAB_FOOTER_SPACER : 0;
+    const { tabBarHeight: bottomFooterSpacer } = useOptionalBottomTabBarHeight();
 
     useEffect(() => {
         setPlatformMissing(!!item?.platformMissing);

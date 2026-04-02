@@ -1,6 +1,6 @@
 -- ShelvesAI Database Schema
 -- Generated from current production schema
--- Last updated: 2026-01-26
+-- Last updated: 2026-04-02
 
 -- ============================================
 -- EXTENSIONS
@@ -42,6 +42,7 @@ CREATE TABLE users (
     -- Admin & Suspension
     is_admin BOOLEAN DEFAULT FALSE NOT NULL,
     is_suspended BOOLEAN DEFAULT FALSE NOT NULL,
+    premium_locked_by_admin BOOLEAN DEFAULT FALSE NOT NULL,
     suspended_at TIMESTAMPTZ,
     suspension_reason TEXT,
 
@@ -78,6 +79,18 @@ CREATE INDEX idx_profile_media_user ON profile_media(user_id);
 ALTER TABLE users
     ADD CONSTRAINT users_profile_media_id_fkey
     FOREIGN KEY (profile_media_id) REFERENCES profile_media(id) ON DELETE SET NULL;
+
+-- ============================================
+-- SYSTEM SETTINGS
+-- ============================================
+CREATE TABLE system_settings (
+    key VARCHAR(255) PRIMARY KEY,
+    value JSONB NOT NULL,
+    description TEXT,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- ============================================
 -- SHELVES
@@ -156,6 +169,7 @@ CREATE TABLE collectables (
     publishers TEXT[] DEFAULT '{}',
     year TEXT,
     market_value TEXT,
+    metascore JSONB DEFAULT NULL,
     market_value_sources JSONB DEFAULT '[]',
     system_name TEXT,  -- e.g., "Nintendo 64", "PlayStation 2"
     formats JSONB DEFAULT '[]',
@@ -264,6 +278,8 @@ CREATE TABLE user_manuals (
     market_value TEXT,
     market_value_sources JSONB DEFAULT '[]',
     manufacturer VARCHAR(100),
+    cover_media_path TEXT,
+    cover_content_type VARCHAR(100),
 
     -- Extended metadata for "Other" shelf items
     age_statement TEXT,
@@ -286,6 +302,33 @@ CREATE TABLE user_manuals (
 CREATE INDEX idx_user_manuals_user ON user_manuals(user_id);
 CREATE INDEX idx_user_manuals_shelf ON user_manuals(shelf_id);
 CREATE UNIQUE INDEX idx_user_manuals_unique_fingerprint ON user_manuals(user_id, shelf_id, manual_fingerprint) WHERE manual_fingerprint IS NOT NULL;
+
+-- ============================================
+-- USER MARKET VALUE ESTIMATES
+-- ============================================
+CREATE TABLE user_market_value_estimates (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    collectable_id INTEGER REFERENCES collectables(id) ON DELETE CASCADE,
+    manual_id INTEGER REFERENCES user_manuals(id) ON DELETE CASCADE,
+    estimate_value TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_estimate_one_target CHECK (
+        (collectable_id IS NOT NULL AND manual_id IS NULL)
+        OR (collectable_id IS NULL AND manual_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX idx_user_market_value_estimates_user ON user_market_value_estimates(user_id);
+CREATE INDEX idx_user_market_value_estimates_collectable ON user_market_value_estimates(collectable_id);
+CREATE INDEX idx_user_market_value_estimates_manual ON user_market_value_estimates(manual_id);
+CREATE UNIQUE INDEX uq_user_estimate_collectable
+    ON user_market_value_estimates (user_id, collectable_id)
+    WHERE collectable_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_user_estimate_manual
+    ON user_market_value_estimates (user_id, manual_id)
+    WHERE manual_id IS NOT NULL;
 
 -- ============================================
 -- USER COLLECTIONS (Items on shelves)
@@ -1031,6 +1074,10 @@ CREATE TRIGGER update_collectables_updated_at
     BEFORE UPDATE ON collectables
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_system_settings_updated_at
+    BEFORE UPDATE ON system_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 CREATE TRIGGER update_media_updated_at
     BEFORE UPDATE ON media
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -1045,6 +1092,10 @@ CREATE TRIGGER update_user_lists_updated_at
 
 CREATE TRIGGER update_user_ratings_updated_at
     BEFORE UPDATE ON user_ratings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_user_market_value_estimates_updated_at
+    BEFORE UPDATE ON user_market_value_estimates
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_job_runs_updated_at

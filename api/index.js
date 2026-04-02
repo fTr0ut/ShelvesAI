@@ -1,5 +1,6 @@
-// Load environment from api/.env
-require('dotenv').config();
+const { loadApiEnv } = require('./loadEnv');
+
+loadApiEnv();
 
 const app = require('./server');
 const logger = require('./logger');
