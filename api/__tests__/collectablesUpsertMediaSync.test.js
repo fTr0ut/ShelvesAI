@@ -256,7 +256,9 @@ describe('collectables.upsert media sync transaction behavior', () => {
       txClient,
     );
 
+    const sql = txClient.query.mock.calls[0][0];
     const params = txClient.query.mock.calls[0][1];
+    expect(sql).toContain("COALESCE($30::jsonb, '[]'::jsonb)");
     expect(params[29]).toBeNull();
     expect(params[30]).toBeNull();
     expect(params[32]).toBe(false);

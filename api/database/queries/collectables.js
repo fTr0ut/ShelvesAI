@@ -454,7 +454,7 @@ async function upsert(data, client = null) {
        market_value, market_value_sources,
        images, cover_url, sources, external_id, fuzzy_fingerprints,
        cover_image_url, cover_image_source, attribution, metascore, max_players, cast_members, platform_data, igdb_payload
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, COALESCE($30::jsonb, '[]'::jsonb), $31)
      ON CONFLICT (fingerprint) DO UPDATE SET
        title = COALESCE(EXCLUDED.title, collectables.title),
        subtitle = COALESCE(EXCLUDED.subtitle, collectables.subtitle),
