@@ -3,7 +3,7 @@
 const fs = require('fs/promises');
 const { query } = require('../pg');
 const s3 = require('../../services/s3');
-const { validateImageBuffer } = require('../../utils/imageValidation');
+const { prepareShelfUploadImage } = require('../../services/shelfImageUpload');
 const {
   uploadPhotoForShelf,
   clearPhotoForShelf,
@@ -28,11 +28,13 @@ jest.mock('../../services/s3', () => ({
   }),
 }));
 
-jest.mock('../../utils/imageValidation', () => ({
-  validateImageBuffer: jest.fn().mockResolvedValue({
+jest.mock('../../services/shelfImageUpload', () => ({
+  prepareShelfUploadImage: jest.fn().mockResolvedValue({
+    buffer: Buffer.from('processed-photo'),
     mime: 'image/jpeg',
     width: 640,
     height: 480,
+    sizeBytes: 15,
   }),
 }));
 
@@ -75,14 +77,19 @@ describe('shelfPhotos.uploadPhotoForShelf', () => {
       contentType: 'image/jpeg',
     });
 
-    expect(validateImageBuffer).toHaveBeenCalled();
-    expect(s3.uploadPrivateBuffer).toHaveBeenCalled();
+    expect(prepareShelfUploadImage).toHaveBeenCalledWith(Buffer.from('photo'));
+    expect(s3.uploadPrivateBuffer).toHaveBeenCalledWith(
+      Buffer.from('processed-photo'),
+      expect.any(String),
+      'image/jpeg',
+    );
     expect(s3.deleteObject).toHaveBeenCalledWith('shelf-photos/user-1/7/old.jpg');
     expect(result).toEqual(expect.objectContaining({
       id: 7,
       photoStorageKey: 'shelf-photos/user-1/7/new.jpg',
       photoStorageProvider: 's3',
     }));
+    expect(query.mock.calls[1][1]).toEqual(expect.arrayContaining([15, 640, 480]));
   });
 });
 

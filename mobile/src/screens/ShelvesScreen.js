@@ -24,6 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { clearShelvesListCache } from '../services/shelvesListCache';
 import { fetchShelvesPage } from '../services/shelvesListService';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 
 const SHELVES_PAGE_LIMIT = 50;
 const SHELF_SORT_OPTIONS = [
@@ -323,6 +324,8 @@ export default function ShelvesScreen({ navigation }) {
 
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
+    const { contentBottomPadding } = useBottomFooterLayout();
+    const shelvesListBottomPadding = contentBottomPadding(spacing.md);
 
     const handleOpenShelf = (shelf) => {
         if (shelf.type === 'special-create') {
@@ -811,8 +814,8 @@ export default function ShelvesScreen({ navigation }) {
                         key={(!isSearchingItems && debouncedSearchQuery.trim().length < 2) ? viewMode : 'list'}
                         contentContainerStyle={
                             (!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe')
-                                ? styles.swipeListContainer
-                                : styles.listContainer
+                                ? [styles.swipeListContainer, { paddingBottom: shelvesListBottomPadding }]
+                                : [styles.listContainer, { paddingBottom: shelvesListBottomPadding }]
                         }
                         ListHeaderComponent={(showTopCreateShelfButton && viewMode !== 'swipe') ? renderTopCreateShelf : null}
                         columnWrapperStyle={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'tile') ? styles.gridRow : undefined}
@@ -1061,7 +1064,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     listContainer: {
         padding: spacing.md,
         paddingTop: 0,
-        paddingBottom: 100,
     },
     topCreateButton: {
         width: '100%',
@@ -1277,7 +1279,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     },
     swipeListContainer: {
         paddingTop: 0,
-        paddingBottom: 100,
     },
     swipeCardItem: {
         flex: 1,

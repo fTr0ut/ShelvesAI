@@ -14,11 +14,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest, getValidToken } from '../services/api';
-import { prepareProfilePhotoAsset } from '../services/imageUpload';
+import { apiRequest } from '../services/api';
+import { getProfileImageSource } from '../utils/mediaUrl';
+import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePhotoUpload';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function ProfileEditScreen({ navigation }) {
@@ -90,21 +90,13 @@ export default function ProfileEditScreen({ navigation }) {
 
     const handlePickPhoto = async () => {
         try {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
+            const selection = await pickProfilePhotoAsset();
+            if (selection.status === 'permission_denied') {
                 Alert.alert('Permission Required', 'Please grant photo library access to upload a profile photo');
                 return;
             }
-
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: Platform.OS === 'ios',
-                aspect: [1, 1],
-                quality: 1,
-            });
-
-            if (!result.canceled && result.assets?.[0]) {
-                await uploadPhoto(result.assets[0]);
+            if (selection.status === 'selected') {
+                await uploadPhoto(selection.asset);
             }
         } catch (e) {
             Alert.alert('Error', 'Failed to pick image');
@@ -114,36 +106,7 @@ export default function ProfileEditScreen({ navigation }) {
     const uploadPhoto = async (asset) => {
         try {
             setUploadingPhoto(true);
-
-            const prepared = await prepareProfilePhotoAsset(asset, { forceSquare: Platform.OS === 'android' });
-            if (!prepared) {
-                throw new Error('Invalid photo selection');
-            }
-
-            const formData = new FormData();
-            formData.append('photo', prepared);
-            const authToken = await getValidToken(token);
-            if (!authToken) {
-                throw new Error('Session expired. Please sign in again.');
-            }
-
-            const res = await fetch(`${apiBase}/api/profile/photo`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                    'ngrok-skip-browser-warning': 'true',
-                },
-                body: formData,
-            });
-
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.error || 'Upload failed');
-            }
-
-            const data = await res.json();
-
-            // Reload profile to get new photo
+            await uploadProfilePhoto({ apiBase, token, asset });
             await loadProfile();
             Alert.alert('Success', 'Profile photo updated!');
         } catch (e) {
@@ -151,16 +114,6 @@ export default function ProfileEditScreen({ navigation }) {
         } finally {
             setUploadingPhoto(false);
         }
-    };
-
-    const getProfileImageSource = () => {
-        if (profile?.profileMediaPath) {
-            return { uri: `${apiBase}/media/${profile.profileMediaPath}` };
-        }
-        if (profile?.picture) {
-            return { uri: profile.picture };
-        }
-        return null;
     };
 
     if (loading) {
@@ -171,7 +124,7 @@ export default function ProfileEditScreen({ navigation }) {
         );
     }
 
-    const profileImage = getProfileImageSource();
+    const profileImage = getProfileImageSource(profile, apiBase);
 
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>

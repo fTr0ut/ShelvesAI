@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import OnboardingConfigGate from '../components/onboarding/OnboardingConfigGate';
 
 export default function UsernameSetupScreen({ navigation, route }) {
     const { token, apiBase, setUser, onboardingConfig } = useContext(AuthContext);
@@ -57,62 +58,56 @@ export default function UsernameSetupScreen({ navigation, route }) {
         }
     };
 
-    if (!onboardingConfig?.username) {
-        return (
-            <View style={styles.loadingContainer}>
-                <Text style={styles.loadingText}>Loading onboarding...</Text>
-            </View>
-        );
-    }
-
     return (
-        <KeyboardAvoidingView
-            style={styles.screen}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+        <OnboardingConfigGate section="username">
+            <KeyboardAvoidingView
+                style={styles.screen}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            <View style={styles.container}>
-                <View style={styles.iconBox}>
-                    <Ionicons name="person-add" size={40} color={colors.primary} />
-                </View>
-
-                <Text style={styles.title}>{onboardingConfig.username.title}</Text>
-                <Text style={styles.subtitle}>{onboardingConfig.username.subtitle}</Text>
-
-                {error ? (
-                    <View style={styles.errorBox}>
-                        <Text style={styles.errorText}>{error}</Text>
+                <View style={styles.container}>
+                    <View style={styles.iconBox}>
+                        <Ionicons name="person-add" size={40} color={colors.primary} />
                     </View>
-                ) : null}
 
-                <View style={styles.inputContainer}>
-                    <Text style={styles.atSign}>{onboardingConfig.username.atSymbol}</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={username}
-                        onChangeText={setUsername}
-                        placeholder={onboardingConfig.username.placeholder}
-                        placeholderTextColor={colors.textMuted}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        autoFocus
-                        editable={!loading}
-                    />
+                    <Text style={styles.title}>{onboardingConfig.username.title}</Text>
+                    <Text style={styles.subtitle}>{onboardingConfig.username.subtitle}</Text>
+
+                    {error ? (
+                        <View style={styles.errorBox}>
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    ) : null}
+
+                    <View style={styles.inputContainer}>
+                        <Text style={styles.atSign}>{onboardingConfig.username.atSymbol}</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={username}
+                            onChangeText={setUsername}
+                            placeholder={onboardingConfig.username.placeholder}
+                            placeholderTextColor={colors.textMuted}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            autoFocus
+                            editable={!loading}
+                        />
+                    </View>
+
+                    <TouchableOpacity
+                        style={[styles.continueButton, loading && styles.continueButtonDisabled]}
+                        onPress={handleSubmit}
+                        disabled={loading}
+                    >
+                        <Text style={styles.continueButtonText}>
+                            {loading ? onboardingConfig.username.loadingLabel : onboardingConfig.username.buttonLabel}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
+                    </TouchableOpacity>
                 </View>
-
-                <TouchableOpacity
-                    style={[styles.continueButton, loading && styles.continueButtonDisabled]}
-                    onPress={handleSubmit}
-                    disabled={loading}
-                >
-                    <Text style={styles.continueButtonText}>
-                        {loading ? onboardingConfig.username.loadingLabel : onboardingConfig.username.buttonLabel}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
-                </TouchableOpacity>
-            </View>
-        </KeyboardAvoidingView>
+            </KeyboardAvoidingView>
+        </OnboardingConfigGate>
     );
 }
 

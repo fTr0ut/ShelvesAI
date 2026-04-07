@@ -28,6 +28,7 @@ import { toggleLike, addComment } from '../services/feedApi';
 import { dismissNewsItem } from '../services/newsApi';
 import { getShareableEventId, shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 import {
     buildOwnerPhotoThumbnailUri,
     formatAddedEventHeader,
@@ -362,6 +363,8 @@ export default function SocialFeedScreen({ navigation, route }) {
 
     // Debounced search handler
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows }), [colors, spacing, typography, shadows]);
+    const { contentBottomPadding } = useBottomFooterLayout();
+    const feedListBottomPadding = contentBottomPadding(spacing.md);
 
     const updateEntrySocial = useCallback((targetId, updates) => {
         if (!targetId) return;
@@ -1527,7 +1530,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                 data={entries}
                 renderItem={renderItem}
                 keyExtractor={(item) => item?.aggregateId || item?.id || Math.random().toString()}
-                contentContainerStyle={styles.listContent}
+                contentContainerStyle={[styles.listContent, { paddingBottom: feedListBottomPadding }]}
                 showsVerticalScrollIndicator={false}
                 refreshControl={
                     <RefreshControl
@@ -1547,7 +1550,7 @@ export default function SocialFeedScreen({ navigation, route }) {
                     ) : entries.length === 0 ? (
                         renderEmpty()
                     ) : (
-                        <View style={styles.footerSpacer} />
+                        <View style={{ height: spacing.sm }} />
                     )
                 }
             />
@@ -1722,7 +1725,6 @@ const createStyles = ({ colors, spacing, typography, shadows }) => StyleSheet.cr
     },
     listContent: {
         padding: spacing.md,
-        paddingBottom: 100,
     },
     feedCard: {
         backgroundColor: colors.surface,

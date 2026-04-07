@@ -14,11 +14,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
-import { prepareProfilePhotoAsset } from '../services/imageUpload';
+import { getProfileImageSource } from '../utils/mediaUrl';
+import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePhotoUpload';
 import { shareEntityLink } from '../services/shareLinks';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 import {
@@ -321,21 +321,13 @@ export default function ProfileScreen({ navigation, route }) {
 
     const handlePickPhoto = async () => {
         try {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
+            const selection = await pickProfilePhotoAsset();
+            if (selection.status === 'permission_denied') {
                 Alert.alert('Permission Required', 'Please grant photo library access');
                 return;
             }
-
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: Platform.OS === 'ios',
-                aspect: [1, 1],
-                quality: 1,
-            });
-
-            if (!result.canceled && result.assets?.[0]) {
-                await uploadPhoto(result.assets[0]);
+            if (selection.status === 'selected') {
+                await uploadPhoto(selection.asset);
             }
         } catch (e) {
             Alert.alert('Error', 'Failed to pick image');
@@ -345,32 +337,7 @@ export default function ProfileScreen({ navigation, route }) {
     const uploadPhoto = async (asset) => {
         try {
             setUploadingPhoto(true);
-            const prepared = await prepareProfilePhotoAsset(asset, { forceSquare: Platform.OS === 'android' });
-            if (!prepared) {
-                throw new Error('Invalid photo selection');
-            }
-
-            const formData = new FormData();
-            formData.append('photo', prepared);
-            const authToken = await getValidToken(token);
-            if (!authToken) {
-                throw new Error('Session expired. Please sign in again.');
-            }
-
-            const res = await fetch(`${apiBase}/api/profile/photo`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                    'ngrok-skip-browser-warning': 'true',
-                },
-                body: formData,
-            });
-
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.error || 'Upload failed');
-            }
-
+            await uploadProfilePhoto({ apiBase, token, asset });
             await loadProfile();
             Alert.alert('Success', 'Profile photo updated!');
         } catch (e) {
@@ -797,7 +764,7 @@ export default function ProfileScreen({ navigation, route }) {
         );
     }
 
-    const profileImage = getProfileImageSource();
+    const profileImage = getProfileImageSource(profile, apiBase);
 
     return (
         <SafeAreaView style={styles.screen} edges={['top']}>

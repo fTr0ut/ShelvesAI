@@ -59,6 +59,7 @@ import { apiRequest, setAuthErrorHandler, setApiBase, getStoredToken, clearToken
 import { ToastProvider } from './context/ToastContext'
 import ToastContainer from './components/Toast'
 import { isOnboardingRequiredForUser } from './utils/onboarding'
+import { shouldAutoRefreshOnboardingConfig } from './utils/onboardingConfig'
 
 const Stack = createNativeStackNavigator()
 const PREMIUM_STORAGE_KEY = 'premiumEnabled'
@@ -167,9 +168,13 @@ export default Sentry.wrap(function App() {
   const [user, setUser] = useState(null)
   const [premiumEnabled, setPremiumEnabledState] = useState(false)
   const [onboardingConfig, setOnboardingConfig] = useState(null)
+  const [onboardingConfigLoading, setOnboardingConfigLoading] = useState(false)
+  const [onboardingConfigError, setOnboardingConfigError] = useState(null)
   const [visionQuota, setVisionQuota] = useState(null)
   const { apiBase, apiBaseSource } = useMemo(() => resolveApiBase(), [])
   const extra = useMemo(() => getExtraConfig(), [])
+  const onboardingConfigRequestIdRef = useRef(0)
+  const onboardingConfigAutoRetryRef = useRef(false)
 
   // Register apiBase with the api service so getValidToken() can call /api/auth/refresh.
   useEffect(() => {
@@ -228,34 +233,42 @@ export default Sentry.wrap(function App() {
     return () => setAuthErrorHandler(null)
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
+  const refreshOnboardingConfig = useCallback(async () => {
+    const requestId = onboardingConfigRequestIdRef.current + 1
+    onboardingConfigRequestIdRef.current = requestId
+    setOnboardingConfigLoading(true)
+    setOnboardingConfigError(null)
 
-    const loadOnboardingConfig = async () => {
-      try {
-        const data = await apiRequest({ apiBase, path: '/api/config/onboarding' })
-        if (!cancelled) {
-          setOnboardingConfig(data)
-        }
-      } catch (err) {
-        Sentry.captureException(err, {
-          tags: {
-            area: 'app_bootstrap',
-            endpoint: '/api/config/onboarding',
-          },
-        })
-        if (!cancelled) {
-          setOnboardingConfig(null)
-        }
+    try {
+      const data = await apiRequest({ apiBase, path: '/api/config/onboarding' })
+      if (onboardingConfigRequestIdRef.current !== requestId) {
+        return null
+      }
+      setOnboardingConfig(data)
+      setOnboardingConfigError(null)
+      return data
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: {
+          area: 'app_bootstrap',
+          endpoint: '/api/config/onboarding',
+        },
+      })
+      if (onboardingConfigRequestIdRef.current !== requestId) {
+        return null
+      }
+      setOnboardingConfigError(err)
+      return null
+    } finally {
+      if (onboardingConfigRequestIdRef.current === requestId) {
+        setOnboardingConfigLoading(false)
       }
     }
-
-    loadOnboardingConfig()
-
-    return () => {
-      cancelled = true
-    }
   }, [apiBase])
+
+  useEffect(() => {
+    refreshOnboardingConfig()
+  }, [refreshOnboardingConfig])
 
   const setPremiumEnabled = useCallback(async (value) => {
     setPremiumEnabledState(value)
@@ -303,6 +316,23 @@ export default Sentry.wrap(function App() {
     }
   }, [apiBase, token, setPremiumEnabled])
 
+  useEffect(() => {
+    if (!needsOnboarding || onboardingConfig) {
+      onboardingConfigAutoRetryRef.current = false
+      return
+    }
+
+    if (shouldAutoRefreshOnboardingConfig({
+      needsOnboarding,
+      onboardingConfig,
+      onboardingConfigLoading,
+      hasAttemptedAutoRetry: onboardingConfigAutoRetryRef.current,
+    })) {
+      onboardingConfigAutoRetryRef.current = true
+      refreshOnboardingConfig()
+    }
+  }, [needsOnboarding, onboardingConfig, onboardingConfigLoading, refreshOnboardingConfig])
+
   const authValue = useMemo(() => ({
     token,
     setToken,
@@ -315,9 +345,24 @@ export default Sentry.wrap(function App() {
     setPremiumEnabled,
     onboardingConfig,
     setOnboardingConfig,
+    onboardingConfigLoading,
+    onboardingConfigError,
+    refreshOnboardingConfig,
     visionQuota,
     setVisionQuota,
-  }), [token, apiBase, needsOnboarding, user, premiumEnabled, setPremiumEnabled, onboardingConfig, visionQuota])
+  }), [
+    token,
+    apiBase,
+    needsOnboarding,
+    user,
+    premiumEnabled,
+    setPremiumEnabled,
+    onboardingConfig,
+    onboardingConfigLoading,
+    onboardingConfigError,
+    refreshOnboardingConfig,
+    visionQuota,
+  ])
 
   if (!ready || !fontsLoaded) return null
 

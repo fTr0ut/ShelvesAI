@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 
 function extractHostname(url) {
     try {
@@ -31,6 +32,8 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
     const { apiBase, token } = useContext(AuthContext);
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
+    const { contentBottomPadding } = useBottomFooterLayout();
+    const sourcesBottomPadding = contentBottomPadding(spacing.xl * 2);
 
     const [sources, setSources] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -129,7 +132,7 @@ export default function MarketValueSourcesScreen({ navigation, route }) {
                 </View>
             </SafeAreaView>
 
-            <ScrollView contentContainerStyle={styles.content}>
+            <ScrollView contentContainerStyle={[styles.content, { paddingBottom: sourcesBottomPadding }]}>
                 {/* Subtitle */}
                 <Text style={styles.subtitle}>
                     Sources we used to come up with this estimate

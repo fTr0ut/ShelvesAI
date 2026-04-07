@@ -18,7 +18,9 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { CategoryIcon } from '../components/ui';
 import { apiRequest, getValidToken } from '../services/api';
+import { prepareImageUploadAsset } from '../services/imageUpload';
 import { clearShelvesListCache } from '../services/shelvesListCache';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 
 const VISIBILITY_OPTIONS = [
   { value: 'private', label: 'Private', icon: 'lock-closed' },
@@ -73,11 +75,15 @@ export default function ShelfCreateScreen({ navigation, route }) {
   const isGamesShelf = selectedType === 'games';
 
   const styles = createStyles({ colors, spacing, typography, shadows, radius });
+  const { contentBottomPadding } = useBottomFooterLayout();
+  const formBottomPadding = contentBottomPadding(spacing.md);
 
   const buildShelfPhotoFilename = useCallback((asset) => {
+    if (asset?.name) return asset.name;
+    if (asset?.fileName) return asset.fileName;
     const uriName = String(asset?.uri || '').split('/').pop();
     if (uriName && uriName.includes('.')) return uriName;
-    const mime = String(asset?.mimeType || '').toLowerCase();
+    const mime = String(asset?.type || asset?.mimeType || '').toLowerCase();
     const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
     return `shelf-photo-${Date.now()}.${ext}`;
   }, []);
@@ -91,7 +97,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
     formData.append('photo', {
       uri: asset.uri,
       name: buildShelfPhotoFilename(asset),
-      type: asset.mimeType || 'image/jpeg',
+      type: asset.type || asset.mimeType || 'image/jpeg',
     });
 
     const response = await fetch(`${apiBase}/api/shelves/${shelfId}/photo`, {
@@ -159,7 +165,15 @@ export default function ShelfCreateScreen({ navigation, route }) {
       Alert.alert('Error', 'No photo selected');
       return;
     }
-    setShelfPhotoAsset(asset);
+    const prepared = await prepareImageUploadAsset(asset, {
+      namePrefix: 'shelf-photo',
+      alwaysTranscode: true,
+    });
+    if (!prepared?.uri) {
+      Alert.alert('Error', 'Failed to prepare photo for upload');
+      return;
+    }
+    setShelfPhotoAsset(prepared);
   }, [saving]);
 
   const handleCreate = useCallback(async () => {
@@ -239,7 +253,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
       >
         <ScrollView
           style={styles.container}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: formBottomPadding }]}
           keyboardShouldPersistTaps="handled"
         >
           {/* Header */}
@@ -476,7 +490,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
   },
   content: {
     padding: spacing.md,
-    paddingBottom: 100,
   },
   header: {
     flexDirection: 'row',

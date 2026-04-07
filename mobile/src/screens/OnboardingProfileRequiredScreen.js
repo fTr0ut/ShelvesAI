@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import OnboardingConfigGate from '../components/onboarding/OnboardingConfigGate';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -144,117 +145,108 @@ export default function OnboardingProfileRequiredScreen({ navigation }) {
         }
     }, [apiBase, city, email, firstName, navigation, state, token, validate, setUser]);
 
-    if (!onboardingConfig?.required?.fields) {
-        return (
+    return (
+        <OnboardingConfigGate section="required">
             <SafeAreaView style={styles.screen} edges={['top']}>
                 <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-                <View style={styles.centerContainer}>
-                    <Text style={styles.loadingText}>Loading onboarding...</Text>
-                </View>
-            </SafeAreaView>
-        );
-    }
-
-    return (
-        <SafeAreaView style={styles.screen} edges={['top']}>
-            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-            <KeyboardAvoidingView
-                style={styles.container}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            >
-                <View style={styles.header}>
-                    <Text style={styles.title}>{onboardingConfig.required.title}</Text>
-                    <Text style={styles.subtitle}>{onboardingConfig.required.subtitle}</Text>
-                </View>
-
-                {error ? (
-                    <View style={styles.errorBox}>
-                        <Ionicons name="alert-circle" size={16} color={colors.error} />
-                        <Text style={styles.errorText}>{error}</Text>
-                    </View>
-                ) : null}
-
-                <View style={styles.card}>
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>{onboardingConfig.required.fields.emailLabel}</Text>
-                        <TextInput
-                            {...nonAuthInputProps}
-                            style={styles.input}
-                            value={email}
-                            onChangeText={handleEmailChange}
-                            placeholder={onboardingConfig.required.fields.emailPlaceholder}
-                            placeholderTextColor={colors.textMuted}
-                            autoCapitalize="none"
-                            keyboardType="email-address"
-                            editable={!loading}
-                        />
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>{onboardingConfig.required.fields.firstNameLabel}</Text>
-                        <TextInput
-                            {...nonAuthInputProps}
-                            style={styles.input}
-                            value={firstName}
-                            onChangeText={handleFirstNameChange}
-                            placeholder={onboardingConfig.required.fields.firstNamePlaceholder}
-                            placeholderTextColor={colors.textMuted}
-                            editable={!loading}
-                        />
-                    </View>
-
-                    <View style={styles.row}>
-                        <View style={styles.inputHalf}>
-                            <Text style={styles.label}>{onboardingConfig.required.fields.cityLabel}</Text>
-                            <TextInput
-                                style={styles.input}
-                                {...nonAuthInputProps}
-                                value={city}
-                                onChangeText={handleCityChange}
-                                placeholder={onboardingConfig.required.fields.cityPlaceholder}
-                                placeholderTextColor={colors.textMuted}
-                                editable={!loading}
-                                ref={cityInputRef}
-                                autoCorrect={false}
-                                spellCheck={false}
-                                autoComplete="off"
-                                returnKeyType="next"
-                                blurOnSubmit={false}
-                                onSubmitEditing={() => stateInputRef.current?.focus()}
-                            />
-                        </View>
-                        <View style={styles.inputHalf}>
-                            <Text style={styles.label}>{onboardingConfig.required.fields.stateLabel}</Text>
-                            <TextInput
-                                style={styles.input}
-                                {...nonAuthInputProps}
-                                value={state}
-                                onChangeText={handleStateChange}
-                                placeholder={onboardingConfig.required.fields.statePlaceholder}
-                                placeholderTextColor={colors.textMuted}
-                                editable={!loading}
-                                ref={stateInputRef}
-                                autoCorrect={false}
-                                spellCheck={false}
-                                autoComplete="off"
-                                returnKeyType="done"
-                            />
-                        </View>
-                    </View>
-                </View>
-
-                <TouchableOpacity
-                    style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
-                    onPress={handleContinue}
-                    disabled={loading}
+                <KeyboardAvoidingView
+                    style={styles.container}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 >
-                    <Text style={styles.primaryButtonText}>
-                        {loading ? onboardingConfig.required.savingLabel : onboardingConfig.required.buttonLabel}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
-                </TouchableOpacity>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+                    <View style={styles.header}>
+                        <Text style={styles.title}>{onboardingConfig.required.title}</Text>
+                        <Text style={styles.subtitle}>{onboardingConfig.required.subtitle}</Text>
+                    </View>
+
+                    {error ? (
+                        <View style={styles.errorBox}>
+                            <Ionicons name="alert-circle" size={16} color={colors.error} />
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    ) : null}
+
+                    <View style={styles.card}>
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>{onboardingConfig.required.fields.emailLabel}</Text>
+                            <TextInput
+                                {...nonAuthInputProps}
+                                style={styles.input}
+                                value={email}
+                                onChangeText={handleEmailChange}
+                                placeholder={onboardingConfig.required.fields.emailPlaceholder}
+                                placeholderTextColor={colors.textMuted}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                                editable={!loading}
+                            />
+                        </View>
+
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>{onboardingConfig.required.fields.firstNameLabel}</Text>
+                            <TextInput
+                                {...nonAuthInputProps}
+                                style={styles.input}
+                                value={firstName}
+                                onChangeText={handleFirstNameChange}
+                                placeholder={onboardingConfig.required.fields.firstNamePlaceholder}
+                                placeholderTextColor={colors.textMuted}
+                                editable={!loading}
+                            />
+                        </View>
+
+                        <View style={styles.row}>
+                            <View style={styles.inputHalf}>
+                                <Text style={styles.label}>{onboardingConfig.required.fields.cityLabel}</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    {...nonAuthInputProps}
+                                    value={city}
+                                    onChangeText={handleCityChange}
+                                    placeholder={onboardingConfig.required.fields.cityPlaceholder}
+                                    placeholderTextColor={colors.textMuted}
+                                    editable={!loading}
+                                    ref={cityInputRef}
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                    autoComplete="off"
+                                    returnKeyType="next"
+                                    blurOnSubmit={false}
+                                    onSubmitEditing={() => stateInputRef.current?.focus()}
+                                />
+                            </View>
+                            <View style={styles.inputHalf}>
+                                <Text style={styles.label}>{onboardingConfig.required.fields.stateLabel}</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    {...nonAuthInputProps}
+                                    value={state}
+                                    onChangeText={handleStateChange}
+                                    placeholder={onboardingConfig.required.fields.statePlaceholder}
+                                    placeholderTextColor={colors.textMuted}
+                                    editable={!loading}
+                                    ref={stateInputRef}
+                                    autoCorrect={false}
+                                    spellCheck={false}
+                                    autoComplete="off"
+                                    returnKeyType="done"
+                                />
+                            </View>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity
+                        style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
+                        onPress={handleContinue}
+                        disabled={loading}
+                    >
+                        <Text style={styles.primaryButtonText}>
+                            {loading ? onboardingConfig.required.savingLabel : onboardingConfig.required.buttonLabel}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
+                    </TouchableOpacity>
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </OnboardingConfigGate>
     );
 }
 

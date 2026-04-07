@@ -15,11 +15,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { apiRequest, clearToken, getValidToken } from '../services/api';
-import { prepareProfilePhotoAsset } from '../services/imageUpload';
+import { apiRequest, clearToken } from '../services/api';
+import { getProfileImageSource } from '../utils/mediaUrl';
+import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePhotoUpload';
+import OnboardingConfigGate from '../components/onboarding/OnboardingConfigGate';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 
 export default function OnboardingProfileOptionalScreen({ navigation }) {
@@ -67,33 +68,15 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         }
     }, [onboardingConfig?.terms?.version, user?.termsAccepted, user?.termsAcceptedVersion]);
 
-    const getProfileImageSource = () => {
-        if (profile?.profileMediaPath) {
-            return { uri: `${apiBase}/media/${profile.profileMediaPath}` };
-        }
-        if (profile?.picture) {
-            return { uri: profile.picture };
-        }
-        return null;
-    };
-
     const handlePickPhoto = async () => {
         try {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
+            const selection = await pickProfilePhotoAsset();
+            if (selection.status === 'permission_denied') {
                 Alert.alert('Permission Required', 'Please grant photo library access to upload a profile photo');
                 return;
             }
-
-            const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
-                allowsEditing: Platform.OS === 'ios',
-                aspect: [1, 1],
-                quality: 1,
-            });
-
-            if (!result.canceled && result.assets?.[0]) {
-                await uploadPhoto(result.assets[0]);
+            if (selection.status === 'selected') {
+                await uploadPhoto(selection.asset);
             }
         } catch (err) {
             Alert.alert('Error', 'Failed to pick image');
@@ -103,33 +86,7 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
     const uploadPhoto = async (asset) => {
         try {
             setUploadingPhoto(true);
-
-            const prepared = await prepareProfilePhotoAsset(asset, { forceSquare: Platform.OS === 'android' });
-            if (!prepared) {
-                throw new Error('Invalid photo selection');
-            }
-
-            const formData = new FormData();
-            formData.append('photo', prepared);
-            const authToken = await getValidToken(token);
-            if (!authToken) {
-                throw new Error('Session expired. Please sign in again.');
-            }
-
-            const res = await fetch(`${apiBase}/api/profile/photo`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                    'ngrok-skip-browser-warning': 'true',
-                },
-                body: formData,
-            });
-
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.error || 'Upload failed');
-            }
-
+            await uploadProfilePhoto({ apiBase, token, asset });
             await loadProfile();
         } catch (err) {
             Alert.alert('Error', err.message || 'Failed to upload photo');
@@ -240,14 +197,6 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         }
     }, [setNeedsOnboarding, setToken, setUser]);
 
-    if (!onboardingConfig?.optional) {
-        return (
-            <View style={[styles.screen, styles.centerContainer]}>
-                <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-        );
-    }
-
     if (loading) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -256,110 +205,112 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         );
     }
 
-    const profileImage = getProfileImageSource();
+    const profileImage = getProfileImageSource(profile, apiBase);
 
     return (
-        <SafeAreaView style={styles.screen} edges={['top']}>
-            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+        <OnboardingConfigGate section="optional">
+            <SafeAreaView style={styles.screen} edges={['top']}>
+                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-                <View style={styles.header}>
-                    <Text style={styles.title}>{onboardingConfig.optional.title}</Text>
-                    <Text style={styles.subtitle}>{onboardingConfig.optional.subtitle}</Text>
-                </View>
-
-                {error ? (
-                    <View style={styles.errorBox}>
-                        <Ionicons name="alert-circle" size={16} color={colors.error} />
-                        <Text style={styles.errorText}>{error}</Text>
+                <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+                    <View style={styles.header}>
+                        <Text style={styles.title}>{onboardingConfig.optional.title}</Text>
+                        <Text style={styles.subtitle}>{onboardingConfig.optional.subtitle}</Text>
                     </View>
-                ) : null}
 
-                <View style={styles.card}>
-                    <View style={styles.photoSection}>
-                        <TouchableOpacity onPress={handlePickPhoto} disabled={uploadingPhoto}>
-                            {profileImage ? (
-                                <Image source={profileImage} style={styles.avatar} />
-                            ) : (
-                                <View style={styles.avatarPlaceholder}>
-                                    <Ionicons name="person" size={36} color={colors.textInverted} />
-                                </View>
-                            )}
-                            <View style={styles.photoOverlay}>
-                                {uploadingPhoto ? (
-                                    <ActivityIndicator size="small" color={colors.text} />
+                    {error ? (
+                        <View style={styles.errorBox}>
+                            <Ionicons name="alert-circle" size={16} color={colors.error} />
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    ) : null}
+
+                    <View style={styles.card}>
+                        <View style={styles.photoSection}>
+                            <TouchableOpacity onPress={handlePickPhoto} disabled={uploadingPhoto}>
+                                {profileImage ? (
+                                    <Image source={profileImage} style={styles.avatar} />
                                 ) : (
-                                    <Ionicons name="camera" size={20} color={colors.text} />
+                                    <View style={styles.avatarPlaceholder}>
+                                        <Ionicons name="person" size={36} color={colors.textInverted} />
+                                    </View>
                                 )}
-                            </View>
-                        </TouchableOpacity>
-                        <Text style={styles.photoHint}>{onboardingConfig.optional.photoHint}</Text>
-                    </View>
+                                <View style={styles.photoOverlay}>
+                                    {uploadingPhoto ? (
+                                        <ActivityIndicator size="small" color={colors.text} />
+                                    ) : (
+                                        <Ionicons name="camera" size={20} color={colors.text} />
+                                    )}
+                                </View>
+                            </TouchableOpacity>
+                            <Text style={styles.photoHint}>{onboardingConfig.optional.photoHint}</Text>
+                        </View>
 
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>{onboardingConfig.optional.bioLabel}</Text>
-                        <TextInput
-                            {...nonAuthInputProps}
-                            style={[styles.input, styles.textArea]}
-                            value={bio}
-                            onChangeText={setBio}
-                            placeholder={onboardingConfig.optional.bioPlaceholder}
-                            placeholderTextColor={colors.textMuted}
-                            multiline
-                            numberOfLines={4}
-                            maxLength={500}
-                        />
-                        <Text style={styles.charCount}>{bio.length}/500</Text>
-                    </View>
-
-                    <View style={styles.termsSection}>
-                        <Text style={styles.termsTitle}>{onboardingConfig.terms?.title || 'Terms of Service'}</Text>
-                        <Text style={styles.termsSubtitle}>
-                            {onboardingConfig.terms?.subtitle || 'Please review and accept our Terms before continuing.'}
-                        </Text>
-                        <TouchableOpacity style={styles.termsLinkRow} onPress={openTerms} disabled={saving}>
-                            <Ionicons name="document-text-outline" size={16} color={colors.primary} />
-                            <Text style={styles.termsLinkText}>{onboardingConfig.terms?.readLabel || 'Read Terms of Service'}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={styles.checkboxRow}
-                            onPress={() => setTermsAccepted((prev) => !prev)}
-                            disabled={saving}
-                        >
-                            <Ionicons
-                                name={termsAccepted ? 'checkbox' : 'square-outline'}
-                                size={20}
-                                color={termsAccepted ? colors.primary : colors.textMuted}
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>{onboardingConfig.optional.bioLabel}</Text>
+                            <TextInput
+                                {...nonAuthInputProps}
+                                style={[styles.input, styles.textArea]}
+                                value={bio}
+                                onChangeText={setBio}
+                                placeholder={onboardingConfig.optional.bioPlaceholder}
+                                placeholderTextColor={colors.textMuted}
+                                multiline
+                                numberOfLines={4}
+                                maxLength={500}
                             />
-                            <Text style={styles.checkboxLabel}>
-                                {onboardingConfig.terms?.agreeLabel || 'I agree to the Terms of Service'}
+                            <Text style={styles.charCount}>{bio.length}/500</Text>
+                        </View>
+
+                        <View style={styles.termsSection}>
+                            <Text style={styles.termsTitle}>{onboardingConfig.terms?.title || 'Terms of Service'}</Text>
+                            <Text style={styles.termsSubtitle}>
+                                {onboardingConfig.terms?.subtitle || 'Please review and accept our Terms before continuing.'}
                             </Text>
-                        </TouchableOpacity>
+                            <TouchableOpacity style={styles.termsLinkRow} onPress={openTerms} disabled={saving}>
+                                <Ionicons name="document-text-outline" size={16} color={colors.primary} />
+                                <Text style={styles.termsLinkText}>{onboardingConfig.terms?.readLabel || 'Read Terms of Service'}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.checkboxRow}
+                                onPress={() => setTermsAccepted((prev) => !prev)}
+                                disabled={saving}
+                            >
+                                <Ionicons
+                                    name={termsAccepted ? 'checkbox' : 'square-outline'}
+                                    size={20}
+                                    color={termsAccepted ? colors.primary : colors.textMuted}
+                                />
+                                <Text style={styles.checkboxLabel}>
+                                    {onboardingConfig.terms?.agreeLabel || 'I agree to the Terms of Service'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                </View>
 
-                <TouchableOpacity
-                    style={[styles.primaryButton, (saving || loggingOut || uploadingPhoto) && styles.primaryButtonDisabled]}
-                    onPress={handleContinue}
-                    disabled={saving || loggingOut || uploadingPhoto}
-                >
-                    <Text style={styles.primaryButtonText}>
-                        {saving ? onboardingConfig.optional.savingLabel : onboardingConfig.optional.continueLabel}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
-                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.primaryButton, (saving || loggingOut || uploadingPhoto) && styles.primaryButtonDisabled]}
+                        onPress={handleContinue}
+                        disabled={saving || loggingOut || uploadingPhoto}
+                    >
+                        <Text style={styles.primaryButtonText}>
+                            {saving ? onboardingConfig.optional.savingLabel : onboardingConfig.optional.continueLabel}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
+                    </TouchableOpacity>
 
-                <TouchableOpacity style={styles.skipButton} onPress={handleSkip} disabled={saving || loggingOut || uploadingPhoto}>
-                    <Text style={styles.skipText}>{onboardingConfig.optional.skipLabel}</Text>
-                </TouchableOpacity>
+                    <TouchableOpacity style={styles.skipButton} onPress={handleSkip} disabled={saving || loggingOut || uploadingPhoto}>
+                        <Text style={styles.skipText}>{onboardingConfig.optional.skipLabel}</Text>
+                    </TouchableOpacity>
 
-                <TouchableOpacity style={styles.logoutButton} onPress={handleBackToLogin} disabled={saving || loggingOut || uploadingPhoto}>
-                    <Text style={styles.logoutButtonText}>
-                        {loggingOut ? 'Returning to login...' : 'Back to Login'}
-                    </Text>
-                </TouchableOpacity>
-            </ScrollView>
-        </SafeAreaView>
+                    <TouchableOpacity style={styles.logoutButton} onPress={handleBackToLogin} disabled={saving || loggingOut || uploadingPhoto}>
+                        <Text style={styles.logoutButtonText}>
+                            {loggingOut ? 'Returning to login...' : 'Back to Login'}
+                        </Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </SafeAreaView>
+        </OnboardingConfigGate>
     );
 }
 

@@ -16,6 +16,7 @@ const {
     isAllowedImageMimeType,
     normalizeMimeType,
 } = require('../../utils/imageValidation');
+const { prepareProfileUploadImage } = require('../../services/profileImageUpload');
 
 // SSRF protection: blocked IP ranges and hostnames
 const BLOCKED_HOSTNAMES = new Set([
@@ -255,11 +256,12 @@ async function uploadFromUrl({ userId, sourceUrl }) {
 
     // Download and validate the image before storage.
     const downloaded = await downloadImageFromUrl(sourceUrl);
-    const checksum = crypto.createHash('sha256').update(downloaded.buffer).digest('hex').slice(0, 16);
-    const ext = extFromContentType(downloaded.contentType);
+    const processed = await prepareProfileUploadImage(downloaded.buffer);
+    const checksum = crypto.createHash('sha256').update(processed.buffer).digest('hex').slice(0, 16);
+    const ext = extFromContentType(processed.mime);
     const localPath = buildLocalPath({ userId, checksum, ext });
 
-    const saveResult = await saveBuffer(downloaded.buffer, localPath, downloaded.contentType);
+    const saveResult = await saveBuffer(processed.buffer, localPath, processed.mime);
 
     // Create database record
     const media = await create({
@@ -288,12 +290,12 @@ async function uploadFromUrl({ userId, sourceUrl }) {
  * Upload profile photo from buffer (multipart upload)
  */
 async function uploadFromBuffer({ userId, buffer, contentType, originalFilename }) {
-    const validated = await validateImageBuffer(buffer);
-    const checksum = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 16);
-    const ext = extFromContentType(validated.mime);
+    const processed = await prepareProfileUploadImage(buffer);
+    const checksum = crypto.createHash('sha256').update(processed.buffer).digest('hex').slice(0, 16);
+    const ext = extFromContentType(processed.mime);
     const localPath = buildLocalPath({ userId, checksum, ext });
 
-    const saveResult = await saveBuffer(buffer, localPath, validated.mime);
+    const saveResult = await saveBuffer(processed.buffer, localPath, processed.mime);
 
     // Create database record
     const media = await create({

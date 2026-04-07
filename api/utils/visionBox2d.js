@@ -1,4 +1,10 @@
 const BOX_SCALE = 1000;
+const NORMALIZED_NOISE_TOLERANCE = 128;
+const BOX_COORDINATE_MODES = Object.freeze({
+  NORMALIZED: 'normalized',
+  PROVIDER_AUTO: 'providerAuto',
+  ABSOLUTE: 'absolute',
+});
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -48,14 +54,50 @@ function isOutOfRangeBox2d(value) {
   return numeric.some((entry) => entry < 0 || entry > BOX_SCALE);
 }
 
+function normalizeCoordinateMode(value) {
+  const normalized = String(value || '').trim();
+  if (normalized === BOX_COORDINATE_MODES.NORMALIZED) return BOX_COORDINATE_MODES.NORMALIZED;
+  if (normalized === BOX_COORDINATE_MODES.ABSOLUTE) return BOX_COORDINATE_MODES.ABSOLUTE;
+  return BOX_COORDINATE_MODES.PROVIDER_AUTO;
+}
+
+function isLikelyNormalizedNoiseBox2d(value, tolerance = NORMALIZED_NOISE_TOLERANCE) {
+  const numeric = toNumericBox2d(value);
+  const resolvedTolerance = Number.isFinite(Number(tolerance))
+    ? Math.max(0, Math.round(Number(tolerance)))
+    : NORMALIZED_NOISE_TOLERANCE;
+  if (!numeric) return false;
+  return numeric.every((entry) => entry >= -resolvedTolerance && entry <= (BOX_SCALE + resolvedTolerance));
+}
+
 function normalizeVisionBox2d(value, options = {}) {
-  const { imageWidth = null, imageHeight = null } = options;
+  const {
+    imageWidth = null,
+    imageHeight = null,
+    mode = BOX_COORDINATE_MODES.PROVIDER_AUTO,
+    normalizedNoiseTolerance = NORMALIZED_NOISE_TOLERANCE,
+  } = options;
   if (!Array.isArray(value) || value.length !== 4) return null;
 
-  if (isOutOfRangeBox2d(value)) {
-    const repaired = toNormalizedFromAbsolute(value, imageWidth, imageHeight);
-    if (repaired) return repaired;
+  const resolvedMode = normalizeCoordinateMode(mode);
+  if (resolvedMode === BOX_COORDINATE_MODES.NORMALIZED) {
+    return normalizeNormalizedBox2d(value);
   }
+
+  if (resolvedMode === BOX_COORDINATE_MODES.ABSOLUTE) {
+    return toNormalizedFromAbsolute(value, imageWidth, imageHeight);
+  }
+
+  if (!isOutOfRangeBox2d(value)) {
+    return normalizeNormalizedBox2d(value);
+  }
+
+  if (isLikelyNormalizedNoiseBox2d(value, normalizedNoiseTolerance)) {
+    return normalizeNormalizedBox2d(value);
+  }
+
+  const repaired = toNormalizedFromAbsolute(value, imageWidth, imageHeight);
+  if (repaired) return repaired;
 
   return normalizeNormalizedBox2d(value);
 }
@@ -104,11 +146,14 @@ function expandVisionBox2dByPixels(
 
 module.exports = {
   BOX_SCALE,
+  BOX_COORDINATE_MODES,
+  NORMALIZED_NOISE_TOLERANCE,
   normalizeVisionDimension,
   normalizeVisionBox2d,
   normalizeNormalizedBox2d,
   toNumericBox2d,
   isOutOfRangeBox2d,
+  isLikelyNormalizedNoiseBox2d,
   normalizePixelPadding,
   expandVisionBox2dByPixels,
 };

@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { auth } = require('../middleware/auth');
+const { imageUploadErrorHandler } = require('../middleware/imageUploadErrorHandler');
 const { requireFields, validateIntParam, validateStringLengths } = require('../middleware/validate');
 const { createWorkflowJobContext } = require('../middleware/workflowJobContext');
 const ctrl = require('../controllers/shelvesController');
@@ -13,13 +14,16 @@ const router = express.Router();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 10 * 1024 * 1024, // 10MB limit
     },
     fileFilter: (req, file, cb) => {
         if (isAllowedImageMimeType(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Only JPEG, PNG, and WEBP images are allowed'));
+            const error = new Error('Only JPEG, PNG, and WEBP images are allowed');
+            error.status = 400;
+            error.code = 'invalid_image_type';
+            cb(error);
         }
     },
 });
@@ -126,5 +130,6 @@ router.get('/:shelfId/review', shelfIntParam, ctrl.listReviewItems);
 router.post('/:shelfId/review/:id/complete', shelfReviewIntParams, ctrl.completeReviewItem);
 router.delete('/:shelfId/review/:id', shelfReviewIntParams, ctrl.dismissReviewItem);
 
+router.use(imageUploadErrorHandler);
 
 module.exports = router;

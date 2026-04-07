@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useState, useEffect } from 'react';
-import { View, Pressable, StyleSheet, Text, Platform } from 'react-native';
+import { View, Pressable, StyleSheet, Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
@@ -116,7 +116,7 @@ export default function BottomTabNavigator() {
     const addItemPulse = useSharedValue(1);
 
     const overlayColor = isDark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)';
-    const bottomInset = Platform.OS === 'android' ? 0 : insets.bottom;
+    const bottomInset = insets.bottom;
     const tabBarHeight = TAB_BAR_HEIGHT + bottomInset;
     const actionBottom = tabBarHeight + spacing.lg;
 

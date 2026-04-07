@@ -25,9 +25,11 @@ const {
 } = require('./manuals/otherManual');
 const { HOOK_TYPES } = require('./visionPipelineHooks');
 const {
+    BOX_COORDINATE_MODES,
     normalizeVisionDimension,
     normalizeVisionBox2d,
     isOutOfRangeBox2d,
+    isLikelyNormalizedNoiseBox2d,
     toNumericBox2d,
     normalizePixelPadding,
     expandVisionBox2dByPixels,
@@ -70,6 +72,20 @@ function getProgressMessage(key, vars = {}) {
     };
 }
 
+function parsePositiveIntegerEnv(value, fallback) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+function parseBooleanEnv(value, fallback) {
+    if (value == null || value === '') return fallback;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return fallback;
+}
+
 // Default tiered confidence thresholds (can be overridden per-type via visionSettings.json)
 // High confidence (≥ max): fingerprint → catalog → enrichment workflow
 // Medium confidence (≥ min, < max): fingerprint → catalog → enrichment workflow (same as high)
@@ -87,6 +103,18 @@ const VISION_BBOX_PADDING_X_PX = normalizePixelPadding(
 const VISION_BBOX_PADDING_Y_PX = normalizePixelPadding(
     process.env.VISION_BBOX_PADDING_Y_PX,
     DEFAULT_VISION_BBOX_PADDING_Y_PX,
+);
+const VISION_DENSE_BOX_REFINEMENT_ENABLED = parseBooleanEnv(
+    process.env.VISION_DENSE_BOX_REFINEMENT_ENABLED,
+    true,
+);
+const VISION_DENSE_BOX_REFINEMENT_THRESHOLD = parsePositiveIntegerEnv(
+    process.env.VISION_DENSE_BOX_REFINEMENT_THRESHOLD,
+    10,
+);
+const VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE = parsePositiveIntegerEnv(
+    process.env.VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE,
+    8,
 );
 const DEFAULT_STRICT_NAME_MATCH_SETTINGS = Object.freeze({
     enabled: true,
@@ -236,7 +264,8 @@ function hasValidBox2d(value) {
 function normalizeBox2d(value, options = {}) {
     const imageWidth = options?.imageWidth ?? options?.width ?? null;
     const imageHeight = options?.imageHeight ?? options?.height ?? null;
-    return normalizeVisionBox2d(value, { imageWidth, imageHeight });
+    const mode = options?.mode ?? BOX_COORDINATE_MODES.PROVIDER_AUTO;
+    return normalizeVisionBox2d(value, { imageWidth, imageHeight, mode });
 }
 
 function resolveScanDimensions(value) {
@@ -250,10 +279,6 @@ function resolveScanDimensions(value) {
 function pickPreferredBox2d(item) {
     const parsedRaw = toNumericBox2d(item?.box_2d);
     const parsedNormalized = toNumericBox2d(item?.box2d);
-
-    if (parsedRaw && isOutOfRangeBox2d(parsedRaw)) {
-        return parsedRaw;
-    }
     return parsedNormalized || parsedRaw || null;
 }
 
@@ -972,9 +997,80 @@ class VisionPipelineService {
         ).map((item, index) => ({
             ...item,
             extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
-            box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
+            box2d: normalizeBox2d(pickPreferredBox2d(item), {
+                ...(scanPhotoDimensions || {}),
+                mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
+            }),
         }));
         const extractedCount = normalizedItems.length;
+
+        const canRefineDenseOtherBoxes = (
+            isOtherShelf
+            && !providedRawItems
+            && this.ocrEnabled
+            && !!imageBase64
+            && VISION_DENSE_BOX_REFINEMENT_ENABLED
+            && normalizedItems.length > VISION_DENSE_BOX_REFINEMENT_THRESHOLD
+            && typeof this.geminiService.refineDenseItemBoxes === 'function'
+        );
+
+        if (canRefineDenseOtherBoxes) {
+            await checkAborted();
+            updateProgress('refiningDenseBoxes', { count: normalizedItems.length });
+            try {
+                const refinedBoxesByIndex = await this.geminiService.refineDenseItemBoxes(
+                    imageBase64,
+                    shelf.type,
+                    normalizedItems,
+                    conversationHistory,
+                    { batchSize: VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE },
+                );
+                if (refinedBoxesByIndex instanceof Map && refinedBoxesByIndex.size > 0) {
+                    let appliedCount = 0;
+                    let fallbackCount = 0;
+                    normalizedItems = normalizedItems.map((item) => {
+                        const extractionIndex = normalizeExtractionIndex(item?.extractionIndex);
+                        if (extractionIndex == null) return item;
+                        const refinedBox2d = normalizeBox2d(
+                            refinedBoxesByIndex.get(extractionIndex),
+                            {
+                                ...(scanPhotoDimensions || {}),
+                                mode: BOX_COORDINATE_MODES.NORMALIZED,
+                            },
+                        );
+                        if (!refinedBox2d) {
+                            fallbackCount += 1;
+                            return item;
+                        }
+                        appliedCount += 1;
+                        return {
+                            ...item,
+                            box2d: refinedBox2d,
+                        };
+                    });
+                    logger.info('[VisionPipeline] Dense box refinement merge complete', {
+                        shelfId: shelf.id,
+                        extractedCount,
+                        requestedCount: normalizedItems.length,
+                        refinedCount: refinedBoxesByIndex.size,
+                        appliedCount,
+                        fallbackCount,
+                        batchSize: VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE,
+                    });
+                } else {
+                    logger.info('[VisionPipeline] Dense box refinement returned no valid boxes; keeping first-pass boxes', {
+                        shelfId: shelf.id,
+                        extractedCount,
+                    });
+                }
+            } catch (err) {
+                logger.warn('[VisionPipeline] Dense box refinement failed; keeping first-pass boxes', {
+                    shelfId: shelf.id,
+                    extractedCount,
+                    message: err?.message || String(err),
+                });
+            }
+        }
 
         if (scanPhotoId) {
             await this.persistVisionRegions(
@@ -1032,7 +1128,10 @@ class VisionPipelineService {
             const secondPassItems = (secondPassResult.items || []).map((item, index) => ({
                 ...normalizeOtherManualItem(item, shelf.type),
                 extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
-                box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
+                box2d: normalizeBox2d(pickPreferredBox2d(item), {
+                    ...(scanPhotoDimensions || {}),
+                    mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
+                }),
             }));
 
             const lowConfidenceIndexes = new Set(
@@ -1114,7 +1213,10 @@ class VisionPipelineService {
                 .map((item) => ({
                     ...normalizeOtherManualItem(item, shelf.type),
                     extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
-                    box2d: normalizeBox2d(pickPreferredBox2d(item), scanPhotoDimensions || {}),
+                    box2d: normalizeBox2d(pickPreferredBox2d(item), {
+                        ...(scanPhotoDimensions || {}),
+                        mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
+                    }),
                 }))
                 .map((item) => ({
                     ...item,
@@ -1826,14 +1928,31 @@ class VisionPipelineService {
         if (!scanPhotoId || !Array.isArray(items)) return;
         const resolvedDimensions = resolveScanDimensions(scanPhotoDimensions);
         let repairedBoxes = 0;
+        let normalizedNoiseBoxes = 0;
         let rejectedBoxes = 0;
         let paddedBoxes = 0;
         const regions = items
             .map((item) => {
                 const preferredBox2d = pickPreferredBox2d(item);
-                const normalizedBox2d = normalizeBox2d(preferredBox2d, resolvedDimensions || {});
-                if (normalizedBox2d && resolvedDimensions && isOutOfRangeBox2d(preferredBox2d)) {
-                    repairedBoxes += 1;
+                const hasCanonicalBox2d = !!toNumericBox2d(item?.box2d);
+                const coordinateMode = hasCanonicalBox2d
+                    ? BOX_COORDINATE_MODES.NORMALIZED
+                    : BOX_COORDINATE_MODES.PROVIDER_AUTO;
+                const normalizedBox2d = normalizeBox2d(preferredBox2d, {
+                    ...(resolvedDimensions || {}),
+                    mode: coordinateMode,
+                });
+                if (
+                    normalizedBox2d
+                    && resolvedDimensions
+                    && !hasCanonicalBox2d
+                    && isOutOfRangeBox2d(preferredBox2d)
+                ) {
+                    if (isLikelyNormalizedNoiseBox2d(preferredBox2d)) {
+                        normalizedNoiseBoxes += 1;
+                    } else {
+                        repairedBoxes += 1;
+                    }
                 }
                 let box2d = normalizedBox2d;
                 if (box2d && resolvedDimensions) {
@@ -1862,11 +1981,12 @@ class VisionPipelineService {
             })
             .filter((item) => item.extractionIndex != null && hasValidBox2d(item.box2d));
 
-        if (repairedBoxes > 0 || rejectedBoxes > 0 || paddedBoxes > 0) {
+        if (repairedBoxes > 0 || normalizedNoiseBoxes > 0 || rejectedBoxes > 0 || paddedBoxes > 0) {
             logger.info('[VisionPipeline.persistVisionRegions] BBox normalization summary', {
                 shelfId,
                 scanPhotoId,
                 repaired: repairedBoxes,
+                normalizedNoiseClamped: normalizedNoiseBoxes,
                 padded: paddedBoxes,
                 rejected: rejectedBoxes,
                 inputCount: items.length,
@@ -3175,4 +3295,3 @@ class VisionPipelineService {
 }
 
 module.exports = { VisionPipelineService };
-

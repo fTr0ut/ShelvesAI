@@ -394,4 +394,109 @@ describe('GoogleGeminiService', () => {
             });
         });
     });
+
+    describe('refineDenseItemBoxes', () => {
+        it('uses standalone vision requests without googleSearch and returns normalized boxes keyed by extractionIndex', async () => {
+            const mockVisionGenerateContent = service.visionModel.generateContent;
+            mockVisionGenerateContent.mockResolvedValue({
+                response: {
+                    text: () => JSON.stringify([
+                        { extractionIndex: 0, box_2d: [120.4, -10, 1004, 180.9] },
+                        { extractionIndex: 1, box_2d: null },
+                    ]),
+                },
+            });
+
+            const result = await service.refineDenseItemBoxes(
+                'data:image/jpeg;base64,aabbcc',
+                'other',
+                [
+                    { extractionIndex: 0, title: 'Alaska Tumbler', author: 'Starbucks' },
+                    { extractionIndex: 1, title: 'Pink Tumbler' },
+                ],
+            );
+
+            expect(mockVisionGenerateContent).toHaveBeenCalledTimes(1);
+            const request = mockVisionGenerateContent.mock.calls[0][0];
+            const promptText = request.contents?.[0]?.parts?.[0]?.text || '';
+            expect(promptText).toMatch(/same shelf photo/i);
+            expect(promptText).toMatch(/extractionIndex=0/i);
+            expect(promptText).toMatch(/box_2d/i);
+            expect(request.tools).toBeUndefined();
+            expect(result).toBeInstanceOf(Map);
+            expect(result.get(0)).toEqual([120, 0, 1000, 181]);
+            expect(result.has(1)).toBe(false);
+        });
+
+        it('uses vision chat continuation when prior conversation history is provided', async () => {
+            const sendMessage = jest.fn().mockResolvedValue({
+                response: {
+                    text: () => JSON.stringify([
+                        { extractionIndex: 3, box_2d: [100, 200, 300, 400] },
+                    ]),
+                },
+            });
+            service.visionModel.startChat.mockReturnValue({ sendMessage });
+
+            const result = await service.refineDenseItemBoxes(
+                'data:image/jpeg;base64,aabbcc',
+                'other',
+                [{ extractionIndex: 3, title: 'Bottle A', itemSpecificText: 'Limited Edition' }],
+                [
+                    { role: 'user', parts: [{ text: 'first pass prompt' }] },
+                    { role: 'model', parts: [{ text: 'first pass result' }] },
+                ],
+            );
+
+            expect(service.visionModel.startChat).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    history: expect.any(Array),
+                    generationConfig: expect.objectContaining({
+                        maxOutputTokens: 2048,
+                        thinkingConfig: { thinkingBudget: 0 },
+                    }),
+                }),
+            );
+            expect(service.visionModel.startChat.mock.calls[0][0].tools).toBeUndefined();
+            expect(sendMessage).toHaveBeenCalledWith(expect.stringMatching(/extractionIndex=3/i));
+            expect(service.visionModel.generateContent).not.toHaveBeenCalled();
+            expect(result.get(3)).toEqual([100, 200, 300, 400]);
+        });
+
+        it('batches dense refinement requests and ignores invalid entries from any batch', async () => {
+            const mockVisionGenerateContent = service.visionModel.generateContent;
+            mockVisionGenerateContent
+                .mockResolvedValueOnce({
+                    response: {
+                        text: () => JSON.stringify([
+                            { extractionIndex: 0, box_2d: [100, 200, 300, 400] },
+                            { extractionIndex: 1, box_2d: [0, 0, 0, 0] },
+                        ]),
+                    },
+                })
+                .mockResolvedValueOnce({
+                    response: {
+                        text: () => JSON.stringify([
+                            { extractionIndex: 8, box_2d: [200, 300, 500, 700] },
+                            { extractionIndex: 'invalid', box_2d: [100, 100, 200, 200] },
+                        ]),
+                    },
+                });
+
+            const result = await service.refineDenseItemBoxes(
+                'data:image/jpeg;base64,aabbcc',
+                'other',
+                Array.from({ length: 9 }, (_, index) => ({
+                    extractionIndex: index,
+                    title: `Item ${index}`,
+                })),
+            );
+
+            expect(mockVisionGenerateContent).toHaveBeenCalledTimes(2);
+            expect(result.get(0)).toEqual([100, 200, 300, 400]);
+            expect(result.get(8)).toEqual([200, 300, 500, 700]);
+            expect(result.has(1)).toBe(false);
+            expect(result.size).toBe(2);
+        });
+    });
 });

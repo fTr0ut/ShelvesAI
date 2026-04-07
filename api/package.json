@@ -18,6 +18,8 @@
         "backfill:collectable-cast": "node scripts/backfill-collectable-cast-members.js",
         "backfill:collectable-platform-data": "node scripts/backfill-collectable-platform-data.js",
         "db:local:check": "node scripts/init-local-db.js --check",
+        "db:local:stamp-migrations": "cross-env USE_LOCAL_DB=1 node scripts/stamp-local-knex-migrations.js",
+        "db:local:patch-favorites-manual-id": "cross-env USE_LOCAL_DB=1 node scripts/patch-local-user-favorites-manual-id.js",
         "db:local:reset": "node scripts/init-local-db.js",
         "test:tmdb": "node scripts/test-tmdb.js",
         "generate-token": "node scripts/generate-token.js",

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { normalizeCollectableKind } = require('./collectables/kind');
 const { withTimeout } = require('../utils/withTimeout');
-const { normalizeVisionBox2d } = require('../utils/visionBox2d');
+const { normalizeVisionBox2d, BOX_COORDINATE_MODES } = require('../utils/visionBox2d');
 const logger = require('../logger');
 const { limitGemini } = require('./outboundLimiterRegistry');
 
@@ -16,6 +16,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60000;
 const DEFAULT_OTHER_FIRST_PASS_THINKING_BUDGET = 800;
 const DEFAULT_OTHER_SECOND_PASS_THINKING_BUDGET = 2200;
 const MAX_SECOND_PASS_HINT_ITEMS = 20;
+const DENSE_BOX_REFINEMENT_MAX_OUTPUT_TOKENS = 2048;
 
 // Load vision settings from config file
 let visionSettings = null;
@@ -141,7 +142,7 @@ function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
 }
 
 function normalizeBox2d(value) {
-    return normalizeVisionBox2d(value);
+    return normalizeVisionBox2d(value, { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO });
 }
 
 function parseNonNegativeInteger(value, fallback) {
@@ -233,6 +234,49 @@ Rules:
 - Keep extractionIndex values unchanged.
 
 Items:
+${itemLines}`;
+}
+
+function chunkArray(items, chunkSize) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const size = Number.isInteger(chunkSize) && chunkSize > 0 ? chunkSize : items.length;
+    const chunks = [];
+    for (let index = 0; index < items.length; index += size) {
+        chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+}
+
+function buildDenseBoxRefinementPrompt(items = []) {
+    const itemLines = items
+        .map((item, index) => {
+            const extractionIndex = Number.isInteger(item?.extractionIndex) ? item.extractionIndex : index;
+            const parts = [
+                `[extractionIndex=${extractionIndex}]`,
+                item?.title ? `title="${normalizeString(item.title)}"` : null,
+                item?.author ? `author="${normalizeString(item.author)}"` : null,
+                item?.manufacturer ? `manufacturer="${normalizeString(item.manufacturer)}"` : null,
+                item?.itemSpecificText ? `itemSpecificText="${normalizeString(item.itemSpecificText)}"` : null,
+            ].filter(Boolean);
+            return `- ${parts.join(', ')}`;
+        })
+        .join('\n');
+
+    return `You are refining item locations on the same shelf photo.
+The shelf is crowded and item boxes may have drifted. For each listed extractionIndex, return a tighter bounding box around that exact item only.
+
+Rules:
+- Do NOT identify new items.
+- Do NOT change extractionIndex values.
+- Return items in the SAME ORDER as the input.
+- Return ONLY the listed extractionIndex values.
+- Output ONLY a valid JSON array.
+- Each object must use exactly this schema:
+  {"extractionIndex": number, "box_2d": [y_min, x_min, y_max, x_max]}
+- box_2d must be normalized to 0-1000.
+- If you cannot localize an item confidently, use "box_2d": null.
+
+Items to localize:
 ${itemLines}`;
 }
 
@@ -1185,6 +1229,132 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             logger.error('[GoogleGeminiService] Vision item detection failed:', err);
             throw buildVisionExtractionError(err);
         }
+    }
+
+    async refineDenseItemBoxes(base64Image, shelfType, items, conversationHistory = null, options = {}) {
+        if (!this.visionModel) {
+            throw new Error('Google Gemini vision model not initialized.');
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+            return new Map();
+        }
+
+        const { data, mimeType } = parseInlineImage(base64Image);
+        const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0 ? options.batchSize : 8;
+        const batches = chunkArray(items, batchSize);
+        const canUseChatMode = Array.isArray(conversationHistory)
+            && conversationHistory.length > 0
+            && typeof this.visionModel?.startChat === 'function';
+        const refinedBoxesByIndex = new Map();
+
+        logger.info('[GoogleGeminiService] Dense box refinement request config', {
+            stage: 'dense_box_refinement',
+            shelfType,
+            batchCount: batches.length,
+            itemCount: items.length,
+            batchSize,
+            chatModeEnabled: canUseChatMode,
+        });
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+            const batch = batches[batchIndex];
+            const prompt = buildDenseBoxRefinementPrompt(batch);
+
+            try {
+                let result;
+                if (canUseChatMode) {
+                    const chat = this.visionModel.startChat({
+                        history: conversationHistory,
+                        generationConfig: {
+                            maxOutputTokens: DENSE_BOX_REFINEMENT_MAX_OUTPUT_TOKENS,
+                            thinkingConfig: { thinkingBudget: 0 },
+                        },
+                    });
+                    result = await withTimeout(
+                        () => limitGemini(() => chat.sendMessage(prompt)),
+                        this.requestTimeoutMs,
+                        `Gemini dense box refinement chat request (batch ${batchIndex + 1})`,
+                    );
+                } else {
+                    result = await withTimeout(
+                        () => limitGemini(() => this.visionModel.generateContent({
+                            contents: [
+                                {
+                                    role: 'user',
+                                    parts: [
+                                        { text: prompt },
+                                        { inlineData: { data, mimeType } },
+                                    ],
+                                },
+                            ],
+                            generationConfig: {
+                                maxOutputTokens: DENSE_BOX_REFINEMENT_MAX_OUTPUT_TOKENS,
+                                thinkingConfig: { thinkingBudget: 0 },
+                            },
+                        })),
+                        this.requestTimeoutMs,
+                        `Gemini dense box refinement request (batch ${batchIndex + 1})`,
+                    );
+                }
+
+                const response = await withTimeout(
+                    () => result.response,
+                    this.requestTimeoutMs,
+                    `Gemini dense box refinement response (batch ${batchIndex + 1})`,
+                );
+                const text = response.text();
+
+                logPayload({
+                    source: 'google-gemini-vision',
+                    operation: 'refineDenseItemBoxes',
+                    payload: {
+                        model: this.visionModelName,
+                        batchIndex,
+                        batchSize: batch.length,
+                        promptPreview: prompt.substring(0, 200),
+                        text,
+                    },
+                });
+
+                const jsonStr = cleanJsonResponse(text);
+                const { parsedItems, repairMode, parseError } = this.parseVisionJsonWithRepairs(jsonStr);
+                if (repairMode) {
+                    logger.info('[GoogleGeminiService] Repaired dense box refinement JSON response', {
+                        batchIndex,
+                        repairMode,
+                    });
+                } else if (parseError) {
+                    logger.warn('[GoogleGeminiService] Failed to parse dense box refinement JSON after repair attempts', {
+                        batchIndex,
+                        error: parseError?.message || String(parseError),
+                    });
+                }
+
+                const parsedArray = Array.isArray(parsedItems) ? parsedItems : [];
+                for (const entry of parsedArray) {
+                    const extractionIndex = coerceExtractionIndex(entry?.extractionIndex, null);
+                    const box2d = normalizeBox2d(entry?.box_2d || entry?.box2d);
+                    if (extractionIndex == null || !box2d) continue;
+                    refinedBoxesByIndex.set(extractionIndex, box2d);
+                }
+            } catch (err) {
+                logger.warn('[GoogleGeminiService] Dense box refinement batch failed; keeping first-pass boxes', {
+                    shelfType,
+                    batchIndex,
+                    itemCount: batch.length,
+                    error: err?.message || String(err),
+                });
+            }
+        }
+
+        logger.info('[GoogleGeminiService] Dense box refinement summary', {
+            shelfType,
+            requestedItems: items.length,
+            refinedItems: refinedBoxesByIndex.size,
+            batchCount: batches.length,
+        });
+
+        return refinedBoxesByIndex;
     }
 
 }

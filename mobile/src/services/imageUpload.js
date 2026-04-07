@@ -3,6 +3,11 @@ import * as ImageManipulator from 'expo-image-manipulator';
 const DEFAULT_MIME_TYPE = 'image/jpeg';
 const JPEG_QUALITY = 0.85;
 const MAX_PROFILE_DIMENSION = 1024;
+const SUPPORTED_UPLOAD_MIME_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+]);
 
 function normalizeMimeType(mimeType) {
     if (!mimeType) return null;
@@ -33,6 +38,10 @@ function inferMimeTypeFromUri(uri) {
             return 'image/bmp';
         case 'heic':
             return 'image/heic';
+        case 'heif':
+            return 'image/heif';
+        case 'avif':
+            return 'image/avif';
         default:
             return null;
     }
@@ -52,7 +61,13 @@ function getSquareCrop(width, height) {
     return { originX, originY, width: size, height: size };
 }
 
-export async function prepareProfilePhotoAsset(asset, { forceSquare = false } = {}) {
+export async function prepareImageUploadAsset(asset, {
+    forceSquare = false,
+    maxDimension = null,
+    namePrefix = 'upload',
+    compress = JPEG_QUALITY,
+    alwaysTranscode = true,
+} = {}) {
     if (!asset?.uri) return null;
 
     const width = Number.isFinite(asset.width) ? asset.width : null;
@@ -69,13 +84,13 @@ export async function prepareProfilePhotoAsset(asset, { forceSquare = false } = 
         targetHeight = crop.height;
     }
 
-    const maxDimension = Math.max(targetWidth || 0, targetHeight || 0);
-    if (maxDimension > MAX_PROFILE_DIMENSION) {
-        const scale = MAX_PROFILE_DIMENSION / maxDimension;
+    const currentMaxDimension = Math.max(targetWidth || 0, targetHeight || 0);
+    if (maxDimension && currentMaxDimension > maxDimension) {
+        const scale = maxDimension / currentMaxDimension;
         actions.push({
             resize: {
-                width: Math.round((targetWidth || maxDimension) * scale),
-                height: Math.round((targetHeight || maxDimension) * scale),
+                width: Math.round((targetWidth || currentMaxDimension) * scale),
+                height: Math.round((targetHeight || currentMaxDimension) * scale),
             },
         });
     }
@@ -85,17 +100,20 @@ export async function prepareProfilePhotoAsset(asset, { forceSquare = false } = 
         || normalizeMimeType(asset.type)
         || inferMimeTypeFromUri(asset.uri);
     let name = asset.fileName || inferNameFromUri(asset.uri);
+    const shouldTranscodeToJpeg = alwaysTranscode || !SUPPORTED_UPLOAD_MIME_TYPES.has(mimeType);
 
     try {
-        const processed = await ImageManipulator.manipulateAsync(
-            asset.uri,
-            actions,
-            { compress: JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG }
-        );
-        if (processed?.uri) {
-            uri = processed.uri;
-            mimeType = DEFAULT_MIME_TYPE;
-            name = `profile-${Date.now()}.jpg`;
+        if (actions.length > 0 || shouldTranscodeToJpeg) {
+            const processed = await ImageManipulator.manipulateAsync(
+                asset.uri,
+                actions,
+                { compress, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            if (processed?.uri) {
+                uri = processed.uri;
+                mimeType = DEFAULT_MIME_TYPE;
+                name = `${namePrefix}-${Date.now()}.jpg`;
+            }
         }
     } catch (err) {
         // fall back to original asset details
@@ -104,6 +122,15 @@ export async function prepareProfilePhotoAsset(asset, { forceSquare = false } = 
     return {
         uri,
         type: mimeType || DEFAULT_MIME_TYPE,
-        name: name || `profile-${Date.now()}.jpg`,
+        name: name || `${namePrefix}-${Date.now()}.jpg`,
     };
+}
+
+export async function prepareProfilePhotoAsset(asset, { forceSquare = false } = {}) {
+    return prepareImageUploadAsset(asset, {
+        forceSquare,
+        maxDimension: MAX_PROFILE_DIMENSION,
+        namePrefix: 'profile',
+        alwaysTranscode: true,
+    });
 }

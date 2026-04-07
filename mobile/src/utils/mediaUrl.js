@@ -3,6 +3,19 @@
  * Handles resolving media paths to full URLs, preferring pre-resolved URLs from the API
  */
 
+function resolveRelativeMediaUrl(url, apiBase) {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+  if (!apiBase) {
+    return url;
+  }
+  const trimmedBase = String(apiBase).replace(/\/+$/, '');
+  const trimmedPath = String(url).replace(/^\/+/, '');
+  return `${trimmedBase}/${trimmedPath}`;
+}
+
 /**
  * Get the profile picture URL from a user/profile object
  * Prefers profileMediaUrl (pre-resolved from API) over constructing from path
@@ -16,7 +29,7 @@ export function getProfileImageUrl(user, apiBase) {
 
   // Prefer pre-resolved URL from API (handles S3/CloudFront)
   if (user.profileMediaUrl) {
-    return user.profileMediaUrl;
+    return resolveRelativeMediaUrl(user.profileMediaUrl, apiBase);
   }
 
   // Fallback to constructing URL from path (local development)
@@ -46,7 +59,7 @@ export function getCoverImageUrl(item, apiBase) {
 
   // Prefer pre-resolved URL from API (handles S3/CloudFront)
   if (item.coverMediaUrl) {
-    return item.coverMediaUrl;
+    return resolveRelativeMediaUrl(item.coverMediaUrl, apiBase);
   }
 
   // Fallback to constructing URL from path

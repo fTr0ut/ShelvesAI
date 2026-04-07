@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const logger = require('../../logger');
-const { validateImageBuffer } = require('../../utils/imageValidation');
+const { prepareShelfUploadImage } = require('../../services/shelfImageUpload');
 const visionItemCropsQueries = require('./visionItemCrops');
 const s3 = require('../../services/s3');
 const {
@@ -305,9 +305,9 @@ async function uploadOwnerPhotoForItem({
     throw new Error('Shelf item not found');
   }
 
-  const validated = await validateImageBuffer(buffer);
-  const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
-  const finalContentType = validated.mime || contentType || 'image/jpeg';
+  const prepared = await prepareShelfUploadImage(buffer);
+  const checksum = crypto.createHash('sha256').update(prepared.buffer).digest('hex');
+  const finalContentType = prepared.mime || contentType || 'image/jpeg';
   const storageKey = buildUploadStorageKey({
     userId,
     shelfId,
@@ -315,7 +315,7 @@ async function uploadOwnerPhotoForItem({
     checksum,
     contentType: finalContentType,
   });
-  const storageProvider = await saveBuffer(buffer, storageKey, finalContentType);
+  const storageProvider = await saveBuffer(prepared.buffer, storageKey, finalContentType);
 
   const result = await query(
     `UPDATE user_collections
@@ -345,9 +345,9 @@ async function uploadOwnerPhotoForItem({
       storageProvider,
       storageKey,
       finalContentType,
-      buffer.length,
-      validated.width || null,
-      validated.height || null,
+      prepared.sizeBytes,
+      prepared.width || null,
+      prepared.height || null,
       itemId,
       userId,
       shelfId,
@@ -375,7 +375,7 @@ async function uploadOwnerPhotoForItem({
         userId,
         shelfId,
       },
-      sourceBuffer: buffer,
+      sourceBuffer: prepared.buffer,
       box: null,
     });
     return withThumb.item || updated;

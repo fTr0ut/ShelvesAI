@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
-const { validateImageBuffer } = require('../../utils/imageValidation');
+const { prepareShelfUploadImage } = require('../../services/shelfImageUpload');
 
 const API_ROOT = path.resolve(__dirname, '..', '..');
 const RAW_PRIVATE_ROOT =
@@ -108,16 +108,16 @@ async function uploadPhotoForShelf({
     throw new Error('Shelf not found');
   }
 
-  const validated = await validateImageBuffer(buffer);
-  const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
-  const finalContentType = validated.mime || contentType || 'image/jpeg';
+  const prepared = await prepareShelfUploadImage(buffer);
+  const checksum = crypto.createHash('sha256').update(prepared.buffer).digest('hex');
+  const finalContentType = prepared.mime || contentType || 'image/jpeg';
   const storageKey = buildStorageKey({
     userId,
     shelfId,
     checksum,
     contentType: finalContentType,
   });
-  const storageProvider = await saveBuffer(buffer, storageKey, finalContentType);
+  const storageProvider = await saveBuffer(prepared.buffer, storageKey, finalContentType);
 
   const result = await query(
     `UPDATE shelves
@@ -134,9 +134,9 @@ async function uploadPhotoForShelf({
       storageProvider,
       storageKey,
       finalContentType,
-      buffer.length,
-      validated.width ?? null,
-      validated.height ?? null,
+      prepared.sizeBytes,
+      prepared.width ?? null,
+      prepared.height ?? null,
       shelfId,
       userId,
     ],

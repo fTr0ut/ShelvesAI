@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import OnboardingConfigGate from '../components/onboarding/OnboardingConfigGate';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -57,18 +58,6 @@ export default function OnboardingPagerScreen({ navigation }) {
         navigation.navigate('OnboardingProfileRequired');
     }, [index, navigation, resolveUser, pages.length]);
 
-    if (!pages.length) {
-        return (
-            <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-                <View style={styles.loadingContainer}>
-                    <Ionicons name="hourglass" size={32} color={colors.primary} />
-                    <Text style={styles.loadingText}>Loading onboarding...</Text>
-                </View>
-            </SafeAreaView>
-        );
-    }
-
     const renderItem = ({ item }) => (
         <View style={[styles.page, { width: screenWidth }]}>
             <View style={styles.iconWrap}>
@@ -89,44 +78,46 @@ export default function OnboardingPagerScreen({ navigation }) {
     const viewConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
 
     return (
-        <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-            <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+        <OnboardingConfigGate section="intro">
+            <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+                <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
-            <FlatList
-                ref={listRef}
-                data={pages}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.key}
-                onViewableItemsChanged={onViewableItemsChanged}
-                viewabilityConfig={viewConfig}
-            />
+                <FlatList
+                    ref={listRef}
+                    data={pages}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.key}
+                    onViewableItemsChanged={onViewableItemsChanged}
+                    viewabilityConfig={viewConfig}
+                />
 
-            <View style={styles.footer}>
-                <View style={styles.dots}>
-                    {pages.map((page, dotIndex) => (
-                        <View
-                            key={page.key}
-                            style={[
-                                styles.dot,
-                                dotIndex === index && styles.dotActive,
-                            ]}
-                        />
-                    ))}
+                <View style={styles.footer}>
+                    <View style={styles.dots}>
+                        {pages.map((page, dotIndex) => (
+                            <View
+                                key={page.key}
+                                style={[
+                                    styles.dot,
+                                    dotIndex === index && styles.dotActive,
+                                ]}
+                            />
+                        ))}
+                    </View>
+
+                    <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
+                        <Text style={styles.primaryButtonText}>
+                            {index === pages.length - 1
+                                ? onboardingConfig.intro.startButtonLabel
+                                : onboardingConfig.intro.nextButtonLabel}
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
+                    </TouchableOpacity>
                 </View>
-
-                <TouchableOpacity style={styles.primaryButton} onPress={handleNext}>
-                    <Text style={styles.primaryButtonText}>
-                        {index === pages.length - 1
-                            ? onboardingConfig.intro.startButtonLabel
-                            : onboardingConfig.intro.nextButtonLabel}
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color={colors.textInverted} />
-                </TouchableOpacity>
-            </View>
-        </SafeAreaView>
+            </SafeAreaView>
+        </OnboardingConfigGate>
     );
 }
 

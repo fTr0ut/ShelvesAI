@@ -49,11 +49,18 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-02 | mobile-android-footer-clearance-unification | Reworked footer-visible mobile Android bottom spacing around a shared runtime footer contract. `mobile/src/navigation/BottomTabNavigator.js` now uses the live safe-area bottom inset again, new helper `mobile/src/navigation/useBottomFooterLayout.js` exposes `isInsideBottomTab`, `tabBarHeight`, `bottomSafeInset`, and derived content/floating bottom offset calculators, and footer-visible screens (`SocialFeedScreen`, `ShelvesScreen`, `ShelfCreateScreen`, `ShelfSelectScreen`, `ShelfEditScreen`, `ItemSearchScreen`, `MarketValueSourcesScreen`, `ShelfDetailScreen`, `CollectableDetailScreen`) now replace hardcoded bottom padding / ad hoc footer math with helper-driven bottom clearance.
+- 2026-04-02 | onboarding-config-retry-and-profile-avatar-normalization | Hardened mobile onboarding config bootstrap so `mobile/src/App.js` now tracks `onboardingConfigLoading`/`onboardingConfigError`, exposes `refreshOnboardingConfig()` through `mobile/src/context/AuthContext.js`, and auto-retries a missing config once when users enter onboarding. Added shared onboarding config gate UI (`mobile/src/components/onboarding/OnboardingConfigGate.js` + `mobile/src/utils/onboardingConfig.js`) and wrapped all onboarding screens so config fetch failures now show retryable errors instead of indefinite `Loading onboarding...` stalls. Consolidated profile-photo picking/upload into shared mobile service `mobile/src/services/profilePhotoUpload.js` backed by pure helper `profilePhotoUpload.shared.js`, removed native picker editing in favor of app-managed square prep, and standardized avatar rendering through `mobile/src/utils/mediaUrl.js` so relative `profileMediaUrl` values resolve correctly against `apiBase`. Backend profile photo writes now run through new normalization helper `api/services/profileImageUpload.js` before `api/database/queries/profileMedia.js` persists bytes. Added focused coverage in `mobile/src/{utils/onboardingConfig.test.js,services/profilePhotoUpload.shared.test.js}` and `api/services/profileImageUpload.test.js`.
+- 2026-04-02 | local-db-migration-baseline-repair | Added local-only DB repair scripts `api/scripts/stamp-local-knex-migrations.js` and `api/scripts/patch-local-user-favorites-manual-id.js` plus npm commands `db:local:stamp-migrations` and `db:local:patch-favorites-manual-id`. These scripts safely target localhost-only development databases, stamp `knex_migrations` for schema-snapshot local DBs, and patch `user_favorites.manual_id` plus related constraints/indexes when the local snapshot lags the runtime/manual-favorites contract.
+- 2026-04-02 | mobile-image-upload-format-normalization | Added shared mobile upload prep helper `mobile/src/services/imageUpload.js::prepareImageUploadAsset()` so device-picked shelf photos, manual covers, and owner photos are normalized to upload-safe JPEG assets before hitting the API. `mobile/src/screens/{ShelfCreateScreen,ShelfEditScreen,CollectableDetailScreen}.js` now run picker results through that helper, preserve generated filename/type fields in multipart form data, and therefore support default iOS HEIC/HEIF and modern Android photo formats without requiring camera-setting changes.
+- 2026-04-02 | shelf-related-upload-resizing-and-error-normalization | Added shared backend image prep in `api/services/shelfImageUpload.js` so shelf photos, owner photos, and manual covers now auto-orient and downscale server-side only when uploads exceed the existing `4096x4096` bound, while preserving allowed JPEG/PNG/WEBP formats. `api/database/queries/{shelfPhotos,userCollectionPhotos,manualMedia}.js` now store processed bytes/metadata from that helper, owner-photo thumbnail regeneration now uses the processed upload buffer, `api/controllers/shelvesController.js` no longer pre-validates manual covers in-controller, and `api/routes/shelves.js` now raises multipart image uploads to 10MB and normalizes tagged multer/image-filter failures through new `api/middleware/imageUploadErrorHandler.js` to return JSON `400/413` instead of generic `500`s. Added coverage in `api/services/shelfImageUpload.test.js`, `api/middleware/imageUploadErrorHandler.test.js`, and new query tests `api/database/queries/{manualMedia,userCollectionPhotos}.test.js` plus updated `api/database/queries/shelfPhotos.test.js`.
+- 2026-04-02 | dense-other-box-refinement-progress | Added dense-scan bbox refinement for Gemini-backed `other` shelves so crowded scans (`>10` detected items by default) now run a geometry-only Gemini follow-up before `vision_item_regions` persistence. `api/services/googleGemini.js` adds batched `refineDenseItemBoxes()` chat/vision refinement without `googleSearch`, `api/services/visionPipeline.js` applies refined boxes best-effort before `persistVisionRegions()` while preserving second-pass metadata-only box stability, and `api/config/visionProgressMessages.json` adds a new `refining-dense-boxes` progress stage with shifted downstream percentages so the mobile vision modal explains the extra crowded-shelf step. Added regression coverage in `api/__tests__/{googleGemini,visionPipeline,visionCropper}.test.js`.
 - 2026-04-02 | vision-review-retention-and-other-gating | Relaxed `'other'` shelf review gating so high-confidence title-only items can auto-save as manuals without creator metadata, while keeping barcode-safe duplicate detection and skipping creator-dependent fingerprint/fuzzy matching when creator is absent. `api/services/visionPipeline.js` now persists `rawData.reviewContext` (`scanPhotoId`, `extractionIndex`, `shelfType`, `reason`) on all `needs_review` writes, `api/database/queries/visionItemRegions.js` adds `getByExtractionIndexForScan()`, and `api/controllers/shelvesController.js` now centralizes review completion via shared helper exported to `api/routes/unmatched.js`, relinking vision regions/crops back onto completed review items so crop-backed owner photos and other persisted scan metadata survive review completion. Added regression coverage in `api/__tests__/{otherManual,visionPipeline,shelvesController,unmatchedRoutes}.test.js`.
 - 2026-04-02 | mobile-android-expo-go-tab-safe-area-clamp | Revised bottom-tab Android handling for Expo Go/runtime parity. `mobile/src/navigation/BottomTabNavigator.js` now clamps React Navigation bottom tab safe-area inset to `0` on Android while preserving iOS bottom inset handling, and derives the custom tab/action-stack height from that same platform-specific inset so Android tabs render at a fixed visual height without the oversized dead band above system controls.
 - 2026-04-01 | mobile-android-bottom-tab-inset-fix | Fixed Android bottom-tab footer spacing for edge-to-edge devices by removing custom tab-bar bottom padding override from `mobile/src/navigation/BottomTabNavigator.js` so React Navigation owns the safe-area inset, and replaced fixed `88` px persistent-footer assumptions in `mobile/src/screens/ShelfDetailScreen.js` and `mobile/src/screens/CollectableDetailScreen.js` with shared helper `mobile/src/navigation/useOptionalBottomTabBarHeight.js` that reads the live bottom tab bar height from navigation context.
 - 2026-04-02 | mobile-android-onboarding-and-icon-alignment | Hardened mobile onboarding routing so post-login auth now refreshes `/api/account` before deciding whether onboarding is required, using shared helper `mobile/src/utils/onboarding.js` in both `mobile/src/App.js` bootstrap and `mobile/src/screens/LoginScreen.js` to prevent incomplete auth payloads from skipping the intro/profile flow. Aligned Expo icon config in `mobile/app.json` to canonical `mobile/assets/icon.png`, synced `mobile/assets/{icon,logo-android,adaptive-icon}.png` to the current iOS app icon, and updated `mobile/generate-icons.js` to keep those Android-facing assets sourced from the current iOS icon instead of regenerating the legacy camera artwork.
 - 2026-04-02 | mobile-icon-source-correction | Corrected the mobile icon source after identifying the purple shelf mark was itself stale. `mobile/assets/icon.png` and `mobile/ios/ShelvesAI/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png` now use `website/public/logo-v2.png`, while Android adaptive assets `mobile/assets/{logo-android,adaptive-icon}.png` now use `website/public/logo-android.png`. `mobile/app.json` again points Android adaptive foreground at `mobile/assets/logo-android.png`, and `mobile/generate-icons.js` now syncs from the website logo assets instead of the retired purple iOS icon.
+- 2026-04-02 | mobile-shelf-spine-color-extraction-fix | Fixed `ShelfDetailScreen` spine-mode color extraction so `renderSpineItem()` now passes the visible cover image source into `SpineItem`, and spine color extraction now normalizes string and `{ uri, headers }` image sources before calling `react-native-image-colors`. The spine UI continues to fall back to the existing title-hash palette only when no usable image color can be extracted or when extraction is intentionally disabled in Expo Go.
 - 2026-04-01 | auth-username-or-email-login | Updated consumer auth login to keep the existing `{ username, password }` request contract while allowing `/api/login` and `/api/auth/login` to authenticate by case-insensitive username or email. `api/database/queries/auth.js` now resolves login identifiers across both fields, rejects ambiguous cross-user username/email collisions with a generic invalid-credentials response, and logs ambiguity for follow-up while preserving bcrypt timing padding. `api/controllers/authController.js` now trims the incoming login identifier before validation. Added rollout audit script `api/scripts/audit-login-identifier-collisions.js` plus `npm run audit:login-identifiers`, added regression coverage in `api/__tests__/authQueries.login.test.js`, `api/__tests__/authController.login.test.js`, and `api/__tests__/authLoginRoutes.test.js`, and made `api/__tests__/setup.js` tolerate missing local `dotenv` installs in minimal test environments.
 - 2026-04-01 | mobile-ios-textinput-autofill-stability-policy | Added shared mobile text-input policy helper `mobile/src/utils/textInputPolicy.js` with explicit iOS non-auth suppression (`autoCorrect=false`, `spellCheck=false`, `autoComplete='off'`, `textContentType='none'`) and auth semantics (`username`, `email`, `password`, `newPassword`) retained for credential fields. Wired helper into high-traffic non-auth input surfaces (`GlobalSearchBar`, `FriendSearchScreen`, `ProfileScreen`, `ProfileEditScreen`, `OnboardingProfileRequiredScreen`, `OnboardingProfileOptionalScreen`, `AccountScreen` feedback modal, `QuickCheckInModal`) plus auth flows (`LoginScreen`, `ForgotPasswordScreen`, `ResetPasswordScreen`). Replaced `AccountScreen` feedback modal `autoFocus` with deferred `InteractionManager.runAfterInteractions` focus and cancellation cleanup to reduce UIKit keyboard queue contention during modal transitions. Added pure-JS regression test `mobile/src/utils/textInputPolicy.test.js`.
 - 2026-04-01 | vision-extraction-heartbeat-progress | Added extraction heartbeat progress stages between 10% and 50% for long-running vision OCR scans. `api/config/visionProgressMessages.json` now includes `extractingInFlight` (`extracting-in-flight`, 20%) and `extractingDeepParse` (`extracting-deep-parse`, 30%). `api/services/visionPipeline.processImage()` now schedules timed heartbeat updates at 3s/9s while extraction is in-flight and clears timers in `finally` to prevent stale updates. Progress updates are now monotonic (never regress percent when later stages report lower configured values). Added test coverage in `api/__tests__/visionPipeline.test.js` for long-running extraction heartbeat emission and fast-extraction heartbeat suppression.
@@ -437,6 +444,7 @@ routes/shelves.js
   -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
   â†’ controllers/shelvesController.js
   â†’ middleware/auth.js
+  â†’ middleware/imageUploadErrorHandler.js
   â†’ middleware/validate.js
   -> middleware/workflowJobContext.js (vision/catalog workflow routes only)
   -> express-rate-limit
@@ -799,6 +807,9 @@ middleware/admin.js
 middleware/validate.js
   (no internal imports)
 
+middleware/imageUploadErrorHandler.js
+  -> multer
+
 middleware/csrf.js
   â†’ utils/adminAuth.js
 
@@ -832,6 +843,7 @@ services/visionPipeline.js
   â†’ config/visionSettings.json
   -> utils/visionBox2d.js
   Data flow: extractItems() -> { items, conversationHistory, warning }
+             crowded `other` scans (>10 items by default) run `googleGemini.refineDenseItemBoxes()` before first region persistence
              processImage() threads conversationHistory to enrichUnresolved/enrichUncertain
              processImage() appends extraction warning to `warnings` payload when present
              processImage(options.scanPhotoDimensions) normalizes/repairs bbox before persistence
@@ -855,6 +867,8 @@ services/googleGemini.js
              standard shelves: vision-only call, enrichment downstream
              transport/provider request failures throw `VISION_PROVIDER_UNAVAILABLE`/`VISION_EXTRACTION_FAILED`
              truncated JSON extraction responses are repaired to salvage complete items
+           refineDenseItemBoxes(base64Image, shelfType, items, conversationHistory?, options?) -> Map<extractionIndex, box2d>
+             batched crowded-shelf geometry-only refinement, no `googleSearch`, ignores invalid boxes
            enrichWithSchema(items, shelfType, conversationHistory?)
            enrichWithSchemaUncertain(items, shelfType, conversationHistory?)
            _executeEnrichmentRequest(prompt, conversationHistory, label, options?)
@@ -867,6 +881,11 @@ services/googleCloudVision.js
 services/visionCropper.js
   -> utils/visionBox2d.js
   Uses shared bbox normalization for crop rectangle repair/clamping (normalized + absolute-style coords)
+
+services/shelfImageUpload.js
+  â†’ utils/imageValidation.js
+  -> sharp
+  Auto-orients oversized shelf-related uploads and resizes only when an image exceeds the shared 4096px bound
 
 services/collectableMatchingService.js
   â†’ database/queries/collectables.js
@@ -1081,6 +1100,16 @@ scripts/backfill-collectable-platform-data.js
   Ã¢â€ â€™ services/catalog/GameCatalogService.js
   Ã¢â€ â€™ logger.js
   Behavior: loads `.env` then `.env.local` override when available; backfills `platform_data`, `igdb_payload`, and `max_players` for IGDB-linked games
+
+scripts/stamp-local-knex-migrations.js
+  → loadEnv.js
+  → logger.js
+  Behavior: localhost-only helper that stamps all current migration `.js` filenames into `knex_migrations` for schema-snapshot local DBs so future `knex migrate:latest` runs do not replay already-materialized baseline tables
+
+scripts/patch-local-user-favorites-manual-id.js
+  → loadEnv.js
+  → logger.js
+  Behavior: localhost-only helper that patches `user_favorites` to add `manual_id`, relaxes `collectable_id` nullability, and recreates the expected favorites constraints/indexes used by manual favorites queries
 ```
 
 ### Database Query Dependencies
@@ -1108,9 +1137,9 @@ database/queries/lists.js â†’ database/pg.js, database/queries/utils.js
 database/queries/ratings.js â†’ database/pg.js, database/queries/utils.js
 database/queries/ownership.js â†’ database/pg.js
 database/queries/media.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
-database/queries/manualMedia.js â†’ database/pg.js, services/s3.js
-database/queries/userCollectionPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
-database/queries/shelfPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/manualMedia.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js
+database/queries/userCollectionPhotos.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
+database/queries/shelfPhotos.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js
 database/queries/visionScanPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
 database/queries/visionItemRegions.js â†’ database/pg.js, database/queries/utils.js (replaceExisting snapshot delete-before-insert support)
 database/queries/visionItemCrops.js â†’ database/pg.js, services/s3.js, database/queries/visionScanPhotos.js
@@ -1244,6 +1273,12 @@ navigation/BottomTabNavigator.js
   -> screens/MarketValueSourcesScreen.js
   -> internal ShelvesStack routes: ShelvesHome, ShelfCreateScreen, ShelfSelect, ShelfDetail, ShelfEdit, ItemSearch, CollectableDetail
 
+navigation/useBottomFooterLayout.js
+  -> @react-navigation/bottom-tabs (BottomTabBarHeightContext)
+  -> @react-navigation/native (useNavigation)
+  -> react-native-safe-area-context
+  Used by footer-visible screens to derive runtime tab/footer clearance and bottom offsets from live tab height + safe-area inset
+
 navigation/linkingConfig.js
   (no internal imports)
 ```
@@ -1264,7 +1299,8 @@ services/pushNotifications.js
   â†’ services/api.js
 
 services/imageUpload.js
-  (no internal imports)
+  -> expo-image-manipulator
+  Shared mobile asset prep for profile photos plus multipart upload normalization of HEIC/HEIF/AVIF and other device-native formats to JPEG
 
 services/ocr.js
   (no internal imports)
@@ -1397,15 +1433,16 @@ components/news/QuickCheckInModal.js
 | UsernameSetupScreen | AuthContext, ThemeContext, api |
 | OnboardingProfileRequiredScreen | AuthContext, ThemeContext |
 | OnboardingProfileOptionalScreen | AuthContext, ThemeContext, api, imageUpload |
-| SocialFeedScreen | ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl, feedAddedEvent |
+| SocialFeedScreen | ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl, feedAddedEvent, navigation/useBottomFooterLayout |
 | FeedDetailScreen | AuthContext, ThemeContext, api, feedApi, coverUrl |
-| ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), AuthContext, ThemeContext, api |
-| ShelfDetailScreen | AuthContext, ThemeContext, api, coverUrl, ocr, ui/CachedImage, ui/StarRating, ui/CategoryIcon, VisionProcessingModal, useVisionProcessing |
-| ShelfCreateScreen | AuthContext, ThemeContext, api |
-| ShelfEditScreen | AuthContext, ThemeContext, api |
-| ShelfSelectScreen | ui/CategoryIcon, AuthContext, ThemeContext, api |
-| ItemSearchScreen | AuthContext, ThemeContext, api, coverUrl, useCollectableSearchEngine |
-| CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, assets/tmdb-logo.svg, expo-image-manipulator, expo-file-system/legacy |
+| ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
+| ShelfDetailScreen | AuthContext, ThemeContext, api, coverUrl, ocr, ui/CachedImage, ui/StarRating, ui/CategoryIcon, VisionProcessingModal, navigation/useBottomFooterLayout |
+| ShelfCreateScreen | AuthContext, ThemeContext, api, imageUpload, navigation/useBottomFooterLayout |
+| ShelfEditScreen | AuthContext, ThemeContext, api, imageUpload, navigation/useBottomFooterLayout |
+| ShelfSelectScreen | ui/CategoryIcon, AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
+| ItemSearchScreen | AuthContext, ThemeContext, api, coverUrl, useCollectableSearchEngine, navigation/useBottomFooterLayout |
+| CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, imageUpload, assets/tmdb-logo.svg, expo-image-manipulator, expo-file-system/legacy, navigation/useBottomFooterLayout |
+| MarketValueSourcesScreen | AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
 | CheckInScreen | AuthContext, ThemeContext, api, useSearch |
 | ManualEditScreen | AuthContext, ThemeContext, api |
 | AccountScreen | AuthContext, ThemeContext, PushContext, api, useAsync (manages is_private + show_personal_photos toggles) |

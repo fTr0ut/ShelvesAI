@@ -411,6 +411,66 @@ describe('VisionPipelineService', () => {
                 ],
             });
         });
+
+        it('clamps slight raw provider overflow as normalized noise during region persistence', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 5,
+                        title: 'Blu-ray Overflow',
+                        box2d: null,
+                        box_2d: [629, 993, 856, 1028],
+                    },
+                ],
+                1,
+                10,
+                25,
+                { width: 4284, height: 5712 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 25,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 5,
+                        box2d: [625, 982, 860, 1000],
+                    }),
+                ],
+            });
+        });
+
+        it('prefers canonical normalized box2d over raw out-of-range box_2d during persistence', async () => {
+            await service.persistVisionRegions(
+                [
+                    {
+                        extractionIndex: 6,
+                        title: 'Canonical Wins',
+                        box2d: [629, 993, 856, 1000],
+                        box_2d: [629, 993, 856, 1028],
+                    },
+                ],
+                1,
+                10,
+                26,
+                { width: 4284, height: 5712 },
+            );
+
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 1,
+                shelfId: 10,
+                scanPhotoId: 26,
+                replaceExisting: true,
+                regions: [
+                    expect.objectContaining({
+                        extractionIndex: 6,
+                        box2d: [625, 982, 860, 1000],
+                    }),
+                ],
+            });
+        });
     });
 
     describe('medium enrichment dedupe guards', () => {
@@ -1060,6 +1120,16 @@ describe('VisionPipelineService', () => {
             });
         });
 
+        function buildDenseOtherItems({ count = 11, confidence = 0.55, titlePrefix = 'Item', boxBase = 100 } = {}) {
+            return Array.from({ length: count }, (_, index) => ({
+                title: `${titlePrefix} ${index}`,
+                author: `Maker ${index}`,
+                confidence,
+                extractionIndex: index,
+                box2d: [boxBase + index, 200 + index, 300 + index, 400 + index],
+            }));
+        }
+
         it('runs second pass for low-confidence other items and merges by extractionIndex', async () => {
             const priorConversationHistory = [
                 { role: 'user', parts: [{ text: 'first pass prompt' }] },
@@ -1119,6 +1189,134 @@ describe('VisionPipelineService', () => {
             );
             expect(service.saveToReviewQueue).not.toHaveBeenCalled();
             expect(result.results.needsReview).toBe(0);
+        });
+
+        it('normalizes slight first-pass provider overflow before matching and saving other items', async () => {
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{
+                    title: 'Overflow Item',
+                    author: 'Maker Overflow',
+                    confidence: 0.95,
+                    extractionIndex: 0,
+                    box_2d: [629, 993, 856, 1028],
+                }],
+            });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(service.saveManualToShelf).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        extractionIndex: 0,
+                        title: 'Overflow Item',
+                        box2d: [629, 993, 856, 1000],
+                    }),
+                ]),
+                100,
+                9,
+                'other',
+                expect.any(Object),
+            );
+        });
+
+        it('runs dense box refinement before region persistence and falls back to original boxes when refinement is invalid', async () => {
+            mockGemini.refineDenseItemBoxes = jest.fn().mockResolvedValue(new Map([
+                [0, [111, 222, 333, 444]],
+                [1, null],
+            ]));
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: buildDenseOtherItems(),
+                })
+                .mockResolvedValueOnce({
+                    items: [],
+                });
+
+            await service.processImage(
+                'base64',
+                { id: 9, type: 'other' },
+                100,
+                'job-dense-persist',
+                { scanPhotoId: 77 },
+            );
+
+            expect(mockGemini.refineDenseItemBoxes).toHaveBeenCalledWith(
+                'base64',
+                'other',
+                expect.arrayContaining([
+                    expect.objectContaining({ extractionIndex: 0 }),
+                    expect.objectContaining({ extractionIndex: 10 }),
+                ]),
+                null,
+                { batchSize: 8 },
+            );
+            expect(visionItemRegionsQueries.upsertRegionsForScan).toHaveBeenCalledWith({
+                userId: 100,
+                shelfId: 9,
+                scanPhotoId: 77,
+                replaceExisting: true,
+                regions: expect.arrayContaining([
+                    expect.objectContaining({
+                        extractionIndex: 0,
+                        box2d: [111, 222, 333, 444],
+                    }),
+                    expect.objectContaining({
+                        extractionIndex: 1,
+                        box2d: [101, 201, 301, 401],
+                    }),
+                ]),
+            });
+        });
+
+        it('skips dense box refinement when item count does not exceed the threshold', async () => {
+            mockGemini.refineDenseItemBoxes = jest.fn().mockResolvedValue(new Map());
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: buildDenseOtherItems({ count: 10 }),
+                })
+                .mockResolvedValueOnce({
+                    items: [],
+                });
+
+            await service.processImage(
+                'base64',
+                { id: 9, type: 'other' },
+                100,
+                'job-dense-skip',
+                { scanPhotoId: 78 },
+            );
+
+            expect(mockGemini.refineDenseItemBoxes).not.toHaveBeenCalled();
+        });
+
+        it('keeps refined first-pass boxes when second-pass metadata returns different box values', async () => {
+            mockGemini.refineDenseItemBoxes = jest.fn().mockResolvedValue(new Map([
+                [0, [111, 222, 333, 444]],
+            ]));
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: buildDenseOtherItems(),
+                })
+                .mockResolvedValueOnce({
+                    items: buildDenseOtherItems({ confidence: 0.94, boxBase: 5, titlePrefix: 'Corrected Item' }),
+                });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100);
+
+            expect(service.saveManualToShelf).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        extractionIndex: 0,
+                        title: 'Corrected Item 0',
+                        confidence: 0.94,
+                        box2d: [111, 222, 333, 444],
+                    }),
+                ]),
+                100,
+                9,
+                'other',
+                expect.any(Object),
+            );
         });
 
         it('ignores unmatched second-pass indexes and keeps first-pass low-confidence items in review', async () => {
@@ -1230,7 +1428,38 @@ describe('VisionPipelineService', () => {
             const secondPassProgress = updates
                 .filter((entry) => entry.step === 'extracting-second-pass')
                 .map((entry) => entry.progress);
-            expect(secondPassProgress).toEqual(expect.arrayContaining([40]));
+            expect(secondPassProgress).toEqual(expect.arrayContaining([55]));
+
+            updateJobSpy.mockRestore();
+        });
+
+        it('emits the dense box refinement progress stage for crowded other-shelf scans', async () => {
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            mockGemini.refineDenseItemBoxes = jest.fn().mockResolvedValue(new Map());
+            mockGemini.detectShelfItemsFromImage
+                .mockResolvedValueOnce({
+                    items: buildDenseOtherItems(),
+                })
+                .mockResolvedValueOnce({
+                    items: [],
+                });
+
+            await service.processImage('base64', { id: 9, type: 'other' }, 100, 'job-dense-progress');
+
+            const updates = updateJobSpy.mock.calls.map((call) => call[1] || {});
+            const steps = updates.map((entry) => entry.step).filter(Boolean);
+            expect(steps).toEqual(expect.arrayContaining([
+                'extracting',
+                'refining-dense-boxes',
+                'categorizing',
+                'extracting-second-pass',
+            ]));
+
+            const refineProgress = updates
+                .filter((entry) => entry.step === 'refining-dense-boxes')
+                .map((entry) => entry.progress);
+            expect(refineProgress).toEqual(expect.arrayContaining([35]));
+            expect(steps.indexOf('refining-dense-boxes')).toBeLessThan(steps.indexOf('categorizing'));
 
             updateJobSpy.mockRestore();
         });

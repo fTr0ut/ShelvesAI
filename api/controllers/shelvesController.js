@@ -37,7 +37,6 @@ const { getWorkflowQueueService } = require('../services/workflowQueueService');
 const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
 const { CatalogProvidersUnavailableError } = require('../services/catalog/errors');
 const { extractRegionCrop } = require('../services/visionCropper');
-const { validateImageBuffer } = require('../utils/imageValidation');
 const {
   normalizeOtherManualItem,
   buildOtherManualPayload,
@@ -2538,12 +2537,11 @@ async function uploadManualCover(req, res) {
     const entry = entryResult.rows[0];
 
     // Upload the cover image
-    const validated = await validateImageBuffer(req.file.buffer);
     const updatedManual = await manualMediaQueries.uploadFromBuffer({
       userId: req.user.id,
       manualId: entry.manual_id,
       buffer: req.file.buffer,
-      contentType: validated.mime,
+      contentType: req.file.mimetype || 'image/jpeg',
     });
 
     // Build response with resolved URL
@@ -2914,6 +2912,7 @@ async function extractVisionRegionCropPayload({ userId, shelfId, scanPhoto, regi
     box2d: getRegionBox2d(region),
     imageWidth: scanPhoto.width,
     imageHeight: scanPhoto.height,
+    coordinateMode: 'normalized',
   });
 
   const crop = await visionItemCropsQueries.upsertFromBuffer({
@@ -3094,6 +3093,7 @@ async function getOrCreateVisionRegionCrop({ userId, shelfId, shelfType = null, 
     box2d: getRegionBox2d(region),
     imageWidth: scanPhoto.width,
     imageHeight: scanPhoto.height,
+    coordinateMode: 'normalized',
   });
 
   if (cropTableAvailable) {

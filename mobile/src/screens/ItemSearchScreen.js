@@ -23,6 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { resolveCollectableCoverUrl } from '../utils/coverUrl';
 import { formatCollectableSearchMeta } from '../utils/collectableDisplay';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 import {
   buildCollectableItemKey,
   buildCollectableSearchQuery,
@@ -130,6 +131,8 @@ export default function ItemSearchScreen({ route, navigation }) {
     () => createStyles({ colors, spacing, shadows, radius }),
     [colors, spacing, shadows, radius]
   );
+  const { contentBottomPadding } = useBottomFooterLayout();
+  const itemSearchBottomPadding = contentBottomPadding(spacing.xl);
 
   const selectedTypeOption = useMemo(() => (
     COLLECTABLE_SEARCH_TYPE_OPTIONS.find((option) => option.value === searchType)
@@ -481,7 +484,10 @@ export default function ItemSearchScreen({ route, navigation }) {
           <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: itemSearchBottomPadding }]}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Catalog Search</Text>
 

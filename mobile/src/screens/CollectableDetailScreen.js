@@ -27,10 +27,11 @@ import { useTheme } from '../context/ThemeContext';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import ImageCropper from '../components/ui/ImageCropper';
 import { apiRequest, getValidToken } from '../services/api';
+import { prepareImageUploadAsset } from '../services/imageUpload';
 import { shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl, buildMediaUri } from '../utils/coverUrl';
 import AddToShelfModal from '../components/AddToShelfModal';
-import useOptionalBottomTabBarHeight from '../navigation/useOptionalBottomTabBarHeight';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 import {
     resolveCollectableMaxPlayers,
     resolveCollectableRating,
@@ -226,7 +227,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     ), [item?.addedAt, item?.createdAt, item?.updatedAt]);
     const hasNoteChanges = (notesDraft || '').trim() !== (collectionNotes || '').trim();
     const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
-    const { tabBarHeight: bottomFooterSpacer } = useOptionalBottomTabBarHeight();
+    const { contentBottomPadding } = useBottomFooterLayout();
+    const detailContentBottomPadding = contentBottomPadding(40);
 
     useEffect(() => {
         setPlatformMissing(!!item?.platformMissing);
@@ -721,15 +723,20 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
             setIsUploadingCover(true);
 
+            const preparedImage = await prepareImageUploadAsset(selectedImage, {
+                namePrefix: 'manual-cover',
+                alwaysTranscode: true,
+            });
+            if (!preparedImage?.uri) {
+                throw new Error('Failed to prepare cover image');
+            }
+
             // Create form data for upload
             const formData = new FormData();
-            const filename = selectedImage.uri.split('/').pop() || 'cover.jpg';
-            const mimeType = selectedImage.mimeType || 'image/jpeg';
-
             formData.append('cover', {
-                uri: selectedImage.uri,
-                name: filename,
-                type: mimeType,
+                uri: preparedImage.uri,
+                name: preparedImage.name || 'cover.jpg',
+                type: preparedImage.type || 'image/jpeg',
             });
             const authToken = await getValidToken(token);
             if (!authToken) {
@@ -817,7 +824,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
         };
     };
 
-    const uploadOwnerPhotoFromUri = async (uri, mimeType = 'image/jpeg') => {
+    const uploadOwnerPhotoFromUri = async (uri, mimeType = 'image/jpeg', filename = null) => {
         if (!canEditOwnerPhoto) return null;
         if (!uri) throw new Error('Photo URI is required');
 
@@ -829,10 +836,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
             }
 
             const formData = new FormData();
-            const filename = uri.split('/').pop() || `owner-photo-${Date.now()}.jpg`;
             formData.append('photo', {
                 uri,
-                name: filename,
+                name: filename || uri.split('/').pop() || `owner-photo-${Date.now()}.jpg`,
                 type: mimeType || 'image/jpeg',
             });
 
@@ -1053,8 +1059,18 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
             const selectedImage = result.assets[0];
             if (!selectedImage?.uri) return;
-            const mimeType = selectedImage.mimeType || 'image/jpeg';
-            await uploadOwnerPhotoFromUri(selectedImage.uri, mimeType);
+            const preparedImage = await prepareImageUploadAsset(selectedImage, {
+                namePrefix: 'owner-photo',
+                alwaysTranscode: true,
+            });
+            if (!preparedImage?.uri) {
+                throw new Error('Failed to prepare photo for upload');
+            }
+            await uploadOwnerPhotoFromUri(
+                preparedImage.uri,
+                preparedImage.type || 'image/jpeg',
+                preparedImage.name || null,
+            );
         } catch (err) {
             console.warn('Failed to upload owner photo:', err);
             Alert.alert('Upload Failed', err?.message || 'Failed to upload your photo');
@@ -1320,7 +1336,11 @@ export default function CollectableDetailScreen({ route, navigation }) {
             });
 
             // 3. Upload main owner photo
-            await uploadOwnerPhotoFromUri(manipulated.uri, 'image/jpeg');
+            await uploadOwnerPhotoFromUri(
+                manipulated.uri,
+                'image/jpeg',
+                `owner-photo-${Date.now()}.jpg`,
+            );
             
             // 4. Send thumbnail box if provided
             if (thumbnailBox && thumbnailBox.scale) {
@@ -2289,7 +2309,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 style={styles.container}
                 contentContainerStyle={[
                     styles.content,
-                    bottomFooterSpacer > 0 ? { paddingBottom: 40 + bottomFooterSpacer } : null,
+                    { paddingBottom: detailContentBottomPadding },
                 ]}
             >
                 {/* Hero */}

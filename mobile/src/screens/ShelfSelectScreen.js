@@ -16,6 +16,7 @@ import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { clearShelvesListCache } from '../services/shelvesListCache';
 import { fetchAllShelves } from '../services/shelvesListService';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 
 export default function ShelfSelectScreen({ navigation }) {
     const { token, apiBase } = useContext(AuthContext);
@@ -24,6 +25,8 @@ export default function ShelfSelectScreen({ navigation }) {
         () => createStyles({ colors, spacing, typography, shadows, radius }),
         [colors, spacing, typography, shadows, radius]
     );
+    const { contentBottomPadding } = useBottomFooterLayout();
+    const shelfSelectBottomPadding = contentBottomPadding(spacing.xl);
 
     const [shelves, setShelves] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -172,7 +175,7 @@ export default function ShelfSelectScreen({ navigation }) {
                 data={shelves}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderItem}
-                contentContainerStyle={styles.listContentContainer}
+                contentContainerStyle={[styles.listContentContainer, { paddingBottom: shelfSelectBottomPadding }]}
                 ListHeaderComponent={shelves.length > 0 ? renderCreateShelf : null}
                 refreshControl={
                     <RefreshControl

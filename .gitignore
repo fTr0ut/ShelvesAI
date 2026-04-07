@@ -54,5 +54,6 @@ nul
 .jks
 
 #script for local development, should not be committed
+pgrewind
 pgrewind.js
 drop-db.js

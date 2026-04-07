@@ -39,7 +39,7 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/cove
 import { extractTextFromImage, parseTextToItems } from '../services/ocr';
 import { CachedImage, StarRating, CategoryIcon } from '../components/ui';
 import VisionProcessingModal from '../components/VisionProcessingModal';
-import useOptionalBottomTabBarHeight from '../navigation/useOptionalBottomTabBarHeight';
+import useBottomFooterLayout from '../navigation/useBottomFooterLayout';
 import { normalizeSearchText } from '../utils/searchNormalization';
 
 const CAMERA_QUALITY = 0.6;
@@ -255,34 +255,61 @@ const getSpineColor = (title, isDark) => {
     return colorPalette[idx];
 };
 
+const SPINE_COLOR_FALLBACK = '#2c2c2c';
+
+function resolveImageColorSource(coverSource) {
+    if (typeof coverSource === 'string' && coverSource.trim()) {
+        return { uri: coverSource.trim(), headers: null };
+    }
+    if (coverSource && typeof coverSource === 'object' && typeof coverSource.uri === 'string' && coverSource.uri.trim()) {
+        return {
+            uri: coverSource.uri.trim(),
+            headers: coverSource.headers && typeof coverSource.headers === 'object'
+                ? coverSource.headers
+                : null,
+        };
+    }
+    return null;
+}
+
+function isValidExtractedColor(value) {
+    return typeof value === 'string' && /^#(?:[0-9a-f]{3,8})$/i.test(value.trim());
+}
+
 const SpineItem = ({ item, styles, colors, isDark, coverSource, info, onNavigate }) => {
     const rawFormat = item.format || item.collectable?.format || '';
     const fmt = String(rawFormat).toLowerCase();
     const isPS = fmt.includes('playstation') || fmt.includes('ps4') || fmt.includes('ps5');
     const isXbox = fmt.includes('xbox');
     const isNintendo = fmt.includes('nintendo') || fmt.includes('switch');
-    
+    const imageColorSource = useMemo(() => resolveImageColorSource(coverSource), [coverSource]);
     const [dominantColor, setDominantColor] = useState(null);
 
     useEffect(() => {
         let isMounted = true;
+        setDominantColor(null);
         // Bypass native extraction completely if running inside Expo Go to avoid [runtime not ready] crashes
-        if (!coverSource || typeof coverSource !== 'string' || !EXPERIMENTAL_PROTOTYPES || isExpoGo) return;
+        if (!imageColorSource?.uri || !EXPERIMENTAL_PROTOTYPES || isExpoGo) return () => { isMounted = false; };
 
         try {
             const ImageColors = require('react-native-image-colors').default;
-            ImageColors.getColors(coverSource, {
-                fallback: '#2c2c2c',
+            ImageColors.getColors(imageColorSource.uri, {
+                fallback: SPINE_COLOR_FALLBACK,
                 cache: true,
-                key: coverSource,
+                key: imageColorSource.uri,
+                ...(imageColorSource.headers ? { headers: imageColorSource.headers } : {}),
             }).then(res => {
                 if (!isMounted) return;
+                let extractedColor = null;
                 if (res.platform === 'android') {
-                    setDominantColor(res.dominant);
+                    extractedColor = res.dominant;
                 } else if (res.platform === 'ios') {
-                    setDominantColor(res.primary);
+                    extractedColor = res.primary;
                 } else if (res.platform === 'web') {
-                    setDominantColor(res.dominant);
+                    extractedColor = res.dominant;
+                }
+                if (isValidExtractedColor(extractedColor)) {
+                    setDominantColor(extractedColor.trim());
                 }
             }).catch(() => {
                 // ignore
@@ -292,7 +319,7 @@ const SpineItem = ({ item, styles, colors, isDark, coverSource, info, onNavigate
         }
 
         return () => { isMounted = false; };
-    }, [coverSource]);
+    }, [imageColorSource]);
 
     let baseColor = getSpineColor(info.title, isDark);
     if (isPS) baseColor = '#00439C';
@@ -351,7 +378,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
     const shelfType = shelf?.type || route?.params?.type || '';
     const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
-    const { tabBarHeight: bottomFooterSpacer } = useOptionalBottomTabBarHeight();
+    const { contentBottomPadding, floatingBottomOffset } = useBottomFooterLayout();
+    const detailContentBottomPadding = contentBottomPadding(spacing.xl + spacing.lg);
+    const detailFabBottomOffset = floatingBottomOffset(spacing.md);
 
     useEffect(() => {
         return () => {
@@ -1147,6 +1176,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const renderSpineItem = ({ item }) => {
         if (item.isSectionHeader) return null;
         const info = getItemInfo(item);
+        const coverSource = resolveCoverSource(item)?.source || null;
         return (
             <SpineItem
                 item={item}
@@ -1154,6 +1184,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 colors={colors}
                 info={info}
                 isDark={isDark}
+                coverSource={coverSource}
                 onNavigate={() => navigation.navigate('CollectableDetail', {
                     item, shelfId: id, readOnly: isReadOnly, ownerId: shelf?.ownerId, ownerUsername: shelf?.ownerUsername || null
                 })}
@@ -1844,8 +1875,8 @@ export default function ShelfDetailScreen({ route, navigation }) {
                         : undefined
                 }
                 contentContainerStyle={[
-                    (!searchQuery && viewMode === 'swipe') ? { paddingTop: 0, paddingBottom: 100 } : styles.listContent,
-                    bottomFooterSpacer > 0 ? { paddingBottom: 100 + bottomFooterSpacer } : null,
+                    (!searchQuery && viewMode === 'swipe') ? { paddingTop: 0 } : styles.listContent,
+                    { paddingBottom: detailContentBottomPadding },
                 ]}
                 refreshControl={
                     <RefreshControl
@@ -1875,7 +1906,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                     style={[
                         styles.fab,
-                        bottomFooterSpacer > 0 ? { bottom: spacing.xs + bottomFooterSpacer / 2 } : null,
+                        { bottom: detailFabBottomOffset },
                         visionLoading && styles.fabDisabled,
                     ]}
                     onPress={handleAddItem}
@@ -2123,7 +2154,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     },
     listContent: {
         padding: spacing.md,
-        paddingBottom: 100,
     },
     itemCard: {
         flexDirection: 'row',

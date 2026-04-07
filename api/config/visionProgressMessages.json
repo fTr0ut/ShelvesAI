@@ -15,34 +15,39 @@
             "progress": 30,
             "message": "Parsing detected items..."
         },
+        "refiningDenseBoxes": {
+            "step": "refining-dense-boxes",
+            "progress": 35,
+            "messageTemplate": "Refining item locations for {count} crowded-shelf detections..."
+        },
         "extractingSecondPass": {
             "step": "extracting-second-pass",
-            "progress": 40,
+            "progress": 55,
             "messageTemplate": "Re-checking {count} uncertain detections..."
         },
         "categorizing": {
             "step": "categorizing",
-            "progress": 20,
+            "progress": 45,
             "messageTemplate": "Found {count} items, categorizing..."
         },
         "matching": {
             "step": "matching",
-            "progress": 30,
+            "progress": 60,
             "messageTemplate": "Matching {count} high-confidence items to database..."
         },
         "catalog": {
             "step": "catalog",
-            "progress": 50,
+            "progress": 70,
             "messageTemplate": "Looking up {count} items in catalogs..."
         },
         "enriching": {
             "step": "enriching",
-            "progress": 65,
+            "progress": 80,
             "messageTemplate": "Yelling at AI louder to find {count} unresolved items..."
         },
         "enrichingMedium": {
             "step": "enriching-medium",
-            "progress": 75,
+            "progress": 85,
             "messageTemplate": "Searching harder for {count} medium-confidence items..."
         },
         "saving": {
