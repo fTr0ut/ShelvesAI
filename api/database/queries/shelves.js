@@ -862,33 +862,73 @@ async function updateReviewedEventLink(itemId, userId, shelfId, {
  */
 async function getItemById(itemId, userId, shelfId) {
     const result = await query(
-        `SELECT uc.*, 
+        `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
+            uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
+            uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
+            uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_storage_provider,
+            uc.owner_photo_storage_key, uc.owner_photo_content_type, uc.owner_photo_size_bytes,
+            uc.owner_photo_width, uc.owner_photo_height,
+            uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
+            uc.owner_photo_thumb_content_type, uc.owner_photo_thumb_size_bytes,
+            uc.owner_photo_thumb_width, uc.owner_photo_thumb_height,
+            uc.owner_photo_thumb_box, uc.owner_photo_thumb_updated_at,
+            uc.owner_photo_visible, uc.owner_photo_updated_at,
             EXISTS (
                 SELECT 1
                 FROM vision_item_regions vir
                 WHERE vir.collection_item_id = uc.id
             ) AS is_vision_linked,
+            u.show_personal_photos,
+            ur.rating as rating,
             c.id as collectable_id,
             c.title as collectable_title,
             c.subtitle as collectable_subtitle,
+            c.description as collectable_description,
             c.primary_creator as collectable_creator,
+            c.publishers as collectable_publishers,
+            c.year as collectable_year,
             c.market_value as collectable_market_value,
-            c.cover_url as collectable_cover,
-            c.cover_image_url as collectable_cover_image_url,
-            c.cover_image_source as collectable_cover_image_source,
-            c.kind as collectable_kind,
             c.formats as collectable_formats,
             c.system_name as collectable_system_name,
             c.platform_data as collectable_platform_data,
+            c.tags as collectable_tags,
+            c.images as collectable_images,
+            c.identifiers as collectable_identifiers,
+            c.sources as collectable_sources,
+            c.fingerprint as collectable_fingerprint,
+            c.lightweight_fingerprint as collectable_lightweight_fingerprint,
+            c.external_id as collectable_external_id,
+            c.cover_url as collectable_cover,
+            c.cover_image_url as collectable_cover_image_url,
+            c.cover_image_source as collectable_cover_image_source,
+            c.attribution as collectable_attribution,
+            c.kind as collectable_kind,
             COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             m.local_path as collectable_cover_media_path,
             um.id as manual_id,
             um.name as manual_name,
+            um.description as manual_description,
             um.author as manual_author,
+            um.manufacturer as manual_manufacturer,
+            um.publisher as manual_publisher,
             um.type as manual_type,
+            um.format as manual_format,
             um.cover_media_path as manual_cover_media_path,
-            um.year as manual_year
+            um.year as manual_year,
+            um.market_value as manual_market_value,
+            um.age_statement as manual_age_statement,
+            um.special_markings as manual_special_markings,
+            um.label_color as manual_label_color,
+            um.regional_item as manual_regional_item,
+            um.edition as manual_edition,
+            um.barcode as manual_barcode,
+            um.manual_fingerprint as manual_fingerprint,
+            um.limited_edition as manual_limited_edition,
+            um.item_specific_text as manual_item_specific_text,
+            um.tags as manual_tags,
+            um.genre as manual_genre
          FROM user_collections uc
+         JOIN users u ON u.id = uc.user_id
          LEFT JOIN collectables c ON c.id = uc.collectable_id
          LEFT JOIN media m ON m.id = c.cover_media_id
          LEFT JOIN LATERAL (
@@ -896,6 +936,8 @@ async function getItemById(itemId, userId, shelfId) {
             FROM user_collection_platforms ucp
             WHERE ucp.collection_item_id = uc.id
          ) ucp ON TRUE
+         LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
+            AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
          LEFT JOIN user_manuals um ON um.id = uc.manual_id
          WHERE uc.id = $1 AND uc.user_id = $2 AND uc.shelf_id = $3`,
         [itemId, userId, shelfId]

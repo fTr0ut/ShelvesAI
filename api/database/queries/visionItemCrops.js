@@ -3,7 +3,6 @@ const path = require('path');
 const { query } = require('../pg');
 const { rowToCamelCase } = require('./utils');
 const s3 = require('../../services/s3');
-const { validateImageBuffer } = require('../../utils/imageValidation');
 
 const API_ROOT = path.resolve(__dirname, '..', '..');
 const RAW_PRIVATE_ROOT = process.env.VISION_PRIVATE_STORAGE_DIR || path.join(API_ROOT, 'private-storage');
@@ -61,13 +60,20 @@ async function upsertFromBuffer({
   regionId,
   buffer,
   contentType = 'image/jpeg',
+  width = null,
+  height = null,
 }) {
   if (!userId || !shelfId || !scanPhotoId || !regionId || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error('Invalid vision crop payload');
   }
 
-  const validated = await validateImageBuffer(buffer);
-  const finalContentType = validated.mime || contentType || 'image/jpeg';
+  const normalizedWidth = Number.isFinite(Number(width)) && Number(width) > 0
+    ? Math.round(Number(width))
+    : null;
+  const normalizedHeight = Number.isFinite(Number(height)) && Number(height) > 0
+    ? Math.round(Number(height))
+    : null;
+  const finalContentType = (contentType || 'image/jpeg').split(';')[0].trim().toLowerCase() || 'image/jpeg';
   const storageKey = buildStorageKey({
     userId,
     shelfId,
@@ -105,8 +111,8 @@ async function upsertFromBuffer({
       storageKey,
       finalContentType,
       buffer.length,
-      validated.width || null,
-      validated.height || null,
+      normalizedWidth,
+      normalizedHeight,
     ],
   );
 

@@ -176,7 +176,9 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
   return {
     name: item?.title || null,
     author: item?.primaryCreator || null,
+    publisher: item?.publisher || null,
     manufacturer: item?.manufacturer || null,
+    format: item?.format || item?.physical?.format || null,
     type: shelfType || item?.type || null,
     description: item?.description || null,
     marketValue: item?.marketValue || item?.market_value || null,
@@ -194,6 +196,7 @@ function buildOtherManualPayload(item, shelfType, manualFingerprint) {
     limitedEdition: item?.limitedEdition || null,
     itemSpecificText: item?.itemSpecificText || null,
     manualFingerprint: manualFingerprint || null,
+    tags: normalizeStringArray(item?.tags, item?.genre, item?.genres),
   };
 }
 

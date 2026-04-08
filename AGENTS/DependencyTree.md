@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-04-02
+Last updated: 2026-04-07
 
 ---
 
@@ -30,17 +30,18 @@ ShelvesAI/
 â”œâ”€â”€ mobile/           Expo SDK 54 / React Native 0.81 / React 19
 â”œâ”€â”€ website/          Next.js 16 App Router marketing + account flows
 â”œâ”€â”€ admin-dashboard/  Vite 7 + React 18 SPA (port 5173)
+â”œâ”€â”€ packages/         Local extractable CommonJS packages consumed by app surfaces
 â”œâ”€â”€ shared/           Design tokens (ES module, consumed by mobile via Metro)
 â””â”€â”€ docker-compose.yml  PostgreSQL 16 + pgAdmin (local dev)
 ```
 
 **Communication patterns:**
-- `mobile â†’ api`: REST over HTTPS, Bearer JWT auth, token in expo-secure-store
-- `website â†’ api`: REST over HTTPS for password reset validate/update
-- `admin-dashboard â†’ api`: REST via `/api/admin/*`, HttpOnly cookie auth + CSRF header
-- `shared â†’ mobile`: Metro watchFolders (not a package, direct file import)
-- `shared â†’ admin-dashboard`: NOT consumed (admin uses Tailwind)
-- `shared â†’ api`: NOT consumed
+- `mobile -> api`: REST over HTTPS, Bearer JWT auth, token in expo-secure-store
+- `website -> api`: REST over HTTPS for password reset validate/update
+- `admin-dashboard -> api`: REST via `/api/admin/*`, HttpOnly cookie auth + CSRF header
+- `shared -> mobile`: Metro watchFolders (not a package, direct file import)
+- `shared -> admin-dashboard`: NOT consumed (admin uses Tailwind)
+- `shared -> api`: NOT consumed
 
 ---
 
@@ -49,8 +50,10 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-07 | vision-crop-package-extraction | Extracted the vision crop domain into top-level local package `packages/vision-crops` published in-repo as `@shelvesai/vision-crops`. The package now owns bbox normalization, Sharp crop extraction, region list/crop retrieval orchestration, crop warmup queue-pressure handling, and review-time crop relinking. `api/controllers/shelvesController.js` now consumes an injected crop service instead of embedding crop orchestration, `api/services/{visionCropper}.js` and `api/utils/{visionBox2d}.js` are thin compatibility re-exports, `api/database/queries/visionItemCrops.js` now trusts generated crop metadata instead of re-running generic image validation, and new regression coverage in `api/__tests__/visionCropService.test.js` plus updated controller/crop tests lock the package boundary.
 - 2026-04-02 | mobile-android-footer-clearance-unification | Reworked footer-visible mobile Android bottom spacing around a shared runtime footer contract. `mobile/src/navigation/BottomTabNavigator.js` now uses the live safe-area bottom inset again, new helper `mobile/src/navigation/useBottomFooterLayout.js` exposes `isInsideBottomTab`, `tabBarHeight`, `bottomSafeInset`, and derived content/floating bottom offset calculators, and footer-visible screens (`SocialFeedScreen`, `ShelvesScreen`, `ShelfCreateScreen`, `ShelfSelectScreen`, `ShelfEditScreen`, `ItemSearchScreen`, `MarketValueSourcesScreen`, `ShelfDetailScreen`, `CollectableDetailScreen`) now replace hardcoded bottom padding / ad hoc footer math with helper-driven bottom clearance.
 - 2026-04-07 | collectables-platform-data-insert-default | Hardened `api/database/queries/collectables.js` so `collectables.upsert()` always binds `platform_data` as `[]` on inserts when callers omit platform metadata, while still preserving the existing boolean-gated no-overwrite behavior for updates. Added regression coverage in `api/__tests__/collectablesUpsertMediaSync.test.js` for omitted-platform insert payloads, which fixes review completion inserts from `needs_review` into `collectables` when `raw_data` lacks `platformData`.
+- 2026-04-07 | review-completion-hydration-and-metadata-retention | Hardened `needs_review` completion so `api/controllers/shelvesController.js` now relinks scan artifacts before rehydrating the finished shelf item, and both `POST /api/shelves/:shelfId/review/:id/complete` and `PUT /api/unmatched/:id` return the full hydrated shelf-item contract (including `ownerPhoto` when present) instead of thin completion summaries. Expanded `api/database/queries/shelves.js#getItemById()` to match shelf-item hydration fields used by `formatShelfItem()`, widened `api/services/manuals/otherManual.js#buildOtherManualPayload()` to retain supported review metadata (`publisher`, `format`, tag/genre-derived tags, and existing market/edition/barcode fields), and added regression coverage in `api/__tests__/{shelvesController,unmatchedRoutes}.test.js` for crop-backed owner-photo restoration and unmatched-route hydrated responses.
 - 2026-04-02 | onboarding-config-retry-and-profile-avatar-normalization | Hardened mobile onboarding config bootstrap so `mobile/src/App.js` now tracks `onboardingConfigLoading`/`onboardingConfigError`, exposes `refreshOnboardingConfig()` through `mobile/src/context/AuthContext.js`, and auto-retries a missing config once when users enter onboarding. Added shared onboarding config gate UI (`mobile/src/components/onboarding/OnboardingConfigGate.js` + `mobile/src/utils/onboardingConfig.js`) and wrapped all onboarding screens so config fetch failures now show retryable errors instead of indefinite `Loading onboarding...` stalls. Consolidated profile-photo picking/upload into shared mobile service `mobile/src/services/profilePhotoUpload.js` backed by pure helper `profilePhotoUpload.shared.js`, removed native picker editing in favor of app-managed square prep, and standardized avatar rendering through `mobile/src/utils/mediaUrl.js` so relative `profileMediaUrl` values resolve correctly against `apiBase`. Backend profile photo writes now run through new normalization helper `api/services/profileImageUpload.js` before `api/database/queries/profileMedia.js` persists bytes. Added focused coverage in `mobile/src/{utils/onboardingConfig.test.js,services/profilePhotoUpload.shared.test.js}` and `api/services/profileImageUpload.test.js`.
 - 2026-04-02 | local-db-migration-baseline-repair | Added local-only DB repair scripts `api/scripts/stamp-local-knex-migrations.js` and `api/scripts/patch-local-user-favorites-manual-id.js` plus npm commands `db:local:stamp-migrations` and `db:local:patch-favorites-manual-id`. These scripts safely target localhost-only development databases, stamp `knex_migrations` for schema-snapshot local DBs, and patch `user_favorites.manual_id` plus related constraints/indexes when the local snapshot lags the runtime/manual-favorites contract.
 - 2026-04-02 | mobile-image-upload-format-normalization | Added shared mobile upload prep helper `mobile/src/services/imageUpload.js::prepareImageUploadAsset()` so device-picked shelf photos, manual covers, and owner photos are normalized to upload-safe JPEG assets before hitting the API. `mobile/src/screens/{ShelfCreateScreen,ShelfEditScreen,CollectableDetailScreen}.js` now run picker results through that helper, preserve generated filename/type fields in multipart form data, and therefore support default iOS HEIC/HEIF and modern Android photo formats without requiring camera-setting changes.
@@ -354,36 +357,36 @@ ShelvesAI/
 
 ```
 api/index.js
-  â†’ api/server.js
+  -> api/server.js
   -> api/logger.js
-  â†’ api/database/pg.js
-  â†’ api/services/newsCacheScheduler.js
-  â†’ api/services/newsSeenCleanupScheduler.js
+  -> api/database/pg.js
+  -> api/services/newsCacheScheduler.js
+  -> api/services/newsSeenCleanupScheduler.js
 
 api/server.js
-  â†’ api/routes/resetPasswordPage.js
-  â†’ api/routes/auth.js
-  â†’ api/routes/shelves.js
-  â†’ api/routes/account.js
-  â†’ api/routes/collectables.js
-  â†’ api/routes/feed.js
-  â†’ api/routes/friends.js
-  â†’ api/routes/profile.js
-  â†’ api/routes/wishlists.js
-  â†’ api/routes/favorites.js
-  â†’ api/routes/lists.js
-  â†’ api/routes/unmatched.js
-  â†’ api/routes/onboarding.js
-  â†’ api/routes/config.js
-  â†’ api/routes/checkin.js
-  â†’ api/routes/notifications.js
-  â†’ api/routes/ratings.js
-  â†’ api/routes/discover.js
-  â†’ api/routes/push.js
-  â†’ api/routes/admin.js
-  â†’ api/routes/manuals.js
-  â†’ api/routes/waitlist.js
-  â†’ api/routes/share.js
+  -> api/routes/resetPasswordPage.js
+  -> api/routes/auth.js
+  -> api/routes/shelves.js
+  -> api/routes/account.js
+  -> api/routes/collectables.js
+  -> api/routes/feed.js
+  -> api/routes/friends.js
+  -> api/routes/profile.js
+  -> api/routes/wishlists.js
+  -> api/routes/favorites.js
+  -> api/routes/lists.js
+  -> api/routes/unmatched.js
+  -> api/routes/onboarding.js
+  -> api/routes/config.js
+  -> api/routes/checkin.js
+  -> api/routes/notifications.js
+  -> api/routes/ratings.js
+  -> api/routes/discover.js
+  -> api/routes/push.js
+  -> api/routes/admin.js
+  -> api/routes/manuals.js
+  -> api/routes/waitlist.js
+  -> api/routes/share.js
 ```
 
 ### Runtime Logging Utilities
@@ -420,21 +423,21 @@ api/database/queries/jobRuns.test.js
   -> api/database/pg.js
 ```
 
-### Routes â†’ Controllers â†’ Queries/Services
+### Routes -> Controllers -> Queries/Services
 
 #### auth
 ```
 routes/auth.js
-  â†’ controllers/authController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/authController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
   Routes: POST /login (consumer username-or-email via `username` field), /register, /refresh, /forgot-password, /reset-password; GET /me, /validate-reset-token
 
 controllers/authController.js
-  â†’ database/queries/auth.js
-  â†’ database/queries/passwordReset.js
-  â†’ services/emailService.js
-  â†’ utils/adminAuth.js
+  -> database/queries/auth.js
+  -> database/queries/passwordReset.js
+  -> services/emailService.js
+  -> utils/adminAuth.js
 ```
 
 #### shelves
@@ -443,109 +446,109 @@ routes/shelves.js
   -> includes GET/POST/DELETE shelf photo endpoints (`/:shelfId/photo`, `/:shelfId/photo/image`)
   -> includes POST /:shelfId/items/:itemId/replacement-intent, POST /:shelfId/items/:itemId/replace, and PUT /:shelfId/items/:itemId/platforms
   -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
-  â†’ controllers/shelvesController.js
-  â†’ middleware/auth.js
-  â†’ middleware/imageUploadErrorHandler.js
-  â†’ middleware/validate.js
+  -> controllers/shelvesController.js
+  -> middleware/auth.js
+  -> middleware/imageUploadErrorHandler.js
+  -> middleware/validate.js
   -> middleware/workflowJobContext.js (vision/catalog workflow routes only)
   -> express-rate-limit
-  â†’ utils/imageValidation.js
+  -> utils/imageValidation.js
 
 controllers/shelvesController.js
   -> database/queries/itemReplacementTraces.js
-  â†’ database/pg.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/collectables.js
-  â†’ database/queries/feed.js
-  â†’ database/queries/utils.js
-  â†’ database/queries/needsReview.js
+  -> database/pg.js
+  -> database/queries/shelves.js
+  -> database/queries/collectables.js
+  -> database/queries/feed.js
+  -> database/queries/utils.js
+  -> database/queries/needsReview.js
   -> database/queries/visionQuota.js
   -> database/queries/visionResultCache.js
-  â†’ database/queries/manualMedia.js
+  -> database/queries/manualMedia.js
   -> database/queries/shelfPhotos.js
   -> database/queries/userCollectionPhotos.js
   -> database/queries/visionScanPhotos.js
   -> database/queries/visionItemRegions.js
   -> database/queries/visionItemCrops.js
   -> database/queries/workflowQueueJobs.js
-  â†’ services/collectables/fingerprint.js
-  â†’ services/collectableMatchingService.js
-  â†’ services/catalog/BookCatalogService.js
-  â†’ services/catalog/MovieCatalogService.js
-  â†’ services/catalog/GameCatalogService.js
+  -> services/collectables/fingerprint.js
+  -> services/collectableMatchingService.js
+  -> services/catalog/BookCatalogService.js
+  -> services/catalog/MovieCatalogService.js
+  -> services/catalog/GameCatalogService.js
+  -> @shelvesai/vision-crops (createVisionCropService)
   -> services/gameShelfDefaults.js
-  â†’ services/visionPipeline.js
-  â†’ services/visionPipelineHooks.js
-  -> services/visionCropper.js
-  â†’ services/processingStatus.js
+  -> services/visionPipeline.js
+  -> services/visionPipelineHooks.js
+  -> services/processingStatus.js
   -> services/workflowQueueService.js
   -> services/workflow/workflowSettings.js
-  â†’ services/mediaUrl.js
-  â†’ services/manuals/otherManual.js
-  â†’ utils/imageValidation.js
-  â†’ utils/normalize.js
-  â†’ config/constants.js
+  -> services/mediaUrl.js
+  -> services/manuals/otherManual.js
+  -> utils/imageValidation.js
+  -> utils/normalize.js
+  -> config/constants.js
 ```
 
 #### feed
 ```
 routes/feed.js
-  â†’ controllers/feedController.js
-  â†’ controllers/eventSocialController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/feedController.js
+  -> controllers/eventSocialController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/feedController.js
-  â†’ database/pg.js
-  â†’ database/queries/feed.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/friendships.js
-  â†’ database/queries/eventSocial.js
-  â†’ database/queries/newsSeen.js
-  â†’ database/queries/utils.js
-  â†’ services/discovery/newsRecommendations.js
-  â†’ services/mediaUrl.js
-  â†’ config/constants.js
+  -> database/pg.js
+  -> database/queries/feed.js
+  -> database/queries/shelves.js
+  -> database/queries/friendships.js
+  -> database/queries/eventSocial.js
+  -> database/queries/newsSeen.js
+  -> database/queries/utils.js
+  -> services/discovery/newsRecommendations.js
+  -> services/mediaUrl.js
+  -> config/constants.js
 
 controllers/eventSocialController.js
-  â†’ database/queries/eventSocial.js
-  â†’ database/queries/notifications.js
-  â†’ database/queries/friendships.js
-  â†’ database/queries/users.js
-  â†’ database/queries/utils.js
+  -> database/queries/eventSocial.js
+  -> database/queries/notifications.js
+  -> database/queries/friendships.js
+  -> database/queries/users.js
+  -> database/queries/utils.js
 ```
 
 #### friends
 ```
 routes/friends.js
-  â†’ controllers/friendController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/friendController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/friendController.js
-  â†’ database/pg.js
-  â†’ database/queries/friendships.js
-  â†’ database/queries/notifications.js
-  â†’ database/queries/utils.js
-  â†’ services/mediaUrl.js
+  -> database/pg.js
+  -> database/queries/friendships.js
+  -> database/queries/notifications.js
+  -> database/queries/utils.js
+  -> services/mediaUrl.js
 ```
 
 #### profile
 ```
 routes/profile.js
-  â†’ controllers/profileController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
-  â†’ utils/imageValidation.js
+  -> controllers/profileController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
+  -> utils/imageValidation.js
 
 controllers/profileController.js
-  â†’ database/pg.js
-  â†’ database/queries/users.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/profileMedia.js
-  â†’ database/queries/utils.js
-  â†’ services/mediaUrl.js
-  â†’ utils/imageValidation.js
+  -> database/pg.js
+  -> database/queries/users.js
+  -> database/queries/shelves.js
+  -> database/queries/profileMedia.js
+  -> database/queries/utils.js
+  -> services/mediaUrl.js
+  -> utils/imageValidation.js
 ```
 
 #### account
@@ -569,25 +572,25 @@ controllers/accountController.js
 #### collectables
 ```
 routes/collectables.js
-  â†’ middleware/auth.js
-  â†’ middleware/admin.js
-  â†’ middleware/validate.js
-  â†’ database/queries/collectables.js
-  â†’ database/pg.js
-  â†’ database/queries/utils.js
-  â†’ services/collectables/fingerprint.js
-  â†’ services/collectables/kind.js
-  â†’ utils/normalize.js
-  â†’database/queries/marketValueEstimates.js
+  -> middleware/auth.js
+  -> middleware/admin.js
+  -> middleware/validate.js
+  -> database/queries/collectables.js
+  -> database/pg.js
+  -> database/queries/utils.js
+  -> services/collectables/fingerprint.js
+  -> services/collectables/kind.js
+  -> utils/normalize.js
+  ->database/queries/marketValueEstimates.js
   Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type/platform and provider-level fallback paging via offset; local games platform filtering uses `system_name` + `platform_data`; game responses include derived `maxPlayers` when available), POST /api/collectables/resolve-search-hit, GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
 ```
 
 #### share
 ```
 routes/share.js
-  â†’ database/pg.js
-  â†’ services/mediaUrl.js
-  â†’ logger.js
+  -> database/pg.js
+  -> services/mediaUrl.js
+  -> logger.js
   Public endpoints:
     GET /api/share/collectables/:id
     GET /api/share/manuals/:id
@@ -601,147 +604,147 @@ routes/share.js
 #### wishlists
 ```
 routes/wishlists.js
-  â†’ controllers/wishlistController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/wishlistController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/wishlistController.js
-  â†’ database/queries/wishlists.js
+  -> database/queries/wishlists.js
 ```
 
 #### favorites
 ```
 routes/favorites.js
-  â†’ controllers/favoritesController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/favoritesController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/favoritesController.js
-  â†’ database/queries/favorites.js
-  â†’ database/queries/collectables.js
-  â†’ database/queries/feed.js
-  â†’ database/queries/users.js
-  â†’ database/queries/friendships.js
-  â†’ database/queries/shelves.js
-  â†’ services/mediaUrl.js
-  â†’ utils/errorHandler.js
+  -> database/queries/favorites.js
+  -> database/queries/collectables.js
+  -> database/queries/feed.js
+  -> database/queries/users.js
+  -> database/queries/friendships.js
+  -> database/queries/shelves.js
+  -> services/mediaUrl.js
+  -> utils/errorHandler.js
 ```
 
 #### lists
 ```
 routes/lists.js
-  â†’ controllers/listsController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/listsController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/listsController.js
-  â†’ database/queries/lists.js
-  â†’ database/queries/collectables.js
-  â†’ database/queries/feed.js
+  -> database/queries/lists.js
+  -> database/queries/collectables.js
+  -> database/queries/feed.js
 ```
 
 #### ratings
 ```
 routes/ratings.js
-  â†’ controllers/ratingsController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/ratingsController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/ratingsController.js
-  â†’ database/queries/ratings.js
-  â†’ database/queries/marketValueEstimates.js
-  â†’ database/queries/collectables.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/feed.js
-  â†’ services/mediaUrl.js
+  -> database/queries/ratings.js
+  -> database/queries/marketValueEstimates.js
+  -> database/queries/collectables.js
+  -> database/queries/shelves.js
+  -> database/queries/feed.js
+  -> services/mediaUrl.js
 ```
 
 #### notifications
 ```
 routes/notifications.js
-  â†’ controllers/notificationController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/notificationController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 
 controllers/notificationController.js
-  â†’ database/queries/notifications.js
-  â†’ database/queries/utils.js
+  -> database/queries/notifications.js
+  -> database/queries/utils.js
 ```
 
 #### push
 ```
 routes/push.js
-  â†’ controllers/pushController.js
-  â†’ middleware/auth.js
+  -> controllers/pushController.js
+  -> middleware/auth.js
 
 controllers/pushController.js
-  â†’ database/queries/pushDeviceTokens.js
-  â†’ database/queries/notificationPreferences.js
-  â†’ services/pushNotificationService.js
+  -> database/queries/pushDeviceTokens.js
+  -> database/queries/notificationPreferences.js
+  -> services/pushNotificationService.js
 ```
 
 #### discover
 ```
 routes/discover.js
-  â†’ controllers/discoverController.js
-  â†’ middleware/auth.js
+  -> controllers/discoverController.js
+  -> middleware/auth.js
 
 controllers/discoverController.js
-  â†’ database/pg.js
-  â†’ database/queries/newsDismissed.js
-  â†’ database/queries/utils.js
-  â†’ utils/errorHandler.js
+  -> database/pg.js
+  -> database/queries/newsDismissed.js
+  -> database/queries/utils.js
+  -> utils/errorHandler.js
 ```
 
 #### unmatched
 ```
 routes/unmatched.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
-  â†’ database/queries/needsReview.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/collectables.js
-  â†’ services/collectables/fingerprint.js
-  â†’ services/manuals/otherManual.js
-  â†’ services/collectableMatchingService.js (lazy require)
+  -> middleware/auth.js
+  -> middleware/validate.js
+  -> database/queries/needsReview.js
+  -> database/queries/shelves.js
+  -> database/queries/collectables.js
+  -> services/collectables/fingerprint.js
+  -> services/manuals/otherManual.js
+  -> services/collectableMatchingService.js (lazy require)
 ```
 
 #### checkin
 ```
 routes/checkin.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
-  â†’ database/queries/feed.js
-  â†’ database/queries/collectables.js
-  â†’ database/pg.js
-  â†’ database/queries/utils.js
+  -> middleware/auth.js
+  -> middleware/validate.js
+  -> database/queries/feed.js
+  -> database/queries/collectables.js
+  -> database/pg.js
+  -> database/queries/utils.js
   -> routes/collectables.js (_helpers: API fallback/container resolution helpers)
 
 Mobile check-in flows that resolve external items before POST /api/checkin:
-  CheckInScreen       â†’ POST /api/collectables/resolve-search-hit (auth only)
-  QuickCheckInModal   â†’ POST /api/collectables/from-news (auth only)
+  CheckInScreen       -> POST /api/collectables/resolve-search-hit (auth only)
+  QuickCheckInModal   -> POST /api/collectables/from-news (auth only)
 ```
 
 #### onboarding
 ```
 routes/onboarding.js
-  â†’ controllers/onboardingController.js
-  â†’ middleware/auth.js
+  -> controllers/onboardingController.js
+  -> middleware/auth.js
 
 controllers/onboardingController.js
-  â†’ database/queries/users.js
-  â†’ database/queries/utils.js
+  -> database/queries/users.js
+  -> database/queries/utils.js
 ```
 
 #### admin
 ```
 routes/admin.js
-  â†’ controllers/adminController.js
-  â†’ controllers/authController.js
-  â†’ middleware/auth.js
-  â†’ middleware/admin.js
-  â†’ middleware/csrf.js
-  â†’ middleware/validate.js
+  -> controllers/adminController.js
+  -> controllers/authController.js
+  -> middleware/auth.js
+  -> middleware/admin.js
+  -> middleware/csrf.js
+  -> middleware/validate.js
   Routes (read, before CSRF):
     GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
     GET  /workfeed, /workfeed/:jobId
@@ -753,24 +756,24 @@ routes/admin.js
     POST /users/:userId/vision-quota/reset
 
 controllers/adminController.js
-  â†’ database/queries/admin.js
-  â†’ database/queries/jobRuns.js
+  -> database/queries/admin.js
+  -> database/queries/jobRuns.js
   -> database/queries/workflowQueueJobs.js
-  â†’ database/queries/systemSettings.js
-  â†’ database/queries/visionQuota.js
-  â†’ database/queries/adminContent.js
+  -> database/queries/systemSettings.js
+  -> database/queries/visionQuota.js
+  -> database/queries/adminContent.js
   -> services/processingStatus.js
-  â†’ services/config/SystemSettingsCache.js
-  â†’ database/queries/utils.js
-  â†’ utils/adminAuth.js
+  -> services/config/SystemSettingsCache.js
+  -> database/queries/utils.js
+  -> utils/adminAuth.js
 ```
 
 #### manuals
 ```
 routes/manuals.js
-  â†’ controllers/shelvesController.js
-  â†’ middleware/auth.js
-  â†’ middleware/validate.js
+  -> controllers/shelvesController.js
+  -> middleware/auth.js
+  -> middleware/validate.js
 ```
 
 #### config
@@ -782,8 +785,8 @@ routes/config.js
 #### waitlist
 ```
 routes/waitlist.js
-  â†’ middleware/validate.js
-  â†’ resend (Contacts API)
+  -> middleware/validate.js
+  -> resend (Contacts API)
 ```
 
 #### resetPasswordPage
@@ -796,11 +799,11 @@ routes/resetPasswordPage.js
 
 ```
 middleware/auth.js
-  â†’ database/pg.js
+  -> database/pg.js
   -> context.js
-  â†’ utils/adminAuth.js
-  â†’ config/constants.js
-  Selects: is_premium, premium_locked_by_admin â†’ sets req.user.premiumLockedByAdmin
+  -> utils/adminAuth.js
+  -> config/constants.js
+  Selects: is_premium, premium_locked_by_admin -> sets req.user.premiumLockedByAdmin
 
 middleware/admin.js
   (no internal imports)
@@ -812,7 +815,7 @@ middleware/imageUploadErrorHandler.js
   -> multer
 
 middleware/csrf.js
-  â†’ utils/adminAuth.js
+  -> utils/adminAuth.js
 
 middleware/requestLogger.js
   -> context.js
@@ -826,22 +829,22 @@ middleware/workflowJobContext.js
 
 ```
 services/visionPipeline.js
-  â†’ services/googleGemini.js
-  â†’ services/processingStatus.js
-  â†’ services/visionPipelineHooks.js
+  -> services/googleGemini.js
+  -> services/processingStatus.js
+  -> services/visionPipelineHooks.js
   -> services/gameShelfDefaults.js
-  â†’ services/collectables/fingerprint.js
-  â†’ services/collectables/kind.js
+  -> services/collectables/fingerprint.js
+  -> services/collectables/kind.js
   -> services/catalog/sharedCatalogServices.js
-  â†’ services/manuals/otherManual.js
-  â†’ database/pg.js
-  â†’ database/queries/collectables.js
-  â†’ database/queries/shelves.js
-  â†’ database/queries/needsReview.js
-  â†’ database/queries/feed.js
+  -> services/manuals/otherManual.js
+  -> database/pg.js
+  -> database/queries/collectables.js
+  -> database/queries/shelves.js
+  -> database/queries/needsReview.js
+  -> database/queries/feed.js
   -> database/queries/visionItemRegions.js
-  â†’ config/constants.js
-  â†’ config/visionSettings.json
+  -> config/constants.js
+  -> config/visionSettings.json
   -> utils/visionBox2d.js
   Data flow: extractItems() -> { items, conversationHistory, warning }
              crowded `other` scans (>10 items by default) run `googleGemini.refineDenseItemBoxes()` before first region persistence
@@ -860,7 +863,7 @@ services/processingStatus.js
   (no internal imports â€” in-memory Map)
 
 services/googleGemini.js
-  â†’ config/visionSettings.json
+  -> config/visionSettings.json
   -> services/outboundLimiterRegistry.js
   -> utils/visionBox2d.js
   Methods: detectShelfItemsFromImage() -> { items, conversationHistory, warning }
@@ -879,18 +882,35 @@ services/googleGemini.js
 services/googleCloudVision.js
   (no internal imports â€” disabled)
 
+### Local Packages
+
+```
+packages/vision-crops/index.js
+  -> packages/vision-crops/lib/visionBox2d.js
+  -> packages/vision-crops/lib/visionCropper.js
+  -> packages/vision-crops/lib/service.js
+
+packages/vision-crops/lib/visionCropper.js
+  -> packages/vision-crops/lib/visionBox2d.js
+  -> sharp (resolved from consuming app or package-local install)
+
+packages/vision-crops/lib/service.js
+  -> packages/vision-crops/lib/visionCropper.js
+  Owns region crop retrieval/listing, warmup queue-pressure logic, crop attachment/manual-cover promotion hooks, and review relinking orchestration via injected adapters
+```
+
 services/visionCropper.js
-  -> utils/visionBox2d.js
-  Uses shared bbox normalization for crop rectangle repair/clamping (normalized + absolute-style coords)
+  -> @shelvesai/vision-crops
+  Thin API compatibility wrapper that injects the API logger into `extractRegionCrop()`
 
 services/shelfImageUpload.js
-  â†’ utils/imageValidation.js
+  -> utils/imageValidation.js
   -> sharp
   Auto-orients oversized shelf-related uploads and resizes only when an image exceeds the shared 4096px bound
 
 services/collectableMatchingService.js
-  â†’ database/queries/collectables.js
-  â†’ services/collectables/fingerprint.js
+  -> database/queries/collectables.js
+  -> services/collectables/fingerprint.js
   -> services/catalog/sharedCatalogServices.js
   -> services/catalog/MetadataScorer.js
   -> services/config/shelfTypeResolver.js
@@ -899,39 +919,39 @@ services/collectables/fingerprint.js
   (no internal imports â€” crypto hashing)
 
 services/collectables/kind.js
-  â†’ services/config/shelfTypeResolver.js
+  -> services/config/shelfTypeResolver.js
 
 services/config/shelfTypeResolver.js
-  â†’ config/shelfType.json
+  -> config/shelfType.json
 
 services/catalog/BookCatalogService.js
-  â†’ services/catalog/CatalogRouter.js
-  â†’ services/openLibrary.js
-  â†’ services/hardcover.js
-  â†’ adapters/openlibrary.adapter.js
-  â†’ adapters/hardcover.adapter.js
+  -> services/catalog/CatalogRouter.js
+  -> services/openLibrary.js
+  -> services/hardcover.js
+  -> adapters/openlibrary.adapter.js
+  -> adapters/hardcover.adapter.js
 
 services/catalog/MovieCatalogService.js
-  â†’ services/catalog/CatalogRouter.js
-  â†’ services/catalog/adapters/TmdbAdapter.js
+  -> services/catalog/CatalogRouter.js
+  -> services/catalog/adapters/TmdbAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/GameCatalogService.js
-  â†’ services/catalog/CatalogRouter.js
-  â†’ services/catalog/adapters/IgdbAdapter.js
+  -> services/catalog/CatalogRouter.js
+  -> services/catalog/adapters/IgdbAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/TvCatalogService.js
-  â†’ services/catalog/CatalogRouter.js
-  â†’ services/catalog/adapters/TmdbTvAdapter.js
+  -> services/catalog/CatalogRouter.js
+  -> services/catalog/adapters/TmdbTvAdapter.js
   -> services/outboundLimiterRegistry.js
 
 services/catalog/MusicCatalogService.js
-  â†’ services/collectables/fingerprint.js
-  â†’ adapters/musicbrainz.adapter.js
-  â†’ services/config/shelfTypeResolver.js
-  â†’ services/catalog/MusicBrainzRequestQueue.js
-  â†’ services/catalog/CatalogRouter.js (lazy require)
+  -> services/collectables/fingerprint.js
+  -> adapters/musicbrainz.adapter.js
+  -> services/config/shelfTypeResolver.js
+  -> services/catalog/MusicBrainzRequestQueue.js
+  -> services/catalog/CatalogRouter.js (lazy require)
 
 services/catalog/MusicBrainzRequestQueue.js
   (no internal imports â€” FIFO request queue)
@@ -944,49 +964,49 @@ services/catalog/sharedCatalogServices.js
   -> services/catalog/MusicCatalogService.js
 
 services/catalog/CoverArtBackfillHook.js
-  â†’ services/visionPipelineHooks.js (lazy require in register())
+  -> services/visionPipelineHooks.js (lazy require in register())
 
 services/catalog/CatalogRouter.js
-  â†’ config/apiContainers.json
-  â†’ services/catalog/MetadataScorer.js
+  -> config/apiContainers.json
+  -> services/catalog/MetadataScorer.js
 
 services/catalog/MetadataScorer.js
-  â†’ config/metadataScoreConfig.json
-  â†’ services/config/SystemSettingsCache.js
+  -> config/metadataScoreConfig.json
+  -> services/config/SystemSettingsCache.js
 
 services/catalog/metadataScore.js
-  â†’ services/catalog/MetadataScorer.js
+  -> services/catalog/MetadataScorer.js
 
 services/config/SystemSettingsCache.js
-  â†’ database/queries/systemSettings.js (lazy require, cache miss only)
+  -> database/queries/systemSettings.js (lazy require, cache miss only)
 
 services/catalog/adapters/TmdbAdapter.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/catalog/adapters/TmdbTvAdapter.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/catalog/adapters/IgdbAdapter.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/catalog/adapters/MusicBrainzAdapter.js
-  â†’ services/collectables/fingerprint.js
-  â†’ adapters/musicbrainz.adapter.js
-  â†’ utils/withTimeout.js
-  â†’ services/catalog/MusicCatalogService.js (lazy require)
+  -> services/collectables/fingerprint.js
+  -> adapters/musicbrainz.adapter.js
+  -> utils/withTimeout.js
+  -> services/catalog/MusicCatalogService.js (lazy require)
 
 services/catalog/adapters/DiscogsAdapter.js
-  â†’ services/collectables/fingerprint.js
-  â†’ adapters/discogs.adapter.js
-  â†’ utils/withTimeout.js
-  â†’ utils/RateLimiter.js
+  -> services/collectables/fingerprint.js
+  -> adapters/discogs.adapter.js
+  -> utils/withTimeout.js
+  -> utils/RateLimiter.js
 
 services/openLibrary.js
   -> services/outboundLimiterRegistry.js
 
 services/hardcover.js
   -> services/outboundLimiterRegistry.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/emailService.js
   -> logger.js
@@ -1019,26 +1039,26 @@ services/manuals/otherManual.js
   (no internal imports)
 
 services/newsCacheScheduler.js
-  â†’ jobs/refreshNewsCache.js
+  -> jobs/refreshNewsCache.js
   -> utils/jobRunner.js
 
 services/newsSeenCleanupScheduler.js
-  â†’ database/queries/newsSeen.js
+  -> database/queries/newsSeen.js
   -> utils/jobRunner.js
 
 services/discovery/newsRecommendations.js
-  â†’ database/pg.js
-  â†’ database/queries/newsSeen.js
+  -> database/pg.js
+  -> database/queries/newsSeen.js
 
 services/discovery/CollectableDiscoveryHook.js
-  â†’ database/queries/collectables.js
-  â†’ services/collectables/fingerprint.js
+  -> database/queries/collectables.js
+  -> services/collectables/fingerprint.js
 
 services/discovery/TmdbDiscoveryAdapter.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/discovery/IgdbDiscoveryAdapter.js
-  â†’ utils/RateLimiter.js
+  -> utils/RateLimiter.js
 
 services/discovery/BlurayDiscoveryAdapter.js
   (uses cheerio for scraping)
@@ -1051,45 +1071,45 @@ services/discovery/NytBooksDiscoveryAdapter.js
 
 ```
 jobs/refreshNewsCache.js
-  â†’ services/discovery/TmdbDiscoveryAdapter.js
-  â†’ services/discovery/IgdbDiscoveryAdapter.js
-  â†’ services/discovery/BlurayDiscoveryAdapter.js
-  â†’ services/discovery/NytBooksDiscoveryAdapter.js
-  â†’ database/pg.js
+  -> services/discovery/TmdbDiscoveryAdapter.js
+  -> services/discovery/IgdbDiscoveryAdapter.js
+  -> services/discovery/BlurayDiscoveryAdapter.js
+  -> services/discovery/NytBooksDiscoveryAdapter.js
+  -> database/pg.js
 
 jobs/resetAndRefreshNewsCache.js
-  â†’ jobs/refreshNewsCache.js
+  -> jobs/refreshNewsCache.js
 
 jobs/refreshCollectableMetadata.js
-  â†’ services/catalog/* (catalog services)
+  -> services/catalog/* (catalog services)
 
 jobs/refreshTmdbCoverCache.js
-  â†’ services/s3.js
+  -> services/s3.js
 
 jobs/cleanupNeedsReview.js
-  â†’ database/pg.js
+  -> database/pg.js
 ```
 
 ### Scripts Internal Dependencies
 
 ```
 scripts/backfillMetascore.js
-  â†’ database/pg.js
-  â†’ services/catalog/MetadataScorer.js
-  â†’ services/config/shelfTypeResolver.js
-  â†’ database/queries/utils.js
+  -> database/pg.js
+  -> services/catalog/MetadataScorer.js
+  -> services/config/shelfTypeResolver.js
+  -> database/queries/utils.js
 
 scripts/backfill-missing-cover-media.js
-  â†’ database/pg.js
-  â†’ database/queries/media.js
-  â†’ logger.js
+  -> database/pg.js
+  -> database/queries/media.js
+  -> logger.js
 
 scripts/get-bearer-token.ps1
   (standalone PowerShell HTTP client for local auth token retrieval)
 
 scripts/audit-login-identifier-collisions.js
-  â†’ database/pg.js
-  â†’ logger.js
+  -> database/pg.js
+  -> logger.js
   Behavior: audits cross-user collisions where `LOWER(users.username) = LOWER(other_user.email)` so consumer username-or-email login can fail safely on ambiguous identifiers
 
 scripts/fetch-api-payload.ps1
@@ -1122,39 +1142,39 @@ database/pg.js
 database/queries/utils.js
   (no internal imports â€” pure helpers)
 
-database/queries/auth.js â†’ database/pg.js, database/queries/utils.js, logger.js
-database/queries/shelves.js â†’ database/pg.js, database/queries/utils.js
+database/queries/auth.js -> database/pg.js, database/queries/utils.js, logger.js
+database/queries/shelves.js -> database/pg.js, database/queries/utils.js
 database/queries/itemReplacementTraces.js -> database/pg.js, database/queries/utils.js
-database/queries/collectables.js â†’ database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
-database/queries/feed.js â†’ database/pg.js, database/queries/utils.js, config/constants.js
-database/queries/eventSocial.js â†’ database/pg.js, database/queries/utils.js
-database/queries/friendships.js â†’ database/pg.js, database/queries/utils.js
-database/queries/users.js â†’ database/pg.js, database/queries/utils.js
-database/queries/notifications.js â†’ database/pg.js, database/queries/utils.js
-database/queries/needsReview.js â†’ database/pg.js, database/queries/utils.js
-database/queries/wishlists.js â†’ database/pg.js, database/queries/utils.js
-database/queries/favorites.js â†’ database/pg.js, database/queries/utils.js
-database/queries/lists.js â†’ database/pg.js, database/queries/utils.js
-database/queries/ratings.js â†’ database/pg.js, database/queries/utils.js
-database/queries/ownership.js â†’ database/pg.js
-database/queries/media.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
-database/queries/manualMedia.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js
-database/queries/userCollectionPhotos.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
-database/queries/shelfPhotos.js â†’ database/pg.js, services/s3.js, services/shelfImageUpload.js
-database/queries/visionScanPhotos.js â†’ database/pg.js, services/s3.js, utils/imageValidation.js
-database/queries/visionItemRegions.js â†’ database/pg.js, database/queries/utils.js (replaceExisting snapshot delete-before-insert support)
-database/queries/visionItemCrops.js â†’ database/pg.js, services/s3.js, database/queries/visionScanPhotos.js
-database/queries/profileMedia.js â†’ database/pg.js, services/s3.js
-database/queries/passwordReset.js â†’ database/pg.js
-database/queries/visionQuota.js â†’ database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
-database/queries/pushDeviceTokens.js â†’ database/pg.js, database/queries/utils.js
-database/queries/notificationPreferences.js â†’ database/pg.js, database/queries/utils.js
+database/queries/collectables.js -> database/pg.js, database/queries/utils.js, database/queries/media.js, services/collectables/kind.js, database/queries/jobRuns.js, context.js
+database/queries/feed.js -> database/pg.js, database/queries/utils.js, config/constants.js
+database/queries/eventSocial.js -> database/pg.js, database/queries/utils.js
+database/queries/friendships.js -> database/pg.js, database/queries/utils.js
+database/queries/users.js -> database/pg.js, database/queries/utils.js
+database/queries/notifications.js -> database/pg.js, database/queries/utils.js
+database/queries/needsReview.js -> database/pg.js, database/queries/utils.js
+database/queries/wishlists.js -> database/pg.js, database/queries/utils.js
+database/queries/favorites.js -> database/pg.js, database/queries/utils.js
+database/queries/lists.js -> database/pg.js, database/queries/utils.js
+database/queries/ratings.js -> database/pg.js, database/queries/utils.js
+database/queries/ownership.js -> database/pg.js
+database/queries/media.js -> database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/manualMedia.js -> database/pg.js, services/s3.js, services/shelfImageUpload.js
+database/queries/userCollectionPhotos.js -> database/pg.js, services/s3.js, services/shelfImageUpload.js, database/queries/visionItemCrops.js, services/ownerPhotoThumbnail.js
+database/queries/shelfPhotos.js -> database/pg.js, services/s3.js, services/shelfImageUpload.js
+database/queries/visionScanPhotos.js -> database/pg.js, services/s3.js, utils/imageValidation.js
+database/queries/visionItemRegions.js -> database/pg.js, database/queries/utils.js (replaceExisting snapshot delete-before-insert support)
+database/queries/visionItemCrops.js -> database/pg.js, services/s3.js
+database/queries/profileMedia.js -> database/pg.js, services/s3.js
+database/queries/passwordReset.js -> database/pg.js
+database/queries/visionQuota.js -> database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
+database/queries/pushDeviceTokens.js -> database/pg.js, database/queries/utils.js
+database/queries/notificationPreferences.js -> database/pg.js, database/queries/utils.js
 database/queries/workflowQueueJobs.js -> database/pg.js, database/queries/utils.js
-database/queries/systemSettings.js â†’ database/pg.js, database/queries/utils.js
-database/queries/newsSeen.js â†’ database/pg.js
-database/queries/newsDismissed.js â†’ database/pg.js
-database/queries/admin.js â†’ database/pg.js, database/queries/utils.js
-database/queries/adminContent.js â†’ database/pg.js, database/queries/utils.js
+database/queries/systemSettings.js -> database/pg.js, database/queries/utils.js
+database/queries/newsSeen.js -> database/pg.js
+database/queries/newsDismissed.js -> database/pg.js
+database/queries/admin.js -> database/pg.js, database/queries/utils.js
+database/queries/adminContent.js -> database/pg.js, database/queries/utils.js
 ```
 
 ### Utility Dependencies
@@ -1167,7 +1187,7 @@ utils/imageValidation.js     (no internal imports â€” uses file-type, image
 utils/withTimeout.js         (no internal imports)
 utils/payloadLogger.js       (no internal imports â€” uses fs)
 utils/RateLimiter.js         (no internal imports)
-utils/visionBox2d.js        (shared bbox normalization helpers for pipeline/cropper/Gemini)
+utils/visionBox2d.js        -> @shelvesai/vision-crops (thin compatibility re-export for shared bbox normalization helpers)
 ```
 
 ### Adapters
@@ -1177,8 +1197,8 @@ adapters/openlibrary.adapter.js  (no internal imports â€” transforms API re
 adapters/hardcover.adapter.js    (no internal imports)
 adapters/tmdb.adapter.js         (no internal imports)
 adapters/tmdbTv.adapter.js       (no internal imports)
-adapters/musicbrainz.adapter.js  â†’ services/collectables/fingerprint.js
-adapters/discogs.adapter.js      â†’ services/collectables/fingerprint.js
+adapters/musicbrainz.adapter.js  -> services/collectables/fingerprint.js
+adapters/discogs.adapter.js      -> services/collectables/fingerprint.js
 ```
 
 ### Config Files (data, not code)
@@ -1201,9 +1221,9 @@ config/metadataScoreConfig.json  (per-type metadata scoring weights + field defi
 
 ```
 mobile/index.js
-  â†’ mobile/src/polyfills/index.js
-      â†’ mobile/src/polyfills/message-channel.js
-  â†’ mobile/src/App.js
+  -> mobile/src/polyfills/index.js
+      -> mobile/src/polyfills/message-channel.js
+  -> mobile/src/App.js
 ```
 
 ### App.js (Root)
@@ -1291,13 +1311,13 @@ services/api.js
   (no internal imports â€” leaf node)
 
 services/feedApi.js
-  â†’ services/api.js
+  -> services/api.js
 
 services/newsApi.js
-  â†’ services/api.js
+  -> services/api.js
 
 services/pushNotifications.js
-  â†’ services/api.js
+  -> services/api.js
 
 services/imageUpload.js
   -> expo-image-manipulator
@@ -1318,112 +1338,112 @@ hooks/useCollectableSearchEngine.js
   Ã¢â€ â€™ utils/searchNormalization.js
 
 hooks/useVisionProcessing.js
-  â†’ context/ToastContext.js
-  â†’ services/api.js
+  -> context/ToastContext.js
+  -> services/api.js
 
 hooks/useAuthDebug.js
-  â†’ services/api.js
+  -> services/api.js
 
 hooks/useNews.js
-  â†’ context/AuthContext.js
-  â†’ services/api.js
+  -> context/AuthContext.js
+  -> services/api.js
 
 hooks/useShelfDetailSync.js  (no internal imports â€” createContext)
 hooks/useFriendSearchSync.js (no internal imports â€” createContext)
 
 hooks/useMentionInput.js
-  â†’ context/AuthContext.js
-  â†’ services/api.js
+  -> context/AuthContext.js
+  -> services/api.js
 ```
 
 ### Components
 
 ```
 components/Toast.js
-  â†’ context/ThemeContext.js
-  â†’ context/ToastContext.js
+  -> context/ThemeContext.js
+  -> context/ToastContext.js
 
 components/VisionProcessingModal.js
-  â†’ context/ThemeContext.js
+  -> context/ThemeContext.js
 
 components/ShelfVisionModal.js
   (no internal imports)
 
 components/FooterNav.js
-  â†’ assets/icons/*.png (legacy, likely unused)
+  -> assets/icons/*.png (legacy, likely unused)
 ```
 
 ### UI Components (barrel: components/ui/index.js)
 
 ```
 ui/AccountSlideMenu.js
-  â†’ context/AuthContext.js
-  â†’ context/ThemeContext.js
-  â†’ ui/Avatar.js
+  -> context/AuthContext.js
+  -> context/ThemeContext.js
+  -> ui/Avatar.js
 
 ui/AppLayout.js
-  â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+  -> ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
 ui/Avatar.js
-  â†’ ui/CachedImage.js
-  â†’ theme/index.js
+  -> ui/CachedImage.js
+  -> theme/index.js
 
-ui/Badge.js â†’ theme/index.js
-ui/Button.js â†’ theme/index.js
-ui/Card.js â†’ theme/index.js
-ui/Input.js â†’ theme/index.js
-ui/Skeleton.js â†’ theme/index.js
+ui/Badge.js -> theme/index.js
+ui/Button.js -> theme/index.js
+ui/Card.js -> theme/index.js
+ui/Input.js -> theme/index.js
+ui/Skeleton.js -> theme/index.js
 
 ui/CachedImage.js
-  â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+  -> ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
-ui/CategoryIcon.js â†’ utils/iconConfig.js
+ui/CategoryIcon.js -> utils/iconConfig.js
 
 ui/EmptyState.js
-  â†’ theme/index.js
-  â†’ ui/Button.js
+  -> theme/index.js
+  -> ui/Button.js
 
-ui/Grid.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
-ui/Hero.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
-ui/ShelfListItem.js â†’ ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+ui/Grid.js -> ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+ui/Hero.js -> ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
+ui/ShelfListItem.js -> ../../../../shared/theme/tokens.js  â† CROSS-COMPONENT
 
-ui/StarRating.js â†’ context/ThemeContext.js
+ui/StarRating.js -> context/ThemeContext.js
 
 ui/GlobalSearchBar.js
-  â†’ context/AuthContext.js
-  â†’ context/ThemeContext.js
-  â†’ services/api.js
+  -> context/AuthContext.js
+  -> context/ThemeContext.js
+  -> services/api.js
   exports: useGlobalSearch (hook), GlobalSearchInput, GlobalSearchOverlay
 
 ui/MentionSuggestions.js
-  â†’ context/ThemeContext.js
+  -> context/ThemeContext.js
 ```
 
 ### News Components
 
 ```
 components/news/NewsFeed.js
-  â†’ context/ThemeContext.js
-  â†’ hooks/useNews.js
-  â†’ components/news/NewsSection.js
-  â†’ components/news/QuickCheckInModal.js
+  -> context/ThemeContext.js
+  -> hooks/useNews.js
+  -> components/news/NewsSection.js
+  -> components/news/QuickCheckInModal.js
 
 components/news/NewsSection.js
-  â†’ context/ThemeContext.js
-  â†’ components/news/NewsCard.js
+  -> context/ThemeContext.js
+  -> components/news/NewsCard.js
 
 components/news/NewsCard.js
-  â†’ components/ui/CachedImage.js
-  â†’ context/ThemeContext.js
+  -> components/ui/CachedImage.js
+  -> context/ThemeContext.js
 
 components/news/QuickCheckInModal.js
-  â†’ context/ThemeContext.js
-  â†’ context/ToastContext.js
-  â†’ context/AuthContext.js
-  â†’ services/api.js
+  -> context/ThemeContext.js
+  -> context/ToastContext.js
+  -> context/AuthContext.js
+  -> services/api.js
 ```
 
-### Screens â†’ Internal Dependencies
+### Screens -> Internal Dependencies
 
 | Screen | Imports |
 |---|---|
@@ -1486,18 +1506,18 @@ theme/theme_light.js (no internal imports â€” light theme tokens)
 
 ```
 website/src/app/layout.tsx
-  â†’ website/src/app/globals.css
-  â†’ website/src/content.json
+  -> website/src/app/globals.css
+  -> website/src/content.json
 
 website/src/app/page.tsx
-  â†’ website/src/content.json
-  â†’ website/src/app/WaitlistForm.tsx
-  â†’ website/src/app/page.module.css
-  â†’ website/src/app/HomeSlideshow.tsx
+  -> website/src/content.json
+  -> website/src/app/WaitlistForm.tsx
+  -> website/src/app/page.module.css
+  -> website/src/app/HomeSlideshow.tsx
 
 website/src/app/WaitlistForm.tsx
-  â†’ website/src/app/waitlist-form.module.css
-  â†’ (env) NEXT_PUBLIC_API_BASE
+  -> website/src/app/waitlist-form.module.css
+  -> (env) NEXT_PUBLIC_API_BASE
 
 website/src/app/about/page.tsx
   (static content page)
@@ -1509,28 +1529,28 @@ website/src/app/privacy/page.tsx
   (static content page)
 
 website/src/app/books/page.tsx
-  â†’ website/src/app/components/CategoryPage.tsx
+  -> website/src/app/components/CategoryPage.tsx
 
 website/src/app/collectibles/page.tsx
-  â†’ website/src/app/components/CategoryPage.tsx
+  -> website/src/app/components/CategoryPage.tsx
 
 website/src/app/movies/page.tsx
-  â†’ website/src/app/components/CategoryPage.tsx
+  -> website/src/app/components/CategoryPage.tsx
 
 website/src/app/video-games/page.tsx
-  â†’ website/src/app/components/CategoryPage.tsx
+  -> website/src/app/components/CategoryPage.tsx
 
 website/src/app/vinyl/page.tsx
-  â†’ website/src/app/components/CategoryPage.tsx
+  -> website/src/app/components/CategoryPage.tsx
 
 website/src/app/reset-password/page.tsx
-  â†’ website/src/app/reset-password/reset-password-client.tsx
+  -> website/src/app/reset-password/reset-password-client.tsx
 
 website/src/app/reset-password/reset-password-client.tsx
-  â†’ website/src/app/reset-password/reset-password.module.css
-  â†’ next/link
-  â†’ (env) NEXT_PUBLIC_API_BASE
-  â†’ (env) NEXT_PUBLIC_RESET_DEEP_LINK_BASE
+  -> website/src/app/reset-password/reset-password.module.css
+  -> next/link
+  -> (env) NEXT_PUBLIC_API_BASE
+  -> (env) NEXT_PUBLIC_RESET_DEEP_LINK_BASE
 ```
 
 ### Config
@@ -1548,33 +1568,33 @@ website/.env.example     (NEXT_PUBLIC_API_BASE, NEXT_PUBLIC_RESET_DEEP_LINK_BASE
 
 ```
 admin-dashboard/src/main.jsx
-  â†’ src/App.jsx
-  â†’ src/context/AuthContext.jsx (AuthProvider)
-  â†’ src/index.css
+  -> src/App.jsx
+  -> src/context/AuthContext.jsx (AuthProvider)
+  -> src/index.css
 ```
 
 ### App.jsx (Router)
 
 ```
 src/App.jsx
-  â†’ src/context/AuthContext.jsx (useAuth)
-  â†’ src/components/Layout.jsx
-  â†’ src/pages/Login.jsx
-  â†’ src/pages/Dashboard.jsx
-  â†’ src/pages/Users.jsx
-  â†’ src/pages/Content.jsx
-  â†’ src/pages/ActivityFeed.jsx
-  â†’ src/pages/SocialFeed.jsx
-  â†’ src/pages/Jobs.jsx
-  â†’ src/pages/AuditLog.jsx
-  â†’ src/pages/Settings.jsx
+  -> src/context/AuthContext.jsx (useAuth)
+  -> src/components/Layout.jsx
+  -> src/pages/Login.jsx
+  -> src/pages/Dashboard.jsx
+  -> src/pages/Users.jsx
+  -> src/pages/Content.jsx
+  -> src/pages/ActivityFeed.jsx
+  -> src/pages/SocialFeed.jsx
+  -> src/pages/Jobs.jsx
+  -> src/pages/AuditLog.jsx
+  -> src/pages/Settings.jsx
 ```
 
 ### Context
 
 ```
 src/context/AuthContext.jsx
-  â†’ src/api/client.js (login, logout, getMe)
+  -> src/api/client.js (login, logout, getMe)
 ```
 
 ### API Client
@@ -1594,80 +1614,80 @@ src/api/client.js
 
 ```
 src/pages/Login.jsx
-  â†’ src/context/AuthContext.jsx (useAuth)
+  -> src/context/AuthContext.jsx (useAuth)
 
 src/pages/Dashboard.jsx
-  â†’ src/api/client.js (getStats, getSystemInfo, getDetailedStats, getRecentFeed)
-  â†’ src/components/StatsCard.jsx
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/utils/errorUtils.js
+  -> src/api/client.js (getStats, getSystemInfo, getDetailedStats, getRecentFeed)
+  -> src/components/StatsCard.jsx
+  -> src/components/UserAvatar.jsx
+  -> src/utils/errorUtils.js
 
 src/pages/Users.jsx
-  â†’ src/api/client.js (getUsers)
-  â†’ src/components/UserTable.jsx
-  â†’ src/components/UserDetailModal.jsx
-  â†’ src/components/Pagination.jsx
+  -> src/api/client.js (getUsers)
+  -> src/components/UserTable.jsx
+  -> src/components/UserDetailModal.jsx
+  -> src/components/Pagination.jsx
 
 src/pages/Content.jsx
-  â†’ src/api/client.js (getShelves)
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/Pagination.jsx
-  â†’ src/components/ShelfDetailModal.jsx
+  -> src/api/client.js (getShelves)
+  -> src/components/UserAvatar.jsx
+  -> src/components/Pagination.jsx
+  -> src/components/ShelfDetailModal.jsx
 
 src/pages/ActivityFeed.jsx
-  â†’ src/api/client.js (getRecentFeed)
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/Pagination.jsx
+  -> src/api/client.js (getRecentFeed)
+  -> src/components/UserAvatar.jsx
+  -> src/components/Pagination.jsx
 
 src/pages/SocialFeed.jsx
-  â†’ src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/Pagination.jsx
-  â†’ src/utils/errorUtils.js
+  -> src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
+  -> src/components/UserAvatar.jsx
+  -> src/components/Pagination.jsx
+  -> src/utils/errorUtils.js
 
 src/pages/Jobs.jsx
-  â†’ src/api/client.js (getJobs)
-  â†’ src/components/Pagination.jsx
-  â†’ src/components/JobDetailModal.jsx
+  -> src/api/client.js (getJobs)
+  -> src/components/Pagination.jsx
+  -> src/components/JobDetailModal.jsx
 
 src/pages/AuditLog.jsx
-  â†’ src/api/client.js (getAuditLogs)
-  â†’ src/components/Pagination.jsx
+  -> src/api/client.js (getAuditLogs)
+  -> src/components/Pagination.jsx
 
 src/pages/Settings.jsx
-  â†’ src/context/AuthContext.jsx (useAuth)
-  â†’ src/api/client.js (getSettings, updateSetting)
-  â†’ src/utils/errorUtils.js
+  -> src/context/AuthContext.jsx (useAuth)
+  -> src/api/client.js (getSettings, updateSetting)
+  -> src/utils/errorUtils.js
 ```
 
 ### Components
 
 ```
 src/components/Layout.jsx
-  â†’ src/components/Sidebar.jsx
+  -> src/components/Sidebar.jsx
 
 src/components/Sidebar.jsx
-  â†’ src/context/AuthContext.jsx (useAuth)
+  -> src/context/AuthContext.jsx (useAuth)
 
 src/components/UserTable.jsx
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/UserBadge.jsx (SuspendedBadge, AdminBadge, PremiumBadge)
+  -> src/components/UserAvatar.jsx
+  -> src/components/UserBadge.jsx (SuspendedBadge, AdminBadge, PremiumBadge)
 
 src/components/UserDetailModal.jsx
-  â†’ src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota)
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/UserBadge.jsx (default: UserBadge)
-  â†’ src/utils/errorUtils.js
+  -> src/api/client.js (getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota)
+  -> src/components/UserAvatar.jsx
+  -> src/components/UserBadge.jsx (default: UserBadge)
+  -> src/utils/errorUtils.js
 
 src/components/JobDetailModal.jsx
-  â†’ src/api/client.js (getJob)
-  â†’ src/utils/errorUtils.js
+  -> src/api/client.js (getJob)
+  -> src/utils/errorUtils.js
 
 src/components/ShelfDetailModal.jsx
-  â†’ src/api/client.js (getShelf, getShelfItems)
-  â†’ src/components/UserAvatar.jsx
-  â†’ src/components/Pagination.jsx
-  â†’ src/utils/errorUtils.js
+  -> src/api/client.js (getShelf, getShelfItems)
+  -> src/components/UserAvatar.jsx
+  -> src/components/Pagination.jsx
+  -> src/utils/errorUtils.js
 
 src/components/StatsCard.jsx     (uses react-router-dom useNavigate)
 src/components/UserBadge.jsx     (leaf â€” no internal imports)
@@ -1802,7 +1822,7 @@ user_collection_platforms (SERIAL PK)
 system_settings (key VARCHAR PK)
   â”œâ”€â”€ value (JSONB, not null)
   â”œâ”€â”€ description (TEXT, nullable)
-  â””â”€â”€ updated_by (FK â†’ users.id, nullable)
+  â””â”€â”€ updated_by (FK -> users.id, nullable)
 
 collectables (SERIAL PK)
   -> max_players (INTEGER, nullable)
@@ -1869,7 +1889,7 @@ news_items (SERIAL PK)
 | `20260120_add_physical_release_date` | + `news_items.physical_release_date` |
 | `20260121_add_collectable_id_to_news` | + `news_items.collectable_id` |
 | `20260121_add_collectables_genre_runtime` | + `collectables.genre[]/runtime` |
-| `20260121_normalize_shelf_types_plural` | Data migration (shelf types â†’ plural) |
+| `20260121_normalize_shelf_types_plural` | Data migration (shelf types -> plural) |
 | `20260121_create_user_news_seen` | + `user_news_seen` |
 | `20260122_add_manual_id_to_ratings` | + `user_ratings.manual_id` |
 | `20260122_add_votes_to_news` | + `news_items.votes` |
@@ -1910,7 +1930,7 @@ news_items (SERIAL PK)
 | `20260325010010_add_item_replacement_traces_rls` | RLS policies for `item_replacement_traces` (`*_isolation` + `*_admin`) |
 | `20260325201500_add_reviewed_event_link_to_user_collections` | + `user_collections.reviewed_event_*` columns for review/feed event linking |
 | `20260326000000_create_user_market_value_estimates` | + `user_market_value_estimates` table |
-| `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default â†’ TRUE (flips existing users), `user_collections.owner_photo_visible` default â†’ TRUE |
+| `20260326010000_show_personal_photos_default_true` | `users.show_personal_photos` default -> TRUE (flips existing users), `user_collections.owner_photo_visible` default -> TRUE |
 | `20260328000000_add_mention_notification_type` | Expand `notifications` type CHECK constraint to include `'mention'`, + `notification_preferences.push_mentions` (BOOLEAN DEFAULT TRUE) |
 | `20260329010000_add_collectables_cast_members` | + `collectables.cast_members` (JSONB) and partial GIN index `idx_collectables_cast_members_gin` for cast containment lookups |
 | `20260330010000_create_workflow_queue_jobs` | + `workflow_queue_jobs` (durable workflow queue table, claim/active-dedupe indexes, status/attempt constraints, updated_at trigger) |

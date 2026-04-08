@@ -25,7 +25,14 @@
       "Bash(grep -n \"addItem\\\\|addManual\\\\|collection_items\" c:/Users/johna/Documents/Projects/ShelvesAI/api/routes/*.js)",
       "Bash(grep -n \"event_logs\\\\|CREATE TABLE\" c:/Users/johna/Documents/Projects/ShelvesAI/api/database/migrations/*.js)",
       "Bash(grep -l \"CREATE TABLE event_logs\" c:/Users/johna/Documents/Projects/ShelvesAI/api/database/migrations/*.js)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Read(//c/tmp/**)",
+      "Bash(tar -xzf /c/Users/johna/Documents/Projects/ShelvesAI/packages/shelvesai-vision-core-1.0.0.tgz package/README.md)",
+      "Bash(rm -rf package)",
+      "Bash(tar -xzf /c/Users/johna/Documents/Projects/ShelvesAI/packages/shelvesai-vision-crops-1.0.0.tgz package/README.md)",
+      "Bash(tar tzf:*)",
+      "Bash(tar xzf:*)",
+      "Read(//tmp/package/**)"
     ]
   }
 }

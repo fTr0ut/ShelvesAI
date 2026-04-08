@@ -62,7 +62,16 @@ describe('unmatched routes', () => {
     completeReviewItemInternal.mockResolvedValue({
       kind: 'manual',
       matchSource: 'manual',
-      item: { id: 1201, position: null },
+      item: {
+        id: 1201,
+        position: null,
+        manual: { id: 1301, name: 'Mystery Bottle', author: null },
+        ownerPhoto: {
+          source: 'vision_crop',
+          imageUrl: '/api/shelves/10/items/1201/owner-photo/image',
+          thumbnailImageUrl: '/api/shelves/10/items/1201/owner-photo/thumbnail',
+        },
+      },
       manual: { id: 1301, name: 'Mystery Bottle', author: null },
     });
 
@@ -83,8 +92,13 @@ describe('unmatched routes', () => {
       matchSource: 'manual',
       item: {
         id: 1201,
-        manual: { id: 1301, name: 'Mystery Bottle', author: null },
         position: null,
+        manual: { id: 1301, name: 'Mystery Bottle', author: null },
+        ownerPhoto: {
+          source: 'vision_crop',
+          imageUrl: '/api/shelves/10/items/1201/owner-photo/image',
+          thumbnailImageUrl: '/api/shelves/10/items/1201/owner-photo/thumbnail',
+        },
       },
     });
   });

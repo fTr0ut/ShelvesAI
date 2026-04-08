@@ -8,6 +8,25 @@ const logger = require('../logger');
 
 const router = express.Router();
 
+function omitMarketValueSources(entity) {
+    if (!entity || typeof entity !== 'object' || Array.isArray(entity)) return entity;
+    const { marketValueSources, ...rest } = entity;
+    return rest;
+}
+
+function omitMarketValueSourcesDeep(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry) => omitMarketValueSourcesDeep(entry));
+    }
+    if (!value || typeof value !== 'object') return value;
+    const sanitized = omitMarketValueSources(value);
+    const output = {};
+    for (const [key, nested] of Object.entries(sanitized)) {
+        output[key] = omitMarketValueSourcesDeep(nested);
+    }
+    return output;
+}
+
 // All routes require authentication
 router.use(auth);
 
@@ -100,13 +119,7 @@ router.put('/:id', unmatchedIntParam, async (req, res) => {
         return res.json({
             success: true,
             matchSource: result.matchSource,
-            item: {
-                id: result.item.id,
-                ...(result.kind === 'manual'
-                    ? { manual: result.manual }
-                    : { collectable: result.collectable }),
-                position: result.item.position ?? null,
-            },
+            item: omitMarketValueSourcesDeep(result.item),
         });
     } catch (err) {
         if (err?.statusCode) {

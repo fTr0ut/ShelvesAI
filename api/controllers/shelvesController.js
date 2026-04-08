@@ -36,7 +36,7 @@ const { getCollectableMatchingService } = require('../services/collectableMatchi
 const { getWorkflowQueueService } = require('../services/workflowQueueService');
 const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
 const { CatalogProvidersUnavailableError } = require('../services/catalog/errors');
-const { extractRegionCrop } = require('../services/visionCropper');
+const { createVisionCropService } = require('@shelvesai/vision-crops');
 const {
   normalizeOtherManualItem,
   buildOtherManualPayload,
@@ -465,29 +465,6 @@ function computeImageSha256(imageBase64) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
-function isMissingRelationError(err, relationName) {
-  if (!err) return false;
-  if (err.code === '42P01') return true;
-  if (!relationName) return false;
-  return String(err.message || '').includes(relationName);
-}
-
-function getRegionBox2d(region) {
-  if (!region || typeof region !== 'object') return null;
-  if (Array.isArray(region.box2d)) return region.box2d;
-  if (Array.isArray(region.box_2d)) return region.box_2d;
-  return null;
-}
-
-function sanitizeBox2dForLog(box2d) {
-  if (!Array.isArray(box2d)) return null;
-  return box2d.slice(0, 4).map((value) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return null;
-    return Math.round(numeric * 1000) / 1000;
-  });
-}
-
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (Number.isInteger(parsed) && parsed > 0) return parsed;
@@ -903,6 +880,62 @@ const VISION_FINGERPRINT_SOURCE = "vision-ocr";
 async function loadShelfForUser(userId, shelfId) {
   return shelvesQueries.getById(parseInt(shelfId, 10), userId);
 }
+
+const visionCropService = createVisionCropService({
+  scanPhotos: {
+    getByIdForUser: visionScanPhotosQueries.getByIdForUser,
+    loadImageBuffer: visionScanPhotosQueries.loadImageBuffer,
+  },
+  regions: {
+    getByIdForScan: visionItemRegionsQueries.getByIdForScan,
+    getByExtractionIndexForScan: visionItemRegionsQueries.getByExtractionIndexForScan,
+    listForScan: visionItemRegionsQueries.listForScan,
+    linkCollectable: visionItemRegionsQueries.linkCollectable,
+    linkManual: visionItemRegionsQueries.linkManual,
+    linkCollectionItem: visionItemRegionsQueries.linkCollectionItem,
+    hasCollectionItemLinkForReference: visionItemRegionsQueries.hasCollectionItemLinkForReference,
+  },
+  crops: {
+    getByRegionIdForUser: visionItemCropsQueries.getByRegionIdForUser,
+    listForScan: visionItemCropsQueries.listForScan,
+    upsertFromBuffer: visionItemCropsQueries.upsertFromBuffer,
+    loadImageBuffer: visionItemCropsQueries.loadImageBuffer,
+  },
+  attachments: {
+    getCollectionItemByIdForShelf: shelvesQueries.getCollectionItemByIdForShelf,
+    findCollectionByReference: shelvesQueries.findCollectionByReference,
+    attachVisionCropToItem: userCollectionPhotosQueries.attachVisionCropToItem,
+  },
+  manualCovers: {
+    async getManualCoverState({ manualId, userId }) {
+      const result = await query(
+        `SELECT cover_media_path
+         FROM user_manuals
+         WHERE id = $1 AND user_id = $2
+         LIMIT 1`,
+        [manualId, userId],
+      );
+      return {
+        hasPrimaryCover: !!result.rows[0]?.cover_media_path,
+      };
+    },
+    uploadFromBuffer: manualMediaQueries.uploadFromBuffer,
+  },
+  queue: {
+    countQueuedVisionJobs: () => workflowQueueJobsQueries.countQueued({ workflowType: WORKFLOW_TYPE_VISION }),
+    getSettings: getWorkflowQueueSettings,
+  },
+  buildCropUrl: ({ shelfId, scanPhotoId, regionId }) => `/api/shelves/${shelfId}/vision/scans/${scanPhotoId}/regions/${regionId}/crop`,
+  logger,
+  settings: {
+    warmupEnabled: VISION_CROP_WARMUP_ENABLED,
+    warmupMaxRegions: VISION_CROP_WARMUP_MAX_REGIONS,
+    warmupPressureMaxRegions: VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS,
+    warmupDeferQueueDepth: VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH,
+    workflowTypeVision: WORKFLOW_TYPE_VISION,
+    notifyForceLongPosition: WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION,
+  },
+});
 
 function formatShelfItem(row) {
   if (!row) return null;
@@ -2905,354 +2938,14 @@ async function deleteShelfItemOwnerPhoto(req, res) {
   }
 }
 
-async function extractVisionRegionCropPayload({ userId, shelfId, scanPhoto, region, scanImage = null }) {
-  const sourceImage = scanImage || await visionScanPhotosQueries.loadImageBuffer(scanPhoto);
-  const extracted = await extractRegionCrop({
-    imageBuffer: sourceImage.buffer,
-    box2d: getRegionBox2d(region),
-    imageWidth: scanPhoto.width,
-    imageHeight: scanPhoto.height,
-    coordinateMode: 'normalized',
-  });
-
-  const crop = await visionItemCropsQueries.upsertFromBuffer({
+async function warmVisionScanCrops({ userId, shelfId, shelfType = null, scanPhotoId, jobId = null }) {
+  return visionCropService.warmScanCrops({
     userId,
     shelfId,
-    scanPhotoId: scanPhoto.id,
-    regionId: region.id,
-    buffer: extracted.buffer,
-    contentType: extracted.contentType,
+    shelfType,
+    scanPhotoId,
+    jobId,
   });
-
-  return {
-    crop,
-    scanImage: sourceImage,
-    payload: {
-      buffer: extracted.buffer,
-      contentType: crop?.contentType || extracted.contentType || 'image/jpeg',
-      contentLength: extracted.buffer.length,
-    },
-  };
-}
-
-async function attachCropToCollectionItem({ userId, shelfId, shelfType = null, region, crop }) {
-  if (!crop || !region) return null;
-  const normalizedShelfType = String(shelfType || '').toLowerCase();
-  const collectionItemId = region.collectionItemId || region.collection_item_id || null;
-  const collectableId = region.collectableId || region.collectable_id || null;
-  const manualId = region.manualId || region.manual_id || null;
-  let collectionItem = null;
-
-  if (collectionItemId) {
-    const byId = await shelvesQueries.getCollectionItemByIdForShelf(collectionItemId, shelfId);
-    if (byId?.id && String(byId.userId) === String(userId)) {
-      collectionItem = byId;
-    } else {
-      logger.warn('[Vision] Region collection item link did not resolve for user/shelf', {
-        shelfId,
-        regionId: region.id,
-        collectionItemId,
-      });
-    }
-  }
-
-  if (!collectionItem?.id) {
-    if (!collectableId && !manualId) return null;
-
-    // First-region-wins policy: if any region for the same scan/reference already has a
-    // collection_item_id link, this region is a non-winning duplicate and should not
-    // auto-attach/overwrite the owner photo via collectable/manual fallback.
-    const scanPhotoId = region.scanPhotoId || region.scan_photo_id || null;
-    if (scanPhotoId) {
-      try {
-        const hasLinkedWinner = await visionItemRegionsQueries.hasCollectionItemLinkForReference({
-          scanPhotoId,
-          collectableId,
-          manualId,
-        });
-        if (hasLinkedWinner) {
-          logger.info('[Vision] Skipping fallback crop attach for non-winning duplicate region', {
-            shelfId,
-            scanPhotoId,
-            regionId: region.id,
-            collectableId,
-            manualId,
-          });
-          return null;
-        }
-      } catch (err) {
-        // Keep fallback behavior on older schemas where region link columns/tables are unavailable.
-        if (err?.code !== '42P01' && err?.code !== '42703') {
-          throw err;
-        }
-      }
-    }
-
-    collectionItem = await shelvesQueries.findCollectionByReference({
-      userId,
-      shelfId,
-      collectableId,
-      manualId,
-    });
-  }
-
-  if (!collectionItem?.id) return null;
-
-  let attached = null;
-  try {
-    attached = await userCollectionPhotosQueries.attachVisionCropToItem({
-      itemId: collectionItem.id,
-      userId,
-      shelfId,
-      cropId: crop.id,
-      contentType: crop.contentType || null,
-      sizeBytes: crop.sizeBytes ?? null,
-      width: crop.width ?? null,
-      height: crop.height ?? null,
-    });
-  } catch (err) {
-    logger.warn('[Vision] Failed to attach crop to collection item', {
-      shelfId,
-      regionId: region.id,
-      cropId: crop.id,
-      message: err?.message || String(err),
-    });
-    attached = null;
-  }
-
-  const shouldPromoteManualCoverFromCrop = (
-    manualId
-    && normalizedShelfType === 'other'
-    && attached
-    && attached.ownerPhotoSource === 'vision_crop'
-    && attached.ownerPhotoVisible === true
-  );
-
-  if (shouldPromoteManualCoverFromCrop) {
-    try {
-      const manualCoverResult = await query(
-        `SELECT cover_media_path
-         FROM user_manuals
-         WHERE id = $1 AND user_id = $2
-         LIMIT 1`,
-        [manualId, userId],
-      );
-      const hasPrimaryCover = !!manualCoverResult.rows[0]?.cover_media_path;
-      if (hasPrimaryCover) {
-        return attached;
-      }
-
-      const cropPayload = await visionItemCropsQueries.loadImageBuffer(crop);
-      await manualMediaQueries.uploadFromBuffer({
-        userId,
-        manualId,
-        buffer: cropPayload.buffer,
-        contentType: cropPayload.contentType || crop.contentType || 'image/jpeg',
-      });
-    } catch (err) {
-      logger.warn('[Vision] Failed to promote manual cover from crop', {
-        shelfId,
-        manualId,
-        regionId: region.id,
-        cropId: crop.id,
-        message: err?.message || String(err),
-      });
-    }
-  }
-
-  return attached;
-}
-
-async function getOrCreateVisionRegionCrop({ userId, shelfId, shelfType = null, scanPhoto, region }) {
-  let crop = null;
-  let cropTableAvailable = true;
-  try {
-    crop = await visionItemCropsQueries.getByRegionIdForUser({
-      userId,
-      shelfId,
-      scanPhotoId: scanPhoto.id,
-      regionId: region.id,
-    });
-  } catch (err) {
-    if (!isMissingRelationError(err, 'vision_item_crops')) {
-      throw err;
-    }
-    cropTableAvailable = false;
-    logger.warn('[Vision] vision_item_crops table missing; generating crop without persistence.');
-  }
-
-  if (crop) {
-    await attachCropToCollectionItem({ userId, shelfId, shelfType, region, crop });
-    const payload = await visionItemCropsQueries.loadImageBuffer(crop);
-    return { crop, payload };
-  }
-
-  const scanImage = await visionScanPhotosQueries.loadImageBuffer(scanPhoto);
-  const extracted = await extractRegionCrop({
-    imageBuffer: scanImage.buffer,
-    box2d: getRegionBox2d(region),
-    imageWidth: scanPhoto.width,
-    imageHeight: scanPhoto.height,
-    coordinateMode: 'normalized',
-  });
-
-  if (cropTableAvailable) {
-    try {
-      crop = await visionItemCropsQueries.upsertFromBuffer({
-        userId,
-        shelfId,
-        scanPhotoId: scanPhoto.id,
-        regionId: region.id,
-        buffer: extracted.buffer,
-        contentType: extracted.contentType,
-      });
-    } catch (persistErr) {
-      if (!isMissingRelationError(persistErr, 'vision_item_crops')) {
-        throw persistErr;
-      }
-      cropTableAvailable = false;
-      logger.warn('[Vision] vision_item_crops table missing while persisting crop; continuing without persistence.');
-    }
-  }
-
-  if (crop) {
-    await attachCropToCollectionItem({ userId, shelfId, shelfType, region, crop });
-  }
-
-  return {
-    crop,
-    payload: {
-      buffer: extracted.buffer,
-      contentType: crop?.contentType || extracted.contentType || 'image/jpeg',
-      contentLength: extracted.buffer.length,
-    },
-  };
-}
-
-async function warmVisionScanCrops({ userId, shelfId, shelfType = null, scanPhotoId, jobId = null }) {
-  if (!VISION_CROP_WARMUP_ENABLED || !scanPhotoId) return;
-
-  try {
-    let resolvedShelfType = shelfType ? String(shelfType).toLowerCase() : null;
-    if (!resolvedShelfType) {
-      const shelf = await loadShelfForUser(userId, shelfId);
-      resolvedShelfType = String(shelf?.type || '').toLowerCase();
-    }
-
-    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
-      id: scanPhotoId,
-      userId,
-      shelfId,
-    });
-    if (!scanPhoto) return;
-
-    const regions = await visionItemRegionsQueries.listForScan({
-      userId,
-      shelfId,
-      scanPhotoId: scanPhoto.id,
-    });
-    if (!regions.length) return;
-
-    let existingCrops = [];
-    try {
-      existingCrops = await visionItemCropsQueries.listForScan({
-        userId,
-        shelfId,
-        scanPhotoId: scanPhoto.id,
-      });
-    } catch (err) {
-      if (!isMissingRelationError(err, 'vision_item_crops')) {
-        throw err;
-      }
-      logger.warn('[Vision] vision_item_crops table missing; skipping crop warmup.');
-      return;
-    }
-
-    const existingByRegion = new Set(existingCrops.map((crop) => crop.regionId));
-    const uncroppedTargets = regions.filter((region) => !existingByRegion.has(region.id));
-    if (!uncroppedTargets.length) return;
-
-    let warmupLimit = VISION_CROP_WARMUP_MAX_REGIONS;
-    try {
-      const [queueDepth, queueSettings] = await Promise.all([
-        workflowQueueJobsQueries.countQueued({ workflowType: WORKFLOW_TYPE_VISION }),
-        getWorkflowQueueSettings(),
-      ]);
-      const pressureThreshold = Math.max(
-        queueSettings.workflowQueueLongThresholdPosition,
-        WORKFLOW_QUEUE_NOTIFY_FORCE_LONG_POSITION,
-      );
-      if (queueDepth >= pressureThreshold) {
-        warmupLimit = Math.min(warmupLimit, VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS);
-      }
-      if (queueDepth >= VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH) {
-        logger.info('[Vision] Skipping crop warmup under queue pressure', {
-          shelfId,
-          scanPhotoId: scanPhoto.id,
-          queueDepth,
-          threshold: VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH,
-          jobId,
-        });
-        return;
-      }
-    } catch (pressureErr) {
-      logger.warn('[Vision] Failed to evaluate queue pressure for crop warmup', {
-        message: pressureErr?.message || String(pressureErr),
-      });
-    }
-
-    const warmupTargets = uncroppedTargets.slice(0, warmupLimit);
-    if (!warmupTargets.length) return;
-
-    let generated = 0;
-    let failed = 0;
-    let scanImage = null;
-
-    for (const region of warmupTargets) {
-      try {
-        const result = await extractVisionRegionCropPayload({
-          userId,
-          shelfId,
-          scanPhoto,
-          region,
-          scanImage,
-        });
-        scanImage = result.scanImage || scanImage;
-        await attachCropToCollectionItem({
-          userId,
-          shelfId,
-          shelfType: resolvedShelfType,
-          region,
-          crop: result.crop,
-        });
-        generated += 1;
-      } catch (err) {
-        failed += 1;
-        logger.warn('[Vision] Failed to warm crop for region', {
-          scanPhotoId: scanPhoto.id,
-          regionId: region.id,
-          box2d: sanitizeBox2dForLog(getRegionBox2d(region)),
-          message: err?.message || String(err),
-        });
-      }
-    }
-
-    logger.info('[Vision] Crop warmup complete', {
-      shelfId,
-      scanPhotoId: scanPhoto.id,
-      requested: warmupTargets.length,
-      generated,
-      failed,
-      jobId,
-    });
-  } catch (err) {
-    logger.warn('[Vision] Crop warmup failed', {
-      shelfId,
-      scanPhotoId,
-      jobId,
-      message: err?.message || String(err),
-    });
-  }
 }
 
 function queueVisionCropWarmup({ userId, shelfId, shelfType = null, scanPhotoId, jobId = null }) {
@@ -3908,50 +3601,18 @@ async function listVisionScanRegions(req, res) {
       return res.status(400).json({ error: 'Invalid scan photo id' });
     }
 
-    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
-      id: scanPhotoId,
+    const result = await visionCropService.listRegionsWithCropStatus({
       userId: req.user.id,
       shelfId: shelf.id,
+      scanPhotoId,
     });
-    if (!scanPhoto) {
+    if (!result.scanPhoto) {
       return res.status(404).json({ error: 'Scan photo not found' });
     }
 
-    const regions = await visionItemRegionsQueries.listForScan({
-      userId: req.user.id,
-      shelfId: shelf.id,
-      scanPhotoId: scanPhoto.id,
-    });
-    let crops = [];
-    try {
-      crops = await visionItemCropsQueries.listForScan({
-        userId: req.user.id,
-        shelfId: shelf.id,
-        scanPhotoId: scanPhoto.id,
-      });
-    } catch (err) {
-      if (!isMissingRelationError(err, 'vision_item_crops')) {
-        throw err;
-      }
-      logger.warn('[Vision] vision_item_crops table missing; returning regions without crop metadata.');
-    }
-    const cropByRegionId = new Map(crops.map((crop) => [crop.regionId, crop]));
-    const regionsWithCropStatus = regions.map((region) => {
-      const crop = cropByRegionId.get(region.id);
-      return {
-        ...region,
-        hasCrop: !!crop,
-        cropImageUrl: `/api/shelves/${shelf.id}/vision/scans/${scanPhoto.id}/regions/${region.id}/crop`,
-        cropContentType: crop?.contentType || null,
-        cropWidth: crop?.width ?? null,
-        cropHeight: crop?.height ?? null,
-        cropCreatedAt: crop?.createdAt ?? null,
-      };
-    });
-
     res.json({
-      scanPhotoId: scanPhoto.id,
-      regions: regionsWithCropStatus,
+      scanPhotoId: result.scanPhotoId,
+      regions: result.regions,
     });
   } catch (err) {
     logger.error('listVisionScanRegions error:', err);
@@ -3973,32 +3634,20 @@ async function getVisionScanRegionCrop(req, res) {
       return res.status(400).json({ error: 'Invalid region id' });
     }
 
-    const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
-      id: scanPhotoId,
-      userId: req.user.id,
-      shelfId: shelf.id,
-    });
-    if (!scanPhoto) {
-      return res.status(404).json({ error: 'Scan photo not found' });
-    }
-
-    const region = await visionItemRegionsQueries.getByIdForScan({
-      userId: req.user.id,
-      shelfId: shelf.id,
-      scanPhotoId: scanPhoto.id,
-      regionId,
-    });
-    if (!region) {
-      return res.status(404).json({ error: 'Region not found' });
-    }
-
-    const { payload } = await getOrCreateVisionRegionCrop({
+    const result = await visionCropService.getOrCreateRegionCrop({
       userId: req.user.id,
       shelfId: shelf.id,
       shelfType: shelf.type,
-      scanPhoto,
-      region,
+      scanPhotoId,
+      regionId,
     });
+    if (!result.scanPhoto) {
+      return res.status(404).json({ error: 'Scan photo not found' });
+    }
+    if (!result.region) {
+      return res.status(404).json({ error: 'Region not found' });
+    }
+    const { payload } = result;
 
     res.setHeader('Content-Type', payload.contentType || 'image/jpeg');
     if (Number.isFinite(payload.contentLength)) {
@@ -4314,82 +3963,94 @@ async function relinkReviewItemArtifacts({
     return { relinked: false, attachedCrop: false, reviewContext: null };
   }
 
-  const scanPhoto = await visionScanPhotosQueries.getByIdForUser({
-    id: reviewContext.scanPhotoId,
-    userId,
-    shelfId: shelf.id,
-  });
-  if (!scanPhoto) {
-    return { relinked: false, attachedCrop: false, reviewContext };
-  }
-
-  if (typeof visionItemRegionsQueries.getByExtractionIndexForScan !== 'function') {
-    return { relinked: false, attachedCrop: false, reviewContext };
-  }
-
-  const region = await visionItemRegionsQueries.getByExtractionIndexForScan({
-    userId,
-    shelfId: shelf.id,
-    scanPhotoId: scanPhoto.id,
-    extractionIndex: reviewContext.extractionIndex,
-  });
-  if (!region) {
-    return { relinked: false, attachedCrop: false, reviewContext };
-  }
-
-  if (collectableId) {
-    await visionItemRegionsQueries.linkCollectable({
-      scanPhotoId: scanPhoto.id,
-      extractionIndex: reviewContext.extractionIndex,
-      collectableId,
-    });
-  }
-  if (manualId) {
-    await visionItemRegionsQueries.linkManual({
-      scanPhotoId: scanPhoto.id,
-      extractionIndex: reviewContext.extractionIndex,
-      manualId,
-    });
-  }
-  if (collectionItemId) {
-    await visionItemRegionsQueries.linkCollectionItem({
-      scanPhotoId: scanPhoto.id,
-      extractionIndex: reviewContext.extractionIndex,
-      collectionItemId,
-    });
-  }
-
-  let attachedCrop = false;
   try {
-    await getOrCreateVisionRegionCrop({
+    const result = await visionCropService.restoreCropLinkageForReviewItem({
       userId,
       shelfId: shelf.id,
       shelfType: shelf.type,
-      scanPhoto,
-      region: {
-        ...region,
-        scanPhotoId: scanPhoto.id,
-        collectableId: collectableId || region.collectableId || null,
-        manualId: manualId || region.manualId || null,
-        collectionItemId: collectionItemId || region.collectionItemId || null,
-      },
+      scanPhotoId: reviewContext.scanPhotoId,
+      extractionIndex: reviewContext.extractionIndex,
+      collectableId,
+      manualId,
+      collectionItemId,
     });
-    attachedCrop = true;
+    return {
+      ...result,
+      reviewContext,
+    };
   } catch (err) {
     logger.warn('[Review] Failed to restore crop linkage for completed review item', {
       shelfId: shelf.id,
       reviewItemId: reviewItem?.id || null,
-      scanPhotoId: scanPhoto.id,
+      scanPhotoId: reviewContext.scanPhotoId,
       extractionIndex: reviewContext.extractionIndex,
       message: err?.message || String(err),
     });
     throw err;
   }
+}
+
+function buildFallbackCompletedReviewItem({
+  collectionItem = null,
+  collectable = null,
+  manual = null,
+  appliedDefaults = null,
+}) {
+  if (!collectionItem?.id) return null;
 
   return {
-    relinked: true,
-    attachedCrop,
-    reviewContext,
+    id: collectionItem.id,
+    collectable: collectable || null,
+    manual: manual || null,
+    isVisionLinked: false,
+    position: collectionItem.position ?? null,
+    format: appliedDefaults?.format ?? collectionItem.format ?? null,
+    platformMissing: appliedDefaults?.platformMissing ?? (collectionItem.platformMissing === true),
+    notes: collectionItem.notes ?? null,
+    rating: collectionItem.rating ?? null,
+    reviewedEventId: collectionItem.reviewedEventLogId ?? null,
+    reviewPublishedAt: collectionItem.reviewedEventPublishedAt || null,
+    reviewUpdatedAt: collectionItem.reviewedEventUpdatedAt || null,
+    ownedPlatforms: normalizeOwnedPlatforms(appliedDefaults?.ownedPlatforms),
+    ownerPhoto: null,
+    createdAt: collectionItem.createdAt || null,
+  };
+}
+
+async function hydrateCompletedReviewItem({
+  userId,
+  shelf,
+  collectionItem = null,
+  collectable = null,
+  manual = null,
+  appliedDefaults = null,
+}) {
+  if (!collectionItem?.id) {
+    return {
+      item: buildFallbackCompletedReviewItem({
+        collectionItem,
+        collectable,
+        manual,
+        appliedDefaults,
+      }),
+      collectable: collectable || null,
+      manual: manual || null,
+    };
+  }
+
+  const hydratedRow = await shelvesQueries.getItemById(collectionItem.id, userId, shelf.id);
+  const hydratedItem = hydratedRow ? formatShelfItem(hydratedRow) : null;
+  const fallbackItem = buildFallbackCompletedReviewItem({
+    collectionItem,
+    collectable,
+    manual,
+    appliedDefaults,
+  });
+
+  return {
+    item: hydratedItem || fallbackItem,
+    collectable: hydratedItem?.collectable || collectable || null,
+    manual: hydratedItem?.manual || manual || null,
   };
 }
 
@@ -4447,13 +4108,20 @@ async function completeReviewItemInternal({
         collectionItemId: item?.id || null,
         collectableId: collectable.id,
       });
+      const hydrated = await hydrateCompletedReviewItem({
+        userId,
+        shelf,
+        collectionItem: item,
+        collectable,
+        appliedDefaults,
+      });
       await needsReviewQueries.markCompleted(reviewItem.id, userId);
 
       return {
         kind: 'collectable',
         matchSource,
-        item,
-        collectable,
+        item: hydrated.item,
+        collectable: hydrated.collectable,
         appliedDefaults,
       };
     }
@@ -4548,7 +4216,6 @@ async function completeReviewItemInternal({
         userId,
         shelfId: shelf.id,
         ...payload,
-        tags: completedData.tags,
       });
       manualMatchSource = 'manual';
       logger.info('[shelves.completeReviewItemInternal] Created new manual from review completion', {
@@ -4578,13 +4245,20 @@ async function completeReviewItemInternal({
       collectionItemId: manualResult?.collection?.id || null,
       manualId: manualResult?.manual?.id || null,
     });
+    const hydrated = await hydrateCompletedReviewItem({
+      userId,
+      shelf,
+      collectionItem: manualResult?.collection || null,
+      manual: manualResult?.manual || null,
+      appliedDefaults,
+    });
     await needsReviewQueries.markCompleted(reviewItem.id, userId);
 
     return {
       kind: 'manual',
       matchSource: manualMatchSource,
-      item: manualResult.collection,
-      manual: manualResult.manual,
+      item: hydrated.item,
+      manual: hydrated.manual,
       appliedDefaults,
       alreadyOnShelf,
     };
@@ -4639,13 +4313,20 @@ async function completeReviewItemInternal({
     collectionItemId: item?.id || null,
     collectableId: collectable.id,
   });
+  const hydrated = await hydrateCompletedReviewItem({
+    userId,
+    shelf,
+    collectionItem: item,
+    collectable,
+    appliedDefaults,
+  });
   await needsReviewQueries.markCompleted(reviewItem.id, userId);
 
   return {
     kind: 'collectable',
     matchSource,
-    item,
-    collectable,
+    item: hydrated.item,
+    collectable: hydrated.collectable,
     appliedDefaults,
   };
 }
@@ -4680,18 +4361,7 @@ async function completeReviewItem(req, res) {
         });
       }
 
-      return res.json({
-        item: {
-          id: result.item.id,
-          manual: omitMarketValueSources(result.manual),
-          position: result.item.position ?? null,
-          format: result.appliedDefaults.format,
-          platformMissing: result.appliedDefaults.platformMissing,
-          notes: result.item.notes ?? null,
-          rating: result.item.rating ?? null,
-          ownedPlatforms: result.appliedDefaults.ownedPlatforms,
-        },
-      });
+      return res.json({ item: omitMarketValueSourcesDeep(result.item) });
     }
 
     await logShelfEvent({
@@ -4707,18 +4377,7 @@ async function completeReviewItem(req, res) {
       }),
     });
 
-    return res.json({
-      item: {
-        id: result.item.id,
-        collectable: omitMarketValueSources(result.collectable),
-        position: result.item.position,
-        format: result.appliedDefaults.format,
-        platformMissing: result.appliedDefaults.platformMissing,
-        notes: result.item.notes,
-        rating: result.item.rating,
-        ownedPlatforms: result.appliedDefaults.ownedPlatforms,
-      },
-    });
+    return res.json({ item: omitMarketValueSourcesDeep(result.item) });
   } catch (err) {
     if (err?.statusCode) {
       return res.status(err.statusCode).json({ error: err.message || 'Server error' });

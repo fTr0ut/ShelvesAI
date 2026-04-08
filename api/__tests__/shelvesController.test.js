@@ -1,3 +1,4 @@
+const sharp = require('sharp');
 const shelvesController = require('../controllers/shelvesController');
 const { VisionPipelineService } = require('../services/visionPipeline');
 const shelvesQueries = require('../database/queries/shelves');
@@ -9,7 +10,6 @@ const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs'
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
 const shelfPhotosQueries = require('../database/queries/shelfPhotos');
 const manualMediaQueries = require('../database/queries/manualMedia');
-const { extractRegionCrop } = require('../services/visionCropper');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
@@ -105,9 +105,6 @@ jest.mock('../database/queries/itemReplacementTraces', () => ({
     markCompleted: jest.fn().mockResolvedValue(null),
     markFailed: jest.fn().mockResolvedValue(null),
 }));
-jest.mock('../services/visionCropper', () => ({
-    extractRegionCrop: jest.fn(),
-}));
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/collectables');
 jest.mock('../database/queries/ratings', () => ({
@@ -138,6 +135,17 @@ jest.mock('../database/queries/visionQuota', () => ({
 describe('shelvesController', () => {
     let req, res;
     let mockPipelineInstance;
+
+    async function createJpegBuffer(width = 100, height = 100) {
+        return sharp({
+            create: {
+                width,
+                height,
+                channels: 3,
+                background: { r: 30, g: 60, b: 90 },
+            },
+        }).jpeg().toBuffer();
+    }
 
     beforeEach(() => {
         jest.clearAllMocks();
@@ -1588,24 +1596,18 @@ describe('shelvesController', () => {
 
             await shelvesController.getVisionScanRegionCrop(req, res);
 
-            expect(extractRegionCrop).not.toHaveBeenCalled();
+            expect(visionScanPhotosQueries.loadImageBuffer).not.toHaveBeenCalled();
             expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
             expect(res.send).toHaveBeenCalledWith(cropBuffer);
         });
 
         it('generates and stores a crop lazily when none exists', async () => {
-            const generatedCrop = Buffer.from('generated-crop');
             visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue(null);
+            const scanBuffer = await createJpegBuffer(1200, 800);
             visionScanPhotosQueries.loadImageBuffer.mockResolvedValue({
-                buffer: Buffer.from('scan-photo'),
+                buffer: scanBuffer,
                 contentType: 'image/jpeg',
-                contentLength: 100,
-            });
-            extractRegionCrop.mockResolvedValue({
-                buffer: generatedCrop,
-                contentType: 'image/jpeg',
-                width: 300,
-                height: 400,
+                contentLength: scanBuffer.length,
             });
             visionItemCropsQueries.upsertFromBuffer.mockResolvedValue({
                 id: 902,
@@ -1615,48 +1617,40 @@ describe('shelvesController', () => {
 
             await shelvesController.getVisionScanRegionCrop(req, res);
 
-            expect(extractRegionCrop).toHaveBeenCalledWith(expect.objectContaining({
-                box2d: [100, 200, 700, 900],
-                imageWidth: 1200,
-                imageHeight: 800,
-            }));
             expect(visionItemCropsQueries.upsertFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
                 userId: 1,
                 shelfId: 10,
                 scanPhotoId: 77,
                 regionId: 8,
+                contentType: 'image/jpeg',
+                width: 840,
+                height: 480,
             }));
             expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
-            expect(res.send).toHaveBeenCalledWith(generatedCrop);
+            expect(Buffer.isBuffer(res.send.mock.calls[0][0])).toBe(true);
         });
 
         it('accepts region box_2d payloads from persistence for crop extraction', async () => {
-            const generatedCrop = Buffer.from('generated-crop');
             visionItemRegionsQueries.getByIdForScan.mockResolvedValue({
                 id: 8,
                 box_2d: [100, 200, 700, 900],
             });
             visionItemCropsQueries.getByRegionIdForUser.mockResolvedValue(null);
+            const scanBuffer = await createJpegBuffer(1200, 800);
             visionScanPhotosQueries.loadImageBuffer.mockResolvedValue({
-                buffer: Buffer.from('scan-photo'),
+                buffer: scanBuffer,
                 contentType: 'image/jpeg',
-                contentLength: 100,
-            });
-            extractRegionCrop.mockResolvedValue({
-                buffer: generatedCrop,
-                contentType: 'image/jpeg',
-                width: 300,
-                height: 400,
+                contentLength: scanBuffer.length,
             });
 
             await shelvesController.getVisionScanRegionCrop(req, res);
 
-            expect(extractRegionCrop).toHaveBeenCalledWith(expect.objectContaining({
-                box2d: [100, 200, 700, 900],
-                imageWidth: 1200,
-                imageHeight: 800,
+            expect(visionItemCropsQueries.upsertFromBuffer).toHaveBeenCalledWith(expect.objectContaining({
+                regionId: 8,
+                width: 840,
+                height: 480,
             }));
-            expect(res.send).toHaveBeenCalledWith(generatedCrop);
+            expect(Buffer.isBuffer(res.send.mock.calls[0][0])).toBe(true);
         });
 
         it('skips manual cover promotion for other-shelf crops when owner photo is not shareable', async () => {
@@ -2267,6 +2261,26 @@ describe('shelvesController', () => {
                 notes: null,
                 rating: null,
             });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 999,
+                userId: 1,
+                shelfId: 10,
+                manualId: 701,
+                position: null,
+                format: null,
+                platformMissing: false,
+                notes: null,
+                rating: null,
+                isVisionLinked: false,
+                ownedPlatforms: [],
+                manualName: 'Weller 12',
+                manualAuthor: 'Buffalo Trace',
+                manualType: 'other',
+                manualCoverMediaPath: null,
+                manualYear: null,
+                manualTags: [],
+                manualGenre: [],
+            });
 
             await shelvesController.completeReviewItem(req, res);
 
@@ -2305,6 +2319,26 @@ describe('shelvesController', () => {
                 position: null,
                 notes: null,
                 rating: null,
+            });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 901,
+                userId: 1,
+                shelfId: 10,
+                collectableId: 801,
+                position: null,
+                format: null,
+                platformMissing: false,
+                notes: null,
+                rating: null,
+                isVisionLinked: false,
+                ownedPlatforms: [],
+                collectableTitle: 'Review Title',
+                collectableCreator: 'Review Creator',
+                collectableYear: 2011,
+                collectableKind: 'books',
+                collectableCover: 'https://img.example/review.jpg',
+                collectableCoverImageUrl: null,
+                collectableCoverImageSource: null,
             });
 
             await shelvesController.completeReviewItem(req, res);
@@ -2356,6 +2390,26 @@ describe('shelvesController', () => {
                     coverMediaPath: 'manuals/1301.jpg',
                 },
             });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 1201,
+                userId: 1,
+                shelfId: 10,
+                manualId: 1301,
+                position: null,
+                format: null,
+                platformMissing: false,
+                notes: null,
+                rating: null,
+                isVisionLinked: false,
+                ownedPlatforms: [],
+                manualName: 'Manual Review',
+                manualAuthor: 'Manual Review Creator',
+                manualType: 'other',
+                manualCoverMediaPath: 'manuals/1301.jpg',
+                manualYear: 2020,
+                manualTags: [],
+                manualGenre: [],
+            });
 
             await shelvesController.completeReviewItem(req, res);
 
@@ -2371,6 +2425,76 @@ describe('shelvesController', () => {
                     year: 2020,
                     coverMediaPath: 'manuals/1301.jpg',
                 }),
+            }));
+        });
+
+        it('preserves supported other-manual metadata when completing a review item', async () => {
+            req.params = { shelfId: '10', id: '55' };
+            req.body = {};
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other', visibility: 'public' });
+            needsReviewQueries.getById.mockResolvedValue({
+                id: 55,
+                shelfId: 10,
+                rawData: {
+                    title: 'Metadata Bottle',
+                    author: 'Review Creator',
+                    publisher: 'Shelf Publisher',
+                    format: 'Bottle',
+                    year: '2024',
+                    marketValue: 'USD $250',
+                    marketValueSources: [{ url: 'https://example.com/value', label: 'Value Source' }],
+                    ageStatement: '12 years',
+                    specialMarkings: 'Store Pick',
+                    labelColor: 'Blue',
+                    regionalItem: 'Kentucky',
+                    edition: 'Batch 3',
+                    barcode: '123456789012',
+                    limitedEdition: '120/500',
+                    itemSpecificText: 'Warehouse C',
+                    tags: ['bourbon'],
+                    genre: ['whiskey'],
+                },
+            });
+            shelvesQueries.findManualByFingerprint.mockResolvedValue(null);
+            shelvesQueries.findManualByBarcode.mockResolvedValue(null);
+            shelvesQueries.fuzzyFindManualForOther.mockResolvedValue(null);
+            shelvesQueries.addManual.mockResolvedValue({
+                collection: {
+                    id: 1203,
+                    position: null,
+                    format: null,
+                    notes: null,
+                    rating: null,
+                },
+                manual: {
+                    id: 1303,
+                    name: 'Metadata Bottle',
+                    author: 'Review Creator',
+                    type: 'other',
+                },
+            });
+
+            await shelvesController.completeReviewItem(req, res);
+
+            expect(shelvesQueries.addManual).toHaveBeenCalledWith(expect.objectContaining({
+                userId: 1,
+                shelfId: 10,
+                name: 'Metadata Bottle',
+                author: 'Review Creator',
+                publisher: 'Shelf Publisher',
+                format: 'Bottle',
+                year: '2024',
+                marketValue: 'USD $250',
+                marketValueSources: [{ url: 'https://example.com/value', label: 'Value Source' }],
+                ageStatement: '12 years',
+                specialMarkings: 'Store Pick',
+                labelColor: 'Blue',
+                regionalItem: 'Kentucky',
+                edition: 'Batch 3',
+                barcode: '123456789012',
+                limitedEdition: '120/500',
+                itemSpecificText: 'Warehouse C',
+                tags: expect.arrayContaining(['bourbon', 'whiskey']),
             }));
         });
 
@@ -2435,6 +2559,50 @@ describe('shelvesController', () => {
                 ownerPhotoSource: 'vision_crop',
                 ownerPhotoVisible: true,
             });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 1201,
+                userId: 1,
+                shelfId: 10,
+                manualId: 1301,
+                position: null,
+                format: null,
+                platformMissing: false,
+                notes: null,
+                rating: null,
+                isVisionLinked: true,
+                ownerPhotoSource: 'vision_crop',
+                ownerPhotoVisible: true,
+                ownerPhotoContentType: 'image/jpeg',
+                ownerPhotoSizeBytes: 123,
+                ownerPhotoWidth: 40,
+                ownerPhotoHeight: 60,
+                ownerPhotoThumbContentType: 'image/jpeg',
+                ownerPhotoThumbSizeBytes: 44,
+                ownerPhotoThumbWidth: 30,
+                ownerPhotoThumbHeight: 45,
+                ownerPhotoThumbBox: { x: 0.1, y: 0.2, width: 0.4, height: 0.5 },
+                ownerPhotoThumbUpdatedAt: '2026-04-01T12:00:00.000Z',
+                ownerPhotoUpdatedAt: '2026-04-01T12:00:00.000Z',
+                ownedPlatforms: [],
+                manualName: 'Mystery Bottle',
+                manualAuthor: null,
+                manualType: 'other',
+                manualCoverMediaPath: 'manuals/1301.jpg',
+                manualDescription: null,
+                manualYear: null,
+                manualMarketValue: null,
+                manualAgeStatement: null,
+                manualSpecialMarkings: null,
+                manualLabelColor: null,
+                manualRegionalItem: null,
+                manualEdition: null,
+                manualBarcode: null,
+                manualFingerprint: null,
+                manualLimitedEdition: null,
+                manualItemSpecificText: null,
+                manualTags: [],
+                manualGenre: [],
+            });
             query
                 .mockResolvedValueOnce({ rows: [{ cover_media_path: null }], rowCount: 1 });
 
@@ -2471,9 +2639,15 @@ describe('shelvesController', () => {
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 item: expect.objectContaining({
                     id: 1201,
+                    ownerPhoto: expect.objectContaining({
+                        source: 'vision_crop',
+                        imageUrl: '/api/shelves/10/items/1201/owner-photo/image',
+                        thumbnailImageUrl: '/api/shelves/10/items/1201/owner-photo/thumbnail',
+                    }),
                     manual: expect.objectContaining({
                         id: 1301,
                         author: null,
+                        coverMediaPath: 'manuals/1301.jpg',
                     }),
                 }),
             }));
@@ -2508,6 +2682,26 @@ describe('shelvesController', () => {
                     author: 'Legacy Creator',
                     type: 'other',
                 },
+            });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 1202,
+                userId: 1,
+                shelfId: 10,
+                manualId: 1302,
+                position: null,
+                format: null,
+                platformMissing: false,
+                notes: null,
+                rating: null,
+                isVisionLinked: false,
+                ownedPlatforms: [],
+                manualName: 'Legacy Manual Review',
+                manualAuthor: 'Legacy Creator',
+                manualType: 'other',
+                manualCoverMediaPath: null,
+                manualYear: null,
+                manualTags: [],
+                manualGenre: [],
             });
 
             await shelvesController.completeReviewItem(req, res);
