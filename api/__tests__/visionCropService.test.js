@@ -224,6 +224,40 @@ describe('vision crop package service', () => {
     expect(deps.crops.upsertFromBuffer).toHaveBeenCalledTimes(1);
   });
 
+  it('prioritizes collection-linked regions when warmup is capped', async () => {
+    const scanBuffer = await createJpegBuffer(1200, 800);
+    const { service, deps } = buildService({
+      regions: {
+        listForScan: jest.fn().mockResolvedValue([
+          { id: 1, box2d: [100, 200, 700, 900] },
+          { id: 2, box2d: [100, 200, 700, 900], collectionItemId: 222 },
+          { id: 3, box2d: [100, 200, 700, 900], collectionItemId: 333 },
+        ]),
+      },
+      settings: {
+        warmupMaxRegions: 2,
+      },
+      scanPhotos: {
+        loadImageBuffer: jest.fn().mockResolvedValue({
+          buffer: scanBuffer,
+          contentType: 'image/jpeg',
+          contentLength: scanBuffer.length,
+        }),
+      },
+    });
+
+    await service.warmScanCrops({
+      userId: 1,
+      shelfId: 10,
+      shelfType: 'books',
+      scanPhotoId: 77,
+    });
+
+    expect(deps.crops.upsertFromBuffer).toHaveBeenCalledTimes(2);
+    expect(deps.crops.upsertFromBuffer.mock.calls[0][0]).toEqual(expect.objectContaining({ regionId: 2 }));
+    expect(deps.crops.upsertFromBuffer.mock.calls[1][0]).toEqual(expect.objectContaining({ regionId: 3 }));
+  });
+
   it('defers warmup entirely when queue depth is too high', async () => {
     const { service, deps } = buildService({
       queue: {

@@ -53,6 +53,11 @@ describe('VisionPipelineService', () => {
         service = new VisionPipelineService();
         mockGemini = GoogleGeminiService.mock.instances[0];
         mockGemini.detectShelfItemsFromImage = jest.fn();
+        mockGemini.sendScoutPrompt = jest.fn().mockResolvedValue(JSON.stringify({
+            full_image_estimated_item_count: 3,
+            full_image_has_more_than_ten: false,
+            regions: [{ region_box_2d: [0, 0, 1000, 1000], confidence: 0.9, estimated_item_count: 3, has_more_than_ten: false }],
+        }));
     });
 
     it('should process high confidence items and add them to shelf', async () => {
@@ -1109,6 +1114,154 @@ describe('VisionPipelineService', () => {
         });
     });
 
+    describe('scout pipeline review fixes', () => {
+        it('routes multi-region sparse scout results through runSliceDetectionPhase', async () => {
+            // Scout returns 2 sparse regions (shouldSlice false, but 2 regions)
+            mockGemini.sendScoutPrompt.mockResolvedValue(JSON.stringify({
+                full_image_estimated_item_count: 6,
+                full_image_has_more_than_ten: false,
+                regions: [
+                    { region_box_2d: [0, 0, 500, 1000], confidence: 0.9, estimated_item_count: 3, has_more_than_ten: false },
+                    { region_box_2d: [500, 0, 1000, 1000], confidence: 0.85, estimated_item_count: 3, has_more_than_ten: false },
+                ],
+            }));
+
+            // Spy on runSliceDetectionPhase to verify it's called (not runSingleRegionDetection)
+            // and return items from both regions
+            const sliceSpy = jest.spyOn(service, 'runSliceDetectionPhase').mockResolvedValue({
+                items: [
+                    { title: 'Book A', confidence: 0.95 },
+                    { title: 'Book B', confidence: 0.95 },
+                ],
+                warnings: [],
+            });
+
+            service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
+                search: jest.fn().mockResolvedValue([]),
+            });
+            mockGemini.enrichWithSchema.mockResolvedValue([
+                { title: 'Book A', confidence: 0.95, kind: 'book' },
+                { title: 'Book B', confidence: 0.95, kind: 'book' },
+            ]);
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            collectablesQueries.upsert.mockResolvedValue({ id: 200 });
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 300 });
+
+            const result = await service.processImage('base64', { id: 1, type: 'book' }, 100);
+
+            // runSliceDetectionPhase should be called (not runSingleRegionDetection)
+            // This proves multi-region scouts route through the slice phase, not single-region
+            expect(sliceSpy).toHaveBeenCalled();
+            expect(result.results.added + result.results.needsReview).toBeGreaterThanOrEqual(1);
+            sliceSpy.mockRestore();
+        });
+
+        it('falls back to legacy extraction when all slice/region extractions fail', async () => {
+            // Scout returns a single dense region (shouldSlice true → routes to runSliceDetectionPhase)
+            mockGemini.sendScoutPrompt.mockResolvedValue(JSON.stringify({
+                full_image_estimated_item_count: 25,
+                full_image_has_more_than_ten: true,
+                regions: [{ region_box_2d: [0, 0, 1000, 1000], confidence: 0.9, estimated_item_count: 25, has_more_than_ten: true }],
+            }));
+
+            // Make runSliceDetectionPhase throw (simulating all extractions failed)
+            const sliceSpy = jest.spyOn(service, 'runSliceDetectionPhase').mockRejectedValue(
+                new Error('All 4 slice/region extractions failed. Falling back to legacy extraction.'),
+            );
+
+            // Legacy fallback via extractItems on full image should succeed
+            mockGemini.detectShelfItemsFromImage.mockResolvedValue({
+                items: [{ title: 'Fallback Book', confidence: 0.95 }],
+            });
+            service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
+                search: jest.fn().mockResolvedValue([]),
+            });
+            mockGemini.enrichWithSchema.mockResolvedValue([{ title: 'Fallback Book', confidence: 0.95, kind: 'book' }]);
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            collectablesQueries.upsert.mockResolvedValue({ id: 201 });
+            shelvesQueries.addCollectable.mockResolvedValue({ id: 301 });
+
+            const result = await service.processImage('base64', { id: 1, type: 'book' }, 100);
+
+            expect(sliceSpy).toHaveBeenCalled();
+            // Legacy extraction should have produced results
+            expect(mockGemini.detectShelfItemsFromImage).toHaveBeenCalled();
+            expect(result.results.added + result.results.needsReview).toBeGreaterThanOrEqual(1);
+            sliceSpy.mockRestore();
+        });
+
+        it('propagates WORKFLOW_ABORTED errors without falling back to legacy extraction', async () => {
+            const abortError = new Error('WORKFLOW_ABORTED');
+            abortError.code = 'WORKFLOW_ABORTED';
+            mockGemini.sendScoutPrompt.mockRejectedValue(abortError);
+
+            await expect(
+                service.processImage('base64', { id: 1, type: 'book' }, 100),
+            ).rejects.toThrow('WORKFLOW_ABORTED');
+
+            // Legacy extraction should NOT have been called
+            expect(mockGemini.detectShelfItemsFromImage).not.toHaveBeenCalled();
+        });
+
+        it('does not trigger legacy fallback when slice phase returns zero items with only warnings', async () => {
+            // Scout returns dense region → routes to runSliceDetectionPhase
+            mockGemini.sendScoutPrompt.mockResolvedValue(JSON.stringify({
+                full_image_estimated_item_count: 20,
+                full_image_has_more_than_ten: true,
+                regions: [{ region_box_2d: [0, 0, 1000, 1000], confidence: 0.9, estimated_item_count: 20, has_more_than_ten: true }],
+            }));
+
+            // runSliceDetectionPhase succeeds but with zero items and a warning (not a throw)
+            const sliceSpy = jest.spyOn(service, 'runSliceDetectionPhase').mockResolvedValue({
+                items: [],
+                warnings: ['Gemini returned truncated response for slice 2'],
+            });
+
+            service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
+                search: jest.fn().mockResolvedValue([]),
+            });
+            mockGemini.enrichWithSchema.mockResolvedValue([]);
+
+            const result = await service.processImage('base64', { id: 1, type: 'book' }, 100);
+
+            expect(sliceSpy).toHaveBeenCalled();
+            // Legacy extractItems on full image should NOT have been called
+            // (detectShelfItemsFromImage is called by extractItems; it should not fire here)
+            expect(mockGemini.detectShelfItemsFromImage).not.toHaveBeenCalled();
+            expect(result.results.added).toBe(0);
+            sliceSpy.mockRestore();
+        });
+
+        it('scans all regions without slicing when VISION_SLICE_ENABLED is false (via shouldSliceRegion)', async () => {
+            // Directly test runSliceDetectionPhase: pass a dense region but mock extractItems
+            // to verify it calls extractItems per-region without slicing
+            const scoutResult = {
+                regions: [
+                    { regionBox2d: [0, 0, 500, 1000], estimatedItemCount: 3, hasMoreThanTen: false, confidence: 0.9 },
+                    { regionBox2d: [500, 0, 1000, 1000], estimatedItemCount: 4, hasMoreThanTen: false, confidence: 0.85 },
+                ],
+                shouldSlice: false,
+            };
+
+            // Mock extractItems to return items
+            const extractSpy = jest.spyOn(service, 'extractItems')
+                .mockResolvedValueOnce({ items: [{ title: 'Item A', confidence: 0.9, box2d: [100, 100, 400, 400] }] })
+                .mockResolvedValueOnce({ items: [{ title: 'Item B', confidence: 0.85, box2d: [100, 100, 400, 400] }] });
+
+            const result = await service.runSliceDetectionPhase(
+                'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+                { type: 'book', description: null, name: 'My Shelf' },
+                scoutResult,
+                { width: 1200, height: 800 },
+            );
+
+            // Both regions should be processed (2 extractItems calls)
+            expect(extractSpy).toHaveBeenCalledTimes(2);
+            expect(result.items.length).toBe(2);
+            extractSpy.mockRestore();
+        });
+    });
+
     describe('other shelf low-confidence second pass', () => {
         beforeEach(() => {
             service.saveToReviewQueue = jest.fn().mockResolvedValue(undefined);
@@ -1475,7 +1628,8 @@ describe('VisionPipelineService', () => {
 
             try {
                 const processPromise = service.processImage('base64', { id: 11, type: 'book' }, 100, 'job-heartbeat');
-                await Promise.resolve();
+                // Flush microtask queue to allow scout phase and extraction setup to complete
+                for (let i = 0; i < 10; i += 1) await Promise.resolve();
 
                 jest.advanceTimersByTime(3000);
                 await Promise.resolve();

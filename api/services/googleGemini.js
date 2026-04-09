@@ -4,7 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { normalizeCollectableKind } = require('./collectables/kind');
 const { withTimeout } = require('../utils/withTimeout');
-const { normalizeVisionBox2d, BOX_COORDINATE_MODES } = require('../utils/visionBox2d');
+const {
+    normalizeVisionBox2d,
+    BOX_COORDINATE_MODES,
+    normalizeVisionQuad2d,
+    deriveVisionBox2dFromQuad2d,
+} = require('../utils/visionBox2d');
 const logger = require('../logger');
 const { limitGemini } = require('./outboundLimiterRegistry');
 
@@ -16,7 +21,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60000;
 const DEFAULT_OTHER_FIRST_PASS_THINKING_BUDGET = 800;
 const DEFAULT_OTHER_SECOND_PASS_THINKING_BUDGET = 2200;
 const MAX_SECOND_PASS_HINT_ITEMS = 20;
-const DENSE_BOX_REFINEMENT_MAX_OUTPUT_TOKENS = 2048;
+const DENSE_BOX_REFINEMENT_MAX_OUTPUT_TOKENS = 4096;
 
 // Load vision settings from config file
 let visionSettings = null;
@@ -90,7 +95,7 @@ function buildJsonStrictnessReminder() {
 - Every item must include confidence as a number between 0 and 1.
 - If confidence is uncertain, provide a lower numeric value (for example: 0.55), never omit it.
 - Never leave a value blank after a key.
-- If unknown, use null (for example: "box_2d": null).
+- If unknown, use null (for example: "box_2d": null, "quad_2d": null).
 - Do not emit trailing commas.`;
 }
 
@@ -143,6 +148,10 @@ function coerceConfidence(value, fallback = DEFAULT_VISION_CONFIDENCE) {
 
 function normalizeBox2d(value) {
     return normalizeVisionBox2d(value, { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO });
+}
+
+function normalizeQuad2d(value) {
+    return normalizeVisionQuad2d(value, { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO });
 }
 
 function parseNonNegativeInteger(value, fallback) {
@@ -272,9 +281,10 @@ Rules:
 - Return ONLY the listed extractionIndex values.
 - Output ONLY a valid JSON array.
 - Each object must use exactly this schema:
-  {"extractionIndex": number, "box_2d": [y_min, x_min, y_max, x_max]}
-- box_2d must be normalized to 0-1000.
-- If you cannot localize an item confidently, use "box_2d": null.
+  {"extractionIndex": number, "box_2d": [y_min, x_min, y_max, x_max], "quad_2d": [[y1,x1],[y2,x2],[y3,x3],[y4,x4]] or null}
+- box_2d and quad_2d must be normalized to 0-1000.
+- quad_2d provides four corner points (top-left, top-right, bottom-right, bottom-left). Use null if uncertain.
+- If you cannot localize an item confidently, use "box_2d": null, "quad_2d": null.
 
 Items to localize:
 ${itemLines}`;
@@ -392,6 +402,7 @@ SECOND PASS INSTRUCTIONS FOR OTHER SHELVES:
 - Keep the same JSON array schema from the first pass.
 - For each rechecked item, include extractionIndex to match the first-pass item.
 - Preserve box_2d as normalized [y_min, x_min, y_max, x_max] (0-1000).
+- Preserve quad_2d as [[y1,x1],[y2,x2],[y3,x3],[y4,x4]] normalized to 0-1000 (or null if uncertain).
 
 LOW-CONFIDENCE ITEMS FROM FIRST PASS:
 ${hintLines}`;
@@ -629,6 +640,8 @@ ${hintLines}`;
 Return ONLY a valid JSON array of objects with:
 - title (string)
 - author (string or null)
+- box_2d: [y_min, x_min, y_max, x_max] normalized to 0-1000
+- quad_2d: [[y1,x1],[y2,x2],[y3,x3],[y4,x4]] normalized to 0-1000 (or null if uncertain)
 - confidence (number from 0 to 1)
 If no items are visible, return [].
 Do not include explanations or markdown.`;
@@ -1117,7 +1130,11 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     raw.primaryCreator || raw.author || raw.creator || raw.brand || raw.publisher || raw.manufacturer,
                 );
                 const confidenceProvided = Number.isFinite(Number(raw.confidence));
-                const box2d = normalizeBox2d(raw.box_2d || raw.box2d);
+                const rawBox2d = normalizeBox2d(raw.box_2d || raw.box2d);
+                const quad2d = normalizeQuad2d(raw.quad_2d || raw.quad2d);
+                const derivedBox2d = quad2d
+                    ? deriveVisionBox2dFromQuad2d(quad2d, { mode: BOX_COORDINATE_MODES.NORMALIZED })
+                    : null;
                 return {
                     ...raw,
                     name: title,
@@ -1129,7 +1146,8 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     confidence: coerceConfidence(raw.confidence),
                     confidenceProvided,
                     extractionIndex: coerceExtractionIndex(raw.extractionIndex, index),
-                    box2d,
+                    box2d: derivedBox2d || rawBox2d,
+                    quad2d,
                 };
             }).filter(Boolean).slice(0, MAX_VISION_ITEMS);
             const missingConfidenceCount = items.filter((item) => item.confidenceProvided === false).length;
@@ -1246,6 +1264,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             && conversationHistory.length > 0
             && typeof this.visionModel?.startChat === 'function';
         const refinedBoxesByIndex = new Map();
+        const refinedQuadsByIndex = new Map();
 
         logger.info('[GoogleGeminiService] Dense box refinement request config', {
             stage: 'dense_box_refinement',
@@ -1333,9 +1352,15 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 const parsedArray = Array.isArray(parsedItems) ? parsedItems : [];
                 for (const entry of parsedArray) {
                     const extractionIndex = coerceExtractionIndex(entry?.extractionIndex, null);
-                    const box2d = normalizeBox2d(entry?.box_2d || entry?.box2d);
+                    const rawBox2d = normalizeBox2d(entry?.box_2d || entry?.box2d);
+                    const quad2d = normalizeQuad2d(entry?.quad_2d || entry?.quad2d);
+                    const derivedBox2d = quad2d
+                        ? deriveVisionBox2dFromQuad2d(quad2d, { mode: BOX_COORDINATE_MODES.NORMALIZED })
+                        : null;
+                    const box2d = derivedBox2d || rawBox2d;
                     if (extractionIndex == null || !box2d) continue;
                     refinedBoxesByIndex.set(extractionIndex, box2d);
+                    if (quad2d) refinedQuadsByIndex.set(extractionIndex, quad2d);
                 }
             } catch (err) {
                 logger.warn('[GoogleGeminiService] Dense box refinement batch failed; keeping first-pass boxes', {
@@ -1354,7 +1379,85 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             batchCount: batches.length,
         });
 
-        return refinedBoxesByIndex;
+        return { boxes: refinedBoxesByIndex, quads: refinedQuadsByIndex };
+    }
+
+    /**
+     * Send a lightweight scout prompt to gather image layout metadata
+     * (region locations, item counts) before full detection.
+     * @param {string} base64Image - Base64-encoded image (with or without data URI prefix)
+     * @param {string} scoutPrompt - The prebuilt scout prompt text
+     * @param {object} [options]
+     * @param {number} [options.thinkingBudget=0] - Thinking budget for the scout call
+     * @returns {Promise<string>} Raw response text from Gemini
+     */
+    async sendScoutPrompt(base64Image, scoutPrompt, options = {}) {
+        if (!this.visionModel) {
+            throw new Error('Google Gemini vision model not initialized.');
+        }
+
+        const { data, mimeType } = parseInlineImage(base64Image);
+        const thinkingBudget = Number.isFinite(options.thinkingBudget)
+            ? Math.max(0, options.thinkingBudget)
+            : 0;
+
+        const generateOptions = {
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        { text: scoutPrompt },
+                        { inlineData: { data, mimeType } },
+                    ],
+                },
+            ],
+            generationConfig: {
+                thinkingConfig: { thinkingBudget },
+            },
+        };
+
+        logger.info('[GoogleGeminiService] Scout prompt request', {
+            stage: 'scout',
+            model: this.visionModelName,
+            promptLength: scoutPrompt.length,
+            thinkingBudget,
+        });
+
+        let result = null;
+        const maxAttempts = 2;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+                result = await withTimeout(
+                    () => limitGemini(() => this.visionModel.generateContent(generateOptions)),
+                    this.requestTimeoutMs,
+                    `Gemini scout request (attempt ${attempt})`,
+                );
+                break;
+            } catch (requestErr) {
+                const canRetry = attempt < maxAttempts && isTransientGeminiRequestError(requestErr);
+                if (!canRetry) throw requestErr;
+                logger.warn('[GoogleGeminiService] Scout request failed, retrying once:', requestErr?.message || requestErr);
+            }
+        }
+
+        const response = await withTimeout(
+            () => result.response,
+            this.requestTimeoutMs,
+            'Gemini scout response',
+        );
+        const responseText = response.text();
+
+        logPayload({
+            source: 'google-gemini-vision',
+            operation: 'scout',
+            payload: {
+                model: this.visionModelName,
+                promptPreview: scoutPrompt.substring(0, 200),
+                responsePreview: String(responseText).substring(0, 500),
+            },
+        });
+
+        return responseText;
     }
 
 }

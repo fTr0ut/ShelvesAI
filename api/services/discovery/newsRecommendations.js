@@ -156,7 +156,7 @@ async function getNewsRecommendationsForUser(userId, options = {}) {
          JOIN shelves s ON s.id = uc.shelf_id
          WHERE uc.user_id = $1 AND s.type = 'movies') AS movie_count,
         COALESCE(
-          (SELECT count FROM format_counts WHERE format = ANY($4)),
+          (SELECT SUM(count)::int FROM format_counts WHERE format = ANY($4)),
           0
         ) AS format_4k_count
     ),

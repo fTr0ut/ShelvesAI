@@ -30,11 +30,29 @@ function resolveBox2d(region) {
   return null;
 }
 
+function isValidQuad2d(quad2d) {
+  if (!Array.isArray(quad2d) || quad2d.length !== 4) return false;
+  return quad2d.every((point) =>
+    Array.isArray(point) && point.length === 2
+    && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])),
+  );
+}
+
+function resolveQuad2d(region) {
+  if (!region || typeof region !== 'object') return null;
+  if (Array.isArray(region.quad2d)) return region.quad2d;
+  if (Array.isArray(region.quad_2d)) return region.quad_2d;
+  return null;
+}
+
 function mapRegionRow(row) {
   const mapped = rowToCamelCase(row);
   if (!mapped) return null;
   if (mapped.box2d == null && Array.isArray(mapped.box_2d)) {
     mapped.box2d = mapped.box_2d;
+  }
+  if (mapped.quad2d == null && Array.isArray(mapped.quad_2d)) {
+    mapped.quad2d = mapped.quad_2d;
   }
   return mapped;
 }
@@ -119,17 +137,20 @@ async function upsertRegionsForScan(
 
     const confidenceValue = region?.confidence;
     const confidence = Number.isFinite(Number(confidenceValue)) ? Number(confidenceValue) : null;
+    const quad2d = resolveQuad2d(region);
+    const quad2dJson = isValidQuad2d(quad2d) ? JSON.stringify(quad2d) : null;
     const result = await q(
       `INSERT INTO vision_item_regions (
          user_id, shelf_id, scan_photo_id, extraction_index,
-         title, primary_creator, box_2d, confidence
+         title, primary_creator, box_2d, quad_2d, confidence
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
        ON CONFLICT (scan_photo_id, extraction_index)
        DO UPDATE SET
          title = EXCLUDED.title,
          primary_creator = EXCLUDED.primary_creator,
          box_2d = EXCLUDED.box_2d,
+         quad_2d = EXCLUDED.quad_2d,
          confidence = EXCLUDED.confidence
        RETURNING *`,
       [
@@ -140,6 +161,7 @@ async function upsertRegionsForScan(
         normalizeString(region?.title || region?.name),
         normalizeString(region?.primaryCreator || region?.author),
         JSON.stringify(box2d.map((value) => Number(value))),
+        quad2dJson,
         confidence,
       ],
     );
@@ -308,4 +330,6 @@ module.exports = {
   getByExtractionIndexForScan,
   isValidBox2d,
   resolveBox2d,
+  isValidQuad2d,
+  resolveQuad2d,
 };

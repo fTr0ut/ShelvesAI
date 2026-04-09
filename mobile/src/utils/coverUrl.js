@@ -1,8 +1,5 @@
 /**
- * Cover URL resolution utilities
- *
- * Extracted from SocialFeedScreen.js to eliminate DUP-4.
- * Logic must exactly match the original implementations.
+ * Cover URL resolution utilities.
  */
 
 /**
@@ -28,11 +25,13 @@ export function buildMediaUri(value, apiBase = '') {
  * Resolve the cover URL for a collectable item.
  *
  * Priority order:
- *  1. `coverMediaUrl`  — pre-resolved by API (S3/CloudFront)
- *  2. `coverMediaPath` — local media path (cached, preferred when available)
- *  3. `coverImageUrl`  — external or local path
- *  4. `coverUrl`       — legacy field
- *  5. `images[]`       — image array (urlLarge > urlMedium > urlSmall > url)
+ *  1. `coverMediaUrl`  - pre-resolved by API (S3/CloudFront)
+ *  2. absolute `coverImageUrl`
+ *  3. absolute `coverUrl`
+ *  4. `coverMediaPath` - media key/path
+ *  5. relative `coverImageUrl`
+ *  6. relative `coverUrl`
+ *  7. `images[]`       - image array (urlLarge > urlMedium > urlSmall > url)
  *
  * @param {Object|null} collectable - Collectable/item object
  * @param {string} [apiBase=''] - API base URL for path construction
@@ -41,29 +40,30 @@ export function buildMediaUri(value, apiBase = '') {
 export function resolveCollectableCoverUrl(collectable, apiBase = '') {
     if (!collectable) return null;
 
-    // Prefer pre-resolved URL from API (handles S3/CloudFront)
     if (collectable.coverMediaUrl) {
         return collectable.coverMediaUrl;
+    }
+
+    const coverImageUrl = collectable.coverImageUrl;
+    if (coverImageUrl && /^https?:/i.test(coverImageUrl)) {
+        return coverImageUrl;
+    }
+
+    const coverUrl = collectable.coverUrl;
+    if (coverUrl && /^https?:/i.test(coverUrl)) {
+        return coverUrl;
     }
 
     if (collectable.coverMediaPath) {
         return buildMediaUri(collectable.coverMediaPath, apiBase);
     }
 
-    const coverImageUrl = collectable.coverImageUrl;
     if (coverImageUrl) {
-        if (/^https?:/i.test(coverImageUrl)) {
-            return coverImageUrl;
-        }
-        // Treat any non-absolute coverImageUrl as a local media path.
-        // Some records may have stale/missing coverImageSource metadata.
         return buildMediaUri(coverImageUrl, apiBase);
     }
 
-    if (collectable.coverUrl) {
-        return /^https?:/i.test(collectable.coverUrl)
-            ? collectable.coverUrl
-            : buildMediaUri(collectable.coverUrl, apiBase);
+    if (coverUrl) {
+        return buildMediaUri(coverUrl, apiBase);
     }
 
     const images = Array.isArray(collectable.images) ? collectable.images : [];
@@ -81,8 +81,8 @@ export function resolveCollectableCoverUrl(collectable, apiBase = '') {
  * Resolve the cover URL for a manual item.
  *
  * Priority order:
- *  1. `coverMediaUrl`  — pre-resolved by API (S3/CloudFront)
- *  2. `coverMediaPath` — local media path
+ *  1. `coverMediaUrl`  - pre-resolved by API (S3/CloudFront)
+ *  2. `coverMediaPath` - local media path
  *
  * @param {Object|null} manual - Manual item object
  * @param {string} [apiBase=''] - API base URL for path construction
@@ -91,7 +91,6 @@ export function resolveCollectableCoverUrl(collectable, apiBase = '') {
 export function resolveManualCoverUrl(manual, apiBase = '') {
     if (!manual) return null;
 
-    // Prefer pre-resolved URL from API (handles S3/CloudFront)
     if (manual.coverMediaUrl) {
         return manual.coverMediaUrl;
     }

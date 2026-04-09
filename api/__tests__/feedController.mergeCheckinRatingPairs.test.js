@@ -4,6 +4,7 @@ const {
   _mergeCheckinRatingPairs: mergeCheckinRatingPairs,
   _mergeReviewedRatingPairs: mergeReviewedRatingPairs,
 } = require('../controllers/feedController');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 
 function makeCheckin({ id, createdAt, collectableId = 101, ownerId = 'u1' }) {
   return {
@@ -85,6 +86,7 @@ describe('buildFeedItemsFromPayloads', () => {
         primaryCreator: 'The Creator',
         year: 1999,
         coverMediaPath: 'covers/101.jpg',
+        coverMediaUrl: resolveMediaUrl('covers/101.jpg'),
       }),
     });
   });
@@ -113,6 +115,7 @@ describe('buildFeedItemsFromPayloads', () => {
         author: 'Manual Creator',
         year: 2005,
         coverMediaPath: 'manuals/202.jpg',
+        coverMediaUrl: resolveMediaUrl('manuals/202.jpg'),
       }),
     });
   });
@@ -127,8 +130,11 @@ describe('mapFeedDetailItemRow', () => {
       collectable_title: 'Detail Item',
       collectable_primary_creator: 'Detail Creator',
       collectable_cover_url: 'https://img.example/detail.jpg',
+      collectable_cover_image_url: 'https://img.example/detail-large.jpg',
+      collectable_cover_image_source: 'local',
       collectable_kind: 'books',
       collectable_year: 2014,
+      collectable_cover_media_path: 'books/detail-item.jpg',
       manual_name: null,
       manual_author: null,
       manual_year: null,
@@ -145,6 +151,11 @@ describe('mapFeedDetailItemRow', () => {
         title: 'Detail Item',
         primaryCreator: 'Detail Creator',
         year: 2014,
+        coverUrl: 'https://img.example/detail.jpg',
+        coverImageUrl: 'https://img.example/detail-large.jpg',
+        coverImageSource: 'local',
+        coverMediaPath: 'books/detail-item.jpg',
+        coverMediaUrl: resolveMediaUrl('books/detail-item.jpg'),
       }),
     });
   });

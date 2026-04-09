@@ -3,6 +3,7 @@ jest.mock('../database/pg', () => ({
 }));
 
 const { query } = require('../database/pg');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 const collectablesRoute = require('../routes/collectables');
 
 const {
@@ -316,6 +317,17 @@ describe('collectables route helpers', () => {
       expect.objectContaining({ igdbPlatformId: 169, name: 'Xbox Series X|S', abbreviation: 'XSX' }),
     ]);
     expect(payload.platforms).toEqual(['Xbox Series X|S', 'XSX', 'Xbox Series X']);
+  });
+
+  it('builds response payload with resolved coverMediaUrl when coverMediaPath exists', () => {
+    const payload = buildCollectableResponsePayload({
+      id: 13,
+      title: 'Atmosphere: A Love Story',
+      coverMediaPath: 'books/Atmosphere_A_Love_Story/abc123.jpg',
+    });
+
+    expect(payload.coverMediaPath).toBe('books/Atmosphere_A_Love_Story/abc123.jpg');
+    expect(payload.coverMediaUrl).toBe(resolveMediaUrl('books/Atmosphere_A_Love_Story/abc123.jpg'));
   });
 
   it('surfaces maxPlayers directly from source multiplayer metadata', () => {

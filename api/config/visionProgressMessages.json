@@ -1,5 +1,15 @@
 {
     "progressMessages": {
+        "scouting": {
+            "step": "scouting",
+            "progress": 5,
+            "message": "Analyzing shelf layout..."
+        },
+        "slicing": {
+            "step": "slicing",
+            "progress": 12,
+            "message": "Splitting image into regions for detailed scan..."
+        },
         "extracting": {
             "step": "extracting",
             "progress": 10,

@@ -225,6 +225,10 @@ function getPayloadField(payload, fields, fallback = null) {
   return fallback;
 }
 
+function resolveCoverMediaUrl(coverMediaPath, coverMediaUrl = null) {
+  return coverMediaUrl || resolveMediaUrl(coverMediaPath);
+}
+
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -472,7 +476,10 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
       const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
       const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
-      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const coverMediaUrl = resolveCoverMediaUrl(
+        coverMediaPath,
+        getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']),
+      );
       const creator = payload.primaryCreator || payload.creator || payload.author || null;
       const year = payload.year ?? null;
       const isManual = payload.manualId || payload.manual_id || (!collectableId && (payload.name || payload.title));
@@ -524,7 +531,10 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       const creator = payload.author || payload.primaryCreator || payload.creator || null;
       const year = payload.year ?? null;
       const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
-      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const coverMediaUrl = resolveCoverMediaUrl(
+        coverMediaPath,
+        getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']),
+      );
       items.push({
         id: payload.itemId || payload.id || null,
         itemId: payload.itemId || payload.id || null,
@@ -559,7 +569,10 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
       const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
       const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
-      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const coverMediaUrl = resolveCoverMediaUrl(
+        coverMediaPath,
+        getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']),
+      );
       const item = {
         id: payload.itemId || payload.id || null,
         collectableId,
@@ -597,7 +610,10 @@ function buildFeedItemsFromPayloads(payloads, eventType, limit) {
       const coverImageUrl = getPayloadField(payload, ['coverImageUrl', 'cover_image_url']);
       const coverImageSource = getPayloadField(payload, ['coverImageSource', 'cover_image_source']);
       const coverMediaPath = getPayloadField(payload, ['coverMediaPath', 'cover_media_path']);
-      const coverMediaUrl = getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']);
+      const coverMediaUrl = resolveCoverMediaUrl(
+        coverMediaPath,
+        getPayloadField(payload, ['coverMediaUrl', 'cover_media_url']),
+      );
       const reviewItem = {
         id: payload.itemId || payload.id || null,
         collectableId,
@@ -642,6 +658,7 @@ function mapFeedDetailItemRow(row, payload = null) {
   const resolvedTitle = row.collectable_title || row.manual_name || 'Unknown item';
   const resolvedCreator = row.collectable_primary_creator || row.primary_creator || row.manual_author || null;
   const resolvedYear = row.collectable_year ?? row.year ?? row.manual_year ?? null;
+  const collectableCoverMediaPath = row.collectable_cover_media_path || row.cover_media_path || null;
 
   return {
     id: row.id,
@@ -660,6 +677,10 @@ function mapFeedDetailItemRow(row, payload = null) {
       title: resolvedTitle,
       primaryCreator: row.collectable_primary_creator || row.primary_creator || null,
       coverUrl: row.collectable_cover_url || row.cover_url || null,
+      coverImageUrl: row.collectable_cover_image_url || row.cover_image_url || null,
+      coverImageSource: row.collectable_cover_image_source || row.cover_image_source || null,
+      coverMediaPath: collectableCoverMediaPath,
+      coverMediaUrl: resolveMediaUrl(collectableCoverMediaPath),
       kind: row.collectable_kind || row.kind || null,
       year: row.collectable_year ?? row.year ?? null,
     } : null,
@@ -1511,8 +1532,11 @@ async function getFeedEntryDetails(req, res) {
                     c.title as collectable_title,
                     c.primary_creator as collectable_primary_creator,
                     c.cover_url as collectable_cover_url,
+                    c.cover_image_url as collectable_cover_image_url,
+                    c.cover_image_source as collectable_cover_image_source,
                     c.kind as collectable_kind,
                     c.year as collectable_year,
+                    m.local_path as collectable_cover_media_path,
                     um.name as manual_name,
                     um.author as manual_author,
                     um.description as manual_description,
@@ -1531,6 +1555,7 @@ async function getFeedEntryDetails(req, res) {
              FROM user_collections uc
              LEFT JOIN collectables c ON c.id = uc.collectable_id
              LEFT JOIN user_manuals um ON um.id = uc.manual_id
+             LEFT JOIN media m ON m.id = c.cover_media_id
              WHERE uc.id = ANY($1)
              ORDER BY array_position($1, uc.id)`,
             [itemIds]

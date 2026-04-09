@@ -33,11 +33,28 @@ const {
     toNumericBox2d,
     normalizePixelPadding,
     expandVisionBox2dByPixels,
+    normalizeVisionQuad2d,
+    deriveVisionBox2dFromQuad2d,
+    toNumericQuad2d,
+    remapNormalizedQuadFromSlice,
 } = require('../utils/visionBox2d');
 const {
     isGamesShelfType,
     resolveGameShelfDefaultsForItem,
 } = require('./gameShelfDefaults');
+const {
+    buildScoutPrompt,
+    buildMultiRegionScoutPrompt,
+    parseScoutResponse,
+    parseMultiRegionScoutResponse,
+} = require('./visionScout');
+const {
+    computeSliceRects,
+    extractSliceBuffers,
+    remapBox2dFromSlice,
+    deduplicateSliceDetections,
+} = require('./visionSlicer');
+const { extractRegionCrop } = require('./visionCropper');
 
 const { getSharedCatalogServices } = require('./catalog/sharedCatalogServices');
 const { getMetadataScorer } = require('./catalog/MetadataScorer');
@@ -116,6 +133,12 @@ const VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE = parsePositiveIntegerEnv(
     process.env.VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE,
     8,
 );
+const VISION_SCOUT_ENABLED = parseBooleanEnv(process.env.VISION_SCOUT_ENABLED, true);
+const VISION_SLICE_ENABLED = parseBooleanEnv(process.env.VISION_SLICE_ENABLED, true);
+const VISION_SLICE_THRESHOLD = parsePositiveIntegerEnv(process.env.VISION_SLICE_THRESHOLD, 10);
+const VISION_SLICE_COUNT = parsePositiveIntegerEnv(process.env.VISION_SLICE_COUNT, 4);
+const VISION_SLICE_OVERLAP_RATIO = parseFloat(process.env.VISION_SLICE_OVERLAP_RATIO || '0.12');
+const VISION_DEDUPE_IOU_THRESHOLD = parseFloat(process.env.VISION_DEDUPE_IOU_THRESHOLD || '0.4');
 const DEFAULT_STRICT_NAME_MATCH_SETTINGS = Object.freeze({
     enabled: true,
     candidateLimit: 3,
@@ -280,6 +303,17 @@ function pickPreferredBox2d(item) {
     const parsedRaw = toNumericBox2d(item?.box_2d);
     const parsedNormalized = toNumericBox2d(item?.box2d);
     return parsedNormalized || parsedRaw || null;
+}
+
+function normalizeQuad2d(value, options = {}) {
+    const mode = options?.mode ?? BOX_COORDINATE_MODES.PROVIDER_AUTO;
+    return normalizeVisionQuad2d(value, { mode });
+}
+
+function pickPreferredQuad2d(item) {
+    return toNumericQuad2d(item?.quad2d) ? item.quad2d
+        : toNumericQuad2d(item?.quad_2d) ? item.quad_2d
+        : null;
 }
 
 function normalizeSourceLinks(value) {
@@ -577,10 +611,12 @@ function mapEnrichedItemsToUnresolved(enrichedItems, unresolvedItems, unresolved
 
         const inheritedBox2d = normalizeBox2d(sourceItem?.box2d ?? sourceItem?.box_2d);
         const normalizedEnrichedBox2d = normalizeBox2d(enrichedItem?.box2d ?? enrichedItem?.box_2d);
+        const inheritedQuad2d = normalizeQuad2d(sourceItem?.quad2d ?? sourceItem?.quad_2d);
         const merged = {
             ...enrichedItem,
             extractionIndex: enrichedIndex ?? sourceIndex,
             box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
+            quad2d: inheritedQuad2d || null,
         };
         const rawFp = rawOcrFingerprints.get(sourceTitle);
         mapped.push(rawFp ? { ...merged, rawOcrFingerprint: rawFp } : merged);
@@ -664,6 +700,7 @@ function fanOutResolvedItems(resolvedItems, groupMap) {
                 ...resolved,
                 extractionIndex: normalizeExtractionIndex(original.extractionIndex),
                 box2d: normalizeBox2d(pickPreferredBox2d(original)),
+                quad2d: normalizeQuad2d(pickPreferredQuad2d(original)),
             });
         }
     }
@@ -939,9 +976,8 @@ class VisionPipelineService {
             catalogContext,
         };
 
-        // Step 1: Extract items from image
+        // Step 1: Extract items from image (scout → crop → queue → reassemble)
         await checkAborted();
-        updateProgress('extracting');
         logger.info('[VisionPipeline] Step 1: Extracting items from image via vision OCR...');
         let rawItems = [];
         let conversationHistory = null;
@@ -957,26 +993,102 @@ class VisionPipelineService {
             rawItems = providedRawItems;
             // MLKit fallback: no Gemini extraction, so no conversation history
         } else if (this.ocrEnabled) {
-            let extractionInFlight = true;
-            if (jobId) {
-                extractionHeartbeatTimeouts.push(setTimeout(() => {
-                    if (!extractionInFlight) return;
-                    updateProgress('extractingInFlight');
-                }, 3000));
-                extractionHeartbeatTimeouts.push(setTimeout(() => {
-                    if (!extractionInFlight) return;
-                    updateProgress('extractingDeepParse');
-                }, 9000));
-            }
+            const isOther = isOtherShelfType(shelf.type);
 
-            try {
-                const extractResult = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
-                rawItems = extractResult.items;
-                conversationHistory = extractResult.conversationHistory;
-                if (extractResult.warning) warnings.push(extractResult.warning);
-            } finally {
-                extractionInFlight = false;
-                clearExtractionHeartbeatTimeouts();
+            if (VISION_SCOUT_ENABLED && !isOther) {
+                // === SCOUT → CROP → QUEUE → REASSEMBLE ===
+                updateProgress('scouting');
+                try {
+                    const scoutResult = await this.runScoutPhase(imageBase64, shelf.type, scanPhotoDimensions);
+
+                    const needsMultiRegionHandling = scoutResult.regions.length > 1;
+                    if (needsMultiRegionHandling || scoutResult.shouldSlice) {
+                        // Multi-region or dense shelf: iterate all regions (slicing per-region as needed)
+                        await checkAborted();
+                        updateProgress('slicing');
+                        const sliceResult = await this.runSliceDetectionPhase(
+                            imageBase64, shelf, scoutResult, scanPhotoDimensions, { updateProgress, checkAborted },
+                        );
+                        rawItems = sliceResult.items;
+                        conversationHistory = null; // no single conversation when multi-slice
+                        if (sliceResult.warnings?.length) warnings.push(...sliceResult.warnings);
+                    } else {
+                        // Sparse shelf or slicing disabled: single-region detection
+                        await checkAborted();
+                        updateProgress('extracting');
+                        let extractionInFlight = true;
+                        if (jobId) {
+                            extractionHeartbeatTimeouts.push(setTimeout(() => {
+                                if (!extractionInFlight) return;
+                                updateProgress('extractingInFlight');
+                            }, 3000));
+                            extractionHeartbeatTimeouts.push(setTimeout(() => {
+                                if (!extractionInFlight) return;
+                                updateProgress('extractingDeepParse');
+                            }, 9000));
+                        }
+                        try {
+                            const detectionResult = await this.runSingleRegionDetection(
+                                imageBase64, shelf, scoutResult, scanPhotoDimensions,
+                            );
+                            rawItems = detectionResult.items;
+                            conversationHistory = detectionResult.conversationHistory;
+                            if (detectionResult.warning) warnings.push(detectionResult.warning);
+                        } finally {
+                            extractionInFlight = false;
+                            clearExtractionHeartbeatTimeouts();
+                        }
+                    }
+                } catch (scoutErr) {
+                    // Re-throw abort errors — don't waste a Gemini call on cancelled work
+                    if (scoutErr?.code === 'WORKFLOW_ABORTED') throw scoutErr;
+                    // Scout failed — fall back to legacy extraction
+                    logger.warn('[VisionPipeline] Scout phase failed, falling back to legacy extraction:', scoutErr?.message || scoutErr);
+                    updateProgress('extracting');
+                    let extractionInFlight = true;
+                    if (jobId) {
+                        extractionHeartbeatTimeouts.push(setTimeout(() => {
+                            if (!extractionInFlight) return;
+                            updateProgress('extractingInFlight');
+                        }, 3000));
+                        extractionHeartbeatTimeouts.push(setTimeout(() => {
+                            if (!extractionInFlight) return;
+                            updateProgress('extractingDeepParse');
+                        }, 9000));
+                    }
+                    try {
+                        const extractResult = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
+                        rawItems = extractResult.items;
+                        conversationHistory = extractResult.conversationHistory;
+                        if (extractResult.warning) warnings.push(extractResult.warning);
+                    } finally {
+                        extractionInFlight = false;
+                        clearExtractionHeartbeatTimeouts();
+                    }
+                }
+            } else {
+                // === LEGACY PATH: "other" shelves + scout-disabled fallback ===
+                updateProgress('extracting');
+                let extractionInFlight = true;
+                if (jobId) {
+                    extractionHeartbeatTimeouts.push(setTimeout(() => {
+                        if (!extractionInFlight) return;
+                        updateProgress('extractingInFlight');
+                    }, 3000));
+                    extractionHeartbeatTimeouts.push(setTimeout(() => {
+                        if (!extractionInFlight) return;
+                        updateProgress('extractingDeepParse');
+                    }, 9000));
+                }
+                try {
+                    const extractResult = await this.extractItems(imageBase64, shelf.type, shelf.description, shelf.name);
+                    rawItems = extractResult.items;
+                    conversationHistory = extractResult.conversationHistory;
+                    if (extractResult.warning) warnings.push(extractResult.warning);
+                } finally {
+                    extractionInFlight = false;
+                    clearExtractionHeartbeatTimeouts();
+                }
             }
         } else {
             throw new Error('Vision OCR disabled and no rawItems provided');
@@ -997,6 +1109,7 @@ class VisionPipelineService {
         ).map((item, index) => ({
             ...item,
             extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
+            quad2d: normalizeQuad2d(pickPreferredQuad2d(item), { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO }),
             box2d: normalizeBox2d(pickPreferredBox2d(item), {
                 ...(scanPhotoDimensions || {}),
                 mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
@@ -1018,13 +1131,15 @@ class VisionPipelineService {
             await checkAborted();
             updateProgress('refiningDenseBoxes', { count: normalizedItems.length });
             try {
-                const refinedBoxesByIndex = await this.geminiService.refineDenseItemBoxes(
+                const refinementResult = await this.geminiService.refineDenseItemBoxes(
                     imageBase64,
                     shelf.type,
                     normalizedItems,
                     conversationHistory,
                     { batchSize: VISION_DENSE_BOX_REFINEMENT_BATCH_SIZE },
                 );
+                const refinedBoxesByIndex = refinementResult?.boxes || (refinementResult instanceof Map ? refinementResult : new Map());
+                const refinedQuadsByIndex = refinementResult?.quads || new Map();
                 if (refinedBoxesByIndex instanceof Map && refinedBoxesByIndex.size > 0) {
                     let appliedCount = 0;
                     let fallbackCount = 0;
@@ -1043,9 +1158,14 @@ class VisionPipelineService {
                             return item;
                         }
                         appliedCount += 1;
+                        const refinedQuad2d = normalizeQuad2d(
+                            refinedQuadsByIndex.get(extractionIndex),
+                            { mode: BOX_COORDINATE_MODES.NORMALIZED },
+                        );
                         return {
                             ...item,
                             box2d: refinedBox2d,
+                            quad2d: refinedQuad2d || item.quad2d || null,
                         };
                     });
                     logger.info('[VisionPipeline] Dense box refinement merge complete', {
@@ -1128,6 +1248,7 @@ class VisionPipelineService {
             const secondPassItems = (secondPassResult.items || []).map((item, index) => ({
                 ...normalizeOtherManualItem(item, shelf.type),
                 extractionIndex: normalizeExtractionIndex(item?.extractionIndex) ?? index,
+                quad2d: normalizeQuad2d(pickPreferredQuad2d(item), { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO }),
                 box2d: normalizeBox2d(pickPreferredBox2d(item), {
                     ...(scanPhotoDimensions || {}),
                     mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
@@ -1162,6 +1283,7 @@ class VisionPipelineService {
                         : item.confidence,
                     // Keep first-pass regions stable for crop linkage; second pass is metadata-focused.
                     box2d: item.box2d ?? replacement.box2d ?? null,
+                    quad2d: item.quad2d ?? replacement.quad2d ?? null,
                 };
             });
 
@@ -1213,6 +1335,7 @@ class VisionPipelineService {
                 .map((item) => ({
                     ...normalizeOtherManualItem(item, shelf.type),
                     extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
+                    quad2d: normalizeQuad2d(pickPreferredQuad2d(item), { mode: BOX_COORDINATE_MODES.PROVIDER_AUTO }),
                     box2d: normalizeBox2d(pickPreferredBox2d(item), {
                         ...(scanPhotoDimensions || {}),
                         mode: BOX_COORDINATE_MODES.PROVIDER_AUTO,
@@ -1971,11 +2094,19 @@ class VisionPipelineService {
                 if (!box2d) {
                     rejectedBoxes += 1;
                 }
+                const preferredQuad2d = pickPreferredQuad2d(item);
+                const hasCanonicalQuad2d = !!toNumericQuad2d(item?.quad2d);
+                const quad2d = normalizeQuad2d(preferredQuad2d, {
+                    mode: hasCanonicalQuad2d
+                        ? BOX_COORDINATE_MODES.NORMALIZED
+                        : BOX_COORDINATE_MODES.PROVIDER_AUTO,
+                });
                 return {
                     extractionIndex: normalizeExtractionIndex(item?.extractionIndex),
                     title: item?.title || item?.name || null,
                     primaryCreator: item?.primaryCreator || item?.author || item?.creator || null,
                     box2d,
+                    quad2d: quad2d || null,
                     confidence: Number.isFinite(Number(item?.confidence)) ? Number(item.confidence) : null,
                 };
             })
@@ -2133,6 +2264,376 @@ class VisionPipelineService {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Scout → Crop → Queue → Reassemble helpers
+    // -----------------------------------------------------------------
+
+    async runScoutPhase(imageBase64, shelfType, scanPhotoDimensions) {
+        logger.info('[VisionPipeline] Running scout phase', { shelfType });
+        const scoutPrompt = buildMultiRegionScoutPrompt(shelfType);
+        const responseText = await this.geminiService.sendScoutPrompt(imageBase64, scoutPrompt);
+        const parsed = parseMultiRegionScoutResponse(responseText);
+
+        const shouldSlice = (
+            parsed.fullImageHasMoreThanTen === true
+            || parsed.fullImageEstimatedItemCount > VISION_SLICE_THRESHOLD
+            || parsed.regions.some((r) => r.hasMoreThanTen === true || r.estimatedItemCount > VISION_SLICE_THRESHOLD)
+        );
+
+        logger.info('[VisionPipeline] Scout phase complete', {
+            shelfType,
+            regionCount: parsed.regions.length,
+            estimatedItemCount: parsed.estimatedItemCount,
+            fullImageEstimatedItemCount: parsed.fullImageEstimatedItemCount,
+            shouldSlice,
+        });
+
+        return {
+            ...parsed,
+            shouldSlice,
+        };
+    }
+
+    async runSliceDetectionPhase(imageBase64, shelf, scoutResult, scanPhotoDimensions, { updateProgress, checkAborted } = {}) {
+        const allItems = [];
+        const sliceWarnings = [];
+        let attemptCount = 0;
+        let failureCount = 0;
+        const { data: imageData, mimeType: imageMimeType } = this._parseInlineImage(imageBase64);
+        const imageBuffer = Buffer.from(imageData, 'base64');
+
+        // Determine slicing strategy per region
+        const regions = scoutResult.regions.length > 0
+            ? scoutResult.regions
+            : [{ regionBox2d: [0, 0, 1000, 1000], estimatedItemCount: scoutResult.fullImageEstimatedItemCount, hasMoreThanTen: true }];
+
+        for (let regionIdx = 0; regionIdx < regions.length; regionIdx += 1) {
+            const region = regions[regionIdx];
+
+            // Extract region crop from full image
+            let regionBuffer = imageBuffer;
+            let regionWidth = scanPhotoDimensions?.width || null;
+            let regionHeight = scanPhotoDimensions?.height || null;
+            let regionSliceRect = null;
+
+            if (region.regionBox2d && !(region.regionBox2d[0] === 0 && region.regionBox2d[1] === 0 && region.regionBox2d[2] === 1000 && region.regionBox2d[3] === 1000)) {
+                try {
+                    const cropResult = await extractRegionCrop({
+                        imageBuffer,
+                        box2d: region.regionBox2d,
+                        sourceWidth: scanPhotoDimensions?.width || null,
+                        sourceHeight: scanPhotoDimensions?.height || null,
+                    });
+                    regionBuffer = cropResult.buffer;
+                    regionWidth = cropResult.width;
+                    regionHeight = cropResult.height;
+                    regionSliceRect = {
+                        box2d: region.regionBox2d,
+                        sourceWidth: scanPhotoDimensions?.width || null,
+                        sourceHeight: scanPhotoDimensions?.height || null,
+                    };
+                } catch (cropErr) {
+                    logger.warn('[VisionPipeline] Region crop failed, using full image for this region', {
+                        regionIdx,
+                        error: cropErr?.message || String(cropErr),
+                    });
+                }
+            }
+
+            // Determine if we should slice this region (gated by VISION_SLICE_ENABLED)
+            const shouldSliceRegion = VISION_SLICE_ENABLED && (
+                region.hasMoreThanTen === true
+                || region.estimatedItemCount > VISION_SLICE_THRESHOLD
+            );
+
+            if (shouldSliceRegion) {
+                // Compute slice rects from the region dimensions
+                const metadata = await require('sharp')(regionBuffer).metadata();
+                const sliceWidth = metadata.width;
+                const sliceHeight = metadata.height;
+                const sliceRects = computeSliceRects(sliceWidth, sliceHeight, {
+                    sliceCount: VISION_SLICE_COUNT,
+                    overlapRatio: VISION_SLICE_OVERLAP_RATIO,
+                });
+                const sliceBuffers = await extractSliceBuffers(regionBuffer, sliceRects);
+
+                logger.info('[VisionPipeline] Slice detection starting', {
+                    regionIdx,
+                    sliceCount: sliceBuffers.length,
+                    regionWidth: sliceWidth,
+                    regionHeight: sliceHeight,
+                });
+
+                // Run detection per slice
+                for (const slice of sliceBuffers) {
+                    if (checkAborted) await checkAborted();
+                    if (updateProgress) updateProgress('extracting');
+
+                    const sliceBase64 = slice.buffer.toString('base64');
+                    attemptCount += 1;
+                    try {
+                        const extractResult = await this.extractItems(
+                            sliceBase64,
+                            shelf.type,
+                            shelf.description,
+                            shelf.name,
+                        );
+
+                        // Remap box2d and quad2d coordinates from slice-local to region-local
+                        const sliceRect = sliceRects[slice.sliceId];
+                        const remappedItems = (extractResult.items || []).map((item) => {
+                            const itemBox = item.box_2d || item.box2d;
+                            const itemQuad = item.quad_2d || item.quad2d;
+                            const remappedBox = itemBox
+                                ? remapBox2dFromSlice(itemBox, sliceRect, sliceWidth, sliceHeight)
+                                : null;
+                            const remappedQuad = itemQuad
+                                ? remapNormalizedQuadFromSlice(itemQuad, {
+                                    sliceRect,
+                                    baseWidth: sliceWidth,
+                                    baseHeight: sliceHeight,
+                                })
+                                : null;
+                            const derivedBox = remappedQuad
+                                ? deriveVisionBox2dFromQuad2d(remappedQuad, { mode: BOX_COORDINATE_MODES.NORMALIZED })
+                                : null;
+                            return {
+                                ...item,
+                                box2d: derivedBox || remappedBox,
+                                box_2d: derivedBox || remappedBox,
+                                quad2d: remappedQuad,
+                                quad_2d: remappedQuad,
+                                sliceId: slice.sliceId,
+                            };
+                        });
+
+                        // If the region was cropped, remap from region-local to full-image coords
+                        if (regionSliceRect) {
+                            const [rYMin, rXMin, rYMax, rXMax] = regionSliceRect.box2d;
+                            const rHeight = rYMax - rYMin;
+                            const rWidth = rXMax - rXMin;
+                            for (const item of remappedItems) {
+                                if (!item.box2d && !item.quad2d) continue;
+                                if (item.quad2d) {
+                                    item.quad2d = normalizeVisionQuad2d(
+                                        item.quad2d.map(([y, x]) => [
+                                            rYMin + (y / 1000) * rHeight,
+                                            rXMin + (x / 1000) * rWidth,
+                                        ]),
+                                        { mode: BOX_COORDINATE_MODES.NORMALIZED },
+                                    );
+                                    item.quad_2d = item.quad2d;
+                                }
+                                if (item.box2d) {
+                                    const [yMin, xMin, yMax, xMax] = item.box2d;
+                                    item.box2d = normalizeVisionBox2d([
+                                        rYMin + (yMin / 1000) * rHeight,
+                                        rXMin + (xMin / 1000) * rWidth,
+                                        rYMin + (yMax / 1000) * rHeight,
+                                        rXMin + (xMax / 1000) * rWidth,
+                                    ], { mode: BOX_COORDINATE_MODES.NORMALIZED });
+                                    item.box_2d = item.box2d;
+                                }
+                            }
+                        }
+
+                        allItems.push(...remappedItems);
+                        if (extractResult.warning) sliceWarnings.push(extractResult.warning);
+                    } catch (sliceErr) {
+                        failureCount += 1;
+                        logger.warn('[VisionPipeline] Slice detection failed', {
+                            regionIdx,
+                            sliceId: slice.sliceId,
+                            error: sliceErr?.message || String(sliceErr),
+                        });
+                        sliceWarnings.push(`Slice ${slice.sliceId} in region ${regionIdx} failed: ${sliceErr?.message || 'unknown'}`);
+                    }
+                }
+            } else {
+                // Region is sparse — detect on the full region without slicing
+                if (checkAborted) await checkAborted();
+                if (updateProgress) updateProgress('extracting');
+                const regionBase64 = regionBuffer.toString('base64');
+                attemptCount += 1;
+                try {
+                    const extractResult = await this.extractItems(
+                        regionBase64,
+                        shelf.type,
+                        shelf.description,
+                        shelf.name,
+                    );
+                    let regionItems = extractResult.items || [];
+
+                    // Remap from region-local to full-image if cropped
+                    if (regionSliceRect) {
+                        const [rYMin, rXMin, rYMax, rXMax] = regionSliceRect.box2d;
+                        const rHeight = rYMax - rYMin;
+                        const rWidth = rXMax - rXMin;
+                        regionItems = regionItems.map((item) => {
+                            const itemBox = item.box_2d || item.box2d;
+                            const itemQuad = item.quad_2d || item.quad2d;
+                            if (!itemBox && !itemQuad) return item;
+                            let remappedQuad = null;
+                            if (itemQuad) {
+                                const nQuad = normalizeVisionQuad2d(itemQuad, { mode: BOX_COORDINATE_MODES.NORMALIZED });
+                                if (nQuad) {
+                                    remappedQuad = normalizeVisionQuad2d(
+                                        nQuad.map(([y, x]) => [
+                                            rYMin + (y / 1000) * rHeight,
+                                            rXMin + (x / 1000) * rWidth,
+                                        ]),
+                                        { mode: BOX_COORDINATE_MODES.NORMALIZED },
+                                    );
+                                }
+                            }
+                            let remapped = null;
+                            if (itemBox) {
+                                const [yMin, xMin, yMax, xMax] = normalizeVisionBox2d(itemBox, { mode: BOX_COORDINATE_MODES.NORMALIZED }) || itemBox;
+                                remapped = normalizeVisionBox2d([
+                                    rYMin + (yMin / 1000) * rHeight,
+                                    rXMin + (xMin / 1000) * rWidth,
+                                    rYMin + (yMax / 1000) * rHeight,
+                                    rXMin + (xMax / 1000) * rWidth,
+                                ], { mode: BOX_COORDINATE_MODES.NORMALIZED });
+                            }
+                            return { ...item, box2d: remapped, box_2d: remapped, quad2d: remappedQuad, quad_2d: remappedQuad };
+                        });
+                    }
+
+                    allItems.push(...regionItems);
+                    if (extractResult.warning) sliceWarnings.push(extractResult.warning);
+                } catch (regionErr) {
+                    failureCount += 1;
+                    logger.warn('[VisionPipeline] Region detection failed', {
+                        regionIdx,
+                        error: regionErr?.message || String(regionErr),
+                    });
+                    sliceWarnings.push(`Region ${regionIdx} detection failed: ${regionErr?.message || 'unknown'}`);
+                }
+            }
+        }
+
+        // Deduplicate across all slices and regions
+        const { detections: dedupedItems, dedupedCount } = deduplicateSliceDetections(allItems, {
+            iouThreshold: VISION_DEDUPE_IOU_THRESHOLD,
+        });
+
+        if (dedupedItems.length === 0 && failureCount === attemptCount && attemptCount > 0) {
+            throw new Error(
+                `All ${failureCount} slice/region extractions failed. Falling back to legacy extraction.`,
+            );
+        }
+
+        // Reassign globally unique extractionIndex values — each slice produces
+        // indices starting at 0, so they collide when combined. The downstream
+        // pipeline deduplicates by extractionIndex and would drop items otherwise.
+        for (let i = 0; i < dedupedItems.length; i += 1) {
+            dedupedItems[i].extractionIndex = i;
+        }
+
+        logger.info('[VisionPipeline] Slice detection phase complete', {
+            totalRawItems: allItems.length,
+            dedupedItems: dedupedItems.length,
+            dedupedCount,
+        });
+
+        return {
+            items: dedupedItems,
+            warnings: sliceWarnings,
+        };
+    }
+
+    async runSingleRegionDetection(imageBase64, shelf, scoutResult, scanPhotoDimensions) {
+        // Use the scout's first region to optionally crop the image before detection
+        const bestRegion = scoutResult.regions?.[0];
+        let detectionBase64 = imageBase64;
+        let regionBox2d = null;
+
+        if (bestRegion?.regionBox2d && bestRegion.confidence > 0.3) {
+            const isFullImage = (
+                bestRegion.regionBox2d[0] <= 10
+                && bestRegion.regionBox2d[1] <= 10
+                && bestRegion.regionBox2d[2] >= 990
+                && bestRegion.regionBox2d[3] >= 990
+            );
+            if (!isFullImage) {
+                try {
+                    const { data } = this._parseInlineImage(imageBase64);
+                    const imageBuffer = Buffer.from(data, 'base64');
+                    const cropResult = await extractRegionCrop({
+                        imageBuffer,
+                        box2d: bestRegion.regionBox2d,
+                        sourceWidth: scanPhotoDimensions?.width || null,
+                        sourceHeight: scanPhotoDimensions?.height || null,
+                    });
+                    detectionBase64 = cropResult.buffer.toString('base64');
+                    regionBox2d = bestRegion.regionBox2d;
+                    logger.info('[VisionPipeline] Scout region crop applied for single-region detection', {
+                        regionBox2d,
+                        cropWidth: cropResult.width,
+                        cropHeight: cropResult.height,
+                    });
+                } catch (cropErr) {
+                    logger.warn('[VisionPipeline] Scout region crop failed, using full image:', cropErr?.message || cropErr);
+                }
+            }
+        }
+
+        const extractResult = await this.extractItems(detectionBase64, shelf.type, shelf.description, shelf.name);
+        let items = extractResult.items || [];
+
+        // Remap box2d and quad2d from cropped-region coords to full-image coords
+        if (regionBox2d) {
+            const [rYMin, rXMin, rYMax, rXMax] = regionBox2d;
+            const rHeight = rYMax - rYMin;
+            const rWidth = rXMax - rXMin;
+            items = items.map((item) => {
+                const itemBox = item.box_2d || item.box2d;
+                const itemQuad = item.quad_2d || item.quad2d;
+                if (!itemBox && !itemQuad) return item;
+                let remappedQuad = null;
+                if (itemQuad) {
+                    const nQuad = normalizeVisionQuad2d(itemQuad, { mode: BOX_COORDINATE_MODES.NORMALIZED });
+                    if (nQuad) {
+                        remappedQuad = normalizeVisionQuad2d(
+                            nQuad.map(([y, x]) => [
+                                rYMin + (y / 1000) * rHeight,
+                                rXMin + (x / 1000) * rWidth,
+                            ]),
+                            { mode: BOX_COORDINATE_MODES.NORMALIZED },
+                        );
+                    }
+                }
+                let remapped = null;
+                if (itemBox) {
+                    const normalized = normalizeVisionBox2d(itemBox, { mode: BOX_COORDINATE_MODES.NORMALIZED }) || itemBox;
+                    const [yMin, xMin, yMax, xMax] = normalized;
+                    remapped = normalizeVisionBox2d([
+                        rYMin + (yMin / 1000) * rHeight,
+                        rXMin + (xMin / 1000) * rWidth,
+                        rYMin + (yMax / 1000) * rHeight,
+                        rXMin + (xMax / 1000) * rWidth,
+                    ], { mode: BOX_COORDINATE_MODES.NORMALIZED });
+                }
+                return { ...item, box2d: remapped, box_2d: remapped, quad2d: remappedQuad, quad_2d: remappedQuad };
+            });
+        }
+
+        return {
+            items,
+            conversationHistory: extractResult.conversationHistory,
+            warning: extractResult.warning,
+        };
+    }
+
+    _parseInlineImage(base64Image) {
+        const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/.exec(String(base64Image || ''));
+        if (match) {
+            return { data: match[2], mimeType: match[1] };
+        }
+        return { data: base64Image, mimeType: 'image/jpeg' };
+    }
+
     async extractItems(imageBase64, shelfType, shelfDescription = null, shelfName = null, options = null) {
         const pass = options?.pass === 'second' ? 'second' : 'first';
         logger.info('[VisionPipeline] OCR extraction stage request', {
@@ -2198,6 +2699,7 @@ class VisionPipelineService {
                                 source: 'catalog-match',
                                 extractionIndex: input?.extractionIndex ?? null,
                                 box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
+                                quad2d: normalizeQuad2d(input?.quad2d ?? input?.quad_2d),
                                 _skipRematch: true,
                                 _ocrGroupKey: input?._ocrGroupKey || null,
                             });
@@ -2224,6 +2726,7 @@ class VisionPipelineService {
                                 source: 'catalog-match',
                                 extractionIndex: input?.extractionIndex ?? null,
                                 box2d: normalizeBox2d(input?.box2d ?? input?.box_2d),
+                                quad2d: normalizeQuad2d(input?.quad2d ?? input?.quad_2d),
                                 _skipRematch: true,
                                 _ocrGroupKey: input?._ocrGroupKey || null,
                             });
@@ -3040,6 +3543,7 @@ class VisionPipelineService {
                     ...normalizeOtherManualItem(rawItem, shelfType),
                     extractionIndex: normalizeExtractionIndex(rawItem?.extractionIndex),
                     box2d: normalizeBox2d(rawItem?.box2d ?? rawItem?.box_2d),
+                    quad2d: normalizeQuad2d(rawItem?.quad2d ?? rawItem?.quad_2d),
                 }
                 : rawItem;
             const title = normalizeString(item.title || item.name);

@@ -10,6 +10,7 @@ const { makeCollectableFingerprint, makeLightweightFingerprint } = require("../s
 const { normalizeCollectableKind } = require("../services/collectables/kind");
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const { resolveShelfType, getApiContainerKey } = require('../services/config/shelfTypeResolver');
+const { resolveMediaUrl } = require('../services/mediaUrl');
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
 const logger = require('../logger');
 const {
@@ -856,11 +857,21 @@ function includePlatformPayload(entity) {
 }
 
 function buildCollectableResponsePayload(entity) {
-  return includePlatformPayload(
+  const payload = includePlatformPayload(
     includeCastPayload(
       omitMarketValueSources(includeGameplayPayload(entity)),
     ),
   );
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const coverMediaPath = normalizeTextValue(payload.coverMediaPath || payload.cover_media_path) || null;
+  if (!coverMediaPath) return payload;
+
+  return {
+    ...payload,
+    coverMediaPath,
+    coverMediaUrl: normalizeTextValue(payload.coverMediaUrl || payload.cover_media_url) || resolveMediaUrl(coverMediaPath),
+  };
 }
 
 // Optional admin/dev only: create catalog item when ALLOW_CATALOG_WRITE=true

@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-04-07
+Last updated: 2026-04-09
 
 ---
 
@@ -50,6 +50,10 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-09 | news-recommendation-4k-profile-scalar-fix | Fixed `api/services/discovery/newsRecommendations.js` so the profile CTE sums all matching 4K-format counts instead of using a scalar subquery that can return multiple rows, which unblocks feed-time news recommendation generation when a user library contains multiple 4K label variants. Added focused regression coverage in `api/__tests__/newsRecommendations.test.js`.
+- 2026-04-09 | vision-crop-warmup-priority-fix | Fixed warm crop prioritization for scan regions so the installed `@shelvesai/vision-crops` service now spends capped warmup budget on regions already linked to shelf items before unlinked review/duplicate regions, preventing saved shelf items from missing attached vision crops when scans exceed the warmup limit. Added focused regression coverage in `api/__tests__/visionCropService.test.js`.
+- 2026-04-09 | collectable-s3-cover-url-resolution | Fixed collectable/feed cover hydration for S3-backed media so `api/routes/collectables.js` now emits `coverMediaUrl` alongside `coverMediaPath`, `api/controllers/feedController.js` now synthesizes resolved media URLs for payload-built items and preserves full collectable cover fields in aggregate detail hydration, and `mobile/src/utils/coverUrl.js` now prefers resolved CDN/external URLs over raw media keys when `coverMediaUrl` is absent. Added regression coverage in `api/__tests__/{collectablesRoute.helpers,feedController.mergeCheckinRatingPairs}.test.js` and new pure-JS mobile test `mobile/src/utils/coverUrl.test.js`.
+- 2026-04-08 | vision-scout-pipeline-and-crops-v1 | Installed `@shelvesai/vision-crops@1.0.0` from tarball (replacing dev symlink). Redesigned vision detection pipeline with scout-crop-queue architecture: new `api/services/visionScout.js` sends a lightweight prefilter prompt to gather image layout metadata (regions, item counts) before detection; new `api/services/visionSlicer.js` computes vertical slice rects, extracts slice buffers via Sharp, remaps slice-local coordinates to full-image, and deduplicates cross-slice detections by IoU. `VisionPipelineService.processImage()` now runs scout → crop → per-slice prompt queue → reassemble for non-other shelves when `VISION_SCOUT_ENABLED=true`, falling back to existing single-call `extractItems()` path for `other` shelves and when scout is disabled. Added `GoogleGeminiService.sendScoutPrompt()` for lightweight Gemini prefilter calls. New progress stages `scouting` (5%) and `slicing` (12%) in `visionProgressMessages.json`. Env knobs: `VISION_SCOUT_ENABLED`, `VISION_SLICE_ENABLED`, `VISION_SLICE_THRESHOLD`, `VISION_SLICE_COUNT`, `VISION_SLICE_OVERLAP_RATIO`, `VISION_DEDUPE_IOU_THRESHOLD`. Removed `packages/vision-crops/` dev source directory. `@shelvesai/vision-core@1.0.0` tarball delivered in `packages/` but not installed.
 - 2026-04-07 | vision-crop-package-extraction | Extracted the vision crop domain into top-level local package `packages/vision-crops` published in-repo as `@shelvesai/vision-crops`. The package now owns bbox normalization, Sharp crop extraction, region list/crop retrieval orchestration, crop warmup queue-pressure handling, and review-time crop relinking. `api/controllers/shelvesController.js` now consumes an injected crop service instead of embedding crop orchestration, `api/services/{visionCropper}.js` and `api/utils/{visionBox2d}.js` are thin compatibility re-exports, `api/database/queries/visionItemCrops.js` now trusts generated crop metadata instead of re-running generic image validation, and new regression coverage in `api/__tests__/visionCropService.test.js` plus updated controller/crop tests lock the package boundary.
 - 2026-04-02 | mobile-android-footer-clearance-unification | Reworked footer-visible mobile Android bottom spacing around a shared runtime footer contract. `mobile/src/navigation/BottomTabNavigator.js` now uses the live safe-area bottom inset again, new helper `mobile/src/navigation/useBottomFooterLayout.js` exposes `isInsideBottomTab`, `tabBarHeight`, `bottomSafeInset`, and derived content/floating bottom offset calculators, and footer-visible screens (`SocialFeedScreen`, `ShelvesScreen`, `ShelfCreateScreen`, `ShelfSelectScreen`, `ShelfEditScreen`, `ItemSearchScreen`, `MarketValueSourcesScreen`, `ShelfDetailScreen`, `CollectableDetailScreen`) now replace hardcoded bottom padding / ad hoc footer math with helper-driven bottom clearance.
 - 2026-04-07 | collectables-platform-data-insert-default | Hardened `api/database/queries/collectables.js` so `collectables.upsert()` always binds `platform_data` as `[]` on inserts when callers omit platform metadata, while still preserving the existing boolean-gated no-overwrite behavior for updates. Added regression coverage in `api/__tests__/collectablesUpsertMediaSync.test.js` for omitted-platform insert payloads, which fixes review completion inserts from `needs_review` into `collectables` when `raw_data` lacks `platformData`.
@@ -833,6 +837,9 @@ services/visionPipeline.js
   -> services/processingStatus.js
   -> services/visionPipelineHooks.js
   -> services/gameShelfDefaults.js
+  -> services/visionScout.js
+  -> services/visionSlicer.js
+  -> services/visionCropper.js (extractRegionCrop for scout region crops)
   -> services/collectables/fingerprint.js
   -> services/collectables/kind.js
   -> services/catalog/sharedCatalogServices.js
@@ -847,11 +854,24 @@ services/visionPipeline.js
   -> config/visionSettings.json
   -> utils/visionBox2d.js
   Data flow: extractItems() -> { items, conversationHistory, warning }
+             when VISION_SCOUT_ENABLED=true (non-other shelves): runScoutPhase() -> runSliceDetectionPhase()/runSingleRegionDetection()
+             scout phase sends multi-region prefilter prompt via GoogleGeminiService.sendScoutPrompt()
+             slice phase computes vertical slices, runs extractItems() per slice, remaps coords, deduplicates by IoU
              crowded `other` scans (>10 items by default) run `googleGemini.refineDenseItemBoxes()` before first region persistence
              processImage() threads conversationHistory to enrichUnresolved/enrichUncertain
              processImage() appends extraction warning to `warnings` payload when present
              processImage(options.scanPhotoDimensions) normalizes/repairs bbox before persistence
              persistVisionRegions(...) uses replaceExisting snapshot semantics per scanPhotoId
+
+services/visionScout.js
+  -> utils/visionBox2d.js (normalizeVisionBox2d for scout response box validation)
+  Scout prompt construction and response parsing for image layout prefilter
+  Exports: buildScoutPrompt, buildMultiRegionScoutPrompt, parseScoutResponse, parseMultiRegionScoutResponse
+
+services/visionSlicer.js
+  -> utils/visionBox2d.js (normalizeVisionBox2d, BOX_SCALE for coordinate remapping)
+  Vertical slice computation, buffer extraction via sharp, coordinate remapping, cross-slice IoU deduplication
+  Exports: computeSliceRects, extractSliceBuffers, remapBox2dFromSlice, computeIou, deduplicateSliceDetections
 
 services/gameShelfDefaults.js
   (no internal imports â€” shared games defaults validation/normalization + mismatch resolver)
@@ -871,6 +891,8 @@ services/googleGemini.js
              standard shelves: vision-only call, enrichment downstream
              transport/provider request failures throw `VISION_PROVIDER_UNAVAILABLE`/`VISION_EXTRACTION_FAILED`
              truncated JSON extraction responses are repaired to salvage complete items
+           sendScoutPrompt(base64Image, scoutPrompt, options?) -> string (raw response text)
+             lightweight prefilter call for image layout metadata, no googleSearch, retries once on transient failure
            refineDenseItemBoxes(base64Image, shelfType, items, conversationHistory?, options?) -> Map<extractionIndex, box2d>
              batched crowded-shelf geometry-only refinement, no `googleSearch`, ignores invalid boxes
            enrichWithSchema(items, shelfType, conversationHistory?)
@@ -885,18 +907,16 @@ services/googleCloudVision.js
 ### Local Packages
 
 ```
-packages/vision-crops/index.js
-  -> packages/vision-crops/lib/visionBox2d.js
-  -> packages/vision-crops/lib/visionCropper.js
-  -> packages/vision-crops/lib/service.js
+@shelvesai/vision-crops@1.0.0 (installed from packages/shelvesai-vision-crops-1.0.0.tgz)
+  lib/visionBox2d.js   — bbox normalization, coordinate modes, padding, polygon/quad geometry
+  lib/visionCropper.js — Sharp crop extraction, crop rect computation
+  lib/service.js       — region crop retrieval/listing, warmup queue-pressure logic,
+                          crop attachment/manual-cover promotion hooks, review relinking orchestration
+  Dependency: sharp (peer, resolved from consuming app)
 
-packages/vision-crops/lib/visionCropper.js
-  -> packages/vision-crops/lib/visionBox2d.js
-  -> sharp (resolved from consuming app or package-local install)
-
-packages/vision-crops/lib/service.js
-  -> packages/vision-crops/lib/visionCropper.js
-  Owns region crop retrieval/listing, warmup queue-pressure logic, crop attachment/manual-cover promotion hooks, and review relinking orchestration via injected adapters
+@shelvesai/vision-core@1.0.0 (tarball at packages/shelvesai-vision-core-1.0.0.tgz, NOT installed)
+  Reference-only: geminiDetector.js, verticalSlices.js, visionService.js patterns
+  replicated in ShelvesAI's own visionScout.js/visionSlicer.js/visionPipeline.js
 ```
 
 services/visionCropper.js
