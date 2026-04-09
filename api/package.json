@@ -48,7 +48,7 @@
         "expo-server-sdk": "^4.0.0",
         "express": "^5.1.0",
         "express-rate-limit": "^7.5.0",
-        "file-type": "^16.5.4",
+        "file-type": "^22.0.1",
         "helmet": "^8.0.0",
         "image-size": "^1.1.1",
         "jsonwebtoken": "^9.0.2",
