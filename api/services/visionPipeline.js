@@ -58,6 +58,12 @@ const { extractRegionCrop } = require('./visionCropper');
 
 const { getSharedCatalogServices } = require('./catalog/sharedCatalogServices');
 const { getMetadataScorer } = require('./catalog/MetadataScorer');
+const {
+    compareTokenSets,
+    getSignificantTitleTokens,
+    isMeaningfulVariantToken,
+    isStrongBookAuthorMatch,
+} = require('./catalog/bookMatchUtils');
 const { getApiContainerKey } = require('./config/shelfTypeResolver');
 const logger = require('../logger');
 
@@ -617,6 +623,12 @@ function mapEnrichedItemsToUnresolved(enrichedItems, unresolvedItems, unresolved
             extractionIndex: enrichedIndex ?? sourceIndex,
             box2d: normalizedEnrichedBox2d || inheritedBox2d || null,
             quad2d: inheritedQuad2d || null,
+            _ocrGroupKey: sourceItem?._ocrGroupKey || enrichedItem?._ocrGroupKey || null,
+            _ocrCanonicalGroupKey:
+                sourceItem?._ocrCanonicalGroupKey
+                || enrichedItem?._ocrCanonicalGroupKey
+                || sourceItem?._ocrGroupKey
+                || null,
         };
         const rawFp = rawOcrFingerprints.get(sourceTitle);
         mapped.push(rawFp ? { ...merged, rawOcrFingerprint: rawFp } : merged);
@@ -780,6 +792,140 @@ function countFuzzyTokenIntersection(extractedTokens, candidateTokens) {
     }
 
     return matches;
+}
+
+function compareBookCanonicalPriority(a, b) {
+    const confidenceDelta = toFiniteNumber(b?.confidence, 0) - toFiniteNumber(a?.confidence, 0);
+    if (confidenceDelta !== 0) return confidenceDelta;
+
+    const significantTitleDelta = getSignificantTitleTokens(b?.title || b?.name).length
+        - getSignificantTitleTokens(a?.title || a?.name).length;
+    if (significantTitleDelta !== 0) return significantTitleDelta;
+
+    const authorPresenceDelta = Number(Boolean(normalizeString(b?.author || b?.primaryCreator || b?.creator)))
+        - Number(Boolean(normalizeString(a?.author || a?.primaryCreator || a?.creator)));
+    if (authorPresenceDelta !== 0) return authorPresenceDelta;
+
+    return toFiniteNumber(a?.extractionIndex, Number.MAX_SAFE_INTEGER)
+        - toFiniteNumber(b?.extractionIndex, Number.MAX_SAFE_INTEGER);
+}
+
+function shouldMergeBookOcrVariants(left, right) {
+    const leftAuthor = normalizeString(left?.author || left?.primaryCreator || left?.creator);
+    const rightAuthor = normalizeString(right?.author || right?.primaryCreator || right?.creator);
+    if (!leftAuthor || !rightAuthor || !isStrongBookAuthorMatch(leftAuthor, [rightAuthor])) {
+        return false;
+    }
+
+    const leftTokens = getSignificantTitleTokens(left?.title || left?.name);
+    const rightTokens = getSignificantTitleTokens(right?.title || right?.name);
+    if (!leftTokens.length || !rightTokens.length) return false;
+
+    const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+    const longer = shorter === leftTokens ? rightTokens : leftTokens;
+
+    if (shorter.length === longer.length) {
+        const exactStats = compareTokenSets(shorter, longer, 0.92);
+        return exactStats.coverage === 1 && exactStats.precision === 1;
+    }
+
+    const stats = compareTokenSets(shorter, longer, 0.92);
+    if (stats.coverage !== 1) return false;
+
+    if (shorter.length === 1) {
+        if (longer.length !== 2) return false;
+        return longer[longer.length - 1] === shorter[0];
+    }
+
+    const hasMeaningfulExtraTokens = stats.unmatchedCandidateTokens.some(isMeaningfulVariantToken);
+    return !hasMeaningfulExtraTokens;
+}
+
+function canonicalizeBookOcrItems(items, shelfType) {
+    if (getApiContainerKey(shelfType) !== 'books' || !Array.isArray(items) || items.length <= 1) {
+        return {
+            canonicalItems: items,
+            canonicalGroupMap: new Map(),
+            mergedCount: 0,
+        };
+    }
+
+    const visited = new Set();
+    const groups = [];
+
+    for (let index = 0; index < items.length; index++) {
+        if (visited.has(index)) continue;
+        visited.add(index);
+        const queue = [index];
+        const groupIndexes = [index];
+
+        while (queue.length > 0) {
+            const currentIndex = queue.shift();
+            const currentItem = items[currentIndex];
+
+            for (let candidateIndex = 0; candidateIndex < items.length; candidateIndex++) {
+                if (visited.has(candidateIndex)) continue;
+                const candidateItem = items[candidateIndex];
+                if (!shouldMergeBookOcrVariants(currentItem, candidateItem)) continue;
+                visited.add(candidateIndex);
+                queue.push(candidateIndex);
+                groupIndexes.push(candidateIndex);
+            }
+        }
+
+        groups.push(groupIndexes.map((itemIndex) => items[itemIndex]));
+    }
+
+    const canonicalItems = [];
+    const canonicalGroupMap = new Map();
+    let mergedCount = 0;
+
+    for (const group of groups) {
+        const orderedGroup = [...group].sort(compareBookCanonicalPriority);
+        const representative = orderedGroup[0];
+        const canonicalGroupKey = `${normalizeToken(representative?.title || representative?.name)}|${normalizeToken(
+            representative?.author || representative?.primaryCreator || representative?.creator,
+        )}`;
+        canonicalItems.push({
+            ...representative,
+            _ocrCanonicalGroupKey: canonicalGroupKey,
+            _ocrGroupKey: canonicalGroupKey,
+        });
+        canonicalGroupMap.set(canonicalGroupKey, group);
+        mergedCount += Math.max(group.length - 1, 0);
+    }
+
+    return {
+        canonicalItems,
+        canonicalGroupMap,
+        mergedCount,
+    };
+}
+
+function fanOutCanonicalGroupItems(items, canonicalGroupMap) {
+    if (!canonicalGroupMap || canonicalGroupMap.size === 0) return items;
+    const fanned = [];
+
+    for (const item of items) {
+        const key = normalizeString(item?._ocrCanonicalGroupKey || item?._ocrGroupKey);
+        if (!key || !canonicalGroupMap.has(key)) {
+            fanned.push(item);
+            continue;
+        }
+
+        for (const original of canonicalGroupMap.get(key)) {
+            fanned.push({
+                ...item,
+                extractionIndex: normalizeExtractionIndex(original?.extractionIndex),
+                box2d: normalizeBox2d(pickPreferredBox2d(original)),
+                quad2d: normalizeQuad2d(pickPreferredQuad2d(original)),
+                _ocrCanonicalGroupKey: key,
+                _ocrGroupKey: key,
+            });
+        }
+    }
+
+    return fanned;
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -1200,6 +1346,21 @@ class VisionPipelineService {
                 scanPhotoId,
                 scanPhotoDimensions || null,
             );
+        }
+
+        let canonicalGroupMap = new Map();
+        if (getApiContainerKey(shelf.type) === 'books') {
+            const canonicalization = canonicalizeBookOcrItems(normalizedItems, shelf.type);
+            canonicalGroupMap = canonicalization.canonicalGroupMap;
+            normalizedItems = canonicalization.canonicalItems;
+            if (canonicalization.mergedCount > 0) {
+                logger.info('[VisionPipeline] Canonical OCR grouping collapsed partial book variants', {
+                    shelfId: shelf.id,
+                    originalCount: extractedCount,
+                    canonicalCount: normalizedItems.length,
+                    mergedCount: canonicalization.mergedCount,
+                });
+            }
         }
 
         // Step 1b: Categorize into three tiers using per-type thresholds
@@ -1808,9 +1969,10 @@ class VisionPipelineService {
         let mediumSaveFailures = [];
         if (mediumItemsToSave.length > 0) {
             await checkAborted();
-            updateProgress('saving', { count: mediumItemsToSave.length });
+            const mediumItemsToPersist = fanOutCanonicalGroupItems(mediumItemsToSave, canonicalGroupMap);
+            updateProgress('saving', { count: mediumItemsToPersist.length });
             const mediumSaveResult = await this.saveToShelf(
-                mediumItemsToSave,
+                mediumItemsToPersist,
                 userId,
                 shelf.id,
                 shelf.type,
@@ -1908,7 +2070,10 @@ class VisionPipelineService {
             ...itemsToSave
         ];
         const collectableResolvedItemsResult = dedupeByExtractionIndex(collectableResolvedItemsRaw);
-        const collectableResolvedItems = collectableResolvedItemsResult.deduped;
+        const collectableResolvedItems = fanOutCanonicalGroupItems(
+            collectableResolvedItemsResult.deduped,
+            canonicalGroupMap,
+        );
         logger.info('[VisionPipeline] Step 5: Saving', collectableResolvedItems.length, 'resolved items to shelf...');
         if (collectableResolvedItemsResult.droppedCount > 0) {
             logger.warn('[VisionPipeline] Step 5 dropped duplicate resolved entries by extractionIndex', {
@@ -2702,6 +2867,7 @@ class VisionPipelineService {
                                 quad2d: normalizeQuad2d(input?.quad2d ?? input?.quad_2d),
                                 _skipRematch: true,
                                 _ocrGroupKey: input?._ocrGroupKey || null,
+                                _ocrCanonicalGroupKey: input?._ocrCanonicalGroupKey || input?._ocrGroupKey || null,
                             });
                             continue;
                         }
@@ -2729,6 +2895,7 @@ class VisionPipelineService {
                                 quad2d: normalizeQuad2d(input?.quad2d ?? input?.quad_2d),
                                 _skipRematch: true,
                                 _ocrGroupKey: input?._ocrGroupKey || null,
+                                _ocrCanonicalGroupKey: input?._ocrCanonicalGroupKey || input?._ocrGroupKey || null,
                             });
                             continue;
                         }
@@ -2779,6 +2946,7 @@ class VisionPipelineService {
                         image: match.imageLinks?.thumbnail || match.cover?.url,
                         _skipRematch: true,
                         _ocrGroupKey: item?._ocrGroupKey || null,
+                        _ocrCanonicalGroupKey: item?._ocrCanonicalGroupKey || item?._ocrGroupKey || null,
                     });
                 } else {
                     unresolved.push(item);
@@ -3124,8 +3292,8 @@ class VisionPipelineService {
                 saveTracking.attemptedSaves += 1;
             }
 
-            const ocrGroupKey = normalizeString(item?._ocrGroupKey);
-            const canReuseGroupResult = item?._skipRematch && ocrGroupKey
+            const ocrGroupKey = normalizeString(item?._ocrCanonicalGroupKey || item?._ocrGroupKey);
+            const canReuseGroupResult = ocrGroupKey
                 && saveTracking?.resolvedCatalogGroupReuse instanceof Map;
             if (canReuseGroupResult && saveTracking.resolvedCatalogGroupReuse.has(ocrGroupKey)) {
                 const reused = saveTracking.resolvedCatalogGroupReuse.get(ocrGroupKey);
@@ -3332,7 +3500,7 @@ class VisionPipelineService {
                     });
                     await this.linkRegionToCollectable(item, collectable.id, hookContext);
                     await this.linkRegionToCollectionItem(item, savedShelfItem?.id, hookContext);
-                    if (item?._skipRematch && ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
+                    if (ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
                         saveTracking.resolvedCatalogGroupReuse.set(ocrGroupKey, {
                             collectableId: collectable.id,
                             collectionItemId: savedShelfItem?.id || null,
@@ -3398,7 +3566,7 @@ class VisionPipelineService {
                 });
                 await this.linkRegionToCollectable(item, collectable.id, hookContext);
                 await this.linkRegionToCollectionItem(item, shelfItem?.id, hookContext);
-                if (item?._skipRematch && ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
+                if (ocrGroupKey && saveTracking?.resolvedCatalogGroupReuse instanceof Map) {
                     saveTracking.resolvedCatalogGroupReuse.set(ocrGroupKey, {
                         collectableId: collectable.id,
                         collectionItemId: shelfItem?.id || null,

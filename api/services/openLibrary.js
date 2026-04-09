@@ -13,6 +13,7 @@ const logger = require('../logger');
 const AbortController = (globalThis && globalThis.AbortController) || fetch.AbortController || null;
 const { limitOpenLibrary } = require('./outboundLimiterRegistry');
 const { isHardProviderError } = require('./catalog/providerErrorUtils');
+const { isBookCandidateRelevant } = require('./catalog/bookMatchUtils');
 
 const DEFAULT_BASE_URL = 'https://openlibrary.org';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -216,7 +217,11 @@ function scoreDoc(doc, { title, author }) {
   // CRITICAL: Check for minimum title match before scoring
   // If there's no meaningful title overlap, return a very negative score
   if (title && doc.title) {
-    if (!isTitleMatch(title, doc.title)) {
+    const relevance = isBookCandidateRelevant(
+      { title, author },
+      { title: doc.title, authors: doc.author_name || [] },
+    );
+    if (!relevance.relevant) {
       return -1000; // No match at all
     }
   }
@@ -499,14 +504,15 @@ async function searchAndHydrateBooks({ title, author, limit = 5, offset = 0, thr
 async function lookupWorkBookMetadata({ title, author, throwOnError = false } = {}) {
   if (!title && !author) return null;
   try {
-    const url = buildSearchUrl({ title, author, limit: 1 });
-    logger.info('[openLibrary.lookupWorkBookMetadata] request', { title, author, strategy: 'first', url });
-    const json = await fetchJson(url);
-    const docs = Array.isArray(json?.docs) ? json.docs : [];
-    if (!docs.length) return null;
-
-    const first = docs[0];
-    return await hydrateDoc(first);
+    const url = buildSearchUrl({ title, author, limit: 5 });
+    logger.info('[openLibrary.lookupWorkBookMetadata] request', { title, author, strategy: 'scored_first', url });
+    const hydrated = await searchAndHydrateBooks({
+      title,
+      author,
+      limit: 1,
+      throwOnError,
+    });
+    return hydrated[0] || null;
   } catch (err) {
     logger.warn('OpenLibrary lookup failed', err.message);
     if (shouldThrowOpenLibraryError(err, throwOnError)) {

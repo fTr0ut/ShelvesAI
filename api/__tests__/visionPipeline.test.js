@@ -539,6 +539,139 @@ describe('VisionPipelineService', () => {
         });
     });
 
+    describe('book OCR canonical grouping', () => {
+        beforeEach(() => {
+            collectablesQueries.findByFingerprint.mockResolvedValue(null);
+            collectablesQueries.findByLightweightFingerprint.mockResolvedValue(null);
+            collectablesQueries.findByFuzzyFingerprint.mockResolvedValue(null);
+        });
+
+        it('groups Player under The Right Player and links both original regions to one saved item', async () => {
+            let nextCollectableId = 800;
+            let nextCollectionItemId = 1800;
+            collectablesQueries.upsert.mockImplementation(async (payload) => ({
+                id: nextCollectableId++,
+                title: payload.title,
+                kind: payload.kind || 'book',
+                primaryCreator: payload.primaryCreator || null,
+            }));
+            shelvesQueries.addCollectable.mockImplementation(async () => ({ id: nextCollectionItemId++ }));
+
+            const lookupSpy = jest.spyOn(service, 'lookupCatalog').mockImplementation(async (items) => ({
+                resolved: items.map((item) => ({
+                    ...item,
+                    title: 'The Right Player',
+                    primaryCreator: 'Kandi Steiner',
+                    kind: 'book',
+                    confidence: 1,
+                    source: 'catalog-match',
+                    _skipRematch: true,
+                    _ocrGroupKey: item._ocrGroupKey || null,
+                    _ocrCanonicalGroupKey: item._ocrCanonicalGroupKey || item._ocrGroupKey || null,
+                })),
+                unresolved: [],
+            }));
+
+            const result = await service.processImage(
+                'base64',
+                { id: 10, type: 'book' },
+                7,
+                {
+                    scanPhotoId: 99,
+                    rawItems: [
+                        {
+                            title: 'Player',
+                            author: 'Kandi Steiner',
+                            confidence: 0.86,
+                            extractionIndex: 1,
+                            box2d: [100, 100, 200, 200],
+                        },
+                        {
+                            title: 'The Right Player',
+                            author: 'Kandi Steiner',
+                            confidence: 0.95,
+                            extractionIndex: 2,
+                            box2d: [210, 100, 320, 200],
+                        },
+                    ],
+                },
+            );
+
+            expect(lookupSpy).toHaveBeenCalledTimes(1);
+            expect(lookupSpy.mock.calls[0][0]).toHaveLength(1);
+            expect(lookupSpy.mock.calls[0][0][0]).toEqual(expect.objectContaining({
+                title: 'The Right Player',
+                author: 'Kandi Steiner',
+            }));
+            expect(shelvesQueries.addCollectable).toHaveBeenCalledTimes(1);
+            expect(visionItemRegionsQueries.linkCollectable).toHaveBeenCalledTimes(2);
+            expect(visionItemRegionsQueries.linkCollectionItem).toHaveBeenCalledTimes(1);
+            expect(result.results.added).toBe(1);
+        });
+
+        it('keeps sequel-like same-author titles separate', async () => {
+            let nextCollectableId = 900;
+            let nextCollectionItemId = 1900;
+            collectablesQueries.upsert.mockImplementation(async (payload) => ({
+                id: nextCollectableId++,
+                title: payload.title,
+                kind: payload.kind || 'book',
+                primaryCreator: payload.primaryCreator || null,
+            }));
+            shelvesQueries.addCollectable.mockImplementation(async () => ({ id: nextCollectionItemId++ }));
+
+            const lookupSpy = jest.spyOn(service, 'lookupCatalog').mockImplementation(async (items) => ({
+                resolved: items.map((item) => ({
+                    ...item,
+                    kind: 'book',
+                    confidence: 1,
+                    source: 'catalog-match',
+                    _skipRematch: true,
+                    _ocrGroupKey: item._ocrGroupKey || null,
+                    _ocrCanonicalGroupKey: item._ocrCanonicalGroupKey || item._ocrGroupKey || null,
+                })),
+                unresolved: [],
+            }));
+
+            const result = await service.processImage(
+                'base64',
+                { id: 11, type: 'book' },
+                7,
+                {
+                    scanPhotoId: 101,
+                    rawItems: [
+                        {
+                            title: 'The Right Player',
+                            author: 'Kandi Steiner',
+                            confidence: 0.95,
+                            extractionIndex: 1,
+                            box2d: [100, 100, 200, 200],
+                        },
+                        {
+                            title: 'The Right Player 2',
+                            author: 'Kandi Steiner',
+                            confidence: 0.94,
+                            extractionIndex: 2,
+                            box2d: [210, 100, 320, 200],
+                        },
+                        {
+                            title: 'The Right Player Again',
+                            author: 'Kandi Steiner',
+                            confidence: 0.93,
+                            extractionIndex: 3,
+                            box2d: [330, 100, 450, 200],
+                        },
+                    ],
+                },
+            );
+
+            expect(lookupSpy).toHaveBeenCalledTimes(1);
+            expect(lookupSpy.mock.calls[0][0]).toHaveLength(3);
+            expect(shelvesQueries.addCollectable).toHaveBeenCalledTimes(3);
+            expect(result.results.added).toBe(3);
+        });
+    });
+
     describe('source identity + region link guards', () => {
         it('skips duplicate source keys across save passes in the same scan run', async () => {
             const existingCollectable = { id: 99, title: 'Existing Book', kind: 'book' };

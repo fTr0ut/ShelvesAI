@@ -91,7 +91,10 @@ describe('CatalogRouter._lookupFallback — universal scoring via MetadataScorer
         });
 
         it('falls through to api2 when api1 score is below threshold', async () => {
-            const lowScoreBook = { title: 'Minimal Book' }; // score will be very low
+            const lowScoreBook = {
+                title: 'The Great Gatsby',
+                primaryCreator: 'F. Scott Fitzgerald',
+            }; // score will be very low, but still relevant
             const highScoreBook = {
                 title: 'The Great Gatsby',
                 primaryCreator: 'F. Scott Fitzgerald',
@@ -113,19 +116,36 @@ describe('CatalogRouter._lookupFallback — universal scoring via MetadataScorer
             expect(result._metadataScore).toBeDefined();
         });
 
-        it('returns best candidate when all results are below threshold', async () => {
-            const lowBook1 = { title: 'Book A' };
-            const lowBook2 = { title: 'Book B', primaryCreator: 'Author' }; // slightly better
+        it('returns null when all book candidates are below threshold and irrelevant', async () => {
+            const weakQuery = { title: 'Player', author: 'Kandi Steiner' };
+            const lowBook1 = { title: "Scoring the Player's Baby", primaryCreator: 'Kandi Steiner' };
+            const lowBook2 = { title: 'Played', primaryCreator: 'Other Author' };
 
             setupRouter('books', [lowBook1], [lowBook2]);
 
-            const result = await router.lookup(lowBook1, 'books');
+            const result = await router.lookup(weakQuery, 'books');
 
-            expect(result).not.toBeNull();
-            // Should return the best candidate (api2 has slightly higher score)
-            expect(result._source).toBe('api2');
-            expect(result._metadataScore).toBeDefined();
-            expect(result._metadataMissing).toBeDefined();
+            expect(result).toBeNull();
+        });
+
+        it('rejects a high-metadata but irrelevant book candidate before scoring fallback', async () => {
+            const weakQuery = { title: 'Player', author: 'Kandi Steiner' };
+            const irrelevantCandidate = {
+                title: "Scoring the Player's Baby",
+                primaryCreator: 'Kandi Steiner',
+                publishers: ['Example House'],
+                year: '2025',
+                description: 'A complete metadata payload for the wrong book candidate.',
+                coverImageUrl: 'https://example.com/cover.jpg',
+                identifiers: { isbn13: '9781234567890' },
+                tags: ['romance'],
+            };
+
+            setupRouter('books', [irrelevantCandidate], []);
+
+            const result = await router.lookup(weakQuery, 'books');
+
+            expect(result).toBeNull();
         });
     });
 

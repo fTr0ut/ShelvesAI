@@ -14,6 +14,7 @@ const path = require('path');
 const { getMetadataScorer } = require('./MetadataScorer');
 const { CatalogProvidersUnavailableError } = require('./errors');
 const { classifyProviderError } = require('./providerErrorUtils');
+const { isBookCandidateRelevant } = require('./bookMatchUtils');
 const { getApiContainerKey } = require('../config/shelfTypeResolver');
 const logger = require('../../logger');
 
@@ -324,6 +325,20 @@ class CatalogRouter {
                 const result = await adapter.lookup(item, options);
 
                 if (result) {
+                    if (containerType === 'books') {
+                        const relevance = isBookCandidateRelevant(item, result);
+                        if (!relevance.relevant) {
+                            logger.info(`[CatalogRouter] Rejected ${api.name} candidate due to weak book relevance`, {
+                                title: item?.title || item?.name || null,
+                                author: item?.author || item?.primaryCreator || null,
+                                candidateTitle: result?.title || null,
+                                candidateAuthor: result?.primaryCreator || result?.author || null,
+                                reason: relevance.reason,
+                            });
+                            continue;
+                        }
+                    }
+
                     if (!shouldScore || !Number.isFinite(minScore)) {
                         logger.info(`[CatalogRouter] Hit on ${api.name}`);
                         return this.wrapCollectableResult(result, {

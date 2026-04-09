@@ -2,6 +2,7 @@ const fetch = require('node-fetch');
 const RateLimiter = require('../utils/RateLimiter');
 const logger = require('../logger');
 const { limitHardcover } = require('./outboundLimiterRegistry');
+const { isBookCandidateRelevant } = require('./catalog/bookMatchUtils');
 
 const AbortController =
   (globalThis && globalThis.AbortController) || fetch.AbortController || null;
@@ -466,13 +467,26 @@ class HardcoverClient {
 
     // Minimum score threshold - require at least some title or author match
     // A score of 0 means no meaningful match was found
-    const MIN_ACCEPTABLE_SCORE = 0;
+    const MIN_ACCEPTABLE_SCORE = expectedTitle.split(/\s+/).filter(Boolean).length <= 2 ? 40 : 0;
 
     let best = null;
     let bestScore = Number.NEGATIVE_INFINITY;
 
     for (const book of books) {
       if (!book) continue;
+      const contributors = this.extractContributorNames(book);
+      const relevance = isBookCandidateRelevant(
+        { title: expected.title, author: expected.author },
+        {
+          title: book.title,
+          primaryCreator: contributors[0] || null,
+          creators: contributors,
+        },
+      );
+      if (!relevance.relevant) {
+        continue;
+      }
+
       let score = 0;
 
       const title = normalizeCompare(book.title || '');
@@ -494,7 +508,6 @@ class HardcoverClient {
       }
 
       if (expectedAuthor) {
-        const contributors = this.extractContributorNames(book);
         if (contributors.some((name) => normalizeCompare(name) === expectedAuthor)) {
           score += 40;
         } else if (contributors.some((name) => normalizeCompare(name).includes(expectedAuthor))) {

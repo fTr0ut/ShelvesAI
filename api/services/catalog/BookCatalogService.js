@@ -5,6 +5,7 @@ const {
   scoreBookCollectable,
   resolveBookMetadataMinScore,
 } = require('./metadataScore');
+const { isBookCandidateRelevant } = require('./bookMatchUtils');
 const {
   lookupWorkBookMetadata,
   searchAndHydrateBooks,
@@ -187,6 +188,24 @@ class BookCatalogService {
 
     const evaluateCandidate = (result, provider, stage) => {
       if (!result) return false;
+      const matchCandidate = this.normalizeCollectableForScore(result, provider) || result;
+      const relevance = isBookCandidateRelevant(payload, matchCandidate);
+      if (!relevance.relevant) {
+        logger.info('[BookCatalogService.safeLookup] Rejected weak catalog candidate', {
+          provider,
+          stage,
+          title: payload.title || null,
+          author: payload.author || null,
+          candidateTitle: matchCandidate?.title || null,
+          candidateAuthor:
+            matchCandidate?.primaryCreator
+            || matchCandidate?.author
+            || (Array.isArray(matchCandidate?.authors) ? matchCandidate.authors[0] : null)
+            || null,
+          reason: relevance.reason,
+        });
+        return false;
+      }
       if (!Number.isFinite(minMetadataScore)) return true;
       const metadata = this.scoreBookMetadata(result, provider);
       if (!bestCandidate || metadata.score > bestCandidate.metadata.score) {
