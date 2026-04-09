@@ -92,6 +92,9 @@ export const toggleAdmin = (userId) =>
 export const togglePremium = (userId) =>
   client.post(`/admin/users/${userId}/toggle-premium`);
 
+export const toggleUnlimitedVisionTokens = (userId) =>
+  client.post(`/admin/users/${userId}/toggle-unlimited-vision`);
+
 // Vision quota
 export const getUserVisionQuota = (userId) =>
   client.get(`/admin/users/${userId}/vision-quota`);
@@ -99,8 +102,8 @@ export const getUserVisionQuota = (userId) =>
 export const resetUserVisionQuota = (userId) =>
   client.post(`/admin/users/${userId}/vision-quota/reset`);
 
-export const setUserVisionQuota = (userId, scansUsed) =>
-  client.put(`/admin/users/${userId}/vision-quota`, { scansUsed });
+export const setUserVisionQuota = (userId, quota) =>
+  client.put(`/admin/users/${userId}/vision-quota`, quota);
 
 // Activity feed
 export const getRecentFeed = (params = {}) =>

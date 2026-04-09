@@ -85,6 +85,7 @@ router.post('/users/:userId/suspend', adminController.suspendUser);
 router.post('/users/:userId/unsuspend', adminController.unsuspendUser);
 router.post('/users/:userId/toggle-admin', adminController.toggleAdmin);
 router.post('/users/:userId/toggle-premium', adminController.togglePremium);
+router.post('/users/:userId/toggle-unlimited-vision', adminController.toggleUnlimitedVisionTokens);
 router.post('/users/:userId/vision-quota/reset', adminController.resetUserVisionQuota);
 router.put('/users/:userId/vision-quota', adminController.setUserVisionQuota);
 

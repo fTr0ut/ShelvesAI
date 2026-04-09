@@ -43,6 +43,7 @@ CREATE TABLE users (
     is_admin BOOLEAN DEFAULT FALSE NOT NULL,
     is_suspended BOOLEAN DEFAULT FALSE NOT NULL,
     premium_locked_by_admin BOOLEAN DEFAULT FALSE NOT NULL,
+    unlimited_vision_tokens BOOLEAN DEFAULT FALSE NOT NULL,
     suspended_at TIMESTAMPTZ,
     suspension_reason TEXT,
 
@@ -807,10 +808,29 @@ CREATE INDEX idx_password_reset_tokens_expires ON password_reset_tokens(expires_
 CREATE TABLE user_vision_quota (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     scans_used INTEGER DEFAULT 0 NOT NULL,
+    tokens_used BIGINT DEFAULT 0 NOT NULL,
+    output_tokens_used BIGINT DEFAULT 0 NOT NULL,
     period_start TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+-- ============================================
+-- VISION TOKEN LOG
+-- ============================================
+CREATE TABLE vision_token_log (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
+    call_label TEXT NOT NULL,
+    prompt_tokens INTEGER DEFAULT 0 NOT NULL,
+    candidates_tokens INTEGER DEFAULT 0 NOT NULL,
+    total_tokens INTEGER DEFAULT 0 NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_vision_token_log_user_id ON vision_token_log(user_id);
+CREATE INDEX idx_vision_token_log_job_id ON vision_token_log(job_id);
 
 -- ============================================
 -- ADMIN ACTION LOGS

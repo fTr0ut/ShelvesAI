@@ -613,24 +613,38 @@ async function resetUserVisionQuota(req, res) {
 
 /**
  * PUT /api/admin/users/:userId/vision-quota
- * Set vision quota scans_used for a user
+ * Set vision quota values for a user (scansUsed, tokensUsed, outputTokensUsed)
  */
 async function setUserVisionQuota(req, res) {
   try {
     const { userId } = req.params;
-    const { scansUsed } = req.body || {};
+    const { scansUsed, tokensUsed, outputTokensUsed } = req.body || {};
 
     if (scansUsed === undefined || !Number.isFinite(scansUsed) || scansUsed < 0) {
       return res.status(400).json({ error: 'scansUsed must be a non-negative number' });
     }
 
-    await visionQuotaQueries.setQuota(userId, scansUsed);
+    const tokenOverrides = {};
+    if (tokensUsed !== undefined) {
+      if (!Number.isFinite(tokensUsed) || tokensUsed < 0) {
+        return res.status(400).json({ error: 'tokensUsed must be a non-negative number' });
+      }
+      tokenOverrides.tokensUsed = tokensUsed;
+    }
+    if (outputTokensUsed !== undefined) {
+      if (!Number.isFinite(outputTokensUsed) || outputTokensUsed < 0) {
+        return res.status(400).json({ error: 'outputTokensUsed must be a non-negative number' });
+      }
+      tokenOverrides.outputTokensUsed = outputTokensUsed;
+    }
+
+    await visionQuotaQueries.setQuota(userId, scansUsed, tokenOverrides);
 
     await adminQueries.logAction({
       adminId: req.user.id,
       action: 'VISION_QUOTA_SET',
       targetUserId: userId,
-      metadata: { scansUsed },
+      metadata: { scansUsed, ...tokenOverrides },
       ...getAdminContext(req),
     });
 
@@ -638,6 +652,38 @@ async function setUserVisionQuota(req, res) {
     res.json({ quota, message: 'Vision quota updated successfully' });
   } catch (err) {
     logger.error('Admin setUserVisionQuota error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+/**
+ * POST /api/admin/users/:userId/toggle-unlimited-vision
+ * Toggle unlimited_vision_tokens flag for a user
+ */
+async function toggleUnlimitedVisionTokens(req, res) {
+  try {
+    const { userId } = req.params;
+
+    const result = await adminQueries.toggleUnlimitedVisionTokens(
+      userId,
+      req.user.id,
+      getAdminContext(req)
+    );
+
+    if (result.error) {
+      const status = result.error === 'User not found' ? 404 : 400;
+      return res.status(status).json({ error: result.error });
+    }
+
+    invalidateAuthCache(userId);
+
+    const message = result.user.unlimitedVisionTokens
+      ? 'User granted unlimited vision tokens'
+      : 'Unlimited vision tokens removed';
+
+    res.json({ user: result.user, message });
+  } catch (err) {
+    logger.error('Admin toggleUnlimitedVisionTokens error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 }
@@ -849,6 +895,7 @@ module.exports = {
   unsuspendUser,
   toggleAdmin,
   togglePremium,
+  toggleUnlimitedVisionTokens,
   getUserVisionQuota,
   resetUserVisionQuota,
   setUserVisionQuota,

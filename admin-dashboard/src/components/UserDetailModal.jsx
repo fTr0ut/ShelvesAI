@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium,
+  getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium, toggleUnlimitedVisionTokens,
   getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota,
 } from '../api/client';
 import UserAvatar from './UserAvatar';
@@ -15,7 +15,9 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
   const [showSuspendForm, setShowSuspendForm] = useState(false);
   const [error, setError] = useState(null);
   const [quota, setQuota] = useState(null);
-  const [quotaInput, setQuotaInput] = useState('');
+  const [quotaScansInput, setQuotaScansInput] = useState('');
+  const [quotaTokensInput, setQuotaTokensInput] = useState('');
+  const [quotaOutputTokensInput, setQuotaOutputTokensInput] = useState('');
   const [showQuotaForm, setShowQuotaForm] = useState(false);
 
   useEffect(() => {
@@ -25,16 +27,20 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
     }
   }, [userId]);
 
-  async function loadUser() {
+  async function loadUser({ showLoading = true } = {}) {
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       setError(null);
       const response = await getUser(userId);
       setUser(response.data.user);
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to load user'));
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 
@@ -42,9 +48,17 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
     try {
       const response = await getUserVisionQuota(userId);
       setQuota(response.data.quota);
-    } catch (_) {
+    } catch (_err) {
+      setQuota(null);
       // Non-critical — quota may not exist yet
     }
+  }
+
+  async function refreshUserAndQuota() {
+    await Promise.all([
+      loadUser({ showLoading: false }),
+      loadQuota(),
+    ]);
   }
 
   async function handleSuspend() {
@@ -52,7 +66,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       setError(null);
       setActionLoading(true);
       await suspendUser(userId, suspendReason);
-      await loadUser();
+      await refreshUserAndQuota();
       setShowSuspendForm(false);
       setSuspendReason('');
       onUpdate?.();
@@ -69,7 +83,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       setError(null);
       setActionLoading(true);
       await unsuspendUser(userId);
-      await loadUser();
+      await refreshUserAndQuota();
       onUpdate?.();
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to unsuspend user'));
@@ -84,7 +98,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       setError(null);
       setActionLoading(true);
       await toggleAdmin(userId);
-      await loadUser();
+      await refreshUserAndQuota();
       onUpdate?.();
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to update admin status'));
@@ -99,7 +113,7 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
       setError(null);
       setActionLoading(true);
       await togglePremium(userId);
-      await loadUser();
+      await refreshUserAndQuota();
       onUpdate?.();
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to update premium status'));
@@ -108,13 +122,28 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
     }
   }
 
-  async function handleResetQuota() {
-    if (!confirm('Reset this user\'s vision quota to 0 scans used?')) return;
+  async function handleToggleUnlimitedVision() {
+    if (!confirm(`Are you sure you want to ${user?.unlimitedVisionTokens ? 'remove' : 'grant'} unlimited vision tokens?`)) return;
     try {
       setError(null);
       setActionLoading(true);
-      const response = await resetUserVisionQuota(userId);
-      setQuota(response.data.quota);
+      await toggleUnlimitedVisionTokens(userId);
+      await refreshUserAndQuota();
+      onUpdate?.();
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to update unlimited vision status'));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleResetQuota() {
+    if (!confirm('Reset this user\'s vision quota to 0 usage?')) return;
+    try {
+      setError(null);
+      setActionLoading(true);
+      await resetUserVisionQuota(userId);
+      await refreshUserAndQuota();
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to reset quota'));
     } finally {
@@ -123,18 +152,41 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
   }
 
   async function handleSetQuota() {
-    const value = parseInt(quotaInput, 10);
-    if (isNaN(value) || value < 0) {
+    const scansUsed = parseInt(quotaScansInput, 10);
+    if (isNaN(scansUsed) || scansUsed < 0) {
       setError('Scans used must be a non-negative number');
       return;
     }
+
+    const quotaUpdate = { scansUsed };
+
+    if (quotaTokensInput.trim() !== '') {
+      const tokensUsed = parseInt(quotaTokensInput, 10);
+      if (isNaN(tokensUsed) || tokensUsed < 0) {
+        setError('Tokens used must be a non-negative number');
+        return;
+      }
+      quotaUpdate.tokensUsed = tokensUsed;
+    }
+
+    if (quotaOutputTokensInput.trim() !== '') {
+      const outputTokensUsed = parseInt(quotaOutputTokensInput, 10);
+      if (isNaN(outputTokensUsed) || outputTokensUsed < 0) {
+        setError('Output tokens used must be a non-negative number');
+        return;
+      }
+      quotaUpdate.outputTokensUsed = outputTokensUsed;
+    }
+
     try {
       setError(null);
       setActionLoading(true);
-      const response = await setUserVisionQuota(userId, value);
-      setQuota(response.data.quota);
+      await setUserVisionQuota(userId, quotaUpdate);
+      await refreshUserAndQuota();
       setShowQuotaForm(false);
-      setQuotaInput('');
+      setQuotaScansInput('');
+      setQuotaTokensInput('');
+      setQuotaOutputTokensInput('');
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to set quota'));
     } finally {
@@ -232,6 +284,25 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
                     </button>
                   </div>
 
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">Unlimited Vision</span>
+                      <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.unlimitedVisionTokens ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                        {user.unlimitedVisionTokens ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleToggleUnlimitedVision}
+                      disabled={actionLoading}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md disabled:opacity-50 ${user.unlimitedVisionTokens
+                        ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        : 'bg-green-600 text-white hover:bg-green-700'
+                      }`}
+                    >
+                      {user.unlimitedVisionTokens ? 'Remove Unlimited' : 'Grant Unlimited'}
+                    </button>
+                  </div>
+
                   {quota && (
                     <>
                       <div className="border-t border-gray-200 pt-3">
@@ -239,7 +310,12 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
                           <span className="text-sm font-medium text-gray-700">Vision Quota</span>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => { setShowQuotaForm(!showQuotaForm); setQuotaInput(String(quota.scansUsed)); }}
+                              onClick={() => {
+                                setShowQuotaForm(!showQuotaForm);
+                                setQuotaScansInput(String(quota.scansUsed ?? 0));
+                                setQuotaTokensInput(String(quota.tokensUsed ?? 0));
+                                setQuotaOutputTokensInput(String(quota.outputTokensUsed ?? 0));
+                              }}
                               disabled={actionLoading}
                               className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                             >
@@ -256,46 +332,75 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
                         </div>
                         <div className="grid grid-cols-3 gap-3 text-center">
                           <div>
-                            <div className="text-lg font-semibold text-gray-900">{quota.scansUsed}</div>
-                            <div className="text-xs text-gray-500">Scans Used</div>
+                            <div className="text-lg font-semibold text-gray-900">{(quota.tokensUsed ?? 0).toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">Tokens Used</div>
                           </div>
                           <div>
-                            <div className="text-lg font-semibold text-gray-900">{quota.scansRemaining}</div>
-                            <div className="text-xs text-gray-500">Remaining</div>
+                            <div className="text-lg font-semibold text-gray-900">{Math.max(0, 100 - (quota.percentUsed ?? 0))}%</div>
+                            <div className="text-xs text-gray-500">% Remaining</div>
                           </div>
                           <div>
                             <div className="text-lg font-semibold text-gray-900">{quota.daysRemaining}</div>
                             <div className="text-xs text-gray-500">Days Left</div>
                           </div>
                         </div>
-                        <div className="mt-2 text-xs text-gray-500 text-center">
-                          Monthly limit: {quota.monthlyLimit} &middot; Period started: {new Date(quota.periodStart).toLocaleDateString()}
+                        <div className="mt-2 text-xs text-gray-500 text-center space-y-1">
+                          <div>
+                            Token limit: {(quota.tokenLimit ?? 0).toLocaleString()} &middot; Output tokens: {(quota.outputTokensUsed ?? 0).toLocaleString()} / {(quota.outputTokenLimit ?? 0).toLocaleString()}
+                          </div>
+                          <div>
+                            Legacy scans: {quota.scansUsed} / {quota.monthlyLimit} &middot; Period started: {new Date(quota.periodStart).toLocaleDateString()}
+                          </div>
                         </div>
                       </div>
 
                       {showQuotaForm && (
-                        <div className="border-t border-gray-200 pt-3 flex items-center gap-2">
-                          <label className="text-sm text-gray-600">Set scans used:</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={quotaInput}
-                            onChange={(e) => setQuotaInput(e.target.value)}
-                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
-                          />
-                          <button
-                            onClick={handleSetQuota}
-                            disabled={actionLoading}
-                            className="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setShowQuotaForm(false)}
-                            className="px-3 py-1 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
-                          >
-                            Cancel
-                          </button>
+                        <div className="border-t border-gray-200 pt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <label className="text-sm text-gray-600">
+                            <span className="block mb-1">Scans used</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={quotaScansInput}
+                              onChange={(e) => setQuotaScansInput(e.target.value)}
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </label>
+                          <label className="text-sm text-gray-600">
+                            <span className="block mb-1">Tokens used</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={quotaTokensInput}
+                              onChange={(e) => setQuotaTokensInput(e.target.value)}
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </label>
+                          <label className="text-sm text-gray-600">
+                            <span className="block mb-1">Output tokens used</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={quotaOutputTokensInput}
+                              onChange={(e) => setQuotaOutputTokensInput(e.target.value)}
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </label>
+                          <div className="md:col-span-3 flex items-center gap-2">
+                            <button
+                              onClick={handleSetQuota}
+                              disabled={actionLoading}
+                              className="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setShowQuotaForm(false)}
+                              className="px-3 py-1 text-xs font-medium rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       )}
                     </>

@@ -1,4 +1,4 @@
-﻿# ShelvesAI Dependency Tree
+# ShelvesAI Dependency Tree
 
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
@@ -50,6 +50,9 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-09 | vision-crop-warmup-unlimited | Added `VISION_CROP_WARMUP_UNLIMITED` env knob (boolean, default `false`) that bypasses the `VISION_CROP_WARMUP_MAX_REGIONS` cap so all detected regions receive crops. Queue-pressure throttle (`VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS`) and queue-depth bail-out (`VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH`) still apply when unlimited is active. `api/controllers/shelvesController.js` parses and passes `warmupUnlimited` to the crop service, `@shelvesai/vision-crops` `lib/service.js` resolves the setting and sets `warmupLimit` to `Infinity` when enabled. Added regression coverage in `api/__tests__/visionCropService.test.js`.
+- 2026-04-09 | token-based-vision-quota-rollout | Completed the token-based vision quota rollout across API, mobile, and admin dashboard. Backend now persists `user_vision_quota.tokens_used` / `output_tokens_used` correctly on admin overrides, exposes `users.unlimited_vision_tokens` through auth/admin payloads, and wires admin route `POST /api/admin/users/:userId/toggle-unlimited-vision`. Mobile `AccountScreen` now shows percentage-based quota remaining when token quota data is present. Admin dashboard `UserDetailModal` and API client now support unlimited-vision toggling plus token-based quota display/editing. Added focused regression coverage in `api/__tests__/{visionQuota,adminQueries.userDetail,adminController.visionQuota}.test.js` and updated `api/__tests__/shelvesController.test.js` quota mocks.
+- 2026-04-09 | vision-large-multi-region-extracting-progress | Added a scout-aware large multi-region extracting progress state so scans with `fullImageEstimatedItemCount > 20` and more than 2 detected regions now emit `extracting-large-multi-region` with an interpolated estimated-item message during the extraction loop. `api/services/visionPipeline.js` now resolves the extracting progress state once from scout output and reuses it through multi-region slice/region extraction, `api/config/visionProgressMessages.json` includes the new templated message, and `api/__tests__/visionPipeline.test.js` covers both the qualifying and non-qualifying threshold cases.
 - 2026-04-09 | news-recommendation-4k-profile-scalar-fix | Fixed `api/services/discovery/newsRecommendations.js` so the profile CTE sums all matching 4K-format counts instead of using a scalar subquery that can return multiple rows, which unblocks feed-time news recommendation generation when a user library contains multiple 4K label variants. Added focused regression coverage in `api/__tests__/newsRecommendations.test.js`.
 - 2026-04-09 | vision-crop-warmup-priority-fix | Fixed warm crop prioritization for scan regions so the installed `@shelvesai/vision-crops` service now spends capped warmup budget on regions already linked to shelf items before unlinked review/duplicate regions, preventing saved shelf items from missing attached vision crops when scans exceed the warmup limit. Added focused regression coverage in `api/__tests__/visionCropService.test.js`.
 - 2026-04-09 | collectable-s3-cover-url-resolution | Fixed collectable/feed cover hydration for S3-backed media so `api/routes/collectables.js` now emits `coverMediaUrl` alongside `coverMediaPath`, `api/controllers/feedController.js` now synthesizes resolved media URLs for payload-built items and preserves full collectable cover fields in aggregate detail hydration, and `mobile/src/utils/coverUrl.js` now prefers resolved CDN/external URLs over raw media keys when `coverMediaUrl` is absent. Added regression coverage in `api/__tests__/{collectablesRoute.helpers,feedController.mergeCheckinRatingPairs}.test.js` and new pure-JS mobile test `mobile/src/utils/coverUrl.test.js`.
@@ -330,9 +333,10 @@ ShelvesAI/
 | `unsuspendUser(userId)` | `POST /api/admin/users/:userId/unsuspend` | Cookie + CSRF |
 | `toggleAdmin(userId)` | `POST /api/admin/users/:userId/toggle-admin` | Cookie + CSRF |
 | `togglePremium(userId)` | `POST /api/admin/users/:userId/toggle-premium` | Cookie + CSRF |
+| `toggleUnlimitedVisionTokens(userId)` | `POST /api/admin/users/:userId/toggle-unlimited-vision` | Cookie + CSRF |
 | `getUserVisionQuota(userId)` | `GET /api/admin/users/:userId/vision-quota` | Cookie |
 | `resetUserVisionQuota(userId)` | `POST /api/admin/users/:userId/vision-quota/reset` | Cookie + CSRF |
-| `setUserVisionQuota(userId, scansUsed)` | `PUT /api/admin/users/:userId/vision-quota` | Cookie + CSRF |
+| `setUserVisionQuota(userId, quota)` | `PUT /api/admin/users/:userId/vision-quota` | Cookie + CSRF |
 | `getRecentFeed(params)` | `GET /api/admin/feed/recent` | Cookie |
 | `getJobs(params)` | `GET /api/admin/jobs` | Cookie |
 | `getJob(jobId)` | `GET /api/admin/jobs/:jobId` | Cookie |
@@ -756,7 +760,7 @@ routes/admin.js
     GET  /shelves, /shelves/:shelfId, /shelves/:shelfId/items
   Routes (write, after CSRF):
     PUT  /settings/:key, /users/:userId/vision-quota
-    POST /users/:userId/suspend, /unsuspend, /toggle-admin, /toggle-premium
+    POST /users/:userId/suspend, /unsuspend, /toggle-admin, /toggle-premium, /toggle-unlimited-vision
     POST /users/:userId/vision-quota/reset
 
 controllers/adminController.js
@@ -1769,7 +1773,7 @@ users (UUID PK)
   â”œâ”€< notifications (user_id FK, actor_id FK)
   â”œâ”€< push_device_tokens (user_id FK)
   â”œâ”€â”€ notification_preferences (user_id PK)
-  â”œâ”€â”€ user_vision_quota (user_id PK)
+  â”œâ”€â”€ user_vision_quota (user_id PK; scans_used + tokens_used + output_tokens_used)
   Ã¢â€Å“Ã¢â€â‚¬< workflow_queue_jobs (user_id FK, shelf_id FK nullable)
   â”œâ”€< password_reset_tokens (user_id FK)
   â”œâ”€< wishlists (user_id FK)
@@ -1783,6 +1787,7 @@ users (UUID PK)
   â”œâ”€< user_news_dismissed (user_id FK)
   â”œâ”€â”€ profile_media (user_id FK)
   â”œâ”€â”€ premium_locked_by_admin (BOOLEAN, default FALSE)
+  â”œâ”€â”€ unlimited_vision_tokens (BOOLEAN, default FALSE)
   â””â”€< admin_action_logs (admin_id FK)
 
 job_runs (job_id TEXT PK)
@@ -1800,6 +1805,13 @@ vision_result_cache (PK: user_id + shelf_id + image_sha256)
   -> shelf_id (FK -> shelves.id)
   -> result_json (JSONB cached pipeline result)
   -> created_at, expires_at (TTL)
+
+vision_token_log (SERIAL PK)
+  -> user_id (FK -> users.id)
+  -> job_id (text)
+  -> call_label (text)
+  -> prompt_tokens / candidates_tokens / total_tokens
+  -> created_at
 
 workflow_queue_jobs (job_id TEXT PK)
   -> workflow_type (text, current primary type: vision)
@@ -1889,7 +1901,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (63 files, 2026-01-10 -> 2026-03-31)
+### Migration History (65 files, 2026-01-10 -> 2026-04-09)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1962,6 +1974,8 @@ news_items (SERIAL PK)
 | `20260331130000_add_collectables_max_players` | + `collectables.max_players` (INTEGER) |
 | `20260331190000_add_shelf_game_defaults_and_platform_missing` | + `shelves.game_defaults` (JSONB, nullable) and + `user_collections.platform_missing` (BOOLEAN NOT NULL DEFAULT FALSE) |
 | `20260401110000_add_shelf_photo_fields` | + `shelves.photo_storage_provider/photo_storage_key/photo_content_type/photo_size_bytes/photo_width/photo_height/photo_updated_at` + `shelves_photo_storage_check` |
+| `20260409120000_add_token_quota_fields` | + `user_vision_quota.tokens_used/output_tokens_used`, + `users.unlimited_vision_tokens` |
+| `20260409120001_create_vision_token_log` | + `vision_token_log` |
 ---
 
 ## External Service Integrations

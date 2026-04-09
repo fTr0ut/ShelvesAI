@@ -446,4 +446,77 @@ describe('vision crop package service', () => {
     expect(Buffer.isBuffer(result.payload.buffer)).toBe(true);
     expect(deps.crops.upsertFromBuffer).not.toHaveBeenCalled();
   });
+
+  it('processes all regions when warmupUnlimited is true', async () => {
+    const scanBuffer = await createJpegBuffer(1200, 800);
+    const regionList = Array.from({ length: 80 }, (_, i) => ({
+      id: i + 1,
+      box2d: [100, 200, 700, 900],
+    }));
+    const { service, deps } = buildService({
+      regions: {
+        listForScan: jest.fn().mockResolvedValue(regionList),
+      },
+      settings: {
+        warmupMaxRegions: 5,
+        warmupUnlimited: true,
+      },
+      scanPhotos: {
+        loadImageBuffer: jest.fn().mockResolvedValue({
+          buffer: scanBuffer,
+          contentType: 'image/jpeg',
+          contentLength: scanBuffer.length,
+        }),
+      },
+    });
+
+    const result = await service.warmScanCrops({
+      userId: 1,
+      shelfId: 10,
+      shelfType: 'books',
+      scanPhotoId: 77,
+    });
+
+    expect(result.skipped).toBe(false);
+    expect(deps.crops.upsertFromBuffer).toHaveBeenCalledTimes(80);
+  });
+
+  it('still throttles under queue pressure even when warmupUnlimited is true', async () => {
+    const scanBuffer = await createJpegBuffer(1200, 800);
+    const regionList = Array.from({ length: 20 }, (_, i) => ({
+      id: i + 1,
+      box2d: [100, 200, 700, 900],
+    }));
+    const { service, deps } = buildService({
+      regions: {
+        listForScan: jest.fn().mockResolvedValue(regionList),
+      },
+      queue: {
+        countQueuedVisionJobs: jest.fn().mockResolvedValue(5),
+        getSettings: jest.fn().mockResolvedValue({ workflowQueueLongThresholdPosition: 3 }),
+      },
+      settings: {
+        warmupMaxRegions: 50,
+        warmupUnlimited: true,
+        warmupPressureMaxRegions: 3,
+      },
+      scanPhotos: {
+        loadImageBuffer: jest.fn().mockResolvedValue({
+          buffer: scanBuffer,
+          contentType: 'image/jpeg',
+          contentLength: scanBuffer.length,
+        }),
+      },
+    });
+
+    const result = await service.warmScanCrops({
+      userId: 1,
+      shelfId: 10,
+      shelfType: 'books',
+      scanPhotoId: 77,
+    });
+
+    expect(result.skipped).toBe(false);
+    expect(deps.crops.upsertFromBuffer).toHaveBeenCalledTimes(3);
+  });
 });

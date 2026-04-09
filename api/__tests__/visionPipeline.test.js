@@ -1750,6 +1750,94 @@ describe('VisionPipelineService', () => {
             updateJobSpy.mockRestore();
         });
 
+        it('uses the large multi-region extracting progress message for scout-qualified scans', async () => {
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            mockGemini.sendScoutPrompt.mockResolvedValue(JSON.stringify({
+                full_image_estimated_item_count: 24,
+                full_image_has_more_than_ten: true,
+                regions: [
+                    { region_box_2d: [0, 0, 333, 1000], confidence: 0.92, estimated_item_count: 8, has_more_than_ten: false },
+                    { region_box_2d: [333, 0, 666, 1000], confidence: 0.91, estimated_item_count: 8, has_more_than_ten: false },
+                    { region_box_2d: [666, 0, 1000, 1000], confidence: 0.9, estimated_item_count: 8, has_more_than_ten: false },
+                ],
+            }));
+            const sliceSpy = jest.spyOn(service, 'runSliceDetectionPhase').mockImplementation(
+                async (_imageBase64, _shelf, _scoutResult, _scanPhotoDimensions, options = {}) => {
+                    options.updateProgress?.(
+                        options.extractingProgressState?.key,
+                        options.extractingProgressState?.vars,
+                    );
+                    return { items: [], warnings: [] };
+                },
+            );
+            service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
+                search: jest.fn().mockResolvedValue([]),
+            });
+            mockGemini.enrichWithSchema.mockResolvedValue([]);
+
+            try {
+                await service.processImage('base64', { id: 13, type: 'book' }, 100, 'job-large-multi-region');
+
+                const largeExtractingUpdates = updateJobSpy.mock.calls
+                    .map((call) => call[1] || {})
+                    .filter((entry) => entry.step === 'extracting-large-multi-region');
+
+                expect(largeExtractingUpdates.length).toBeGreaterThan(0);
+                expect(largeExtractingUpdates).toEqual(expect.arrayContaining([
+                    expect.objectContaining({
+                        message: "est. 24 of items detected, this may take a while. Feel free to hide this message. We'll send a notification when it's done!",
+                    }),
+                ]));
+            } finally {
+                sliceSpy.mockRestore();
+                updateJobSpy.mockRestore();
+            }
+        });
+
+        it('keeps the generic extracting progress message when only one large-scan threshold is met', async () => {
+            const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');
+            mockGemini.sendScoutPrompt.mockResolvedValue(JSON.stringify({
+                full_image_estimated_item_count: 24,
+                full_image_has_more_than_ten: true,
+                regions: [
+                    { region_box_2d: [0, 0, 500, 1000], confidence: 0.92, estimated_item_count: 12, has_more_than_ten: true },
+                    { region_box_2d: [500, 0, 1000, 1000], confidence: 0.91, estimated_item_count: 12, has_more_than_ten: true },
+                ],
+            }));
+            const sliceSpy = jest.spyOn(service, 'runSliceDetectionPhase').mockImplementation(
+                async (_imageBase64, _shelf, _scoutResult, _scanPhotoDimensions, options = {}) => {
+                    options.updateProgress?.(
+                        options.extractingProgressState?.key,
+                        options.extractingProgressState?.vars,
+                    );
+                    return { items: [], warnings: [] };
+                },
+            );
+            service.resolveCatalogServiceForShelf = jest.fn().mockReturnValue({
+                search: jest.fn().mockResolvedValue([]),
+            });
+            mockGemini.enrichWithSchema.mockResolvedValue([]);
+
+            try {
+                await service.processImage('base64', { id: 14, type: 'book' }, 100, 'job-generic-extracting');
+
+                const updates = updateJobSpy.mock.calls.map((call) => call[1] || {});
+                const genericExtractingUpdates = updates.filter((entry) => entry.step === 'extracting');
+                const largeExtractingUpdates = updates.filter((entry) => entry.step === 'extracting-large-multi-region');
+
+                expect(genericExtractingUpdates.length).toBeGreaterThan(0);
+                expect(genericExtractingUpdates).toEqual(expect.arrayContaining([
+                    expect.objectContaining({
+                        message: 'Taking a look...',
+                    }),
+                ]));
+                expect(largeExtractingUpdates).toHaveLength(0);
+            } finally {
+                sliceSpy.mockRestore();
+                updateJobSpy.mockRestore();
+            }
+        });
+
         it('emits extraction heartbeat progress stages while OCR extraction is still running', async () => {
             jest.useFakeTimers();
             const updateJobSpy = jest.spyOn(processingStatus, 'updateJob');

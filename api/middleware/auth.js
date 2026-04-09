@@ -91,7 +91,7 @@ async function auth(req, res, next) {
 
     if (!user) {
       const result = await query(
-        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason, unlimited_vision_tokens FROM users WHERE id = $1',
         [payload.id]
       );
 
@@ -119,6 +119,7 @@ async function auth(req, res, next) {
       isPremium: !!user.is_premium,
       premiumLockedByAdmin: !!user.premium_locked_by_admin,
       isAdmin: !!user.is_admin,
+      unlimitedVisionTokens: !!user.unlimited_vision_tokens,
     };
     req.tokenType = payload.type || 'user';
     setUserId(user.id);
@@ -156,7 +157,7 @@ async function optionalAuth(req, res, next) {
 
     if (!user) {
       const result = await query(
-        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason FROM users WHERE id = $1',
+        'SELECT id, username, is_premium, premium_locked_by_admin, is_admin, is_suspended, suspension_reason, unlimited_vision_tokens FROM users WHERE id = $1',
         [payload.id]
       );
 
@@ -181,6 +182,7 @@ async function optionalAuth(req, res, next) {
         isPremium: !!user.is_premium,
         premiumLockedByAdmin: !!user.premium_locked_by_admin,
         isAdmin: !!user.is_admin,
+        unlimitedVisionTokens: !!user.unlimited_vision_tokens,
       };
       setUserId(user.id);
     }

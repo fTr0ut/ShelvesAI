@@ -33,7 +33,7 @@ async function getAccount(req, res) {
       logger.warn('Failed to get vision quota:', quotaErr.message);
     }
 
-    res.json({ user, visionQuota });
+    res.json({ user, visionQuota, unlimitedVisionTokens: req.user.unlimitedVisionTokens || false });
   } catch (err) {
     logger.error('getAccount error:', err);
     res.status(500).json({ error: 'Server error' });

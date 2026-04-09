@@ -1,4 +1,4 @@
-const { GoogleGeminiService, getVisionSettingsForType } = require('./googleGemini');
+const { GoogleGeminiService, getVisionSettingsForType, TokenAccumulator } = require('./googleGemini');
 // const { GoogleCloudVisionService } = require('./googleCloudVision'); // Temporarily disabled; keep for easy re-enable.
 const collectablesQueries = require('../database/queries/collectables');
 const needsReviewQueries = require('../database/queries/needsReview');
@@ -92,6 +92,23 @@ function getProgressMessage(key, vars = {}) {
         step: cfg.step || key,
         progress: cfg.progress ?? 0,
         message,
+    };
+}
+
+function resolveScoutExtractingProgressState(scoutResult) {
+    const regionCount = Array.isArray(scoutResult?.regions) ? scoutResult.regions.length : 0;
+    const count = Number(scoutResult?.fullImageEstimatedItemCount);
+
+    if (Number.isFinite(count) && count > 20 && regionCount > 2) {
+        return {
+            key: 'extractingLargeMultiRegion',
+            vars: { count },
+        };
+    }
+
+    return {
+        key: 'extracting',
+        vars: {},
     };
 }
 
@@ -1082,6 +1099,10 @@ class VisionPipelineService {
         // Track any warnings from enrichment (e.g., truncated responses)
         const warnings = [];
 
+        // Track token usage across all Gemini calls for this job
+        const tokenAccumulator = new TokenAccumulator();
+        this.geminiService.tokenAccumulator = tokenAccumulator;
+
         // Get per-type confidence thresholds from config
         const typeSettings = getVisionSettingsForType(shelf.type) || {};
         const confidenceMax = typeSettings.confidenceMax ?? DEFAULT_CONFIDENCE_MAX;
@@ -1146,6 +1167,7 @@ class VisionPipelineService {
                 updateProgress('scouting');
                 try {
                     const scoutResult = await this.runScoutPhase(imageBase64, shelf.type, scanPhotoDimensions);
+                    const extractingProgressState = resolveScoutExtractingProgressState(scoutResult);
 
                     const needsMultiRegionHandling = scoutResult.regions.length > 1;
                     if (needsMultiRegionHandling || scoutResult.shouldSlice) {
@@ -1153,7 +1175,11 @@ class VisionPipelineService {
                         await checkAborted();
                         updateProgress('slicing');
                         const sliceResult = await this.runSliceDetectionPhase(
-                            imageBase64, shelf, scoutResult, scanPhotoDimensions, { updateProgress, checkAborted },
+                            imageBase64,
+                            shelf,
+                            scoutResult,
+                            scanPhotoDimensions,
+                            { updateProgress, checkAborted, extractingProgressState },
                         );
                         rawItems = sliceResult.items;
                         conversationHistory = null; // no single conversation when multi-slice
@@ -1161,7 +1187,7 @@ class VisionPipelineService {
                     } else {
                         // Sparse shelf or slicing disabled: single-region detection
                         await checkAborted();
-                        updateProgress('extracting');
+                        updateProgress(extractingProgressState.key, extractingProgressState.vars);
                         let extractionInFlight = true;
                         if (jobId) {
                             extractionHeartbeatTimeouts.push(setTimeout(() => {
@@ -1651,6 +1677,8 @@ class VisionPipelineService {
                 addedItems,
                 needsReview: [...lowConfidence, ...itemsToReview, ...skippedItems, ...possibleDuplicateItems],
                 warnings: warnings.length > 0 ? warnings : undefined,
+                tokenUsage: tokenAccumulator.totals,
+                tokenCalls: tokenAccumulator.calls,
             };
         }
 
@@ -2208,7 +2236,9 @@ class VisionPipelineService {
             },
             addedItems,
             needsReview: reviewQueueItems,
-            warnings: warnings.length > 0 ? warnings : undefined
+            warnings: warnings.length > 0 ? warnings : undefined,
+            tokenUsage: tokenAccumulator.totals,
+            tokenCalls: tokenAccumulator.calls,
         };
     }
 
@@ -2459,7 +2489,17 @@ class VisionPipelineService {
         };
     }
 
-    async runSliceDetectionPhase(imageBase64, shelf, scoutResult, scanPhotoDimensions, { updateProgress, checkAborted } = {}) {
+    async runSliceDetectionPhase(
+        imageBase64,
+        shelf,
+        scoutResult,
+        scanPhotoDimensions,
+        {
+            updateProgress,
+            checkAborted,
+            extractingProgressState = { key: 'extracting', vars: {} },
+        } = {},
+    ) {
         const allItems = [];
         const sliceWarnings = [];
         let attemptCount = 0;
@@ -2532,7 +2572,9 @@ class VisionPipelineService {
                 // Run detection per slice
                 for (const slice of sliceBuffers) {
                     if (checkAborted) await checkAborted();
-                    if (updateProgress) updateProgress('extracting');
+                    if (updateProgress) {
+                        updateProgress(extractingProgressState.key, extractingProgressState.vars);
+                    }
 
                     const sliceBase64 = slice.buffer.toString('base64');
                     attemptCount += 1;
@@ -2617,7 +2659,9 @@ class VisionPipelineService {
             } else {
                 // Region is sparse — detect on the full region without slicing
                 if (checkAborted) await checkAborted();
-                if (updateProgress) updateProgress('extracting');
+                if (updateProgress) {
+                    updateProgress(extractingProgressState.key, extractingProgressState.vars);
+                }
                 const regionBase64 = regionBuffer.toString('base64');
                 attemptCount += 1;
                 try {

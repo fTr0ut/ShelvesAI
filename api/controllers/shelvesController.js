@@ -495,6 +495,7 @@ function isWithinHoursWindow(value, hours) {
 
 const VISION_CROP_WARMUP_ENABLED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_ENABLED, true);
 const VISION_CROP_WARMUP_MAX_REGIONS = parsePositiveInt(process.env.VISION_CROP_WARMUP_MAX_REGIONS, 50);
+const VISION_CROP_WARMUP_UNLIMITED = parseBooleanFlag(process.env.VISION_CROP_WARMUP_UNLIMITED, false);
 const VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS = parsePositiveInt(
   process.env.VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS,
   10,
@@ -930,6 +931,7 @@ const visionCropService = createVisionCropService({
   settings: {
     warmupEnabled: VISION_CROP_WARMUP_ENABLED,
     warmupMaxRegions: VISION_CROP_WARMUP_MAX_REGIONS,
+    warmupUnlimited: VISION_CROP_WARMUP_UNLIMITED,
     warmupPressureMaxRegions: VISION_CROP_WARMUP_PRESSURE_MAX_REGIONS,
     warmupDeferQueueDepth: VISION_CROP_WARMUP_DEFER_QUEUE_DEPTH,
     workflowTypeVision: WORKFLOW_TYPE_VISION,
@@ -3057,9 +3059,18 @@ async function runVisionPipelineJob({
 
     if (isCloudVision) {
       try {
-        await visionQuotaQueries.incrementUsage(userId);
+        const tokenUsage = result.tokenUsage || { totalTokens: 0, candidatesTokens: 0 };
+        await visionQuotaQueries.incrementTokenUsage(
+          userId,
+          tokenUsage.totalTokens,
+          tokenUsage.candidatesTokens,
+        );
+        if (result.tokenCalls && jobId) {
+          visionQuotaQueries.logTokenCalls(userId, jobId, result.tokenCalls)
+            .catch(err => logger.warn('[Vision] Failed to log token calls:', err.message));
+        }
       } catch (quotaErr) {
-        logger.warn('[Vision] Failed to increment quota:', quotaErr.message);
+        logger.warn('[Vision] Failed to increment token quota:', quotaErr.message);
       }
     }
 
@@ -3298,16 +3309,21 @@ async function processShelfVision(req, res) {
       });
     }
 
-    if (isCloudVision) {
+    if (isCloudVision && !req.user.unlimitedVisionTokens) {
       const quota = await visionQuotaQueries.getQuota(req.user.id);
-      if (quota.scansRemaining <= 0) {
+      if (quota.tokensRemaining <= 0 || quota.outputTokensUsed >= quota.outputTokenLimit) {
         return res.status(429).json({
-          error: 'Monthly vision scan quota exceeded',
+          error: 'Monthly vision token quota exceeded',
           quotaExceeded: true,
           quota: {
-            scansUsed: quota.scansUsed,
-            scansRemaining: 0,
+            tokensUsed: quota.tokensUsed,
+            tokensRemaining: 0,
+            tokenLimit: quota.tokenLimit,
+            outputTokensUsed: quota.outputTokensUsed,
+            outputTokenLimit: quota.outputTokenLimit,
+            percentUsed: 100,
             daysRemaining: quota.daysRemaining,
+            scansUsed: quota.scansUsed,
             monthlyLimit: quota.monthlyLimit,
           },
         });

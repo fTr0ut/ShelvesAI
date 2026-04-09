@@ -99,6 +99,84 @@ function buildJsonStrictnessReminder() {
 - Do not emit trailing commas.`;
 }
 
+class TokenAccumulator {
+    constructor() {
+        this._calls = [];
+        this._nextId = 1;
+    }
+
+    start(label) {
+        const call = {
+            id: this._nextId++,
+            label,
+            promptTokens: 0,
+            candidatesTokens: 0,
+            totalTokens: 0,
+            includeInAudit: false,
+            status: 'pending',
+        };
+        this._calls.push(call);
+        return call.id;
+    }
+
+    finish(handle, usageMetadata) {
+        const call = this._resolve(handle);
+        if (!call) return;
+        call.promptTokens = usageMetadata?.promptTokenCount || 0;
+        call.candidatesTokens = usageMetadata?.candidatesTokenCount || 0;
+        call.totalTokens = usageMetadata?.totalTokenCount || 0;
+        call.includeInAudit = true;
+        call.status = 'success';
+    }
+
+    fail(handle, err) {
+        const call = this._resolve(handle);
+        if (!call) return;
+        if (this._shouldAuditFailure(err)) {
+            call.includeInAudit = true;
+            call.status = 'timed_out';
+            return;
+        }
+        call.includeInAudit = false;
+        call.status = 'ignored_failure';
+    }
+
+    _resolve(handle) {
+        if (handle == null) return null;
+        return this._calls.find((call) => call.id === handle) || null;
+    }
+
+    _shouldAuditFailure(err) {
+        const message = String(err?.message || '').toLowerCase();
+        return (
+            message.includes('timed out')
+            || message.includes('timeout')
+            || message.includes('abort')
+        );
+    }
+
+    get calls() {
+        return this._calls
+            .filter((call) => call.includeInAudit)
+            .map((call) => ({
+                label: call.label,
+                promptTokens: call.promptTokens,
+                candidatesTokens: call.candidatesTokens,
+                totalTokens: call.totalTokens,
+            }));
+    }
+
+    get totals() {
+        let promptTokens = 0, candidatesTokens = 0, totalTokens = 0;
+        for (const c of this.calls) {
+            promptTokens += c.promptTokens;
+            candidatesTokens += c.candidatesTokens;
+            totalTokens += c.totalTokens;
+        }
+        return { promptTokens, candidatesTokens, totalTokens };
+    }
+}
+
 function isTransientGeminiRequestError(err) {
     const message = String(err?.message || '').toLowerCase();
     const stack = String(err?.stack || '').toLowerCase();
@@ -355,6 +433,7 @@ class GoogleGeminiService {
             this.visionModel = this.genAI.getGenerativeModel({ model: visionModelName }, requestOptions);
             this.modelName = textModelName;
             this.model = this.textModel;
+            this.tokenAccumulator = null;
         } else {
             logger.warn('[GoogleGeminiService] GOOGLE_GEN_AI_KEY not set.');
             this.genAI = null;
@@ -364,6 +443,7 @@ class GoogleGeminiService {
             this.visionModelName = null;
             this.model = null;
             this.modelName = null;
+            this.tokenAccumulator = null;
         }
     }
 
@@ -735,6 +815,7 @@ ${schemaBlock}
 
 Return ONLY valid JSON array. No markdown, no explanation.`;
 
+        const tokenCall = this.tokenAccumulator?.start('schema_enrichment');
         try {
             const result = await this._executeEnrichmentRequest(
                 prompt, conversationHistory, 'schema enrichment'
@@ -744,6 +825,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 this.requestTimeoutMs,
                 'Gemini schema enrichment response',
             );
+            this.tokenAccumulator?.finish(tokenCall, response.usageMetadata);
             const text = response.text();
 
             logPayload({
@@ -802,6 +884,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             }));
 
         } catch (err) {
+            this.tokenAccumulator?.fail(tokenCall, err);
             logger.error('[GoogleGeminiService] Schema enrichment failed:', err);
             // Fallback: return extracting items as is
             return items.map(i => ({
@@ -888,6 +971,7 @@ ${schemaBlock}
 
 Return ONLY valid JSON array. No markdown, no explanation.`;
 
+        const tokenCall = this.tokenAccumulator?.start('uncertain_enrichment');
         try {
             const result = await this._executeEnrichmentRequest(
                 prompt, conversationHistory, 'uncertain enrichment'
@@ -897,6 +981,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 this.requestTimeoutMs,
                 'Gemini uncertain enrichment response',
             );
+            this.tokenAccumulator?.finish(tokenCall, response.usageMetadata);
             const text = response.text();
 
             logPayload({
@@ -947,6 +1032,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             }));
 
         } catch (err) {
+            this.tokenAccumulator?.fail(tokenCall, err);
             logger.error('[GoogleGeminiService] Uncertain enrichment failed:', err);
             return items.map(i => ({
                 title: i.name || i.title,
@@ -992,6 +1078,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
         }
         visionPrompt = `${visionPrompt}\n\n${buildJsonStrictnessReminder()}`;
         const thinkingBudget = isOther ? resolveOtherThinkingBudget(pass) : 0;
+        let visionTokenCall = null;
 
         try {
             logger.info('[GoogleGeminiService] Vision extraction request config', {
@@ -1026,6 +1113,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             let visionResult = null;
             const maxAttempts = 2;
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                visionTokenCall = this.tokenAccumulator?.start('vision_extraction');
                 try {
                     if (canUseVisionChatMode) {
                         const chatParams = {
@@ -1050,6 +1138,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     }
                     break;
                 } catch (requestErr) {
+                    this.tokenAccumulator?.fail(visionTokenCall, requestErr);
                     const canRetry = attempt < maxAttempts && isTransientGeminiRequestError(requestErr);
                     if (!canRetry) throw requestErr;
                     logger.warn('[GoogleGeminiService] Vision extraction request failed, retrying once:', requestErr?.message || requestErr);
@@ -1060,6 +1149,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 this.requestTimeoutMs,
                 'Gemini vision extraction response',
             );
+            this.tokenAccumulator?.finish(visionTokenCall, visionResponse.usageMetadata);
             const visionText = visionResponse.text();
 
             logPayload({
@@ -1161,6 +1251,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
             ) {
                 confidencePatchRequested = true;
                 const missingItems = items.filter((item) => item.confidenceProvided === false);
+                const patchTokenCall = this.tokenAccumulator?.start('confidence_patch');
                 try {
                     const patchChat = this.visionModel.startChat({
                         history: conversationHistory,
@@ -1179,6 +1270,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                         this.requestTimeoutMs,
                         'Gemini vision confidence patch response',
                     );
+                    this.tokenAccumulator?.finish(patchTokenCall, patchResponse.usageMetadata);
                     const patchText = patchResponse.text();
                     const patchJsonStr = cleanJsonResponse(patchText);
                     const { parsedItems: parsedPatchItems } = this.parseVisionJsonWithRepairs(patchJsonStr);
@@ -1214,6 +1306,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                         ];
                     }
                 } catch (patchErr) {
+                    this.tokenAccumulator?.fail(patchTokenCall, patchErr);
                     logger.warn('[GoogleGeminiService] Vision confidence patch request failed; fallback confidence retained', {
                         shelfType,
                         pass,
@@ -1244,6 +1337,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
 
             return { items, conversationHistory, warning };
         } catch (err) {
+            this.tokenAccumulator?.fail(visionTokenCall, err);
             logger.error('[GoogleGeminiService] Vision item detection failed:', err);
             throw buildVisionExtractionError(err);
         }
@@ -1278,6 +1372,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
             const batch = batches[batchIndex];
             const prompt = buildDenseBoxRefinementPrompt(batch);
+            const tokenCall = this.tokenAccumulator?.start('dense_box_refinement');
 
             try {
                 let result;
@@ -1321,6 +1416,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     this.requestTimeoutMs,
                     `Gemini dense box refinement response (batch ${batchIndex + 1})`,
                 );
+                this.tokenAccumulator?.finish(tokenCall, response.usageMetadata);
                 const text = response.text();
 
                 logPayload({
@@ -1363,6 +1459,7 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                     if (quad2d) refinedQuadsByIndex.set(extractionIndex, quad2d);
                 }
             } catch (err) {
+                this.tokenAccumulator?.fail(tokenCall, err);
                 logger.warn('[GoogleGeminiService] Dense box refinement batch failed; keeping first-pass boxes', {
                     shelfType,
                     batchIndex,
@@ -1424,8 +1521,10 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
         });
 
         let result = null;
+        let tokenCall = null;
         const maxAttempts = 2;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            tokenCall = this.tokenAccumulator?.start('scout');
             try {
                 result = await withTimeout(
                     () => limitGemini(() => this.visionModel.generateContent(generateOptions)),
@@ -1434,32 +1533,39 @@ Return ONLY valid JSON array. No markdown, no explanation.`;
                 );
                 break;
             } catch (requestErr) {
+                this.tokenAccumulator?.fail(tokenCall, requestErr);
                 const canRetry = attempt < maxAttempts && isTransientGeminiRequestError(requestErr);
                 if (!canRetry) throw requestErr;
                 logger.warn('[GoogleGeminiService] Scout request failed, retrying once:', requestErr?.message || requestErr);
             }
         }
 
-        const response = await withTimeout(
-            () => result.response,
-            this.requestTimeoutMs,
-            'Gemini scout response',
-        );
-        const responseText = response.text();
+        try {
+            const response = await withTimeout(
+                () => result.response,
+                this.requestTimeoutMs,
+                'Gemini scout response',
+            );
+            this.tokenAccumulator?.finish(tokenCall, response.usageMetadata);
+            const responseText = response.text();
 
-        logPayload({
-            source: 'google-gemini-vision',
-            operation: 'scout',
-            payload: {
-                model: this.visionModelName,
-                promptPreview: scoutPrompt.substring(0, 200),
-                responsePreview: String(responseText).substring(0, 500),
-            },
-        });
+            logPayload({
+                source: 'google-gemini-vision',
+                operation: 'scout',
+                payload: {
+                    model: this.visionModelName,
+                    promptPreview: scoutPrompt.substring(0, 200),
+                    responsePreview: String(responseText).substring(0, 500),
+                },
+            });
 
-        return responseText;
+            return responseText;
+        } catch (err) {
+            this.tokenAccumulator?.fail(tokenCall, err);
+            throw err;
+        }
     }
 
 }
 
-module.exports = { GoogleGeminiService, getVisionSettingsForType };
+module.exports = { GoogleGeminiService, getVisionSettingsForType, TokenAccumulator };

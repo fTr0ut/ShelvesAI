@@ -282,7 +282,9 @@ export default function AccountScreen({ navigation }) {
               </View>
               <View style={styles.quotaContent}>
                 <Text style={styles.quotaValue}>
-                  {visionQuota.scansRemaining} / {visionQuota.monthlyLimit} remaining
+                  {visionQuota.percentUsed != null
+                    ? `${Math.max(0, 100 - visionQuota.percentUsed)}% remaining`
+                    : `${visionQuota.scansRemaining} / ${visionQuota.monthlyLimit} remaining`}
                 </Text>
                 <Text style={styles.quotaHint}>
                   Resets in {visionQuota.daysRemaining} day{visionQuota.daysRemaining !== 1 ? 's' : ''}

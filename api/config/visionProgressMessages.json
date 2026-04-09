@@ -7,23 +7,28 @@
         },
         "slicing": {
             "step": "slicing",
-            "progress": 12,
-            "message": "Splitting image into regions for detailed scan..."
+            "progress": 10,
+            "message": "Breaking out the magnifying glass..."
         },
         "extracting": {
             "step": "extracting",
-            "progress": 10,
+            "progress": 15,
             "message": "Taking a look..."
+        },
+        "extractingLargeMultiRegion": {
+            "step": "extracting-large-multi-region",
+            "progress": 10,
+            "messageTemplate": "Est. {count} items detected, this may take a while. Feel free to hide this message. We'll send a notification when it's done!"
         },
         "extractingInFlight": {
             "step": "extracting-in-flight",
             "progress": 20,
-            "message": "Still analyzing your photo..."
+            "message": "Still looking..."
         },
         "extractingDeepParse": {
             "step": "extracting-deep-parse",
             "progress": 30,
-            "message": "Parsing detected items..."
+            "message": "Figuring out your detected items..."
         },
         "refiningDenseBoxes": {
             "step": "refining-dense-boxes",
@@ -32,12 +37,12 @@
         },
         "extractingSecondPass": {
             "step": "extracting-second-pass",
-            "progress": 55,
+            "progress": 50,
             "messageTemplate": "Re-checking {count} uncertain detections..."
         },
         "categorizing": {
             "step": "categorizing",
-            "progress": 45,
+            "progress": 55,
             "messageTemplate": "Found {count} items, categorizing..."
         },
         "matching": {

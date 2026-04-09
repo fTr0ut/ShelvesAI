@@ -1,4 +1,4 @@
-const { GoogleGeminiService } = require('../services/googleGemini');
+const { GoogleGeminiService, TokenAccumulator } = require('../services/googleGemini');
 
 // Mock GoogleGenerativeAI
 jest.mock('@google/generative-ai', () => ({
@@ -27,6 +27,35 @@ describe('GoogleGeminiService', () => {
     });
 
     describe('enrichWithSchema', () => {
+        it('records timed-out enrichment attempts in the token accumulator audit trail', async () => {
+            const timedOutService = new GoogleGeminiService({ requestTimeoutMs: 5 });
+            timedOutService.tokenAccumulator = new TokenAccumulator();
+            timedOutService.model.generateContent.mockImplementation(
+                () => new Promise(() => {})
+            );
+
+            const result = await timedOutService.enrichWithSchema(
+                [{ title: 'Slow Book', author: 'Test Author' }],
+                'book',
+            );
+
+            expect(result).toHaveLength(1);
+            expect(result[0].notes).toBe('Enrichment failed');
+            expect(timedOutService.tokenAccumulator.calls).toEqual([
+                {
+                    label: 'schema_enrichment',
+                    promptTokens: 0,
+                    candidatesTokens: 0,
+                    totalTokens: 0,
+                },
+            ]);
+            expect(timedOutService.tokenAccumulator.totals).toEqual({
+                promptTokens: 0,
+                candidatesTokens: 0,
+                totalTokens: 0,
+            });
+        });
+
         it('should return enriched items when API returns valid JSON', async () => {
             const mockResponse = [
                 {
@@ -116,6 +145,43 @@ describe('GoogleGeminiService', () => {
             expect(promptText).toMatch(/For music, include:/i);
             expect(promptText).not.toMatch(/For books, include:/i);
             expect(promptText).toMatch(/Vinyl LP/i);
+        });
+    });
+
+    describe('TokenAccumulator', () => {
+        it('includes timed-out attempts in audit calls but ignores non-timeout transport failures', () => {
+            const accumulator = new TokenAccumulator();
+            const timeoutHandle = accumulator.start('schema_enrichment');
+            const ignoredHandle = accumulator.start('scout');
+            const successHandle = accumulator.start('vision_extraction');
+
+            accumulator.fail(timeoutHandle, new Error('Gemini standalone schema enrichment timed out after 60000ms'));
+            accumulator.fail(ignoredHandle, new TypeError('fetch failed'));
+            accumulator.finish(successHandle, {
+                promptTokenCount: 120,
+                candidatesTokenCount: 45,
+                totalTokenCount: 165,
+            });
+
+            expect(accumulator.calls).toEqual([
+                {
+                    label: 'schema_enrichment',
+                    promptTokens: 0,
+                    candidatesTokens: 0,
+                    totalTokens: 0,
+                },
+                {
+                    label: 'vision_extraction',
+                    promptTokens: 120,
+                    candidatesTokens: 45,
+                    totalTokens: 165,
+                },
+            ]);
+            expect(accumulator.totals).toEqual({
+                promptTokens: 120,
+                candidatesTokens: 45,
+                totalTokens: 165,
+            });
         });
     });
 
@@ -423,9 +489,12 @@ describe('GoogleGeminiService', () => {
             expect(promptText).toMatch(/extractionIndex=0/i);
             expect(promptText).toMatch(/box_2d/i);
             expect(request.tools).toBeUndefined();
-            expect(result).toBeInstanceOf(Map);
-            expect(result.get(0)).toEqual([120, 0, 1000, 181]);
-            expect(result.has(1)).toBe(false);
+            expect(result).toMatchObject({
+                boxes: expect.any(Map),
+                quads: expect.any(Map),
+            });
+            expect(result.boxes.get(0)).toEqual([120, 0, 1000, 181]);
+            expect(result.boxes.has(1)).toBe(false);
         });
 
         it('uses vision chat continuation when prior conversation history is provided', async () => {
@@ -452,7 +521,7 @@ describe('GoogleGeminiService', () => {
                 expect.objectContaining({
                     history: expect.any(Array),
                     generationConfig: expect.objectContaining({
-                        maxOutputTokens: 2048,
+                        maxOutputTokens: 4096,
                         thinkingConfig: { thinkingBudget: 0 },
                     }),
                 }),
@@ -460,7 +529,7 @@ describe('GoogleGeminiService', () => {
             expect(service.visionModel.startChat.mock.calls[0][0].tools).toBeUndefined();
             expect(sendMessage).toHaveBeenCalledWith(expect.stringMatching(/extractionIndex=3/i));
             expect(service.visionModel.generateContent).not.toHaveBeenCalled();
-            expect(result.get(3)).toEqual([100, 200, 300, 400]);
+            expect(result.boxes.get(3)).toEqual([100, 200, 300, 400]);
         });
 
         it('batches dense refinement requests and ignores invalid entries from any batch', async () => {
@@ -493,10 +562,10 @@ describe('GoogleGeminiService', () => {
             );
 
             expect(mockVisionGenerateContent).toHaveBeenCalledTimes(2);
-            expect(result.get(0)).toEqual([100, 200, 300, 400]);
-            expect(result.get(8)).toEqual([200, 300, 500, 700]);
-            expect(result.has(1)).toBe(false);
-            expect(result.size).toBe(2);
+            expect(result.boxes.get(0)).toEqual([100, 200, 300, 400]);
+            expect(result.boxes.get(8)).toEqual([200, 300, 500, 700]);
+            expect(result.boxes.has(1)).toBe(false);
+            expect(result.boxes.size).toBe(2);
         });
     });
 });

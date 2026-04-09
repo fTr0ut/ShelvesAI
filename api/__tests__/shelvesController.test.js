@@ -126,10 +126,24 @@ jest.mock('../database/queries/visionQuota', () => ({
         scansUsed: 0,
         scansRemaining: 50,
         monthlyLimit: 50,
+        tokensUsed: 0,
+        outputTokensUsed: 0,
+        tokenLimit: 500000,
+        outputTokenLimit: 100000,
+        tokensRemaining: 500000,
+        percentUsed: 0,
         periodStart: new Date().toISOString(),
         daysRemaining: 30,
     }),
-    incrementUsage: jest.fn().mockResolvedValue({ scansUsed: 1, scansRemaining: 49, monthlyLimit: 50 }),
+    incrementTokenUsage: jest.fn().mockResolvedValue({
+        scansUsed: 1,
+        tokensUsed: 100,
+        outputTokensUsed: 20,
+        tokensRemaining: 499900,
+        tokenLimit: 500000,
+        outputTokenLimit: 100000,
+    }),
+    logTokenCalls: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('shelvesController', () => {

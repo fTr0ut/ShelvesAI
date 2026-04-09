@@ -111,7 +111,7 @@ async function listUsers({
   const result = await query(
     `SELECT id, username, email, first_name, last_name, picture,
             is_admin, is_suspended, suspended_at, suspension_reason,
-            is_premium, premium_locked_by_admin,
+            is_premium, premium_locked_by_admin, unlimited_vision_tokens,
             created_at, updated_at
      FROM users
      ${whereClause}
@@ -135,7 +135,8 @@ async function getUserById(userId) {
     `SELECT u.id, u.username, u.email, u.first_name, u.last_name,
             u.picture, u.bio, u.city, u.state, u.country,
             u.is_admin, u.is_suspended, u.suspended_at, u.suspension_reason,
-            u.is_private, u.is_premium, u.onboarding_completed,
+            u.is_private, u.is_premium, u.premium_locked_by_admin,
+            u.unlimited_vision_tokens, u.onboarding_completed,
             u.created_at, u.updated_at,
             (SELECT COUNT(*) FROM shelves WHERE owner_id = u.id) as shelf_count,
             (SELECT COUNT(*) FROM user_collections WHERE user_id = u.id) as collection_count,
@@ -603,6 +604,47 @@ async function deleteEventAggregate(eventId, adminId, context = {}) {
   });
 }
 
+/**
+ * Toggle unlimited_vision_tokens flag for a user (admin-only).
+ */
+async function toggleUnlimitedVisionTokens(userId, adminId, context = {}) {
+  return transaction(async (client) => {
+    const current = await client.query(
+      'SELECT id, username, unlimited_vision_tokens FROM users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+
+    if (current.rows.length === 0) {
+      return { error: 'User not found' };
+    }
+
+    const targetValue = !current.rows[0].unlimited_vision_tokens;
+    const result = await client.query(
+      `UPDATE users
+       SET unlimited_vision_tokens = $2
+       WHERE id = $1
+       RETURNING id, username, unlimited_vision_tokens`,
+      [userId, targetValue]
+    );
+
+    if (result.rows.length === 0) {
+      return { error: 'Concurrent modification detected, please retry' };
+    }
+
+    const updated = result.rows[0];
+    await logAdminAction(client, {
+      adminId,
+      action: 'UNLIMITED_VISION_TOKENS_TOGGLED',
+      targetUserId: userId,
+      metadata: { unlimitedVisionTokens: !!updated.unlimited_vision_tokens },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    return { user: rowToCamelCase(updated) };
+  });
+}
+
 module.exports = {
   getSystemStats,
   listUsers,
@@ -611,6 +653,7 @@ module.exports = {
   unsuspendUser,
   toggleAdmin,
   togglePremium,
+  toggleUnlimitedVisionTokens,
   getRecentActivity,
   listAuditLogs,
   getDetailedStats,
