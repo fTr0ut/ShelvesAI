@@ -1,5 +1,6 @@
 import React, { useContext, useMemo, useState } from 'react';
 import {
+    Image,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -114,7 +115,11 @@ export default function LoginScreen({ navigation }) {
                 {/* Logo */}
                 <View style={styles.logoSection}>
                     <View style={styles.logoBox}>
-                        <Ionicons name="library" size={48} color={colors.primary} />
+                        <Image 
+                            source={require('../../assets/logo.png')} 
+                            style={styles.logoImage} 
+                            resizeMode="cover"
+                        />
                     </View>
                     <Text style={styles.appName}>ShelvesAI</Text>
                     <Text style={styles.tagline}>Organize your collections</Text>
@@ -124,6 +129,23 @@ export default function LoginScreen({ navigation }) {
                 {/* Form */}
                 <View style={styles.form}>
                     <Text style={styles.formTitle}>{isRegister ? 'Create Account' : 'Welcome Back'}</Text>
+
+                    <View style={styles.toggleContainer}>
+                        <Text style={styles.toggleText}>
+                            {isRegister ? 'Already have an account?' : "Don't have an account?"}
+                        </Text>
+                        <TouchableOpacity
+                            style={styles.toggleButtonOrange}
+                            onPress={() => {
+                                setIsRegister(!isRegister);
+                                setError('');
+                            }}
+                        >
+                            <Text style={styles.toggleButtonOrangeText}>
+                                {isRegister ? 'Log In' : 'Sign Up'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
 
                     {error ? (
                         <View style={styles.errorBox}>
@@ -216,18 +238,6 @@ export default function LoginScreen({ navigation }) {
                         </Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity
-                        style={styles.toggleButton}
-                        onPress={() => {
-                            setIsRegister(!isRegister);
-                            setError('');
-                        }}
-                    >
-                        <Text style={styles.toggleText}>
-                            {isRegister ? 'Already have an account? ' : "Don't have an account? "}
-                            <Text style={styles.toggleLink}>{isRegister ? 'Log In' : 'Sign Up'}</Text>
-                        </Text>
-                    </TouchableOpacity>
                 </View>
             </View>
         </KeyboardAvoidingView>
@@ -326,17 +336,32 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 16,
         fontWeight: '600',
     },
-    toggleButton: {
-        marginTop: spacing.lg,
+    toggleContainer: {
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: spacing.lg,
+        gap: spacing.sm,
     },
     toggleText: {
         fontSize: 14,
         color: colors.textMuted,
     },
-    toggleLink: {
-        color: colors.primary,
+    toggleButtonOrange: {
+        backgroundColor: colors.warning || '#f97316',
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.xs,
+        borderRadius: radius.md,
+    },
+    toggleButtonOrangeText: {
+        color: '#FFFFFF',
+        fontSize: 14,
         fontWeight: '600',
+    },
+    logoImage: {
+        width: 56,
+        height: 56,
+        borderRadius: 14,
     },
     forgotPassword: {
         alignSelf: 'flex-end',

@@ -14,6 +14,7 @@ const {
     normalizeSearchText,
     buildNormalizedSqlExpression,
 } = require('../../utils/searchNormalization');
+const { normalizeComparableId, isSameComparableId } = require('../../utils/identity');
 
 const normalizedCollectableTitleExpr = buildNormalizedSqlExpression('c.title');
 const normalizedCollectableCreatorExpr = buildNormalizedSqlExpression('COALESCE(c.primary_creator, \'\')');
@@ -57,6 +58,10 @@ function normalizeOwnedPlatforms(input) {
         out.push(normalized);
     }
     return out;
+}
+
+function isSameUserId(a, b) {
+    return isSameComparableId(a, b);
 }
 
 /**
@@ -743,7 +748,7 @@ async function removeItem(itemId, userId, shelfId, client = null) {
  */
 async function listVisibleForUser(ownerId, viewerId = null) {
     // If viewer is the owner, show all shelves
-    if (viewerId && ownerId === viewerId) {
+    if (isSameUserId(ownerId, viewerId)) {
         return listForUser(ownerId);
     }
 
@@ -970,6 +975,176 @@ async function getItemById(itemId, userId, shelfId) {
         [itemId, userId, shelfId]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function getItemByIdForViewing(itemId, shelfId) {
+    const result = await query(
+        `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
+            uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
+            uc.series, uc.edition, uc.special_markings, uc.age_statement, uc.label_color,
+            uc.regional_item, uc.barcode, uc.item_specific_text,
+            uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
+            EXISTS (
+                SELECT 1
+                FROM vision_item_regions vir
+                WHERE vir.collection_item_id = uc.id
+            ) AS is_vision_linked,
+            uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_content_type,
+            uc.owner_photo_size_bytes, uc.owner_photo_width, uc.owner_photo_height,
+            uc.owner_photo_thumb_storage_provider, uc.owner_photo_thumb_storage_key,
+            uc.owner_photo_thumb_content_type, uc.owner_photo_thumb_size_bytes,
+            uc.owner_photo_thumb_width, uc.owner_photo_thumb_height,
+            uc.owner_photo_thumb_box, uc.owner_photo_thumb_updated_at,
+            uc.owner_photo_visible, uc.owner_photo_updated_at,
+            ur.rating as rating,
+            c.title as collectable_title,
+            c.subtitle as collectable_subtitle,
+            c.description as collectable_description,
+            c.primary_creator as collectable_creator,
+            c.publishers as collectable_publishers,
+            c.year as collectable_year,
+            c.market_value as collectable_market_value,
+            c.formats as collectable_formats,
+            c.system_name as collectable_system_name,
+            c.platform_data as collectable_platform_data,
+            c.tags as collectable_tags,
+            c.images as collectable_images,
+            c.identifiers as collectable_identifiers,
+            c.sources as collectable_sources,
+            c.fingerprint as collectable_fingerprint,
+            c.lightweight_fingerprint as collectable_lightweight_fingerprint,
+            c.external_id as collectable_external_id,
+            c.cover_url as collectable_cover,
+            c.cover_image_url as collectable_cover_image_url,
+            c.cover_image_source as collectable_cover_image_source,
+            c.attribution as collectable_attribution,
+            c.cover_media_id as collectable_cover_media_id,
+            m.local_path as collectable_cover_media_path,
+            c.kind as collectable_kind,
+            ume.estimate_value as user_market_value,
+            COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
+            um.name as manual_name,
+            um.type as manual_type,
+            um.description as manual_description,
+            um.author as manual_author,
+            um.manufacturer as manual_manufacturer,
+            um.publisher as manual_publisher,
+            um.format as manual_format,
+            um.year as manual_year,
+            um.market_value as manual_market_value,
+            um.age_statement as manual_age_statement,
+            um.special_markings as manual_special_markings,
+            um.label_color as manual_label_color,
+            um.regional_item as manual_regional_item,
+            um.edition as manual_edition,
+            um.barcode as manual_barcode,
+            um.manual_fingerprint as manual_fingerprint,
+            um.limited_edition as manual_limited_edition,
+            um.item_specific_text as manual_item_specific_text,
+            um.tags as manual_tags,
+            um.cover_media_path as manual_cover_media_path
+         FROM user_collections uc
+         LEFT JOIN collectables c ON c.id = uc.collectable_id
+         LEFT JOIN user_manuals um ON um.id = uc.manual_id
+         LEFT JOIN media m ON m.id = c.cover_media_id
+         LEFT JOIN user_market_value_estimates ume
+           ON ume.user_id = uc.user_id
+          AND (
+            (uc.collectable_id IS NOT NULL AND ume.collectable_id = uc.collectable_id)
+            OR (uc.manual_id IS NOT NULL AND ume.manual_id = uc.manual_id)
+          )
+         LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
+            FROM user_collection_platforms ucp
+            WHERE ucp.collection_item_id = uc.id
+         ) ucp ON TRUE
+         LEFT JOIN user_ratings ur ON ur.user_id = uc.user_id
+            AND (ur.collectable_id = uc.collectable_id OR ur.manual_id = uc.manual_id)
+         WHERE uc.id = $1
+           AND uc.shelf_id = $2
+         LIMIT 1`,
+        [itemId, shelfId],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function findLatestAccessibleCollectionItemByReference({
+    viewerUserId,
+    requestedOwnerId = null,
+    collectableId = null,
+    manualId = null,
+} = {}) {
+    const normalizedViewerUserId = normalizeComparableId(viewerUserId);
+    const normalizedRequestedOwnerId = normalizeComparableId(requestedOwnerId) || normalizedViewerUserId;
+    if (!normalizedViewerUserId || !normalizedRequestedOwnerId) return null;
+
+    const referenceClauses = [];
+    const params = [normalizedRequestedOwnerId];
+    if (collectableId != null) {
+        params.push(collectableId);
+        referenceClauses.push(`uc.collectable_id = $${params.length}`);
+    }
+    if (manualId != null) {
+        params.push(manualId);
+        referenceClauses.push(`uc.manual_id = $${params.length}`);
+    }
+
+    if (referenceClauses.length !== 1) return null;
+
+    const isOwnerLookup = isSameUserId(normalizedRequestedOwnerId, normalizedViewerUserId);
+    const referenceClause = referenceClauses[0];
+
+    const locatorResult = isOwnerLookup
+        ? await query(
+            `SELECT uc.id AS item_id, uc.shelf_id
+             FROM user_collections uc
+             WHERE uc.user_id = $1
+               AND ${referenceClause}
+             ORDER BY uc.created_at DESC, uc.id DESC
+             LIMIT 1`,
+            params,
+        )
+        : await query(
+            `SELECT uc.id AS item_id, uc.shelf_id
+             FROM user_collections uc
+             JOIN shelves s ON s.id = uc.shelf_id
+             JOIN users owner ON owner.id = s.owner_id
+             WHERE uc.user_id = $1
+               AND ${referenceClause}
+               AND (owner.is_suspended = false OR s.owner_id = $${params.length + 1})
+               AND (
+                 s.owner_id = $${params.length + 1}
+                 OR s.visibility = 'public'
+                 OR (s.visibility = 'friends' AND EXISTS (
+                   SELECT 1 FROM friendships f
+                   WHERE f.status = 'accepted'
+                     AND (
+                       (f.requester_id = s.owner_id AND f.addressee_id = $${params.length + 1})
+                       OR (f.requester_id = $${params.length + 1} AND f.addressee_id = s.owner_id)
+                     )
+                 ))
+               )
+             ORDER BY uc.created_at DESC, uc.id DESC
+             LIMIT 1`,
+            [...params, normalizedViewerUserId],
+        );
+
+    const located = locatorResult.rows[0];
+    if (!located) return null;
+
+    const itemId = located.item_id;
+    const shelfId = located.shelf_id;
+    const item = isOwnerLookup
+        ? await getItemById(itemId, normalizedRequestedOwnerId, shelfId)
+        : await getItemByIdForViewing(itemId, shelfId);
+
+    return {
+        owned: isOwnerLookup,
+        viewable: !isOwnerLookup,
+        shelfId,
+        itemId,
+        item,
+    };
 }
 
 /**
@@ -1333,6 +1508,8 @@ module.exports = {
     updateItemRating,
     updateReviewedEventLink,
     getItemById,
+    getItemByIdForViewing,
+    findLatestAccessibleCollectionItemByReference,
     getManualById,
     getOwnedPlatformsByCollectionItemId,
     replaceOwnedPlatformsForCollectionItem,

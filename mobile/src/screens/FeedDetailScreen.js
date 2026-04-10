@@ -217,7 +217,7 @@ export default function FeedDetailScreen({ route, navigation }) {
   };
   const handleAddedDetailPress = (detail, event) => {
     event?.stopPropagation?.();
-    const params = buildAddedItemDetailParams(detail, owner?.id);
+    const params = buildAddedItemDetailParams(detail, owner?.id, owner?.username || null);
     if (params) {
       navigation.navigate('CollectableDetail', params);
     }
@@ -411,9 +411,17 @@ export default function FeedDetailScreen({ route, navigation }) {
         onPress={() => {
           if (hasDetailTarget) {
             if (resolvedCollectableId) {
-              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                collectableId: resolvedCollectableId,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             } else {
-              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                item,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             }
           }
         }}
@@ -476,9 +484,17 @@ export default function FeedDetailScreen({ route, navigation }) {
         onPress={() => {
           if (hasDetailTarget) {
             if (resolvedCollectableId) {
-              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                collectableId: resolvedCollectableId,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             } else {
-              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                item,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             }
           }
         }}
@@ -535,9 +551,17 @@ export default function FeedDetailScreen({ route, navigation }) {
         onPress={() => {
           if (hasDetailTarget) {
             if (resolvedCollectableId) {
-              navigation.navigate('CollectableDetail', { collectableId: resolvedCollectableId, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                collectableId: resolvedCollectableId,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             } else {
-              navigation.navigate('CollectableDetail', { item, ownerId: owner?.id });
+              navigation.navigate('CollectableDetail', {
+                item,
+                ownerId: owner?.id,
+                ownerUsername: owner?.username || null,
+              });
             }
           }
         }}
@@ -683,7 +707,11 @@ export default function FeedDetailScreen({ route, navigation }) {
                 style={styles.checkinBody}
                 onPress={() => {
                   if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
+                    navigation.navigate('CollectableDetail', {
+                      item: { collectable },
+                      ownerId: owner?.id,
+                      ownerUsername: owner?.username || null,
+                    });
                   }
                 }}
                 activeOpacity={collectable?.id ? 0.7 : 1}

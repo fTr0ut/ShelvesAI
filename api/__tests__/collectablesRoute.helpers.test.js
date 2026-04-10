@@ -1,3 +1,7 @@
+jest.mock('file-type', () => ({
+  fromBuffer: jest.fn().mockResolvedValue({ ext: 'jpg', mime: 'image/jpeg' }),
+}));
+
 jest.mock('../database/pg', () => ({
   query: jest.fn(),
 }));

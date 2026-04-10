@@ -789,7 +789,11 @@ export default function SocialFeedScreen({ navigation, route }) {
 
             const handleCheckinCollectablePress = () => {
                 if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
+                    navigation.navigate('CollectableDetail', {
+                        item: { collectable },
+                        ownerId: owner?.id,
+                        ownerUsername: owner?.username || null,
+                    });
                 }
             };
 
@@ -987,7 +991,11 @@ export default function SocialFeedScreen({ navigation, route }) {
                                 disabled={!featuredReview?.collectableId}
                                 onPress={() => {
                                     if (featuredReview?.collectableId) {
-                                        navigation.navigate('CollectableDetail', { collectableId: String(featuredReview.collectableId), ownerId: owner?.id });
+                                        navigation.navigate('CollectableDetail', {
+                                            collectableId: String(featuredReview.collectableId),
+                                            ownerId: owner?.id,
+                                            ownerUsername: owner?.username || null,
+                                        });
                                     }
                                 }}
                             >
@@ -1101,7 +1109,11 @@ export default function SocialFeedScreen({ navigation, route }) {
                                     disabled={!ratingItem.collectableId}
                                     onPress={() => {
                                         if (ratingItem.collectableId) {
-                                            navigation.navigate('CollectableDetail', { collectableId: String(ratingItem.collectableId), ownerId: owner?.id });
+                                            navigation.navigate('CollectableDetail', {
+                                                collectableId: String(ratingItem.collectableId),
+                                                ownerId: owner?.id,
+                                                ownerUsername: owner?.username || null,
+                                            });
                                         }
                                     }}
                                 >
@@ -1174,7 +1186,11 @@ export default function SocialFeedScreen({ navigation, route }) {
 
             const handleCheckinRatedCollectablePress = () => {
                 if (collectable?.id) {
-                    navigation.navigate('CollectableDetail', { item: { collectable }, ownerId: owner?.id });
+                    navigation.navigate('CollectableDetail', {
+                        item: { collectable },
+                        ownerId: owner?.id,
+                        ownerUsername: owner?.username || null,
+                    });
                 }
             };
 
@@ -1291,7 +1307,7 @@ export default function SocialFeedScreen({ navigation, route }) {
         };
         const handleAddedDetailPress = (detail, event) => {
             event?.stopPropagation?.();
-            const params = buildAddedItemDetailParams(detail, owner?.id);
+            const params = buildAddedItemDetailParams(detail, owner?.id, owner?.username || null);
             if (params) {
                 navigation.navigate('CollectableDetail', params);
             }

@@ -153,10 +153,13 @@ export function hasAddedItemDetailTarget(detail = {}) {
     );
 }
 
-export function buildAddedItemDetailParams(detail = {}, ownerId = null) {
+export function buildAddedItemDetailParams(detail = {}, ownerId = null, ownerUsername = null) {
     if (!hasAddedItemDetailTarget(detail)) return null;
 
-    const ownerParams = ownerId ? { ownerId } : {};
+    const ownerParams = {
+        ...(ownerId ? { ownerId } : {}),
+        ...(ownerUsername ? { ownerUsername } : {}),
+    };
     if (detail.collectableId) {
         return { ...ownerParams, collectableId: String(detail.collectableId) };
     }

@@ -124,46 +124,19 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
     const shelfId = activeShelfId;
     const item = activeItem || {};
+    const normalizedOwnerId = ownerId != null ? String(ownerId) : null;
+    const normalizedViewerId = user?.id != null ? String(user.id) : null;
+    const isForeignOwnerContext = !!(
+        normalizedOwnerId
+        && normalizedViewerId
+        && normalizedOwnerId !== normalizedViewerId
+    );
+    const initialRouteHasShelfItemContext = !!(
+        (route.params?.item?.shelfId || route.params?.shelfId)
+        && route.params?.item?.id
+    );
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
-
-    useEffect(() => {
-        let isActive = true;
-        if ((activeItem?.shelfId || activeShelfId) && activeItem?.id) return;
-        if (!user?.id || (ownerId && ownerId !== user.id)) return;
-        
-        const targetCollectableId = collectableId || activeItem?.collectable?.id || activeItem?.collectableId;
-        const targetManualId = manualId || activeItem?.manual?.id || activeItem?.manualId;
-        
-        if (!targetCollectableId && !targetManualId) return;
-
-        (async () => {
-            try {
-                let response;
-                if (targetCollectableId) {
-                    response = await apiRequest({
-                        apiBase,
-                        path: `/api/collectables/${targetCollectableId}/shelf-item`,
-                        token,
-                    });
-                } else if (targetManualId) {
-                    response = await apiRequest({
-                        apiBase,
-                        path: `/api/manuals/${targetManualId}/shelf-item`,
-                        token,
-                    });
-                }
-                
-                if (isActive && response?.owned) {
-                    setActiveShelfId(response.shelfId);
-                    setActiveItem(prev => ({ ...(prev || {}), id: response.itemId, shelfId: response.shelfId }));
-                }
-            } catch (err) {
-                // Ignore
-            }
-        })();
-        return () => { isActive = false; };
-    }, [apiBase, token, collectableId, activeItem?.collectable?.id, activeItem?.collectableId, activeItem?.manual?.id, activeItem?.manualId, manualId, user?.id, ownerId, activeShelfId, activeItem?.shelfId, activeItem?.id]);
 
     const isWithinHoursWindow = (value, hours) => {
         if (!value || !Number.isFinite(hours) || hours <= 0) return false;
@@ -175,9 +148,8 @@ export default function CollectableDetailScreen({ route, navigation }) {
     // Determine ownership to initialize ratings correctly from passed params
     // If ownerId is missing or matches current user, we assume 'item.rating' is OUR rating.
     // If ownerId is present and distinct, 'item.rating' is the OWNER'S rating.
-    const isOwnerContext = ownerId && user?.id && ownerId !== user.id;
-    const initialRating = !isOwnerContext ? (item?.rating || 0) : 0;
-    const initialOwnerRating = isOwnerContext ? (item?.rating || 0) : null;
+    const initialRating = !isForeignOwnerContext ? (item?.rating || 0) : 0;
+    const initialOwnerRating = isForeignOwnerContext ? (item?.rating || 0) : null;
 
     const [resolvedCollectable, setResolvedCollectable] = useState(null);
     const [resolvedManual, setResolvedManual] = useState(null);
@@ -191,6 +163,13 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [wishlists, setWishlists] = useState([]);
     const [showAddToShelfModal, setShowAddToShelfModal] = useState(false);
     const [addedToShelfId, setAddedToShelfId] = useState(null);
+    const [ownershipResolutionStatus, setOwnershipResolutionStatus] = useState(() => {
+        if (ownerId != null) return 'pending';
+        if (initialRouteHasShelfItemContext) {
+            return (readOnly || isForeignOwnerContext) ? 'foreign/viewable' : 'owned';
+        }
+        return 'pending';
+    });
     const [ownerPhoto, setOwnerPhoto] = useState(null);
     const [ownerPhotoLoading, setOwnerPhotoLoading] = useState(false);
     const [ownerPhotoBusy, setOwnerPhotoBusy] = useState(false);
@@ -249,9 +228,11 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const isManual = hasManualContent && !hasCollectableContent;
     const source = isManual ? manual : collectable;
     const hasShelfItemContext = !!(notesShelfId && item?.id);
-    const isOwnedShelfItem = hasShelfItemContext && !readOnly && !(ownerId && user?.id && ownerId !== user.id);
+    const requiresOwnershipResolution = ownerId != null || !hasShelfItemContext;
+    const isOwnershipPending = ownershipResolutionStatus === 'pending';
+    const isOwnedShelfItem = ownershipResolutionStatus === 'owned' && hasShelfItemContext && !readOnly;
     const canEditOwnerPhoto = isOwnedShelfItem;
-    const canEditNotes = hasShelfItemContext && !readOnly;
+    const canEditNotes = isOwnedShelfItem;
     const canShowReplaceCTA = isOwnedShelfItem
         && item?.isVisionLinked === true
         && isWithinHoursWindow(item?.createdAt, 72);
@@ -274,6 +255,90 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const hasPublishedReview = !!(reviewedEventId || reviewPublishedAt || reviewUpdatedAt);
     const { contentBottomPadding } = useBottomFooterLayout();
     const detailContentBottomPadding = contentBottomPadding(40);
+
+    useEffect(() => {
+        if (ownerId != null) return;
+        if (!hasShelfItemContext) return;
+        const nextStatus = (readOnly || isForeignOwnerContext) ? 'foreign/viewable' : 'owned';
+        setOwnershipResolutionStatus((prev) => (prev === nextStatus ? prev : nextStatus));
+    }, [hasShelfItemContext, isForeignOwnerContext, ownerId, readOnly]);
+
+    useEffect(() => {
+        let isActive = true;
+        if (ownershipResolutionStatus !== 'pending') return;
+        if (!user?.id || !apiBase || !token) return;
+
+        const targetCollectableId = collectableId || activeItem?.collectable?.id || activeItem?.collectableId;
+        const targetManualId = manualId || activeItem?.manual?.id || activeItem?.manualId;
+        if (!targetCollectableId && !targetManualId) return;
+
+        const loadOwnership = async () => {
+            try {
+                let endpoint = targetCollectableId
+                    ? `/api/collectables/${targetCollectableId}/shelf-item`
+                    : `/api/manuals/${targetManualId}/shelf-item`;
+
+                if (ownerId != null) {
+                    endpoint += `?ownerId=${encodeURIComponent(String(ownerId))}`;
+                }
+
+                const response = await apiRequest({
+                    apiBase,
+                    path: endpoint,
+                    token,
+                });
+                if (!isActive) return;
+
+                if (response?.owned || response?.viewable) {
+                    setActiveShelfId(response.shelfId);
+                    if (response?.item) {
+                        setActiveItem({
+                            ...response.item,
+                            shelfId: response.shelfId,
+                        });
+                    } else {
+                        setActiveItem((prev) => ({
+                            ...(prev || {}),
+                            id: response.itemId,
+                            shelfId: response.shelfId,
+                        }));
+                    }
+                    setOwnershipResolutionStatus(response.owned ? 'owned' : 'foreign/viewable');
+                    return;
+                }
+
+                setOwnershipResolutionStatus('unowned');
+            } catch (err) {
+                console.warn('Failed to resolve item ownership:', err?.message || err);
+                if (isActive) {
+                    setOwnershipResolutionStatus('unowned');
+                }
+            }
+        };
+
+        if (requiresOwnershipResolution) {
+            loadOwnership();
+        } else {
+            setOwnershipResolutionStatus((readOnly || isForeignOwnerContext) ? 'foreign/viewable' : 'owned');
+        }
+
+        return () => { isActive = false; };
+    }, [
+        activeItem?.collectable?.id,
+        activeItem?.collectableId,
+        activeItem?.manual?.id,
+        activeItem?.manualId,
+        apiBase,
+        collectableId,
+        isForeignOwnerContext,
+        manualId,
+        ownerId,
+        ownershipResolutionStatus,
+        readOnly,
+        requiresOwnershipResolution,
+        token,
+        user?.id,
+    ]);
 
     useEffect(() => {
         setPlatformMissing(!!item?.platformMissing);
@@ -499,37 +564,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
     }, [hasShelfItemContext, isManual, route.params?.userEstimate, route.params?.userEstimateAt]);
 
-    useEffect(() => {
-        let isActive = true;
-        if (!hasShelfItemContext || isManual || !notesShelfId || !apiBase || !token) return;
-
-        (async () => {
-            try {
-                const shelfData = await apiRequest({
-                    apiBase,
-                    path: `/api/shelves/${notesShelfId}/items?limit=200&skip=0`,
-                    token,
-                });
-                if (!isActive) return;
-                const matchedItem = (Array.isArray(shelfData?.items) ? shelfData.items : []).find((entry) => (
-                    String(entry?.id) === String(item?.id)
-                    || (resolvedCollectableId && String(entry?.collectable?.id) === String(resolvedCollectableId))
-                ));
-                if (matchedItem?.userDetails) {
-                    setCollectableUserDetails(matchedItem.userDetails);
-                    setActiveItem((prev) => prev ? ({
-                        ...prev,
-                        ...matchedItem,
-                    }) : matchedItem);
-                }
-            } catch (err) {
-                console.warn('Failed to hydrate shelf item details:', err?.message || err);
-            }
-        })();
-
-        return () => { isActive = false; };
-    }, [apiBase, hasShelfItemContext, isManual, item?.id, notesShelfId, resolvedCollectableId, token]);
-
     // Fetch all rating data
     useEffect(() => {
         let isActive = true;
@@ -564,7 +598,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 if (isActive) setRating(myData.rating || 0);
 
                 // 3. Get Owner's Rating (Scenario B, C) - for both collectables and manuals
-                if (ownerId && user?.id && ownerId !== user.id) {
+                if (isForeignOwnerContext) {
                     const ownerData = await apiRequest({
                         apiBase,
                         path: `/api/ratings/${targetId}/user/${ownerId}${queryParam}`,
@@ -580,7 +614,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
         loadRatings();
 
         return () => { isActive = false; };
-    }, [apiBase, token, collectable?.id, manual?.id, ownerId, user?.id]);
+    }, [apiBase, token, collectable?.id, manual?.id, ownerId, user?.id, isForeignOwnerContext]);
 
     // Check favorite status
     useEffect(() => {
@@ -1675,10 +1709,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const ownerRatingLabel = normalizedOwnerUsername
         ? `${normalizedOwnerUsername}'s rating:`
         : 'Owner rating:';
-    const ownerPhotoSectionLabel = (isOwnerContext && normalizedOwnerUsername)
+    const ownerPhotoSectionLabel = (isForeignOwnerContext && normalizedOwnerUsername)
         ? `${normalizedOwnerUsername}'s Photo`
         : 'Your photos';
-    const ownerPhotoViewerTitle = (isOwnerContext && normalizedOwnerUsername)
+    const ownerPhotoViewerTitle = (isForeignOwnerContext && normalizedOwnerUsername)
         ? `${normalizedOwnerUsername}'s photo`
         : 'Your photo';
 
@@ -2215,7 +2249,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const ownerPhotoViewerBusy = ownerPhotoViewerLoading || ownerPhotoViewerApplying || ownerPhotoBusy;
     const showOwnerPhotoSection = hasShelfItemContext
         ? (ownerPhotoLoading || !!ownerPhoto?.hasPhoto || canEditOwnerPhoto)
-        : !(ownerId && user?.id && ownerId !== user.id);
+        : !isForeignOwnerContext;
     const isOtherManualItem = isManual && String(manual?.type || '').toLowerCase() === 'other';
     const shouldReplaceManualHeroWithOwnerPhoto = (
         isOtherManualItem
@@ -2344,7 +2378,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const renderOwnerPhotoCard = (extraStyle = null) => (
         <View style={[styles.ownerPhotoCard, extraStyle]}>
             <Text style={[styles.sectionTitle, styles.ownerPhotoSectionTitle]}>{ownerPhotoSectionLabel}</Text>
-            {showAutoScanSubtext && !isOwnerContext && (
+            {showAutoScanSubtext && !isForeignOwnerContext && (
                 <Text style={styles.ownerPhotoSubtext}>added automatically from your scan</Text>
             )}
 
@@ -2542,7 +2576,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                             </View>
 
                             {/* Owner Rating (if visible) */}
-                            {ownerId && user?.id && ownerId !== user.id && (
+                            {isForeignOwnerContext && (
                                 <View style={styles.ratingBlock}>
                                     <Text style={styles.ratingLabel}>{ownerRatingLabel}</Text>
                                     <View style={styles.ratingRow}>
@@ -2571,73 +2605,77 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                 showOwnerPhotoInRatingColumn && isManual && styles.actionButtonsColumnAlignWithRatings,
                             ]}
                         >
-                            {!isOwnedShelfItem && user?.id && (collectable?.id || manual?.id) && !addedToShelfId && (
+                            {!isOwnershipPending && ownershipResolutionStatus === 'unowned' && user?.id && (collectable?.id || manual?.id) && !addedToShelfId && (
                                 <TouchableOpacity
                                     onPress={() => setShowAddToShelfModal(true)}
-                                    style={styles.actionIconBtn}
+                                    style={styles.pillButtonSuccess}
                                     activeOpacity={0.7}
                                 >
-                                    <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
+                                    <Text style={styles.pillButtonTextInverted}>Add</Text>
                                 </TouchableOpacity>
                             )}
-                            {!isOwnedShelfItem && user?.id && addedToShelfId && (
-                                <View style={styles.actionIconBtn}>
-                                    <Ionicons name="checkmark-circle" size={28} color={colors.success || '#4CAF50'} />
+                            {!isOwnershipPending && ownershipResolutionStatus === 'unowned' && user?.id && addedToShelfId && (
+                                <View style={styles.pillButtonStatic}>
+                                    <Ionicons name="checkmark-circle" size={18} color={colors.success || '#4CAF50'} />
+                                    <Text style={styles.pillButtonTextSuccess}>Added</Text>
                                 </View>
                             )}
                             {(collectable?.id || manual?.id) && (
                                 <TouchableOpacity
-                                    onPress={handleToggleFavorite}
-                                    style={styles.actionIconBtn}
-                                    activeOpacity={0.7}
-                                >
-                                    <Ionicons
-                                        name={isFavorited ? 'heart' : 'heart-outline'}
-                                        size={28}
-                                        color={isFavorited ? colors.error : colors.textMuted}
-                                    />
-                                </TouchableOpacity>
-                            )}
-                            <TouchableOpacity
-                                onPress={handleOpenWishlistModal}
-                                style={styles.actionIconBtn}
-                                activeOpacity={0.7}
-                            >
-                                <Ionicons
-                                    name="bookmark-outline"
-                                    size={28}
-                                    color={colors.textMuted}
-                                />
-                            </TouchableOpacity>
-                            {(collectable?.id || manual?.id) && (
-                                <TouchableOpacity
                                     onPress={handleCheckIn}
-                                    style={styles.actionIconBtn}
+                                    style={styles.pillButtonOutline}
                                     activeOpacity={0.7}
                                 >
                                     <Ionicons
                                         name="checkmark-done-outline"
-                                        size={28}
+                                        size={18}
+                                        color={colors.textMuted}
+                                    />
+                                    <Text style={styles.pillButtonTextMuted}>Check-in</Text>
+                                </TouchableOpacity>
+                            )}
+                            <View style={styles.actionIconRow}>
+                                {(collectable?.id || manual?.id) && (
+                                    <TouchableOpacity
+                                        onPress={handleToggleFavorite}
+                                        style={styles.actionIconBtn}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons
+                                            name={isFavorited ? 'heart' : 'heart-outline'}
+                                            size={26}
+                                            color={isFavorited ? colors.error : colors.textMuted}
+                                        />
+                                    </TouchableOpacity>
+                                )}
+                                <TouchableOpacity
+                                    onPress={handleOpenWishlistModal}
+                                    style={styles.actionIconBtn}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons
+                                        name="bookmark-outline"
+                                        size={26}
                                         color={colors.textMuted}
                                     />
                                 </TouchableOpacity>
-                            )}
-                            <TouchableOpacity
-                                onPress={handleShareItem}
-                                style={styles.actionIconBtn}
-                                activeOpacity={0.7}
-                                disabled={shareBusy}
-                            >
-                                {shareBusy ? (
-                                    <ActivityIndicator size="small" color={colors.textMuted} />
-                                ) : (
-                                    <Ionicons
-                                        name="share-social-outline"
-                                        size={28}
-                                        color={colors.textMuted}
-                                    />
-                                )}
-                            </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={handleShareItem}
+                                    style={styles.actionIconBtn}
+                                    activeOpacity={0.7}
+                                    disabled={shareBusy}
+                                >
+                                    {shareBusy ? (
+                                        <ActivityIndicator size="small" color={colors.textMuted} />
+                                    ) : (
+                                        <Ionicons
+                                            name="share-social-outline"
+                                            size={26}
+                                            color={colors.textMuted}
+                                        />
+                                    )}
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
                 </View>
@@ -3371,15 +3409,68 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         color: colors.textSecondary,
     },
     actionButtonsColumn: {
-        alignItems: 'center',
+        alignItems: 'flex-end',
         gap: spacing.md,
     },
     actionButtonsColumnAlignWithRatings: {
         alignSelf: 'flex-end',
         paddingBottom: spacing.xs,
     },
+    actionIconRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: spacing.sm,
+    },
     actionIconBtn: {
         padding: 4,
+    },
+    pillButtonSuccess: {
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: radius.full,
+        backgroundColor: colors.success,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...shadows.sm,
+    },
+    pillButtonStatic: {
+        flexDirection: 'row',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: radius.full,
+        backgroundColor: colors.surfaceElevated,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+    },
+    pillButtonOutline: {
+        flexDirection: 'row',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: radius.full,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+    },
+    pillButtonTextInverted: {
+        color: colors.textInverted,
+        fontSize: 14,
+        fontWeight: '600',
+        fontFamily: typography.semibold,
+    },
+    pillButtonTextSuccess: {
+        color: colors.success,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    pillButtonTextMuted: {
+        color: colors.textMuted,
+        fontSize: 13,
+        fontWeight: '500',
     },
     section: {
         marginBottom: spacing.lg,

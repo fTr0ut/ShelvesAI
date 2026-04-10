@@ -3,6 +3,7 @@ const { auth } = require("../middleware/auth");
 const { requireAdmin } = require("../middleware/admin");
 const { validateIntParam, validateStringLengths } = require("../middleware/validate");
 const collectablesQueries = require("../database/queries/collectables");
+const shelvesQueries = require("../database/queries/shelves");
 const marketValueEstimates = require("../database/queries/marketValueEstimates");
 const { query } = require("../database/pg");
 const { rowToCamelCase, parsePagination } = require("../database/queries/utils");
@@ -12,6 +13,8 @@ const { getCollectableMatchingService } = require('../services/collectableMatchi
 const { resolveShelfType, getApiContainerKey } = require('../services/config/shelfTypeResolver');
 const { resolveMediaUrl } = require('../services/mediaUrl');
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
+const { normalizeComparableId } = require('../utils/identity');
+const { _helpers: shelfItemResponseHelpers } = require('../controllers/shelvesController');
 const logger = require('../logger');
 const {
   normalizeSearchText,
@@ -24,6 +27,11 @@ const normalizedCollectableTitleExpr = buildNormalizedSqlExpression('title');
 const normalizedCollectableCreatorExpr = buildNormalizedSqlExpression('COALESCE(primary_creator, \'\')');
 
 router.use(auth);
+
+function logShelfItemResolution(context, payload) {
+  if (process.env.NODE_ENV === 'production') return;
+  logger.info(`[${context}] shelf-item resolved`, payload);
+}
 
 // Category to kind mapping for news items
 const CATEGORY_TO_KIND = {
@@ -1128,7 +1136,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       });
       const sqlPattern = q.replace(/\*/g, '%');
       const normalizedPattern = normalizeSearchWildcardPattern(q);
-      countSql = `SELECT COUNT(*) as total FROM collectables 
+      countSql = `SELECT COUNT(*) as total FROM collectables
        WHERE (
          title ILIKE $1
          OR primary_creator ILIKE $1
@@ -1155,7 +1163,7 @@ router.get("/", validateStringLengths({ q: 500 }, { source: 'query' }), async (r
       });
       const normalizedQuery = normalizeSearchText(q);
       const castContainmentJson = JSON.stringify([{ nameNormalized: normalizeCastName(q) }]);
-      countSql = `SELECT COUNT(*) as total FROM collectables 
+      countSql = `SELECT COUNT(*) as total FROM collectables
        WHERE (
          title % $1
          OR primary_creator % $1
@@ -1324,25 +1332,64 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
   }
 });
 
-// Check if the current user owns this collectable
+// Check if the current user (or a specified owner) has this collectable on a shelf
 router.get("/:collectableId/shelf-item", validateIntParam(['collectableId']), async (req, res) => {
   try {
     const collectableId = parseInt(req.params.collectableId, 10);
-    const userId = req.user.id;
-    const result = await query(
-      `SELECT uc.id as item_id, uc.shelf_id
-       FROM user_collections uc
-       WHERE uc.user_id = $1 AND uc.collectable_id = $2
-       ORDER BY uc.created_at DESC LIMIT 1`,
-      [userId, collectableId]
-    );
-    if (!result.rows.length) {
+    const userId = normalizeComparableId(req.user.id);
+    const ownerOverrideProvided = Object.prototype.hasOwnProperty.call(req.query || {}, 'ownerId');
+    const requestedOwnerId = ownerOverrideProvided
+      ? normalizeComparableId(req.query.ownerId)
+      : userId;
+
+    if (!requestedOwnerId) {
+      return res.status(400).json({ error: "Invalid ownerId" });
+    }
+
+    const resolution = await shelvesQueries.findLatestAccessibleCollectionItemByReference({
+      viewerUserId: userId,
+      requestedOwnerId,
+      collectableId,
+    });
+
+    if (!resolution) {
+      logShelfItemResolution('collectables.shelfItem', {
+        viewerUserId: userId,
+        requestedOwnerId,
+        collectableId,
+        owned: false,
+        viewable: false,
+        shelfId: null,
+        itemId: null,
+        hasHydratedItem: false,
+      });
       return res.json({ owned: false });
     }
+
+    const formattedItem = resolution.item
+      ? shelfItemResponseHelpers.formatShelfItem(resolution.item)
+      : null;
+    const responseItem = resolution.owned
+      ? formattedItem
+      : shelfItemResponseHelpers.redactShelfItemForViewer(formattedItem);
+
+    logShelfItemResolution('collectables.shelfItem', {
+      viewerUserId: userId,
+      requestedOwnerId,
+      collectableId,
+      owned: resolution.owned,
+      viewable: resolution.viewable === true,
+      shelfId: resolution.shelfId,
+      itemId: resolution.itemId,
+      hasHydratedItem: !!responseItem,
+    });
+
     return res.json({
-      owned: true,
-      shelfId: result.rows[0].shelf_id,
-      itemId: result.rows[0].item_id
+      owned: resolution.owned,
+      ...(resolution.viewable ? { viewable: true } : {}),
+      shelfId: resolution.shelfId,
+      itemId: resolution.itemId,
+      ...(responseItem ? { item: responseItem } : {}),
     });
   } catch (err) {
     logger.error('GET /collectables/:id/shelf-item error:', err);

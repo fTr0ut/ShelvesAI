@@ -33,6 +33,7 @@ const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs'
 const userCollectionPhotosQueries = require('../database/queries/userCollectionPhotos');
 const shelfPhotosQueries = require('../database/queries/shelfPhotos');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
+const { isSameComparableId } = require('../utils/identity');
 const { getCollectableMatchingService } = require('../services/collectableMatchingService');
 const { getWorkflowQueueService } = require('../services/workflowQueueService');
 const { getWorkflowQueueSettings } = require('../services/workflow/workflowSettings');
@@ -247,6 +248,10 @@ function formatShelfResponse(shelf) {
       photoUpdatedAt,
     }),
   };
+}
+
+function isSameUserId(a, b) {
+  return isSameComparableId(a, b);
 }
 
 function formatShelfPhotoResponse(shelfRow) {
@@ -1099,9 +1104,20 @@ function formatShelfItem(row) {
   return formatted;
 }
 
+function redactShelfItemForViewer(item) {
+  if (!item || typeof item !== 'object') return item;
+  return {
+    ...item,
+    ownerPhoto: null,
+    reviewedEventId: null,
+    reviewPublishedAt: null,
+    reviewUpdatedAt: null,
+  };
+}
+
 function canViewerAccessOwnerPhoto(itemRow, viewerUserId) {
   if (!itemRow?.ownerPhotoSource) return false;
-  if (itemRow.userId && viewerUserId && itemRow.userId === viewerUserId) return true;
+  if (isSameUserId(itemRow?.userId, viewerUserId)) return true;
   return !!(itemRow.ownerPhotoVisible && itemRow.showPersonalPhotos);
 }
 
@@ -1468,7 +1484,7 @@ async function getShelf(req, res) {
 
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
-    const readOnly = shelf.ownerId !== req.user.id;
+    const readOnly = !isSameUserId(shelf.ownerId, req.user.id);
     res.json({ shelf: { ...formatShelfResponse(shelf), readOnly } });
   } catch (err) {
     logger.error('getShelf error:', err);
@@ -1654,18 +1670,12 @@ async function listShelfItems(req, res) {
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
 
     const { limit, skip } = parsePaginationParams(req.query, { defaultLimit: 25, maxLimit: 200 });
-    const isOwner = shelf.ownerId === req.user.id;
+    const isOwner = isSameUserId(shelf.ownerId, req.user.id);
     let items = isOwner
       ? await hydrateShelfItems(req.user.id, shelf.id, { limit, skip })
       : (await shelvesQueries.getItemsForViewing(shelf.id, { limit, offset: skip })).map(formatShelfItem).filter(Boolean);
     if (!isOwner) {
-      items = items.map((item) => ({
-        ...item,
-        ownerPhoto: null,
-        reviewedEventId: null,
-        reviewPublishedAt: null,
-        reviewUpdatedAt: null,
-      }));
+      items = items.map(redactShelfItemForViewer);
     }
 
     if (OWNER_PHOTO_DEBUG_ENABLED) {
@@ -1860,7 +1870,7 @@ async function addCollectable(req, res) {
     if (manualId) {
       const manual = await shelvesQueries.getManualById(manualId);
       if (!manual) return res.status(404).json({ error: "Manual item not found" });
-      if (manual.userId !== req.user.id) {
+      if (!isSameUserId(manual.userId, req.user.id)) {
         return res.status(403).json({ error: "You do not own this manual item" });
       }
 
@@ -2642,7 +2652,7 @@ async function getShelfItemOwnerPhoto(req, res) {
       return res.status(404).json({ error: 'Shelf item not found' });
     }
 
-    const isOwner = item.userId === req.user.id;
+    const isOwner = isSameUserId(item.userId, req.user.id);
     if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
@@ -2691,7 +2701,7 @@ async function getShelfItemOwnerPhotoImage(req, res) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
 
-    const isOwner = item.userId === req.user.id;
+    const isOwner = isSameUserId(item.userId, req.user.id);
     if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
@@ -2748,7 +2758,7 @@ async function getShelfItemOwnerPhotoThumbnail(req, res) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
 
-    const isOwner = item.userId === req.user.id;
+    const isOwner = isSameUserId(item.userId, req.user.id);
     if (!isOwner && !canViewerAccessOwnerPhoto(item, req.user.id)) {
       return res.status(404).json({ error: 'Owner photo not found' });
     }
@@ -4967,4 +4977,10 @@ module.exports = {
   updateCollectionItemDetails,
   updateOwnedPlatforms,
   searchUserCollection,
+};
+
+module.exports._helpers = {
+  formatShelfItem,
+  redactShelfItemForViewer,
+  isSameUserId,
 };

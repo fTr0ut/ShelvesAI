@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-04-09
+Last updated: 2026-04-10
 
 ---
 
@@ -49,6 +49,12 @@ ShelvesAI/
 
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
+
+- 2026-04-10 | collectable-detail-social-ownership-hydration | Hardened SocialFeed/Profile/FeedDetail navigation into `CollectableDetailScreen` so feed-origin detail params now carry `ownerUsername` alongside `ownerId`, and the detail screen normalizes owner/viewer ids before deciding owned vs foreign context. The lightweight shelf-context lookup now hydrates full matched shelf items from `/api/shelves/:shelfId/items` for both collectables and manuals instead of only when `userDetails` exists. Backend `GET /api/collectables/:collectableId/shelf-item` and `GET /api/manuals/:manualId/shelf-item` now resolve the latest viewable foreign-owner copy directly in SQL, preventing a newer private copy from masking an older public/friends-visible one.
+
+- 2026-04-10 | shelf-controller-owner-id-normalization | Fixed shelf ownership classification in `api/controllers/shelvesController.js` by normalizing `shelf.ownerId` and `req.user.id` before owner/read-only checks. This prevents owned shelf item hydration from falling into the foreign-view path when auth ids arrive as strings, which was stripping owner-only detail data from `GET /api/shelves/:shelfId/items` for users opening their own items from SocialFeed-origin detail routes.
+
+- 2026-04-10 | feed-profile-shelf-item-hydration-refactor | Reworked feed/profile detail ownership resolution so `GET /api/collectables/:collectableId/shelf-item` and `GET /api/manuals/:manualId/shelf-item` now normalize UUID-backed owner ids correctly, return an optional hydrated `item`, and log lookup outcomes in development. Added shared reference-based shelf item resolution in `api/database/queries/shelves.js`, exported shared shelf-item formatting/redaction helpers from `api/controllers/shelvesController.js`, and removed the `CollectableDetailScreen` feed/profile hydration dependency on paginated `GET /api/shelves/:shelfId/items?limit=200&skip=0` lookups in favor of explicit `pending | owned | foreign/viewable | unowned` ownership state.
 
 - 2026-04-09 | collectable-user-details-section | Added collectable-only per-shelf-item `Your details` support across API and mobile. Database now persists `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` via migration `20260409130000_add_user_collection_item_details` and init schema parity. Shelf item hydration in `api/database/queries/shelves.js` now joins `user_market_value_estimates` and `api/controllers/shelvesController.js` emits a `userDetails` object on collectable shelf items, plus new owner endpoint `PUT /api/shelves/:shelfId/items/:itemId/details` saves those fields and the existing user market estimate. Mobile adds new `mobile/src/screens/ItemDetailsScreen.js`, registers it in both root and Shelves-tab stacks, and updates `CollectableDetailScreen` to render owner-editable `Your details` between `Details` and `Tags` while keeping manual edit flow unchanged.
 

@@ -275,10 +275,10 @@ export default function ShelfCreateScreen({ navigation, route }) {
 
           {/* Name Input */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Name</Text>
+            <Text style={styles.label}>Give your shelf a name:</Text>
             <TextInput
               style={styles.input}
-              placeholder="My Collection"
+              placeholder="My Book Collection"
               placeholderTextColor={colors.textMuted}
               value={name}
               onChangeText={setName}
@@ -331,7 +331,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
 
           {/* Type Selection */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Type</Text>
+            <Text style={styles.label}>Select the type of items that will be stored in this shelf:</Text>
             <View style={styles.chipGrid}>
               {SHELF_TYPES.map(opt => (
                 <TouchableOpacity
@@ -363,7 +363,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
             </Text>
             <TextInput
               style={[styles.input, styles.textArea]}
-              placeholder={isOtherShelf ? 'Describe what this Other shelf contains' : "What's in this collection?"}
+              placeholder={isOtherShelf ? 'Describe the specifics of your items, the more detail the better!' : "What's in this collection?"}
               placeholderTextColor={colors.textMuted}
               value={description}
               onChangeText={setDescription}
@@ -435,7 +435,7 @@ export default function ShelfCreateScreen({ navigation, route }) {
 
           {/* Visibility */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Visibility</Text>
+            <Text style={styles.label}>Select who you want to share this shelf with:</Text>
             <View style={styles.visibilityRow}>
               {VISIBILITY_OPTIONS.map(opt => (
                 <TouchableOpacity

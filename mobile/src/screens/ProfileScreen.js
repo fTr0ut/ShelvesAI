@@ -542,7 +542,7 @@ export default function ProfileScreen({ navigation, route }) {
         };
         const handleAddedDetailPress = (detail, event) => {
             event?.stopPropagation?.();
-            const params = buildAddedItemDetailParams(detail, item?.owner?.id);
+            const params = buildAddedItemDetailParams(detail, item?.owner?.id, item?.owner?.username || null);
             if (params) {
                 navigation.navigate('CollectableDetail', params);
             }

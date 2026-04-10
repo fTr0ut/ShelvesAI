@@ -1,3 +1,7 @@
+jest.mock('file-type', () => ({
+    fromBuffer: jest.fn().mockResolvedValue({ ext: 'jpg', mime: 'image/jpeg' }),
+}));
+
 const sharp = require('sharp');
 const shelvesController = require('../controllers/shelvesController');
 const { VisionPipelineService } = require('../services/visionPipeline');
@@ -731,6 +735,57 @@ describe('shelvesController', () => {
                         imageUrl: '/api/shelves/10/photo/image',
                     }),
                 }),
+            }));
+        });
+
+        it('treats mixed-type owner ids as writable in getShelf responses', async () => {
+            req.params = { shelfId: '10' };
+            req.user = { id: '1' };
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                name: 'Books',
+                type: 'books',
+                visibility: 'private',
+            });
+
+            await shelvesController.getShelf(req, res);
+
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                shelf: expect.objectContaining({
+                    id: 10,
+                    readOnly: false,
+                }),
+            }));
+        });
+
+        it('uses the owner hydration path in listShelfItems for mixed-type owner ids', async () => {
+            req.params = { shelfId: '10' };
+            req.user = { id: '1' };
+            req.query = {};
+            shelvesQueries.getForViewing.mockResolvedValue({
+                id: 10,
+                ownerId: 1,
+                visibility: 'private',
+            });
+            shelvesQueries.getItems.mockResolvedValue([{
+                id: 55,
+                userId: '1',
+                shelfId: 10,
+                collectableId: 501,
+                collectableTitle: 'Owner Copy',
+                collectableKind: 'books',
+                ownedPlatforms: [],
+            }]);
+            shelvesQueries.getItemsForViewing.mockResolvedValue([]);
+            query.mockResolvedValueOnce({ rows: [{ total: '1' }], rowCount: 1 });
+
+            await shelvesController.listShelfItems(req, res);
+
+            expect(shelvesQueries.getItems).toHaveBeenCalledWith(10, '1', { limit: 25, offset: 0 });
+            expect(shelvesQueries.getItemsForViewing).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                items: [expect.objectContaining({ id: 55 })],
             }));
         });
 
@@ -2357,6 +2412,31 @@ describe('shelvesController', () => {
 
             expect(userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer).toHaveBeenCalled();
             expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+            expect(res.send).toHaveBeenCalledWith(thumbBuffer);
+        });
+
+        it('treats mixed-type owner ids as owner access for thumbnail reads', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.user = { id: '1' };
+            const thumbBuffer = Buffer.from('thumb');
+            userCollectionPhotosQueries.getByCollectionItem.mockResolvedValue({
+                id: 55,
+                userId: 1,
+                shelfId: 10,
+                ownerPhotoSource: 'upload',
+                ownerPhotoVisible: false,
+                showPersonalPhotos: false,
+                ownerPhotoThumbContentType: 'image/jpeg',
+            });
+            userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer.mockResolvedValue({
+                buffer: thumbBuffer,
+                contentType: 'image/jpeg',
+                contentLength: thumbBuffer.length,
+            });
+
+            await shelvesController.getShelfItemOwnerPhotoThumbnail(req, res);
+
+            expect(userCollectionPhotosQueries.loadOwnerPhotoThumbnailBuffer).toHaveBeenCalled();
             expect(res.send).toHaveBeenCalledWith(thumbBuffer);
         });
 
