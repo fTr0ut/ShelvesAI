@@ -12,6 +12,7 @@ const shelfPhotosQueries = require('../database/queries/shelfPhotos');
 const manualMediaQueries = require('../database/queries/manualMedia');
 const needsReviewQueries = require('../database/queries/needsReview');
 const collectablesQueries = require('../database/queries/collectables');
+const marketValueEstimates = require('../database/queries/marketValueEstimates');
 const feedQueries = require('../database/queries/feed');
 const ratingsQueries = require('../database/queries/ratings');
 const itemReplacementTracesQueries = require('../database/queries/itemReplacementTraces');
@@ -107,6 +108,11 @@ jest.mock('../database/queries/itemReplacementTraces', () => ({
 }));
 jest.mock('../database/queries/needsReview');
 jest.mock('../database/queries/collectables');
+jest.mock('../database/queries/marketValueEstimates', () => ({
+    getEstimate: jest.fn().mockResolvedValue(null),
+    setEstimate: jest.fn().mockResolvedValue(null),
+    deleteEstimate: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('../database/queries/ratings', () => ({
     getRating: jest.fn().mockResolvedValue({ rating: null }),
 }));
@@ -203,6 +209,9 @@ describe('shelvesController', () => {
         if (shelvesQueries.updateCollectionItemGameDefaults) {
             shelvesQueries.updateCollectionItemGameDefaults.mockReset();
         }
+        if (shelvesQueries.updateCollectionItemDetails) {
+            shelvesQueries.updateCollectionItemDetails.mockReset();
+        }
         if (shelvesQueries.listCollectionItemsForDefaults) {
             shelvesQueries.listCollectionItemsForDefaults.mockReset();
         }
@@ -241,6 +250,9 @@ describe('shelvesController', () => {
             collectablesQueries.updateFormat = jest.fn();
         }
         collectablesQueries.updateFormat.mockReset();
+        marketValueEstimates.getEstimate.mockReset();
+        marketValueEstimates.setEstimate.mockReset();
+        marketValueEstimates.deleteEstimate.mockReset();
         itemReplacementTracesQueries.createIntent.mockReset();
         itemReplacementTracesQueries.getByIdForUser.mockReset();
         itemReplacementTracesQueries.markCompleted.mockReset();
@@ -1117,6 +1129,154 @@ describe('shelvesController', () => {
             expect(res.status).toHaveBeenCalledWith(400);
             expect(shelvesQueries.replaceOwnedPlatformsForCollectionItem).not.toHaveBeenCalled();
             expect(collectablesQueries.updateFormat).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('updateCollectionItemDetails', () => {
+        it('updates collectable-specific user details and market value', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = {
+                format: 'Steelbook',
+                series: 'Criterion Collection',
+                edition: 'First Pressing',
+                specialMarkings: 'Signed insert',
+                ageStatement: 'Aged 10 years',
+                labelColor: 'Black',
+                regional: 'Japan',
+                barcode: '123456789012',
+                itemSpecificText: 'Numbered release',
+                userMarketValue: '$45',
+            };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'movies' });
+            shelvesQueries.getItemById
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 900,
+                    manualId: null,
+                    collectableKind: 'movies',
+                })
+                .mockResolvedValueOnce({
+                    id: 55,
+                    shelfId: 10,
+                    collectableId: 900,
+                    manualId: null,
+                    collectableKind: 'movies',
+                    createdAt: '2026-04-09T15:00:00.000Z',
+                    format: 'Steelbook',
+                    series: 'Criterion Collection',
+                    edition: 'First Pressing',
+                    specialMarkings: 'Signed insert',
+                    ageStatement: 'Aged 10 years',
+                    labelColor: 'Black',
+                    regionalItem: 'Japan',
+                    barcode: '123456789012',
+                    itemSpecificText: 'Numbered release',
+                    userMarketValue: '$45',
+                });
+
+            await shelvesController.updateCollectionItemDetails(req, res);
+
+            expect(shelvesQueries.updateCollectionItemDetails).toHaveBeenCalledWith({
+                collectionItemId: 55,
+                userId: 1,
+                shelfId: 10,
+                details: {
+                    format: 'Steelbook',
+                    series: 'Criterion Collection',
+                    edition: 'First Pressing',
+                    special_markings: 'Signed insert',
+                    age_statement: 'Aged 10 years',
+                    label_color: 'Black',
+                    regional_item: 'Japan',
+                    barcode: '123456789012',
+                    item_specific_text: 'Numbered release',
+                },
+            });
+            expect(marketValueEstimates.setEstimate).toHaveBeenCalledWith(1, { collectableId: 900 }, '$45');
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    id: 55,
+                    userDetails: expect.objectContaining({
+                        dateAddedToShelf: '2026-04-09T15:00:00.000Z',
+                        format: 'Steelbook',
+                        series: 'Criterion Collection',
+                        edition: 'First Pressing',
+                        specialMarkings: 'Signed insert',
+                        ageStatement: 'Aged 10 years',
+                        labelColor: 'Black',
+                        regional: 'Japan',
+                        barcode: '123456789012',
+                        itemSpecificText: 'Numbered release',
+                        userMarketValue: '$45',
+                    }),
+                }),
+            }));
+        });
+
+        it('omits editable format for game collectables and clears blank market value', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = {
+                format: 'Physical',
+                series: 'Nintendo Selects',
+                userMarketValue: '   ',
+            };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'games' });
+            shelvesQueries.getItemById
+                .mockResolvedValueOnce({
+                    id: 55,
+                    collectableId: 900,
+                    manualId: null,
+                    collectableKind: 'games',
+                })
+                .mockResolvedValueOnce({
+                    id: 55,
+                    shelfId: 10,
+                    collectableId: 900,
+                    manualId: null,
+                    collectableKind: 'games',
+                    createdAt: '2026-04-09T15:00:00.000Z',
+                    format: 'digital',
+                    series: 'Nintendo Selects',
+                    userMarketValue: null,
+                });
+
+            await shelvesController.updateCollectionItemDetails(req, res);
+
+            expect(shelvesQueries.updateCollectionItemDetails).toHaveBeenCalledWith({
+                collectionItemId: 55,
+                userId: 1,
+                shelfId: 10,
+                details: {
+                    series: 'Nintendo Selects',
+                },
+            });
+            expect(marketValueEstimates.deleteEstimate).toHaveBeenCalledWith(1, { collectableId: 900 });
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                item: expect.objectContaining({
+                    userDetails: expect.objectContaining({
+                        format: null,
+                        series: 'Nintendo Selects',
+                    }),
+                }),
+            }));
+        });
+
+        it('rejects manual items for the shared collectable details endpoint', async () => {
+            req.params = { shelfId: '10', itemId: '55' };
+            req.body = { edition: 'First Edition' };
+            shelvesQueries.getById.mockResolvedValue({ id: 10, ownerId: 1, type: 'other' });
+            shelvesQueries.getItemById.mockResolvedValue({
+                id: 55,
+                collectableId: null,
+                manualId: 901,
+                collectableKind: null,
+            });
+
+            await shelvesController.updateCollectionItemDetails(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(shelvesQueries.updateCollectionItemDetails).not.toHaveBeenCalled();
+            expect(marketValueEstimates.setEstimate).not.toHaveBeenCalled();
         });
     });
 

@@ -18,6 +18,7 @@ const processingStatus = require('../services/processingStatus');
 const { query, transaction } = require('../database/pg');
 const shelvesQueries = require('../database/queries/shelves');
 const collectablesQueries = require('../database/queries/collectables');
+const marketValueEstimates = require('../database/queries/marketValueEstimates');
 const ratingsQueries = require('../database/queries/ratings');
 const feedQueries = require('../database/queries/feed');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
@@ -134,6 +135,30 @@ function normalizeOwnedPlatforms(value) {
 
 function normalizeOwnedGameFormat(value) {
   return normalizeGameFormat(value);
+}
+
+function isGameCollectableKind(value) {
+  const normalized = normalizeString(value);
+  if (!normalized) return false;
+  const lower = normalized.toLowerCase();
+  return lower === 'game' || lower === 'games';
+}
+
+function formatCollectionUserDetails(row) {
+  if (!row?.collectableId) return null;
+  return {
+    dateAddedToShelf: row.createdAt || null,
+    format: isGameCollectableKind(row.collectableKind) ? null : (row.format || null),
+    series: row.series || null,
+    edition: row.edition || null,
+    specialMarkings: row.specialMarkings || null,
+    ageStatement: row.ageStatement || null,
+    labelColor: row.labelColor || null,
+    regional: row.regionalItem || null,
+    barcode: row.barcode || null,
+    itemSpecificText: row.itemSpecificText || null,
+    userMarketValue: row.userMarketValue || null,
+  };
 }
 
 function normalizePlatformData(value) {
@@ -1018,6 +1043,7 @@ function formatShelfItem(row) {
     id: row.id,
     collectable,
     manual,
+    userDetails: formatCollectionUserDetails(row),
     isVisionLinked: !!row.isVisionLinked,
     position: row.position ?? null,
     format: row.format ?? null,
@@ -4735,6 +4761,76 @@ async function searchUserCollection(req, res) {
   }
 }
 
+async function updateCollectionItemDetails(req, res) {
+  try {
+    const shelfId = parseInt(req.params.shelfId, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+    if (!Number.isInteger(shelfId) || !Number.isInteger(itemId)) {
+      return res.status(400).json({ error: 'Invalid shelf or item id' });
+    }
+
+    const shelf = await loadShelfForUser(req.user.id, shelfId);
+    if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
+
+    const currentItem = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    if (!currentItem) return res.status(404).json({ error: 'Item not found' });
+    if (!currentItem.collectableId || currentItem.manualId) {
+      return res.status(400).json({ error: 'Item details editing is only supported for collectable shelf items' });
+    }
+
+    const body = req.body ?? {};
+    const updates = {};
+    const fieldMap = {
+      format: 'format',
+      series: 'series',
+      edition: 'edition',
+      specialMarkings: 'special_markings',
+      ageStatement: 'age_statement',
+      labelColor: 'label_color',
+      regional: 'regional_item',
+      barcode: 'barcode',
+      itemSpecificText: 'item_specific_text',
+    };
+    const isGameItem = isGameCollectableKind(currentItem.collectableKind);
+
+    Object.entries(fieldMap).forEach(([bodyField, dbField]) => {
+      if (!Object.prototype.hasOwnProperty.call(body, bodyField)) return;
+      if (bodyField === 'format' && isGameItem) return;
+      updates[dbField] = normalizeString(body[bodyField]);
+    });
+
+    const userMarketValueProvided = Object.prototype.hasOwnProperty.call(body, 'userMarketValue');
+    const normalizedUserMarketValue = userMarketValueProvided ? normalizeString(body.userMarketValue) : undefined;
+
+    if (!Object.keys(updates).length && normalizedUserMarketValue === undefined) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    if (Object.keys(updates).length) {
+      await shelvesQueries.updateCollectionItemDetails({
+        collectionItemId: itemId,
+        userId: req.user.id,
+        shelfId: shelf.id,
+        details: updates,
+      });
+    }
+
+    if (normalizedUserMarketValue !== undefined) {
+      if (normalizedUserMarketValue) {
+        await marketValueEstimates.setEstimate(req.user.id, { collectableId: currentItem.collectableId }, normalizedUserMarketValue);
+      } else {
+        await marketValueEstimates.deleteEstimate(req.user.id, { collectableId: currentItem.collectableId });
+      }
+    }
+
+    const refreshed = await shelvesQueries.getItemById(itemId, req.user.id, shelf.id);
+    return res.json({ item: formatShelfItem(refreshed) });
+  } catch (err) {
+    logger.error('updateCollectionItemDetails error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 async function updateOwnedPlatforms(req, res) {
   try {
     const shelfId = parseInt(req.params.shelfId, 10);
@@ -4868,6 +4964,7 @@ module.exports = {
   abortVision,
   addCollectableFromApi,
   getManualItem,
+  updateCollectionItemDetails,
   updateOwnedPlatforms,
   searchUserCollection,
 };

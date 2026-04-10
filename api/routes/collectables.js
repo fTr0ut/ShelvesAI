@@ -1324,6 +1324,32 @@ router.get("/:collectableId", validateIntParam(['collectableId']), async (req, r
   }
 });
 
+// Check if the current user owns this collectable
+router.get("/:collectableId/shelf-item", validateIntParam(['collectableId']), async (req, res) => {
+  try {
+    const collectableId = parseInt(req.params.collectableId, 10);
+    const userId = req.user.id;
+    const result = await query(
+      `SELECT uc.id as item_id, uc.shelf_id
+       FROM user_collections uc
+       WHERE uc.user_id = $1 AND uc.collectable_id = $2
+       ORDER BY uc.created_at DESC LIMIT 1`,
+      [userId, collectableId]
+    );
+    if (!result.rows.length) {
+      return res.json({ owned: false });
+    }
+    return res.json({
+      owned: true,
+      shelfId: result.rows[0].shelf_id,
+      itemId: result.rows[0].item_id
+    });
+  } catch (err) {
+    logger.error('GET /collectables/:id/shelf-item error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Get market value sources for a collectable (or manual via ?type=manual)
 router.get("/:collectableId/market-value-sources", validateIntParam(['collectableId']), async (req, res) => {
   try {

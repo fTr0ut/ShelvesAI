@@ -31,6 +31,7 @@ import ShelfDetailScreen from '../screens/ShelfDetailScreen';
 import ShelfEditScreen from '../screens/ShelfEditScreen';
 import ItemSearchScreen from '../screens/ItemSearchScreen';
 import CollectableDetailScreen from '../screens/CollectableDetailScreen';
+import ItemDetailsScreen from '../screens/ItemDetailsScreen';
 import MarketValueSourcesScreen from '../screens/MarketValueSourcesScreen';
 
 const Tab = createBottomTabNavigator();
@@ -99,6 +100,7 @@ function ShelvesTabStack() {
             <ShelvesStack.Screen name="ShelfEdit" component={ShelfEditScreen} />
             <ShelvesStack.Screen name="ItemSearch" component={ItemSearchScreen} />
             <ShelvesStack.Screen name="CollectableDetail" component={CollectableDetailScreen} />
+            <ShelvesStack.Screen name="ItemDetails" component={ItemDetailsScreen} />
             <ShelvesStack.Screen name="MarketValueSources" component={MarketValueSourcesScreen} />
         </ShelvesStack.Navigator>
     );

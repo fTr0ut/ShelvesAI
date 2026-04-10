@@ -190,6 +190,8 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
+            uc.series, uc.edition, uc.special_markings, uc.age_statement, uc.label_color,
+            uc.regional_item, uc.barcode, uc.item_specific_text,
             uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
             EXISTS (
                 SELECT 1
@@ -228,6 +230,7 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
             c.cover_media_id as collectable_cover_media_id,
             m.local_path as collectable_cover_media_path,
             c.kind as collectable_kind,
+            ume.estimate_value as user_market_value,
             COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             um.name as manual_name,
             um.type as manual_type,
@@ -253,6 +256,12 @@ async function getItems(shelfId, userId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
+     LEFT JOIN user_market_value_estimates ume
+       ON ume.user_id = uc.user_id
+      AND (
+        (uc.collectable_id IS NOT NULL AND ume.collectable_id = uc.collectable_id)
+        OR (uc.manual_id IS NOT NULL AND ume.manual_id = uc.manual_id)
+      )
      LEFT JOIN LATERAL (
        SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
        FROM user_collection_platforms ucp
@@ -275,6 +284,8 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
+            uc.series, uc.edition, uc.special_markings, uc.age_statement, uc.label_color,
+            uc.regional_item, uc.barcode, uc.item_specific_text,
             uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
             EXISTS (
                 SELECT 1
@@ -313,6 +324,7 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
             c.cover_media_id as collectable_cover_media_id,
             m.local_path as collectable_cover_media_path,
             c.kind as collectable_kind,
+            ume.estimate_value as user_market_value,
             COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             um.name as manual_name,
             um.type as manual_type,
@@ -338,6 +350,12 @@ async function getItemsForViewing(shelfId, { limit = 100, offset = 0 } = {}) {
      LEFT JOIN collectables c ON c.id = uc.collectable_id
      LEFT JOIN user_manuals um ON um.id = uc.manual_id
      LEFT JOIN media m ON m.id = c.cover_media_id
+     LEFT JOIN user_market_value_estimates ume
+       ON ume.user_id = uc.user_id
+      AND (
+        (uc.collectable_id IS NOT NULL AND ume.collectable_id = uc.collectable_id)
+        OR (uc.manual_id IS NOT NULL AND ume.manual_id = uc.manual_id)
+      )
      LEFT JOIN LATERAL (
        SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
        FROM user_collection_platforms ucp
@@ -864,6 +882,8 @@ async function getItemById(itemId, userId, shelfId) {
     const result = await query(
         `SELECT uc.id, uc.user_id, uc.shelf_id, uc.collectable_id, uc.manual_id,
             uc.position, uc.format, uc.platform_missing, uc.notes, uc.created_at,
+            uc.series, uc.edition, uc.special_markings, uc.age_statement, uc.label_color,
+            uc.regional_item, uc.barcode, uc.item_specific_text,
             uc.reviewed_event_log_id, uc.reviewed_event_published_at, uc.reviewed_event_updated_at,
             uc.owner_photo_source, uc.owner_photo_crop_id, uc.owner_photo_storage_provider,
             uc.owner_photo_storage_key, uc.owner_photo_content_type, uc.owner_photo_size_bytes,
@@ -903,6 +923,7 @@ async function getItemById(itemId, userId, shelfId) {
             c.cover_image_source as collectable_cover_image_source,
             c.attribution as collectable_attribution,
             c.kind as collectable_kind,
+            ume.estimate_value as user_market_value,
             COALESCE(ucp.platform_names, ARRAY[]::text[]) as owned_platforms,
             m.local_path as collectable_cover_media_path,
             um.id as manual_id,
@@ -931,6 +952,12 @@ async function getItemById(itemId, userId, shelfId) {
          JOIN users u ON u.id = uc.user_id
          LEFT JOIN collectables c ON c.id = uc.collectable_id
          LEFT JOIN media m ON m.id = c.cover_media_id
+         LEFT JOIN user_market_value_estimates ume
+           ON ume.user_id = uc.user_id
+          AND (
+            (uc.collectable_id IS NOT NULL AND ume.collectable_id = uc.collectable_id)
+            OR (uc.manual_id IS NOT NULL AND ume.manual_id = uc.manual_id)
+          )
          LEFT JOIN LATERAL (
             SELECT ARRAY_AGG(DISTINCT ucp.platform_name ORDER BY ucp.platform_name) AS platform_names
             FROM user_collection_platforms ucp
@@ -1044,6 +1071,51 @@ async function updateCollectionItemGameDefaults({
            AND shelf_id = $5
          RETURNING *`,
         [format, platformMissing === true, collectionItemId, userId, shelfId],
+    );
+    return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function updateCollectionItemDetails({
+    collectionItemId,
+    userId,
+    shelfId,
+    details,
+}, client = null) {
+    const q = resolveQuery(client);
+    const payload = details && typeof details === 'object' ? details : {};
+    const allowedFields = [
+        'format',
+        'series',
+        'edition',
+        'special_markings',
+        'age_statement',
+        'label_color',
+        'regional_item',
+        'barcode',
+        'item_specific_text',
+    ];
+    const setClauses = [];
+    const values = [];
+
+    allowedFields.forEach((field) => {
+        if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
+        values.push(payload[field]);
+        setClauses.push(`${field} = $${values.length}`);
+    });
+
+    if (!setClauses.length) {
+        return null;
+    }
+
+    values.push(collectionItemId, userId, shelfId);
+    const result = await q(
+        `UPDATE user_collections
+         SET ${setClauses.join(', ')}
+         WHERE id = $${values.length - 2}
+           AND user_id = $${values.length - 1}
+           AND shelf_id = $${values.length}
+         RETURNING *`,
+        values,
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
@@ -1266,6 +1338,7 @@ module.exports = {
     replaceOwnedPlatformsForCollectionItem,
     ensureOwnedPlatformsForCollectionItem,
     updateCollectionItemGameDefaults,
+    updateCollectionItemDetails,
     listCollectionItemsForDefaults,
     searchUserCollection,
 };

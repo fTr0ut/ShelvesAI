@@ -103,6 +103,23 @@ router.post('/:shelfId/items/:itemId/replacement-intent', shelfItemIntParams, ct
 router.post('/:shelfId/items/:itemId/replace', shelfItemIntParams, ctrl.replaceShelfItem);
 router.delete('/:shelfId/items/:itemId', shelfItemIntParams, ctrl.removeShelfItem);
 router.put('/:shelfId/items/:itemId/rating', shelfItemIntParams, ctrl.rateShelfItem);
+router.put(
+    '/:shelfId/items/:itemId/details',
+    shelfItemIntParams,
+    validateStringLengths({
+        format: 200,
+        series: 500,
+        edition: 500,
+        specialMarkings: 1000,
+        ageStatement: 200,
+        labelColor: 200,
+        regional: 200,
+        barcode: 200,
+        itemSpecificText: 5000,
+        userMarketValue: 200,
+    }),
+    ctrl.updateCollectionItemDetails,
+);
 router.put('/:shelfId/items/:itemId/platforms', shelfItemIntParams, ctrl.updateOwnedPlatforms);
 router.put('/:shelfId/manual/:itemId', shelfItemIntParams, validateStringLengths({ name: 500, description: 5000 }), ctrl.updateManualEntry);
 router.post('/:shelfId/manual/:itemId/cover', shelfItemIntParams, upload.single('cover'), ctrl.uploadManualCover);

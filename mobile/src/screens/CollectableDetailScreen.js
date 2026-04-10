@@ -114,12 +114,56 @@ function formatDisplayDate(value) {
 }
 
 export default function CollectableDetailScreen({ route, navigation }) {
-    const { item, shelfId, readOnly, id, collectableId, manualId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
+    const { readOnly, id, collectableId, manualId, ownerId, ownerUsername } = route.params || {}; // ownerId added for Scenario B/C
     const { apiBase, token, user } = useContext(AuthContext); // user needed to compare with ownerId
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
     const insets = useSafeAreaInsets();
 
+    const [activeShelfId, setActiveShelfId] = useState(route.params?.shelfId || null);
+    const [activeItem, setActiveItem] = useState(route.params?.item || null);
+
+    const shelfId = activeShelfId;
+    const item = activeItem || {};
+
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
+
+    useEffect(() => {
+        let isActive = true;
+        if ((activeItem?.shelfId || activeShelfId) && activeItem?.id) return;
+        if (!user?.id || (ownerId && ownerId !== user.id)) return;
+        
+        const targetCollectableId = collectableId || activeItem?.collectable?.id || activeItem?.collectableId;
+        const targetManualId = manualId || activeItem?.manual?.id || activeItem?.manualId;
+        
+        if (!targetCollectableId && !targetManualId) return;
+
+        (async () => {
+            try {
+                let response;
+                if (targetCollectableId) {
+                    response = await apiRequest({
+                        apiBase,
+                        path: `/api/collectables/${targetCollectableId}/shelf-item`,
+                        token,
+                    });
+                } else if (targetManualId) {
+                    response = await apiRequest({
+                        apiBase,
+                        path: `/api/manuals/${targetManualId}/shelf-item`,
+                        token,
+                    });
+                }
+                
+                if (isActive && response?.owned) {
+                    setActiveShelfId(response.shelfId);
+                    setActiveItem(prev => ({ ...(prev || {}), id: response.itemId, shelfId: response.shelfId }));
+                }
+            } catch (err) {
+                // Ignore
+            }
+        })();
+        return () => { isActive = false; };
+    }, [apiBase, token, collectableId, activeItem?.collectable?.id, activeItem?.collectableId, activeItem?.manual?.id, activeItem?.manualId, manualId, user?.id, ownerId, activeShelfId, activeItem?.shelfId, activeItem?.id]);
 
     const isWithinHoursWindow = (value, hours) => {
         if (!value || !Number.isFinite(hours) || hours <= 0) return false;
@@ -161,6 +205,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const [coverViewerUri, setCoverViewerUri] = useState(null);
     const [coverViewerAspectRatio, setCoverViewerAspectRatio] = useState(null);
     const [collectionNotes, setCollectionNotes] = useState(item?.notes ?? null);
+    const [collectableUserDetails, setCollectableUserDetails] = useState(item?.userDetails ?? null);
     const [notesDraft, setNotesDraft] = useState(item?.notes || '');
     const [notesSaving, setNotesSaving] = useState(false);
     const [isEditingNotes, setIsEditingNotes] = useState(false);
@@ -233,6 +278,10 @@ export default function CollectableDetailScreen({ route, navigation }) {
     useEffect(() => {
         setPlatformMissing(!!item?.platformMissing);
     }, [item?.id, item?.platformMissing]);
+
+    useEffect(() => {
+        setCollectableUserDetails(item?.userDetails ?? null);
+    }, [item?.id, item?.userDetails]);
 
     // Fetch wishlists
     const fetchWishlists = async () => {
@@ -432,9 +481,54 @@ export default function CollectableDetailScreen({ route, navigation }) {
     // Listen for user estimate returned from MarketValueSourcesScreen
     useEffect(() => {
         if (route.params?.userEstimateAt) {
-            setUserEstimate(route.params.userEstimate ?? null);
+            const nextEstimate = route.params.userEstimate ?? null;
+            setUserEstimate(nextEstimate);
+            if (!isManual && hasShelfItemContext) {
+                setCollectableUserDetails((prev) => ({
+                    ...(prev || {}),
+                    userMarketValue: nextEstimate?.value || null,
+                }));
+                setActiveItem((currentItem) => currentItem ? ({
+                    ...currentItem,
+                    userDetails: {
+                        ...(currentItem.userDetails || {}),
+                        userMarketValue: nextEstimate?.value || null,
+                    },
+                }) : currentItem);
+            }
         }
-    }, [route.params?.userEstimateAt]);
+    }, [hasShelfItemContext, isManual, route.params?.userEstimate, route.params?.userEstimateAt]);
+
+    useEffect(() => {
+        let isActive = true;
+        if (!hasShelfItemContext || isManual || !notesShelfId || !apiBase || !token) return;
+
+        (async () => {
+            try {
+                const shelfData = await apiRequest({
+                    apiBase,
+                    path: `/api/shelves/${notesShelfId}/items?limit=200&skip=0`,
+                    token,
+                });
+                if (!isActive) return;
+                const matchedItem = (Array.isArray(shelfData?.items) ? shelfData.items : []).find((entry) => (
+                    String(entry?.id) === String(item?.id)
+                    || (resolvedCollectableId && String(entry?.collectable?.id) === String(resolvedCollectableId))
+                ));
+                if (matchedItem?.userDetails) {
+                    setCollectableUserDetails(matchedItem.userDetails);
+                    setActiveItem((prev) => prev ? ({
+                        ...prev,
+                        ...matchedItem,
+                    }) : matchedItem);
+                }
+            } catch (err) {
+                console.warn('Failed to hydrate shelf item details:', err?.message || err);
+            }
+        })();
+
+        return () => { isActive = false; };
+    }, [apiBase, hasShelfItemContext, isManual, item?.id, notesShelfId, resolvedCollectableId, token]);
 
     // Fetch all rating data
     useEffect(() => {
@@ -1817,7 +1911,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
         }
 
         const derivedFormat = () => {
-            if (item?.format) return item.format;
             const direct = resolveBaseValue('format') || resolveValue(source, 'physical.format');
             if (direct) return direct;
             const formats = resolveBaseValue('formats');
@@ -1966,9 +2059,41 @@ export default function CollectableDetailScreen({ route, navigation }) {
     };
 
     const metadata = buildMetadata();
-    if (userEstimate?.value) {
+    const shouldAppendLegacyUserEstimate = isManual || (!isManual && !hasShelfItemContext);
+    if (shouldAppendLegacyUserEstimate && userEstimate?.value) {
         metadata.push({ label: 'Your Estimate', value: userEstimate.value });
     }
+
+    const buildUserDetailsMetadata = () => {
+        if (isManual || !hasShelfItemContext) return [];
+
+        const sourceDetails = collectableUserDetails || item?.userDetails || {};
+        const entries = [];
+        const pushEntry = (label, value) => {
+            const normalized = normalizeDisplayText(value);
+            if (!normalized) return;
+            entries.push({ label, value: normalized });
+        };
+
+        pushEntry('Date added to Shelf', formatDisplayDate(
+            sourceDetails?.dateAddedToShelf || item?.createdAt || item?.addedAt,
+        ));
+        if (!isGameCollectableContext) {
+            pushEntry('Format', sourceDetails?.format);
+        }
+        pushEntry('Series', sourceDetails?.series);
+        pushEntry('Edition', sourceDetails?.edition);
+        pushEntry('Special Markings', sourceDetails?.specialMarkings);
+        pushEntry('Age Statement', sourceDetails?.ageStatement);
+        pushEntry('Label Color', sourceDetails?.labelColor);
+        pushEntry('Regional', sourceDetails?.regional);
+        pushEntry('Barcode', sourceDetails?.barcode);
+        pushEntry('Item-Specific Text', sourceDetails?.itemSpecificText);
+        pushEntry('Your Market Value', sourceDetails?.userMarketValue);
+        return entries;
+    };
+
+    const userDetailsMetadata = buildUserDetailsMetadata();
 
 
 
@@ -2027,6 +2152,21 @@ export default function CollectableDetailScreen({ route, navigation }) {
         setCoverViewerVisible(false);
         setCoverViewerUri(null);
     };
+
+    const handleCheckIn = useCallback(() => {
+        const prefilledItem = {
+            id: isManual ? (manual?.id || item?.id) : (collectable?.id || resolvedCollectableId),
+            title: title,
+            primaryCreator: subtitle,
+            coverUrl: coverUri,
+            source: isManual ? 'manual' : 'collectable',
+            fromApi: false,
+        };
+        navigation.navigate('CheckIn', {
+            prefilledItem,
+            originTab: route.name,
+        });
+    }, [isManual, manual?.id, item?.id, collectable?.id, resolvedCollectableId, title, subtitle, coverUri, navigation, route.name]);
 
     useEffect(() => {
         if (!coverViewerUri) {
@@ -2154,6 +2294,25 @@ export default function CollectableDetailScreen({ route, navigation }) {
             setResolvedManual((prev) => ({ ...(prev || {}), ...updatedManualEntry.manual }));
         }
     }, [route.params?.updatedManualEntryAt, route.params?.updatedManualEntry, item?.id]);
+
+    useEffect(() => {
+        const updatedItemDetailsEntry = route.params?.updatedItemDetailsEntry;
+        if (!updatedItemDetailsEntry) return;
+        const matchesCurrentItem = (
+            String(updatedItemDetailsEntry.id) === String(item?.id)
+            || (
+                resolvedCollectableId
+                && String(updatedItemDetailsEntry?.collectable?.id) === String(resolvedCollectableId)
+            )
+        );
+        if (!matchesCurrentItem) return;
+
+        setCollectableUserDetails(updatedItemDetailsEntry.userDetails ?? null);
+        setActiveItem((prev) => prev ? ({
+            ...prev,
+            ...updatedItemDetailsEntry,
+        }) : updatedItemDetailsEntry);
+    }, [route.params?.updatedItemDetailsAt, route.params?.updatedItemDetailsEntry, item?.id, resolvedCollectableId]);
 
     const renderAttribution = () => {
         const attr = collectable?.attribution;
@@ -2450,6 +2609,19 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                     color={colors.textMuted}
                                 />
                             </TouchableOpacity>
+                            {(collectable?.id || manual?.id) && (
+                                <TouchableOpacity
+                                    onPress={handleCheckIn}
+                                    style={styles.actionIconBtn}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons
+                                        name="checkmark-done-outline"
+                                        size={28}
+                                        color={colors.textMuted}
+                                    />
+                                </TouchableOpacity>
+                            )}
                             <TouchableOpacity
                                 onPress={handleShareItem}
                                 style={styles.actionIconBtn}
@@ -2555,6 +2727,45 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                     ) : (
                                         <Text style={styles.metadataValue}>{m.value}</Text>
                                     )}
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
+
+                {userDetailsMetadata.length > 0 && (
+                    <View style={styles.section}>
+                        <View style={styles.notesHeaderRow}>
+                            <Text style={styles.sectionTitle}>Your details</Text>
+                            {isOwnedShelfItem && !isManual && (
+                                <TouchableOpacity
+                                    style={styles.notesEditButton}
+                                    onPress={() => navigation.navigate('ItemDetails', {
+                                        item: {
+                                            ...(item || {}),
+                                            userDetails: collectableUserDetails ?? item?.userDetails ?? null,
+                                        },
+                                        shelfId: notesShelfId,
+                                        detailRouteKey: route.key,
+                                        detailNavigatorKey: navigation.getState?.()?.key || null,
+                                    })}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="pencil" size={14} color={colors.text} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                        <View style={styles.metadataCard}>
+                            {userDetailsMetadata.map((detail, index) => (
+                                <View
+                                    key={`${detail.label}-${index}`}
+                                    style={[
+                                        styles.metadataRow,
+                                        index < userDetailsMetadata.length - 1 && styles.metadataRowBorder,
+                                    ]}
+                                >
+                                    <Text style={styles.metadataLabel}>{detail.label}</Text>
+                                    <Text style={styles.metadataValue}>{detail.value}</Text>
                                 </View>
                             ))}
                         </View>

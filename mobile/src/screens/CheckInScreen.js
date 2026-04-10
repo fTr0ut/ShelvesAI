@@ -130,11 +130,21 @@ export default function CheckInScreen() {
         handleSearchChange(searchQuery);
     }, [selectedType, handleSearchChange]);
 
+    useEffect(() => {
+        if (route.params?.prefilledItem) {
+            setSelectedItem(route.params.prefilledItem);
+        }
+    }, [route.params?.prefilledItem]);
+
     // Step handlers
     const handleStatusSelect = useCallback((status) => {
         setSelectedStatus(status);
-        setStep(STEPS.SEARCH);
-    }, []);
+        if (selectedItem || route.params?.prefilledItem) {
+            setStep(STEPS.CONFIRM);
+        } else {
+            setStep(STEPS.SEARCH);
+        }
+    }, [selectedItem, route.params?.prefilledItem]);
 
     const handleItemSelect = useCallback((item) => {
         setSelectedItem(item);
@@ -148,9 +158,13 @@ export default function CheckInScreen() {
             setExpandedSearch(false);
             clearSearch();
         } else if (step === STEPS.CONFIRM) {
-            setStep(STEPS.SEARCH);
+            if (route.params?.prefilledItem) {
+                setStep(STEPS.STATUS);
+            } else {
+                setStep(STEPS.SEARCH);
+            }
         }
-    }, [step, clearSearch]);
+    }, [step, clearSearch, route.params?.prefilledItem]);
 
     const handleSeeMoreResults = useCallback(() => {
         if (!searchQuery.trim()) return;

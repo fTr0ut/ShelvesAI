@@ -31,6 +31,7 @@ import OnboardingPagerScreen from './screens/OnboardingPagerScreen'
 import OnboardingProfileRequiredScreen from './screens/OnboardingProfileRequiredScreen'
 import OnboardingProfileOptionalScreen from './screens/OnboardingProfileOptionalScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
+import ItemDetailsScreen from './screens/ItemDetailsScreen'
 import MarketValueSourcesScreen from './screens/MarketValueSourcesScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
@@ -451,6 +452,7 @@ function AppNavigator({ token, needsOnboarding, navigationRef }) {
             <Stack.Screen name="ShelfEdit" component={ShelfEditScreen} />
             <Stack.Screen name="ItemSearch" component={ItemSearchScreen} />
             <Stack.Screen name="CollectableDetail" component={CollectableDetailScreen} />
+            <Stack.Screen name="ItemDetails" component={ItemDetailsScreen} />
             <Stack.Screen name="MarketValueSources" component={MarketValueSourcesScreen} />
             <Stack.Screen name="Account" component={AccountScreen} />
             <Stack.Screen name="ManualEdit" component={ManualEditScreen} />

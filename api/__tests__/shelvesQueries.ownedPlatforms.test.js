@@ -80,6 +80,44 @@ describe('shelves owned platform queries', () => {
     }));
   });
 
+  it('updates per-item collectable detail fields on user_collections', async () => {
+    query.mockResolvedValueOnce({
+      rows: [{ id: 55, series: 'Criterion Collection', special_markings: 'Signed insert' }],
+    });
+
+    const result = await shelvesQueries.updateCollectionItemDetails({
+      collectionItemId: 55,
+      userId: 'user-1',
+      shelfId: 10,
+      details: {
+        series: 'Criterion Collection',
+        special_markings: 'Signed insert',
+      },
+    });
+
+    expect(query.mock.calls[0][0]).toContain('UPDATE user_collections');
+    expect(query.mock.calls[0][0]).toContain('series = $1');
+    expect(query.mock.calls[0][0]).toContain('special_markings = $2');
+    expect(query.mock.calls[0][1]).toEqual(['Criterion Collection', 'Signed insert', 55, 'user-1', 10]);
+    expect(result).toEqual(expect.objectContaining({
+      id: 55,
+      series: 'Criterion Collection',
+      specialMarkings: 'Signed insert',
+    }));
+  });
+
+  it('getItemById SQL includes collectable user detail fields and joined user market value', async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+
+    await shelvesQueries.getItemById(55, 'user-1', 10);
+
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain('uc.series');
+    expect(sql).toContain('uc.special_markings');
+    expect(sql).toContain('ume.estimate_value as user_market_value');
+    expect(sql).toContain('LEFT JOIN user_market_value_estimates ume');
+  });
+
   it('lists shelf items for game default propagation', async () => {
     query.mockResolvedValueOnce({
       rows: [

@@ -50,6 +50,12 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-09 | collectable-user-details-section | Added collectable-only per-shelf-item `Your details` support across API and mobile. Database now persists `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` via migration `20260409130000_add_user_collection_item_details` and init schema parity. Shelf item hydration in `api/database/queries/shelves.js` now joins `user_market_value_estimates` and `api/controllers/shelvesController.js` emits a `userDetails` object on collectable shelf items, plus new owner endpoint `PUT /api/shelves/:shelfId/items/:itemId/details` saves those fields and the existing user market estimate. Mobile adds new `mobile/src/screens/ItemDetailsScreen.js`, registers it in both root and Shelves-tab stacks, and updates `CollectableDetailScreen` to render owner-editable `Your details` between `Details` and `Tags` while keeping manual edit flow unchanged.
+
+- 2026-04-09 | collectable-detail-feed-context-hydration | Fixed missing owner perspectives (crop photos, customized notes, favorited status) when navigating to owned items from generic contexts like social feed check-ins. Added new API endpoints `GET /api/collectables/:collectableId/shelf-item` and `GET /api/manuals/:manualId/shelf-item` to dynamically fetch the user's shelf context. Updated `mobile/src/screens/CollectableDetailScreen.js` to initialize `activeShelfId` and `activeItemId` via state, seamlessly fetching and hydrating the missing shelf context whenever `ownerId` matches the current user and intrinsic shelf data is absent.
+
+- 2026-04-09 | collectable-detail-hide-cover-media-url | Updated `mobile/src/screens/CollectableDetailScreen.js` metadata filtering so internal cover URL fields (`coverMediaUrl` and `cover_media_url`) are omitted from the user-visible Details section for all item types.
+
 - 2026-04-09 | mobile-activity-added-item-detail-links | Expanded added-event activity previews so `FeedDetailScreen`, `SocialFeedScreen`, and `ProfileScreen` now treat added-item thumbnails and titles as direct detail links for both collectables and manuals, while falling back to public owner-photo thumbnails whenever no official cover exists. `mobile/src/utils/feedAddedEvent.js` now carries `manualId` plus shared `hasAddedItemDetailTarget()` / `buildAddedItemDetailParams()` helpers, and new pure-JS regression coverage in `mobile/src/utils/feedAddedEvent.test.js` locks collectable/manual detail-route selection.
 
 - 2026-04-09 | crop-as-fallback-cover | Extended owner crop photo to serve as fallback cover when no API-sourced cover exists, for all shelf types. `api/controllers/shelvesController.js` `formatShelfItem()` now includes `hasPhoto: true` in the `ownerPhoto` response object for consistency with `formatOwnerPhotoResponse()`. `mobile/src/screens/ShelfDetailScreen.js` `resolveCoverSource()` refactored to extract owner photo resolution into a reusable `resolveOwnerPhotoCover()` helper; any item without a standard cover (`resolveCollectableCoverUrl` / `resolveManualCoverUrl` both null) now falls back to the owner's crop thumbnail or full image. `mobile/src/screens/SocialFeedScreen.js` broadened `getOtherOwnerThumbSource` → `getOwnerThumbSource` removing the `isOtherShelfAdded` gate so single-item and multi-item added-event cards try crop thumbnails as fallback covers for all shelf types. Privacy gating unchanged: owner photo endpoints enforce `owner_photo_visible` + `show_personal_photos` server-side; mobile falls back to icon placeholder via `onError` on 403.
@@ -455,7 +461,7 @@ controllers/authController.js
 ```
 routes/shelves.js
   -> includes GET/POST/DELETE shelf photo endpoints (`/:shelfId/photo`, `/:shelfId/photo/image`)
-  -> includes POST /:shelfId/items/:itemId/replacement-intent, POST /:shelfId/items/:itemId/replace, and PUT /:shelfId/items/:itemId/platforms
+  -> includes POST /:shelfId/items/:itemId/replacement-intent, POST /:shelfId/items/:itemId/replace, PUT /:shelfId/items/:itemId/details, and PUT /:shelfId/items/:itemId/platforms
   -> route-level express-rate-limit ingress guards on `POST /:shelfId/vision` and `POST /:shelfId/catalog-lookup`
   -> controllers/shelvesController.js
   -> middleware/auth.js
@@ -1490,6 +1496,7 @@ components/news/QuickCheckInModal.js
 | ShelfSelectScreen | ui/CategoryIcon, AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
 | ItemSearchScreen | AuthContext, ThemeContext, api, coverUrl, useCollectableSearchEngine, navigation/useBottomFooterLayout |
 | CollectableDetailScreen | AuthContext, ThemeContext, ui/CachedImage, ui/StarRating, ui/CategoryIcon, api, coverUrl, imageUpload, assets/tmdb-logo.svg, expo-image-manipulator, expo-file-system/legacy, navigation/useBottomFooterLayout |
+| ItemDetailsScreen | AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
 | MarketValueSourcesScreen | AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
 | CheckInScreen | AuthContext, ThemeContext, api, useSearch |
 | ManualEditScreen | AuthContext, ThemeContext, api |
@@ -1904,7 +1911,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (65 files, 2026-01-10 -> 2026-04-09)
+### Migration History (66 files, 2026-01-10 -> 2026-04-09)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -1979,6 +1986,7 @@ news_items (SERIAL PK)
 | `20260401110000_add_shelf_photo_fields` | + `shelves.photo_storage_provider/photo_storage_key/photo_content_type/photo_size_bytes/photo_width/photo_height/photo_updated_at` + `shelves_photo_storage_check` |
 | `20260409120000_add_token_quota_fields` | + `user_vision_quota.tokens_used/output_tokens_used`, + `users.unlimited_vision_tokens` |
 | `20260409120001_create_vision_token_log` | + `vision_token_log` |
+| `20260409130000_add_user_collection_item_details` | + `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` |
 ---
 
 ## External Service Integrations
