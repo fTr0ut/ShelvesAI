@@ -923,9 +923,9 @@ export default function ShelfDetailScreen({ route, navigation }) {
         );
         const fallback = coverUri ? { source: { uri: coverUri }, kind: 'fallback' } : null;
 
-        // For manual "other" items, prefer persisted owner-photo thumbnail in list cards.
-        // Cache-bust with thumbnail update timestamp so edits appear immediately after save.
-        if (manualType === 'other' && ownerPhotoHeaders) {
+        // Helper: try resolving owner-photo thumbnail or full image as cover source.
+        const resolveOwnerPhotoCover = () => {
+            if (!ownerPhotoHeaders) return null;
             if (ownerFailureState !== 'thumb_failed' && ownerFailureState !== 'image_failed' && ownerPhoto?.thumbnailImageUrl) {
                 const thumbUri = resolveApiUri(ownerPhoto.thumbnailImageUrl);
                 const thumbVersion = ownerPhoto.thumbnailUpdatedAt || ownerPhoto.updatedAt || null;
@@ -954,6 +954,20 @@ export default function ShelfDetailScreen({ route, navigation }) {
                     };
                 }
             }
+            return null;
+        };
+
+        // For manual "other" items, prefer persisted owner-photo thumbnail in list cards
+        // (even if an API cover exists).
+        if (manualType === 'other') {
+            const ownerCover = resolveOwnerPhotoCover();
+            if (ownerCover) return ownerCover;
+        }
+
+        // For any item type: when no standard cover exists, fall back to owner crop photo.
+        if (!fallback && ownerPhoto) {
+            const ownerCover = resolveOwnerPhotoCover();
+            if (ownerCover) return ownerCover;
         }
 
         return fallback;

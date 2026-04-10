@@ -1,4 +1,4 @@
-import { resolveCollectableCoverUrl, resolveManualCoverUrl } from './coverUrl';
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from './coverUrl.js';
 
 const SHELF_TYPE_NOUNS = {
     books: { singular: 'book', plural: 'books' },
@@ -109,6 +109,14 @@ export function getAddedItemDetails(item = {}, apiBase = '') {
         || payload?.collectable_id
         || null
     );
+    const manualId = (
+        item?.manualId
+        || item?.manual_id
+        || manual?.id
+        || payload?.manualId
+        || payload?.manual_id
+        || null
+    );
     // Only trust explicit collection item ids for owner-photo thumbnail lookups.
     const itemId = item?.itemId || payload?.itemId || payload?.item_id || null;
     const rating = item?.rating ?? payload?.rating ?? null;
@@ -119,7 +127,9 @@ export function getAddedItemDetails(item = {}, apiBase = '') {
         year,
         coverUrl,
         collectableId,
+        manualId,
         itemId,
+        rawItem: item,
         isManual: !collectableId,
         rating,
     };
@@ -128,6 +138,35 @@ export function getAddedItemDetails(item = {}, apiBase = '') {
 export function getAddedPreviewItems(items = [], apiBase = '', limit = 3) {
     if (!Array.isArray(items) || items.length === 0) return [];
     return items.slice(0, limit).map((item) => getAddedItemDetails(item, apiBase));
+}
+
+export function hasAddedItemDetailTarget(detail = {}) {
+    if (!detail || typeof detail !== 'object') return false;
+    if (detail.collectableId || detail.manualId) return true;
+
+    const rawItem = detail.rawItem;
+    return !!(
+        rawItem?.collectable
+        || rawItem?.collectableSnapshot
+        || rawItem?.manual
+        || rawItem?.manualSnapshot
+    );
+}
+
+export function buildAddedItemDetailParams(detail = {}, ownerId = null) {
+    if (!hasAddedItemDetailTarget(detail)) return null;
+
+    const ownerParams = ownerId ? { ownerId } : {};
+    if (detail.collectableId) {
+        return { ...ownerParams, collectableId: String(detail.collectableId) };
+    }
+    if (detail.manualId) {
+        return { ...ownerParams, manualId: String(detail.manualId) };
+    }
+    if (detail.rawItem && typeof detail.rawItem === 'object') {
+        return { ...ownerParams, item: detail.rawItem };
+    }
+    return null;
 }
 
 export function buildOwnerPhotoThumbnailUri({ apiBase = '', shelfId, itemId, updatedAt = null }) {

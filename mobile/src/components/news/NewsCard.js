@@ -72,7 +72,7 @@ const NewsCard = ({ item, onCheckIn, onDismiss }) => {
             ...shadows.sm,
         },
         coverContainer: {
-            height: 160,
+            height: 380,
             width: '100%',
             backgroundColor: colors.background,
             position: 'relative',

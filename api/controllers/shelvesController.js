@@ -1029,6 +1029,7 @@ function formatShelfItem(row) {
     reviewUpdatedAt: row.reviewedEventUpdatedAt || null,
     ownedPlatforms: normalizeOwnedPlatforms(row.ownedPlatforms),
     ownerPhoto: row.ownerPhotoSource ? {
+      hasPhoto: true,
       source: row.ownerPhotoSource,
       visible: !!row.ownerPhotoVisible,
       contentType: row.ownerPhotoContentType || null,

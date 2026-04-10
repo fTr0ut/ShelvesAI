@@ -22,10 +22,12 @@ import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePh
 import { shareEntityLink } from '../services/shareLinks';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 import {
+    buildAddedItemDetailParams,
     buildOwnerPhotoThumbnailUri,
     formatAddedEventHeader,
     getAddedItemDetails,
     getAddedPreviewItems,
+    hasAddedItemDetailTarget,
     isAddedEventType,
     resolveAddedEventCount,
 } from '../utils/feedAddedEvent';
@@ -526,8 +528,8 @@ export default function ProfileScreen({ navigation, route }) {
         const coverItems = previewItems.filter((preview) => !!preview.coverUrl).slice(0, 3);
         const reviewedUpdatedLabel = getReviewedUpdatedLabel(item);
         const getThumbFailureKey = (entryKey, detail, idx) => `${entryKey}:${detail?.itemId || detail?.name || idx}`;
-        const getOtherOwnerThumbSource = (entryKey, detail, idx) => {
-            if (!isOtherShelfAdded || !addedImageHeaders) return null;
+        const getOwnerThumbSource = (entryKey, detail, idx) => {
+            if (!addedImageHeaders) return null;
             const thumbUri = buildOwnerPhotoThumbnailUri({
                 apiBase,
                 shelfId: shelf?.id,
@@ -537,6 +539,16 @@ export default function ProfileScreen({ navigation, route }) {
             const failureKey = getThumbFailureKey(entryKey, detail, idx);
             if (addedThumbFailures[failureKey]) return null;
             return { uri: thumbUri, headers: addedImageHeaders };
+        };
+        const handleAddedDetailPress = (detail, event) => {
+            event?.stopPropagation?.();
+            const params = buildAddedItemDetailParams(detail, item?.owner?.id);
+            if (params) {
+                navigation.navigate('CollectableDetail', params);
+            }
+        };
+        const stopNestedPress = (event) => {
+            event?.stopPropagation?.();
         };
 
         let actionText = 'updated';
@@ -578,10 +590,9 @@ export default function ProfileScreen({ navigation, route }) {
                     <View style={styles.postSingleAddedRow}>
                         {(() => {
                             const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
-                            const ownerSource = getOtherOwnerThumbSource(entryKey, singleAddedItem, 0);
-                            const imageSource = isOtherShelfAdded
-                                ? ownerSource
-                                : (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null);
+                            const ownerSource = getOwnerThumbSource(entryKey, singleAddedItem, 0);
+                            const imageSource = (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null) || ownerSource;
+                            const hasDetailTarget = hasAddedItemDetailTarget(singleAddedItem);
                             if (!imageSource) {
                                 return (
                                     <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
@@ -590,20 +601,34 @@ export default function ProfileScreen({ navigation, route }) {
                                 );
                             }
                             return (
-                                <Image
-                                    source={imageSource}
-                                    style={styles.postCoverThumb}
-                                    resizeMode="cover"
-                                    onError={() => {
-                                        if (!isOtherShelfAdded) return;
-                                        const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
-                                        setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
-                                    }}
-                                />
+                                <TouchableOpacity
+                                    activeOpacity={hasDetailTarget ? 0.7 : 1}
+                                    disabled={!hasDetailTarget}
+                                    onPress={(event) => handleAddedDetailPress(singleAddedItem, event)}
+                                    onPressIn={stopNestedPress}
+                                >
+                                    <Image
+                                        source={imageSource}
+                                        style={styles.postCoverThumb}
+                                        resizeMode="cover"
+                                        onError={() => {
+                                            if (!ownerSource) return;
+                                            const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
+                                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                        }}
+                                    />
+                                </TouchableOpacity>
                             );
                         })()}
                         <View style={styles.postSingleAddedMeta}>
-                            <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                            <TouchableOpacity
+                                activeOpacity={hasAddedItemDetailTarget(singleAddedItem) ? 0.7 : 1}
+                                disabled={!hasAddedItemDetailTarget(singleAddedItem)}
+                                onPress={(event) => handleAddedDetailPress(singleAddedItem, event)}
+                                onPressIn={stopNestedPress}
+                            >
+                                <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                            </TouchableOpacity>
                             <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>
                                 {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
                             </Text>
@@ -625,20 +650,27 @@ export default function ProfileScreen({ navigation, route }) {
                     <View style={styles.postCoverRow}>
                         {previewItems.map((preview, idx) => {
                             const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
-                            const ownerSource = getOtherOwnerThumbSource(entryKey, preview, idx);
+                            const ownerSource = getOwnerThumbSource(entryKey, preview, idx);
                             const failureKey = getThumbFailureKey(entryKey, preview, idx);
                             const previewKey = `${entryKey}-${preview.itemId || preview.manualId || preview.name || 'preview'}-${idx}-other-thumb`;
                             if (ownerSource) {
                                 return (
-                                    <Image
+                                    <TouchableOpacity
                                         key={previewKey}
-                                        source={ownerSource}
-                                        style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
-                                        resizeMode="cover"
-                                        onError={() => {
-                                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
-                                        }}
-                                    />
+                                        activeOpacity={hasAddedItemDetailTarget(preview) ? 0.7 : 1}
+                                        disabled={!hasAddedItemDetailTarget(preview)}
+                                        onPress={(event) => handleAddedDetailPress(preview, event)}
+                                        onPressIn={stopNestedPress}
+                                    >
+                                        <Image
+                                            source={ownerSource}
+                                            style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
+                                            resizeMode="cover"
+                                            onError={() => {
+                                                setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                            }}
+                                        />
+                                    </TouchableOpacity>
                                 );
                             }
                             return (
@@ -658,32 +690,63 @@ export default function ProfileScreen({ navigation, route }) {
                     </View>
                 ) : null}
 
-                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length > 0) && (
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && (coverItems.length > 0 || previewItems.some((preview) => !!preview.itemId))) && (
                     <View style={styles.postCoverRow}>
-                        {coverItems.map((preview, idx) => {
+                        {previewItems.slice(0, 3).map((preview, idx) => {
                             const entryKey = item?.aggregateId || item?.id || item?.createdAt || 'entry';
+                            const ownerSource = !preview.coverUrl ? getOwnerThumbSource(entryKey, preview, idx) : null;
+                            const imageSource = preview.coverUrl ? { uri: preview.coverUrl } : ownerSource;
                             const previewKey = `${entryKey}-${preview.itemId || preview.manualId || preview.name || 'preview'}-${idx}-cover`;
+                            if (!imageSource) {
+                                return (
+                                    <View
+                                        key={previewKey}
+                                        style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }, styles.postOtherThumbPlaceholder]}
+                                    >
+                                        <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                    </View>
+                                );
+                            }
                             return (
-                                <Image
+                                <TouchableOpacity
                                     key={previewKey}
-                                    source={{ uri: preview.coverUrl }}
-                                    style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
-                                    resizeMode="cover"
-                                />
+                                    activeOpacity={hasAddedItemDetailTarget(preview) ? 0.7 : 1}
+                                    disabled={!hasAddedItemDetailTarget(preview)}
+                                    onPress={(event) => handleAddedDetailPress(preview, event)}
+                                    onPressIn={stopNestedPress}
+                                >
+                                    <Image
+                                        source={imageSource}
+                                        style={[styles.postCoverThumb, idx > 0 && { marginLeft: -8 }]}
+                                        resizeMode="cover"
+                                        onError={() => {
+                                            if (!ownerSource) return;
+                                            const failureKey = getThumbFailureKey(entryKey, preview, idx);
+                                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                                        }}
+                                    />
+                                </TouchableOpacity>
                             );
                         })}
-                        {totalItems > coverItems.length && (
+                        {totalItems > Math.min(previewItems.length, 3) && (
                             <View style={styles.postMoreCoversChip}>
-                                <Text style={styles.postMoreCoversText}>+{totalItems - coverItems.length}</Text>
+                                <Text style={styles.postMoreCoversText}>+{totalItems - Math.min(previewItems.length, 3)}</Text>
                             </View>
                         )}
                     </View>
                 )}
 
-                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length === 0 && previewItems.length > 0) && (
+                {(isAddedEvent && totalItems > 1 && !isOtherShelfAdded && coverItems.length === 0 && !previewItems.some((preview) => !!preview.itemId) && previewItems.length > 0) && (
                     <View style={styles.postItemsPreview}>
                         {previewItems.map((entry, idx) => (
-                            <View key={idx} style={styles.postItemChip}>
+                            <TouchableOpacity
+                                key={idx}
+                                style={styles.postItemChip}
+                                activeOpacity={hasAddedItemDetailTarget(entry) ? 0.7 : 1}
+                                disabled={!hasAddedItemDetailTarget(entry)}
+                                onPress={(event) => handleAddedDetailPress(entry, event)}
+                                onPressIn={stopNestedPress}
+                            >
                                 <Ionicons name="book" size={12} color={colors.primary} />
                                 <Text style={styles.postItemTitle} numberOfLines={1}>{entry?.name || 'Untitled'}</Text>
                                 {entry?.rating != null && entry.rating > 0 && (
@@ -696,7 +759,7 @@ export default function ProfileScreen({ navigation, route }) {
                                         })}
                                     </View>
                                 )}
-                            </View>
+                            </TouchableOpacity>
                         ))}
                         {totalItems > previewItems.length && (
                             <Text style={styles.postMoreItems}>+{totalItems - previewItems.length} more</Text>

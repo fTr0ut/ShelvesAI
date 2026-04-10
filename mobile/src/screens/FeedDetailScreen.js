@@ -25,10 +25,12 @@ import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/cove
 import { useMentionInput } from '../hooks/useMentionInput';
 import { MentionSuggestions } from '../components/ui';
 import {
+  buildAddedItemDetailParams,
   buildOwnerPhotoThumbnailUri,
   formatAddedEventHeader,
   getAddedItemDetails,
   getAddedPreviewItems,
+  hasAddedItemDetailTarget,
   isAddedEventType,
   resolveAddedEventCount,
 } from '../utils/feedAddedEvent';
@@ -201,8 +203,8 @@ export default function FeedDetailScreen({ route, navigation }) {
     ? { Authorization: `Bearer ${imageAuthToken}`, 'ngrok-skip-browser-warning': 'true' }
     : null;
   const getThumbFailureKey = (entryKey, detail, idx) => `${entryKey}:${detail?.itemId || detail?.name || idx}`;
-  const getOtherOwnerThumbSource = (entryKey, detail, idx) => {
-    if (!isOtherShelfAdded || !addedImageHeaders) return null;
+  const getOwnerThumbSource = (entryKey, detail, idx) => {
+    if (!addedImageHeaders) return null;
     const thumbUri = buildOwnerPhotoThumbnailUri({
       apiBase,
       shelfId: shelf?.id,
@@ -212,6 +214,13 @@ export default function FeedDetailScreen({ route, navigation }) {
     const failureKey = getThumbFailureKey(entryKey, detail, idx);
     if (addedThumbFailures[failureKey]) return null;
     return { uri: thumbUri, headers: addedImageHeaders };
+  };
+  const handleAddedDetailPress = (detail, event) => {
+    event?.stopPropagation?.();
+    const params = buildAddedItemDetailParams(detail, owner?.id);
+    if (params) {
+      navigation.navigate('CollectableDetail', params);
+    }
   };
   const shouldRenderItemsList = !isAddedEvent || addedItemCount > 1;
   const shareEventId = getShareableEventId(resolvedEntry) || getShareableEventId(entry);
@@ -750,10 +759,9 @@ export default function FeedDetailScreen({ route, navigation }) {
                 <View style={styles.addedSingleRow}>
                   {(() => {
                     const entryKey = resolvedEntry?.aggregateId || resolvedEntry?.id || resolvedEntry?.createdAt || 'entry';
-                    const ownerSource = getOtherOwnerThumbSource(entryKey, singleAddedItem, 0);
-                    const imageSource = isOtherShelfAdded
-                      ? ownerSource
-                      : (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null);
+                    const ownerSource = getOwnerThumbSource(entryKey, singleAddedItem, 0);
+                    const imageSource = (singleAddedItem.coverUrl ? { uri: singleAddedItem.coverUrl } : null) || ownerSource;
+                    const hasDetailTarget = hasAddedItemDetailTarget(singleAddedItem);
                     if (!imageSource) {
                       return (
                         <View style={[styles.addedThumb, styles.addedOtherPlaceholder]}>
@@ -762,20 +770,32 @@ export default function FeedDetailScreen({ route, navigation }) {
                       );
                     }
                     return (
-                      <Image
-                        source={imageSource}
-                        style={styles.addedThumb}
-                        resizeMode="cover"
-                        onError={() => {
-                          if (!isOtherShelfAdded) return;
-                          const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
-                          setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
-                        }}
-                      />
+                      <TouchableOpacity
+                        activeOpacity={hasDetailTarget ? 0.7 : 1}
+                        disabled={!hasDetailTarget}
+                        onPress={(event) => handleAddedDetailPress(singleAddedItem, event)}
+                      >
+                        <Image
+                          source={imageSource}
+                          style={styles.addedThumb}
+                          resizeMode="cover"
+                          onError={() => {
+                            if (!ownerSource) return;
+                            const failureKey = getThumbFailureKey(entryKey, singleAddedItem, 0);
+                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                          }}
+                        />
+                      </TouchableOpacity>
                     );
                   })()}
                   <View style={styles.addedSingleMeta}>
-                    <Text style={styles.addedSingleTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                    <TouchableOpacity
+                      activeOpacity={hasAddedItemDetailTarget(singleAddedItem) ? 0.7 : 1}
+                      disabled={!hasAddedItemDetailTarget(singleAddedItem)}
+                      onPress={(event) => handleAddedDetailPress(singleAddedItem, event)}
+                    >
+                      <Text style={styles.addedSingleTitle} numberOfLines={1}>{singleAddedItem.name}</Text>
+                    </TouchableOpacity>
                     <Text style={styles.addedSingleSubtext} numberOfLines={1}>
                       {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
                     </Text>
@@ -798,19 +818,25 @@ export default function FeedDetailScreen({ route, navigation }) {
                   {addedPreviewItems.map((preview, idx) => {
                     const entryKey = resolvedEntry?.aggregateId || resolvedEntry?.id || resolvedEntry?.createdAt || 'entry';
                     if (isOtherShelfAdded) {
-                      const ownerSource = getOtherOwnerThumbSource(entryKey, preview, idx);
+                      const ownerSource = getOwnerThumbSource(entryKey, preview, idx);
                       const failureKey = getThumbFailureKey(entryKey, preview, idx);
                       if (ownerSource) {
                         return (
-                          <Image
+                          <TouchableOpacity
                             key={`${preview.itemId || preview.name || idx}-other-preview`}
-                            source={ownerSource}
-                            style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
-                            resizeMode="cover"
-                            onError={() => {
-                              setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
-                            }}
-                          />
+                            activeOpacity={hasAddedItemDetailTarget(preview) ? 0.7 : 1}
+                            disabled={!hasAddedItemDetailTarget(preview)}
+                            onPress={(event) => handleAddedDetailPress(preview, event)}
+                          >
+                            <Image
+                              source={ownerSource}
+                              style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
+                              resizeMode="cover"
+                              onError={() => {
+                                setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                              }}
+                            />
+                          </TouchableOpacity>
                         );
                       }
                       return (
@@ -822,14 +848,36 @@ export default function FeedDetailScreen({ route, navigation }) {
                         </View>
                       );
                     }
-                    if (!preview.coverUrl) return null;
+                    const ownerSource = !preview.coverUrl ? getOwnerThumbSource(entryKey, preview, idx) : null;
+                    const imageSource = preview.coverUrl ? { uri: preview.coverUrl } : ownerSource;
+                    if (!imageSource) {
+                      return (
+                        <View
+                          key={`${preview.itemId || preview.name || idx}-preview`}
+                          style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }, styles.addedOtherPlaceholder]}
+                        >
+                          <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                        </View>
+                      );
+                    }
                     return (
-                      <Image
+                      <TouchableOpacity
                         key={`${preview.itemId || preview.name || idx}-preview`}
-                        source={{ uri: preview.coverUrl }}
-                        style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
-                        resizeMode="cover"
-                      />
+                        activeOpacity={hasAddedItemDetailTarget(preview) ? 0.7 : 1}
+                        disabled={!hasAddedItemDetailTarget(preview)}
+                        onPress={(event) => handleAddedDetailPress(preview, event)}
+                      >
+                        <Image
+                          source={imageSource}
+                          style={[styles.addedPreviewThumb, idx > 0 && { marginLeft: -8 }]}
+                          resizeMode="cover"
+                          onError={() => {
+                            if (!ownerSource) return;
+                            const failureKey = getThumbFailureKey(entryKey, preview, idx);
+                            setAddedThumbFailures((prev) => ({ ...prev, [failureKey]: true }));
+                          }}
+                        />
+                      </TouchableOpacity>
                     );
                   })}
                   {addedItemCount > addedPreviewItems.length ? (

@@ -2412,7 +2412,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                 showOwnerPhotoInRatingColumn && isManual && styles.actionButtonsColumnAlignWithRatings,
                             ]}
                         >
-                            {!hasShelfItemContext && user?.id && (collectable?.id || manual?.id) && !addedToShelfId && (
+                            {!isOwnedShelfItem && user?.id && (collectable?.id || manual?.id) && !addedToShelfId && (
                                 <TouchableOpacity
                                     onPress={() => setShowAddToShelfModal(true)}
                                     style={styles.actionIconBtn}
@@ -2421,7 +2421,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                                     <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
                                 </TouchableOpacity>
                             )}
-                            {!hasShelfItemContext && user?.id && addedToShelfId && (
+                            {!isOwnedShelfItem && user?.id && addedToShelfId && (
                                 <View style={styles.actionIconBtn}>
                                     <Ionicons name="checkmark-circle" size={28} color={colors.success || '#4CAF50'} />
                                 </View>
