@@ -1469,7 +1469,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 'image/jpeg',
                 `owner-photo-${Date.now()}.jpg`,
             );
-            
+
             // 4. Send thumbnail box if provided
             if (thumbnailBox && thumbnailBox.scale) {
                 const baseThumbW = viewSize.width * 0.6;
@@ -1479,7 +1479,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 const thumbScreenH = baseThumbH * safeThumbScale;
                 const thumbScreenX = (viewSize.width / 2) - (thumbScreenW / 2) + Number(thumbnailBox.translateX || 0);
                 const thumbScreenY = (viewSize.height / 2) - (thumbScreenH / 2) + Number(thumbnailBox.translateY || 0);
-                
+
                 // Convert thumbScreen to original unclipped crop coordinates:
                 const unclippedScaleX = cropW / viewSize.width;
                 const unclippedScaleY = cropH / viewSize.height;
@@ -1538,7 +1538,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 if (normalizedBox.width <= 0 || normalizedBox.height <= 0) {
                     throw new Error('Thumbnail selection is invalid. Please reframe and try again.');
                 }
-                
+
                 const authToken = await getValidToken(token);
                 const thumbResp = await fetch(`${apiBase}/api/shelves/${shelfId}/items/${item.id}/owner-photo/thumbnail`, {
                     method: 'PUT',
@@ -1715,7 +1715,9 @@ export default function CollectableDetailScreen({ route, navigation }) {
     const ownerPhotoViewerTitle = (isForeignOwnerContext && normalizedOwnerUsername)
         ? `${normalizedOwnerUsername}'s photo`
         : 'Your photo';
-
+    const ownerYourDetailsLabel = (isForeignOwnerContext && normalizedOwnerUsername)
+        ? `${normalizedOwnerUsername}'s details`
+        : 'Your details';
     useFocusEffect(
         useCallback(() => {
             let isActive = true;
@@ -2498,6 +2500,15 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 </View>
             )}
 
+            {isForeignOwnerContext && normalizedOwnerUsername ? (
+                <View style={styles.foreignOwnerBanner}>
+                    <Ionicons name="person-outline" size={14} color={colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={styles.foreignOwnerBannerText}>
+                        You're viewing {normalizedOwnerUsername}'s item
+                    </Text>
+                </View>
+            ) : null}
+
             <ScrollView
                 style={styles.container}
                 contentContainerStyle={[
@@ -2774,7 +2785,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
                 {userDetailsMetadata.length > 0 && (
                     <View style={styles.section}>
                         <View style={styles.notesHeaderRow}>
-                            <Text style={styles.sectionTitle}>Your details</Text>
+                            <Text style={styles.sectionTitle}>{ownerYourDetailsLabel}</Text>
                             {isOwnedShelfItem && !isManual && (
                                 <TouchableOpacity
                                     style={styles.notesEditButton}
@@ -4078,5 +4089,20 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
     emptyWishlistSubtext: {
         fontSize: 14,
         color: colors.textMuted,
+    },
+    foreignOwnerBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 6,
+        paddingHorizontal: spacing.md,
+        backgroundColor: colors.primary + '14',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.primary + '33',
+    },
+    foreignOwnerBannerText: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: colors.primary,
     },
 });
