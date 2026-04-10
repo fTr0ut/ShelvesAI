@@ -1760,6 +1760,7 @@ export default function CollectableDetailScreen({ route, navigation }) {
             'coverImageSource',
             'coverMediaId',
             'coverMediaPath',
+            'coverMediaUrl',
             'attribution',
             'externalId',
             'fingerprint',
@@ -1784,7 +1785,6 @@ export default function CollectableDetailScreen({ route, navigation }) {
 
         // Hide internal metadata fields for manual items
         if (isManual) {
-            excludedKeys.add('coverMediaUrl');
             excludedKeys.add('userId');
             excludedKeys.add('shelfId');
             excludedKeys.add('coverContentType');

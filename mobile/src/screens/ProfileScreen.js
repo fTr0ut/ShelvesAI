@@ -21,6 +21,7 @@ import { getProfileImageSource } from '../utils/mediaUrl';
 import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePhotoUpload';
 import { shareEntityLink } from '../services/shareLinks';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
+import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import {
     buildAddedItemDetailParams,
     buildOwnerPhotoThumbnailUri,
@@ -509,6 +510,10 @@ export default function ProfileScreen({ navigation, route }) {
         const { shelf, items = [], eventType } = item;
         const timeAgo = formatRelativeTime(shelf?.updatedAt || item.createdAt);
         const isAddedEvent = isAddedEventType(eventType);
+        const isCheckIn = eventType === 'checkin.activity';
+        const isCheckinRated = eventType === 'checkin.rated';
+        const isReviewedEvent = eventType === 'reviewed';
+        const isRatingLikeEvent = eventType === 'item.rated' || isReviewedEvent;
         const totalItems = isAddedEvent ? resolveAddedEventCount(item) : (item?.eventItemCount || items.length || 0);
         const previewItems = getAddedPreviewItems(items, apiBase, 3);
         const singleAddedItem = isAddedEvent && totalItems === 1
@@ -550,6 +555,19 @@ export default function ProfileScreen({ navigation, route }) {
         const stopNestedPress = (event) => {
             event?.stopPropagation?.();
         };
+        const renderStars = (rating, size = 12) => {
+            const fullStars = Math.floor(rating);
+            const hasHalf = rating % 1 >= 0.5;
+            return (
+                <View style={{ flexDirection: 'row' }}>
+                    {Array.from({ length: 5 }, (_, i) => {
+                        if (i < fullStars) return <Ionicons key={i} name="star" size={size} color="#FFD700" />;
+                        if (i === fullStars && hasHalf) return <Ionicons key={i} name="star-half" size={size} color="#FFD700" />;
+                        return <Ionicons key={i} name="star-outline" size={size} color="#FFD700" />;
+                    })}
+                </View>
+            );
+        };
 
         let actionText = 'updated';
         if (eventType === 'shelf.created') actionText = 'created';
@@ -557,12 +575,344 @@ export default function ProfileScreen({ navigation, route }) {
         else if (eventType === 'reviewed') actionText = 'reviewed';
 
         const handlePostPress = () => {
-            if (eventType && (eventType.includes('added') || eventType.includes('removed') || eventType === 'reviewed' || eventType === 'item.rated')) {
+            if (eventType && (eventType.includes('added') || eventType.includes('removed') || eventType === 'reviewed' || eventType === 'item.rated' || isCheckIn || isCheckinRated)) {
                 navigation.navigate('FeedDetail', { entry: item });
             } else {
                 navigation.navigate('ShelfDetail', { id: shelf?.id, title: shelf?.name });
             }
         };
+        if (isCheckIn) {
+            const statusLabels = {
+                starting: 'started',
+                continuing: 'is continuing',
+                completed: 'finished',
+            };
+            const statusLabel = statusLabels[item.checkinStatus] || item.checkinStatus || 'checked in';
+            const checkinItem = item.collectable || item.manual || {};
+            const checkinTitle = checkinItem.title || checkinItem.name || 'something';
+            const checkinCreator = checkinItem.primaryCreator || checkinItem.author || null;
+            const coverUrl = resolveCollectableCoverUrl(item.collectable, apiBase) || resolveManualCoverUrl(item.manual, apiBase) || null;
+            const hasDetailTarget = !!item.collectable?.id;
+
+            const handleCheckinDetailPress = (event) => {
+                event?.stopPropagation?.();
+                if (hasDetailTarget) {
+                    navigation.navigate('CollectableDetail', {
+                        item: { collectable: item.collectable },
+                        ownerId: item.owner?.id,
+                        ownerUsername: item.owner?.username || null,
+                    });
+                }
+            };
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePostPress}
+                    style={styles.postCard}
+                >
+                    <View style={styles.postHeader}>
+                        <Text style={styles.postAction}>
+                            {statusLabel}{' '}
+                            <Text style={styles.postShelfName}>{checkinTitle}</Text>
+                        </Text>
+                        <Text style={styles.postTime}>{timeAgo}</Text>
+                    </View>
+
+                    <View style={styles.postSingleAddedRow}>
+                        <TouchableOpacity
+                            activeOpacity={hasDetailTarget ? 0.7 : 1}
+                            disabled={!hasDetailTarget}
+                            onPress={handleCheckinDetailPress}
+                            onPressIn={stopNestedPress}
+                        >
+                            {coverUrl ? (
+                                <Image source={{ uri: coverUrl }} style={styles.postCoverThumb} resizeMode="cover" />
+                            ) : (
+                                <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
+                                    <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                </View>
+                            )}
+                        </TouchableOpacity>
+
+                        <View style={styles.postSingleAddedMeta}>
+                            <TouchableOpacity
+                                activeOpacity={hasDetailTarget ? 0.7 : 1}
+                                disabled={!hasDetailTarget}
+                                onPress={handleCheckinDetailPress}
+                                onPressIn={stopNestedPress}
+                            >
+                                <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{checkinTitle}</Text>
+                            </TouchableOpacity>
+                            {checkinCreator ? (
+                                <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>
+                                    {checkinCreator}
+                                </Text>
+                            ) : null}
+                            {item.note ? (
+                                <Text style={[styles.postSingleAddedSubtext, { marginTop: 4, color: colors.text }]} numberOfLines={2}>
+                                    {item.note}
+                                </Text>
+                            ) : null}
+                        </View>
+                    </View>
+
+                    <View style={styles.postFooter}>
+                        <View style={styles.postStat} />
+                        {(item.likeCount > 0 || item.commentCount > 0) && (
+                            <View style={styles.postSocialStats}>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.likeCount || 0}</Text>
+                                </View>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.commentCount || 0}</Text>
+                                </View>
+                            </View>
+                        )}
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+
+        // Rating event rendering
+        if (eventType === 'item.rated') {
+            const ratingItems = items || [];
+            const totalRated = item?.eventItemCount || ratingItems.length || 0;
+            const isSingleRated = totalRated === 1;
+            const ratingPreviews = ratingItems.slice(0, 3).map(e => {
+                const coverUrl = resolveCollectableCoverUrl(e.collectable, apiBase)
+                    || resolveCollectableCoverUrl(e, apiBase)
+                    || (e.manual ? resolveManualCoverUrl(e.manual, apiBase) : null);
+                const title = e.collectable?.title || e.title || e.manual?.title || e.manual?.name || 'Untitled';
+                const creator = e.collectable?.primaryCreator || e.primaryCreator || e.manual?.author || null;
+                const collectableId = e.collectable?.id || e.collectableId || e.collectable_id || null;
+                const manualId = e.manual?.id || e.manualId || null;
+                return { title, creator, coverUrl, collectableId, manualId, rating: e.rating || 0 };
+            });
+            const singleItem = isSingleRated ? ratingPreviews[0] : null;
+
+            const handleRatedItemPress = (rp, event) => {
+                event?.stopPropagation?.();
+                if (rp?.collectableId) {
+                    navigation.navigate('CollectableDetail', {
+                        collectableId: String(rp.collectableId),
+                        ownerId: item.owner?.id,
+                        ownerUsername: item.owner?.username || null,
+                    });
+                } else if (rp?.manualId) {
+                    navigation.navigate('CollectableDetail', {
+                        manualId: String(rp.manualId),
+                        ownerId: item.owner?.id,
+                        ownerUsername: item.owner?.username || null,
+                    });
+                }
+            };
+            const hasRatedDetailTarget = (rp) => !!(rp?.collectableId || rp?.manualId);
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePostPress}
+                    style={styles.postCard}
+                >
+                    <View style={styles.postHeader}>
+                        <Text style={styles.postAction}>
+                            rated{' '}
+                            <Text style={styles.postShelfName}>
+                                {isSingleRated ? singleItem?.title : `${totalRated} items`}
+                            </Text>
+                        </Text>
+                        <Text style={styles.postTime}>{timeAgo}</Text>
+                    </View>
+
+                    {isSingleRated && singleItem ? (
+                        <View style={styles.postSingleAddedRow}>
+                            <TouchableOpacity
+                                activeOpacity={hasRatedDetailTarget(singleItem) ? 0.7 : 1}
+                                disabled={!hasRatedDetailTarget(singleItem)}
+                                onPress={(event) => handleRatedItemPress(singleItem, event)}
+                                onPressIn={stopNestedPress}
+                            >
+                                {singleItem.coverUrl ? (
+                                    <Image source={{ uri: singleItem.coverUrl }} style={styles.postCoverThumb} resizeMode="cover" />
+                                ) : (
+                                    <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
+                                        <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                    </View>
+                                )}
+                            </TouchableOpacity>
+                            <View style={styles.postSingleAddedMeta}>
+                                <TouchableOpacity
+                                    activeOpacity={hasRatedDetailTarget(singleItem) ? 0.7 : 1}
+                                    disabled={!hasRatedDetailTarget(singleItem)}
+                                    onPress={(event) => handleRatedItemPress(singleItem, event)}
+                                    onPressIn={stopNestedPress}
+                                >
+                                    <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{singleItem.title}</Text>
+                                </TouchableOpacity>
+                                {singleItem.creator ? (
+                                    <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>{singleItem.creator}</Text>
+                                ) : null}
+                                {singleItem.rating > 0 ? (
+                                    <View style={{ marginTop: 2 }}>
+                                        {renderStars(singleItem.rating)}
+                                    </View>
+                                ) : null}
+                            </View>
+                        </View>
+                    ) : null}
+
+                    {!isSingleRated && ratingPreviews.length > 0 ? (
+                        <View style={styles.postCoverRow}>
+                            {ratingPreviews.map((rp, idx) => (
+                                <TouchableOpacity
+                                    key={idx}
+                                    style={{ alignItems: 'center', marginRight: 8 }}
+                                    activeOpacity={hasRatedDetailTarget(rp) ? 0.7 : 1}
+                                    disabled={!hasRatedDetailTarget(rp)}
+                                    onPress={(event) => handleRatedItemPress(rp, event)}
+                                    onPressIn={stopNestedPress}
+                                >
+                                    {rp.coverUrl ? (
+                                        <Image source={{ uri: rp.coverUrl }} style={styles.postCoverThumb} resizeMode="cover" />
+                                    ) : (
+                                        <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
+                                            <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                        </View>
+                                    )}
+                                    {rp.rating > 0 ? renderStars(rp.rating, 10) : null}
+                                </TouchableOpacity>
+                            ))}
+                            {totalRated > ratingPreviews.length ? (
+                                <View style={styles.postMoreCoversChip}>
+                                    <Text style={styles.postMoreCoversText}>+{totalRated - ratingPreviews.length}</Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : null}
+
+                    <View style={styles.postFooter}>
+                        <View style={styles.postStat} />
+                        {(item.likeCount > 0 || item.commentCount > 0) && (
+                            <View style={styles.postSocialStats}>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.likeCount || 0}</Text>
+                                </View>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.commentCount || 0}</Text>
+                                </View>
+                            </View>
+                        )}
+                    </View>
+                </TouchableOpacity>
+            );
+        }
+
+        // Combined check-in + rating event rendering
+        if (isCheckinRated) {
+            const statusLabels = {
+                starting: 'started',
+                continuing: 'is continuing',
+                completed: 'finished',
+            };
+            const statusLabel = statusLabels[item.checkinStatus] || item.checkinStatus || 'checked in';
+            const checkinItem = item.collectable || item.manual || {};
+            const checkinTitle = checkinItem.title || checkinItem.name || 'something';
+            const checkinCreator = checkinItem.primaryCreator || checkinItem.author || null;
+            const coverUrl = resolveCollectableCoverUrl(item.collectable, apiBase)
+                || resolveManualCoverUrl(item.manual, apiBase)
+                || null;
+            const hasDetailTarget = !!item.collectable?.id;
+            const checkinRating = item.rating || 0;
+
+            const handleCheckinRatedDetailPress = (event) => {
+                event?.stopPropagation?.();
+                if (hasDetailTarget) {
+                    navigation.navigate('CollectableDetail', {
+                        item: { collectable: item.collectable },
+                        ownerId: item.owner?.id,
+                        ownerUsername: item.owner?.username || null,
+                    });
+                }
+            };
+
+            return (
+                <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={handlePostPress}
+                    style={styles.postCard}
+                >
+                    <View style={styles.postHeader}>
+                        <Text style={styles.postAction}>
+                            {statusLabel}{' '}
+                            <Text style={styles.postShelfName}>{checkinTitle}</Text>
+                        </Text>
+                        <Text style={styles.postTime}>{timeAgo}</Text>
+                    </View>
+
+                    <View style={styles.postSingleAddedRow}>
+                        <TouchableOpacity
+                            activeOpacity={hasDetailTarget ? 0.7 : 1}
+                            disabled={!hasDetailTarget}
+                            onPress={handleCheckinRatedDetailPress}
+                            onPressIn={stopNestedPress}
+                        >
+                            {coverUrl ? (
+                                <Image source={{ uri: coverUrl }} style={styles.postCoverThumb} resizeMode="cover" />
+                            ) : (
+                                <View style={[styles.postCoverThumb, styles.postOtherThumbPlaceholder]}>
+                                    <Ionicons name="book-outline" size={18} color={colors.textMuted} />
+                                </View>
+                            )}
+                        </TouchableOpacity>
+
+                        <View style={styles.postSingleAddedMeta}>
+                            <TouchableOpacity
+                                activeOpacity={hasDetailTarget ? 0.7 : 1}
+                                disabled={!hasDetailTarget}
+                                onPress={handleCheckinRatedDetailPress}
+                                onPressIn={stopNestedPress}
+                            >
+                                <Text style={styles.postSingleAddedTitle} numberOfLines={1}>{checkinTitle}</Text>
+                            </TouchableOpacity>
+                            {checkinCreator ? (
+                                <Text style={styles.postSingleAddedSubtext} numberOfLines={1}>{checkinCreator}</Text>
+                            ) : null}
+                            {checkinRating > 0 ? (
+                                <View style={{ marginTop: 2 }}>
+                                    {renderStars(checkinRating)}
+                                </View>
+                            ) : null}
+                            {item.note ? (
+                                <Text style={[styles.postSingleAddedSubtext, { marginTop: 4, color: colors.text }]} numberOfLines={2}>
+                                    {item.note}
+                                </Text>
+                            ) : null}
+                        </View>
+                    </View>
+
+                    <View style={styles.postFooter}>
+                        <View style={styles.postStat} />
+                        {(item.likeCount > 0 || item.commentCount > 0) && (
+                            <View style={styles.postSocialStats}>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="heart-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.likeCount || 0}</Text>
+                                </View>
+                                <View style={styles.postStat}>
+                                    <Ionicons name="chatbubble-outline" size={14} color={colors.textMuted} />
+                                    <Text style={styles.postStatText}>{item.commentCount || 0}</Text>
+                                </View>
+                            </View>
+                        )}
+                    </View>
+                </TouchableOpacity>
+            );
+        }
 
         return (
             <TouchableOpacity
@@ -633,13 +983,8 @@ export default function ProfileScreen({ navigation, route }) {
                                 {[singleAddedItem.creator, singleAddedItem.year].filter(Boolean).join(' • ') || ' '}
                             </Text>
                             {singleAddedItem.rating != null && singleAddedItem.rating > 0 && (
-                                <View style={{ flexDirection: 'row', marginTop: 2 }}>
-                                    {Array.from({ length: 5 }, (_, i) => {
-                                        const r = singleAddedItem.rating;
-                                        if (i < Math.floor(r)) return <Ionicons key={i} name="star" size={12} color="#FFD700" />;
-                                        if (i === Math.floor(r) && r % 1 >= 0.5) return <Ionicons key={i} name="star-half" size={12} color="#FFD700" />;
-                                        return <Ionicons key={i} name="star-outline" size={12} color="#FFD700" />;
-                                    })}
+                                <View style={{ marginTop: 2 }}>
+                                    {renderStars(singleAddedItem.rating)}
                                 </View>
                             )}
                         </View>
@@ -750,13 +1095,8 @@ export default function ProfileScreen({ navigation, route }) {
                                 <Ionicons name="book" size={12} color={colors.primary} />
                                 <Text style={styles.postItemTitle} numberOfLines={1}>{entry?.name || 'Untitled'}</Text>
                                 {entry?.rating != null && entry.rating > 0 && (
-                                    <View style={{ flexDirection: 'row', marginLeft: 4 }}>
-                                        {Array.from({ length: 5 }, (_, i) => {
-                                            const r = entry.rating;
-                                            if (i < Math.floor(r)) return <Ionicons key={i} name="star" size={10} color="#FFD700" />;
-                                            if (i === Math.floor(r) && r % 1 >= 0.5) return <Ionicons key={i} name="star-half" size={10} color="#FFD700" />;
-                                            return <Ionicons key={i} name="star-outline" size={10} color="#FFD700" />;
-                                        })}
+                                    <View style={{ marginLeft: 4 }}>
+                                        {renderStars(entry.rating, 10)}
                                     </View>
                                 )}
                             </TouchableOpacity>
