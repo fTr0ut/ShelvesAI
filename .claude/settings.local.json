@@ -34,7 +34,8 @@
       "Bash(tar xzf:*)",
       "Read(//tmp/package/**)",
       "Bash(tar -xzf packages/shelvesai-vision-core-1.0.0.tgz -O package/lib/geminiDetector.js)",
-      "Bash(tar:*)"
+      "Bash(tar:*)",
+      "mcp__context7__query-docs"
     ]
   }
 }

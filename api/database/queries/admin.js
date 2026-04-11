@@ -645,6 +645,97 @@ async function toggleUnlimitedVisionTokens(userId, adminId, context = {}) {
   });
 }
 
+const DB_AUDIENCE_TYPES = new Set(['all', 'premium', 'free', 'admins', 'new_7d', 'new_30d']);
+
+/**
+ * Build a WHERE clause fragment for a given audience type.
+ * Returns an object with { fragment, values } to append to a base query.
+ */
+function audienceWhereFragment(audienceType) {
+  if (!DB_AUDIENCE_TYPES.has(audienceType)) {
+    throw new Error(`Invalid audienceType: ${audienceType}`);
+  }
+  if (audienceType === 'premium') return ' AND is_premium = true';
+  if (audienceType === 'free') return ' AND is_premium = false';
+  if (audienceType === 'admins') return ' AND is_admin = true';
+  if (audienceType === 'new_7d') return " AND created_at >= NOW() - INTERVAL '7 days'";
+  if (audienceType === 'new_30d') return " AND created_at >= NOW() - INTERVAL '30 days'";
+  return ''; // 'all'
+}
+
+/**
+ * Fetch users for an email campaign segment.
+ * Always excludes suspended users and users without an email address.
+ * @param {'all'|'premium'|'free'|'admins'|'new_7d'|'new_30d'} audienceType
+ * @returns {Array<{id, email, firstName, username}>}
+ */
+async function getUsersForEmailCampaign(audienceType) {
+  const filter = audienceWhereFragment(audienceType);
+  const result = await query(
+    `SELECT id, email, first_name, username
+     FROM users
+     WHERE is_suspended = false AND email IS NOT NULL${filter}
+     ORDER BY id`,
+  );
+  return result.rows.map(rowToCamelCase);
+}
+
+/**
+ * Count users matching an email campaign segment.
+ * @param {'all'|'premium'|'free'|'admins'|'new_7d'|'new_30d'} audienceType
+ * @returns {number}
+ */
+async function countUsersForEmailCampaign(audienceType) {
+  const filter = audienceWhereFragment(audienceType);
+  const result = await query(
+    `SELECT COUNT(*) as count
+     FROM users
+     WHERE is_suspended = false AND email IS NOT NULL${filter}`,
+  );
+  return parseInt(result.rows[0].count);
+}
+
+/**
+ * Insert a record of a sent email campaign.
+ */
+async function insertEmailCampaign({
+  adminId,
+  subject,
+  templateId,
+  audienceType,
+  audienceLabel,
+  recipientCount,
+  sentCount,
+  failedCount,
+  status,
+}) {
+  const result = await query(
+    `INSERT INTO admin_email_campaigns
+       (admin_id, subject, template_id, audience_type, audience_label,
+        recipient_count, sent_count, failed_count, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id`,
+    [adminId, subject, templateId, audienceType, audienceLabel || null,
+     recipientCount, sentCount, failedCount, status],
+  );
+  return { id: result.rows[0].id };
+}
+
+/**
+ * List sent email campaigns, most recent first.
+ */
+async function listEmailCampaigns(limit = 50) {
+  const result = await query(
+    `SELECT id, admin_id, subject, template_id, audience_type, audience_label,
+            recipient_count, sent_count, failed_count, status, sent_at
+     FROM admin_email_campaigns
+     ORDER BY sent_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map(rowToCamelCase);
+}
+
 module.exports = {
   getSystemStats,
   listUsers,
@@ -661,4 +752,8 @@ module.exports = {
   getAdminSocialFeed,
   getAdminEventComments,
   deleteEventAggregate,
+  getUsersForEmailCampaign,
+  countUsersForEmailCampaign,
+  insertEmailCampaign,
+  listEmailCampaigns,
 };

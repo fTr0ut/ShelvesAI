@@ -1712,6 +1712,8 @@ src/App.jsx
   -> src/pages/AuditLog.jsx
   -> src/pages/Settings.jsx
   -> src/pages/Broadcast.jsx
+  -> src/pages/DeletionRequests.jsx
+  -> src/pages/EmailCenter.jsx
 ```
 
 ### Context
@@ -1732,7 +1734,9 @@ src/api/client.js
     getRecentFeed, getJobs, getJob, getAuditLogs,
     getSettings, updateSetting,
     getShelves, getShelf, getShelfItems,
-    sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast
+    sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast,
+    getResendAudiences, getEmailAudienceCount, sendEmailCampaign, getEmailCampaigns,
+    getDeletionRequests, approveDeletionRequest, rejectDeletionRequest
 ```
 
 ### Pages
@@ -1787,6 +1791,15 @@ src/pages/Settings.jsx
 src/pages/Broadcast.jsx
   -> src/api/client.js (sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast)
   -> src/utils/errorUtils.js
+
+src/pages/DeletionRequests.jsx
+  -> src/api/client.js (getDeletionRequests, approveDeletionRequest, rejectDeletionRequest)
+  -> src/utils/errorUtils.js
+
+src/pages/EmailCenter.jsx
+  -> react-quill-new
+  -> src/api/client.js (getResendAudiences, getEmailAudienceCount, sendEmailCampaign, getEmailCampaigns)
+  -> src/utils/errorUtils.js
 ```
 
 ### Components
@@ -1834,7 +1847,7 @@ src/utils/errorUtils.js          (leaf â€” no internal imports)
 
 | File | Imported By |
 |---|---|
-| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal), Content (via ShelfDetailModal), ActivityFeed, SocialFeed, Jobs (via JobDetailModal), AuditLog, Settings |
+| `api/client.js` | AuthContext, Dashboard, Users (via UserDetailModal), Content (via ShelfDetailModal), ActivityFeed, SocialFeed, Jobs (via JobDetailModal), AuditLog, Settings, Broadcast, DeletionRequests, EmailCenter |
 | `context/AuthContext.jsx` | main, App, Login, Settings, Sidebar |
 | `components/Layout.jsx` | App |
 | `components/Sidebar.jsx` | Layout |
@@ -1846,7 +1859,7 @@ src/utils/errorUtils.js          (leaf â€” no internal imports)
 | `components/UserBadge.jsx` | UserTable, UserDetailModal |
 | `components/UserAvatar.jsx` | UserTable, UserDetailModal, Dashboard, ActivityFeed, SocialFeed, Content, ShelfDetailModal |
 | `components/Pagination.jsx` | Users, ActivityFeed, SocialFeed, Jobs, AuditLog, Content, ShelfDetailModal |
-| `utils/errorUtils.js` | Dashboard, UserDetailModal, JobDetailModal, ShelfDetailModal, Settings, SocialFeed |
+| `utils/errorUtils.js` | Dashboard, UserDetailModal, JobDetailModal, ShelfDetailModal, Settings, SocialFeed, Broadcast, DeletionRequests, EmailCenter |
 
 ---
 
@@ -1894,6 +1907,7 @@ users (UUID PK)
   â”œâ”€â”€ premium_locked_by_admin (BOOLEAN, default FALSE)
   â”œâ”€â”€ unlimited_vision_tokens (BOOLEAN, default FALSE)
   â””â”€< admin_action_logs (admin_id FK)
+  └─< admin_email_campaigns (admin_id nullable FK; subject, template_id, audience_type, audience_label, sent_count, failed_count, status, sent_at)
 
 job_runs (job_id TEXT PK)
   -> user_id (FK -> users.id, nullable)
@@ -2084,6 +2098,7 @@ news_items (SERIAL PK)
 | `20260409120001_create_vision_token_log` | + `vision_token_log` |
 | `20260409130000_add_user_collection_item_details` | + `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` |
 | `20260411113000_create_user_blocks` | + `user_blocks`, backfill/remove legacy `friendships.status='blocked'`, `users_are_blocked(user1, user2)` helper function, RLS policies for participants/admins |
+| `20260411200000_create_admin_email_campaigns` | + `admin_email_campaigns` (admin_id nullable FK, subject, template_id, audience_type, audience_label, recipient_count, sent_count, failed_count, status, sent_at) |
 ---
 
 ## External Service Integrations

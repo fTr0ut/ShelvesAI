@@ -164,6 +164,19 @@ export const approveDeletionRequest = (id, note = '') =>
 export const rejectDeletionRequest = (id, note = '') =>
   client.post(`/admin/deletion-requests/${id}/reject`, { note });
 
+// Email campaigns
+export const getResendAudiences = () =>
+  client.get('/admin/email/resend-audiences');
+
+export const getEmailAudienceCount = (audienceType) =>
+  client.get('/admin/email/audience-count', { params: { type: audienceType } });
+
+export const sendEmailCampaign = (payload) =>
+  client.post('/admin/email/send', payload);
+
+export const getEmailCampaigns = () =>
+  client.get('/admin/email/campaigns');
+
 // Broadcast
 export const sendBroadcast = (payload) =>
   client.post('/admin/broadcast', payload);

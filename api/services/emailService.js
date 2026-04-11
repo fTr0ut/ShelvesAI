@@ -382,9 +382,98 @@ If you have questions or believe this was a mistake, please contact us at ${SUPP
     }
 }
 
+/**
+ * Send a bulk email campaign to multiple recipients via Resend batch API.
+ * Chunks recipients into groups of 100 (Resend batch limit per request).
+ * @param {Array<{email: string, name?: string}>} recipients
+ * @param {{ subject: string, html: string, text?: string }} opts
+ * @returns {{ sent: number, failed: number, simulated?: boolean }}
+ */
+async function sendBulkEmail(recipients, { subject, html, text }) {
+    if (!API_KEY) {
+        const env = String(process.env.NODE_ENV || '').toLowerCase();
+        const isDevLike = env === 'development' || env === 'test';
+
+        if (!isDevLike) {
+            throw new Error('Email transport unavailable');
+        }
+
+        logger.warn(`[EmailService] Simulating bulk email to ${recipients.length} recipients`);
+        return { sent: recipients.length, failed: 0, simulated: true };
+    }
+
+    const CHUNK = 100;
+    let sent = 0;
+    let failed = 0;
+
+    for (let i = 0; i < recipients.length; i += CHUNK) {
+        const chunk = recipients.slice(i, i + CHUNK);
+        const messages = chunk.map(({ email, name }) => ({
+            from: `${APP_NAME} <${FROM_EMAIL}>`,
+            to: name ? `${name} <${email}>` : email,
+            subject,
+            html,
+            ...(text ? { text } : {}),
+        }));
+        try {
+            const response = await resend.batch.send(messages);
+            if (response?.error) throw new Error(response.error.message || 'Resend batch API error');
+            sent += chunk.length;
+        } catch (err) {
+            logger.error(`[EmailService] Bulk batch (offset ${i}) failed:`, err.message);
+            failed += chunk.length;
+        }
+    }
+
+    logger.info(`[EmailService] Bulk campaign complete: ${sent} sent, ${failed} failed`);
+    return { sent, failed };
+}
+
+/**
+ * List all Resend Audiences available in the account.
+ * @returns {Array<{id: string, name: string}>}
+ */
+async function getResendAudiences() {
+    if (!resend) throw new Error('Email transport unavailable');
+    const response = await resend.audiences.list();
+    if (response?.error) throw new Error(response.error.message || 'Resend API error');
+    return (response.data?.data || []).map(({ id, name }) => ({ id, name }));
+}
+
+/**
+ * Fetch all non-unsubscribed contacts from a Resend Audience, paginating automatically.
+ * @param {string} audienceId
+ * @returns {Array<{email: string, name?: string}>}
+ */
+async function getResendAudienceContacts(audienceId) {
+    if (!resend) throw new Error('Email transport unavailable');
+    const contacts = [];
+    let after;
+    do {
+        const response = await resend.contacts.list({
+            audienceId,
+            limit: 100,
+            ...(after ? { after } : {}),
+        });
+        if (response?.error) throw new Error(response.error.message || 'Resend API error');
+        const page = response.data?.data || [];
+        for (const c of page) {
+            if (!c.unsubscribed) {
+                const name = [c.firstName, c.lastName].filter(Boolean).join(' ') || undefined;
+                contacts.push({ email: c.email, ...(name ? { name } : {}) });
+            }
+        }
+        after = response.data?.has_more ? page[page.length - 1]?.id : undefined;
+    } while (after);
+    return contacts;
+}
+
 module.exports = {
     sendPasswordResetEmail,
     sendFeedbackEmail,
     sendDeletionApprovedEmail,
     sendDeletionRejectedEmail,
+    sendBulkEmail,
+    getResendAudiences,
+    getResendAudienceContacts,
 };

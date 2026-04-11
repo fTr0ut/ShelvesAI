@@ -8,7 +8,13 @@ const jobRunsQueries = require('../database/queries/jobRuns');
 const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
-const { sendDeletionApprovedEmail, sendDeletionRejectedEmail } = require('../services/emailService');
+const {
+    sendDeletionApprovedEmail,
+    sendDeletionRejectedEmail,
+    sendBulkEmail,
+    getResendAudiences,
+    getResendAudienceContacts,
+} = require('../services/emailService');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const adminContentQueries = require('../database/queries/adminContent');
 const processingStatus = require('../services/processingStatus');
@@ -926,6 +932,172 @@ async function approveDeletionRequest(req, res) {
   }
 }
 
+// ─── Email Campaign Handlers ──────────────────────────────────────────────────
+
+const DB_AUDIENCE_TYPES = new Set(['all', 'premium', 'free', 'admins', 'new_7d', 'new_30d']);
+
+function stripScriptTags(html) {
+    return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+}
+
+function stripHtmlTags(html) {
+    return html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li>/gi, '• ')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .trim();
+}
+
+async function listResendAudiences(req, res) {
+    try {
+        const audiences = await getResendAudiences();
+        return res.json({ audiences });
+    } catch (err) {
+        logger.warn('listResendAudiences: Resend API unavailable:', err.message);
+        return res.json({ audiences: [] });
+    }
+}
+
+async function getEmailAudienceCount(req, res) {
+    const type = String(req.query.type || '').trim();
+
+    if (!type) {
+        return res.status(400).json({ error: 'type query parameter is required' });
+    }
+
+    try {
+        let count;
+        if (type.startsWith('resend:')) {
+            const audienceId = type.slice(7);
+            if (!audienceId) return res.status(400).json({ error: 'Invalid Resend audience ID' });
+            const contacts = await getResendAudienceContacts(audienceId);
+            count = contacts.length;
+        } else if (DB_AUDIENCE_TYPES.has(type)) {
+            count = await adminQueries.countUsersForEmailCampaign(type);
+        } else {
+            return res.status(400).json({ error: 'Invalid audience type' });
+        }
+        return res.json({ count });
+    } catch (err) {
+        logger.error('getEmailAudienceCount error:', err);
+        return res.status(500).json({ error: 'Server error' });
+    }
+}
+
+async function sendEmailCampaign(req, res) {
+    const { templateId, subject, emailHtml, audienceType, audienceLabel } = req.body || {};
+
+    if (!subject || typeof subject !== 'string' || !subject.trim()) {
+        return res.status(400).json({ error: 'subject is required' });
+    }
+    if (subject.trim().length > 200) {
+        return res.status(400).json({ error: 'subject must be 200 characters or fewer' });
+    }
+    if (!emailHtml || typeof emailHtml !== 'string' || !emailHtml.trim()) {
+        return res.status(400).json({ error: 'emailHtml is required' });
+    }
+    if (!audienceType || typeof audienceType !== 'string') {
+        return res.status(400).json({ error: 'audienceType is required' });
+    }
+    const isResend = audienceType.startsWith('resend:');
+    if (!isResend && !DB_AUDIENCE_TYPES.has(audienceType)) {
+        return res.status(400).json({ error: 'Invalid audienceType' });
+    }
+    if (isResend && !audienceType.slice(7)) {
+        return res.status(400).json({ error: 'Invalid Resend audience ID' });
+    }
+
+    const safeHtml = stripScriptTags(emailHtml);
+    const plainText = stripHtmlTags(safeHtml);
+
+    try {
+        // Resolve recipients
+        let recipients;
+        if (isResend) {
+            const audienceId = audienceType.slice(7);
+            recipients = await getResendAudienceContacts(audienceId);
+        } else {
+            const users = await adminQueries.getUsersForEmailCampaign(audienceType);
+            recipients = users.map(u => ({
+                email: u.email,
+                name: u.firstName || u.username || undefined,
+            }));
+        }
+
+        if (recipients.length === 0) {
+            return res.status(422).json({ error: 'No recipients found for the selected audience' });
+        }
+
+        // Send
+        const result = await sendBulkEmail(recipients, {
+            subject: subject.trim(),
+            html: safeHtml,
+            text: plainText,
+        });
+
+        const status = result.failed === recipients.length ? 'failed' : 'sent';
+        const safeLabel = audienceLabel ? String(audienceLabel).slice(0, 200) : null;
+
+        // Persist campaign record
+        const { id: campaignId } = await adminQueries.insertEmailCampaign({
+            adminId: req.user.id,
+            subject: subject.trim(),
+            templateId: String(templateId || 'custom').slice(0, 50),
+            audienceType,
+            audienceLabel: safeLabel,
+            recipientCount: recipients.length,
+            sentCount: result.sent,
+            failedCount: result.failed,
+            status,
+        });
+
+        // Audit log
+        await adminQueries.logAction({
+            adminId: req.user.id,
+            action: 'EMAIL_CAMPAIGN_SENT',
+            metadata: {
+                campaignId,
+                subject: subject.trim(),
+                audienceType,
+                recipientCount: recipients.length,
+                sentCount: result.sent,
+                failedCount: result.failed,
+            },
+            ipAddress: getClientIp(req),
+            userAgent: req.headers['user-agent'] || null,
+        });
+
+        return res.json({
+            sent: result.sent,
+            failed: result.failed,
+            recipientCount: recipients.length,
+            campaignId,
+            simulated: result.simulated || false,
+        });
+    } catch (err) {
+        logger.error('sendEmailCampaign error:', err);
+        return res.status(500).json({ error: 'Server error' });
+    }
+}
+
+async function getEmailCampaigns(req, res) {
+    try {
+        const campaigns = await adminQueries.listEmailCampaigns(50);
+        return res.json({ campaigns });
+    } catch (err) {
+        logger.error('getEmailCampaigns error:', err);
+        return res.status(500).json({ error: 'Server error' });
+    }
+}
+
 async function rejectDeletionRequest(req, res) {
   const { id } = req.params;
   const reviewerNote = req.body?.note ? String(req.body.note).trim() : null;
@@ -984,4 +1156,8 @@ module.exports = {
   listDeletionRequests,
   approveDeletionRequest,
   rejectDeletionRequest,
+  listResendAudiences,
+  getEmailAudienceCount,
+  sendEmailCampaign,
+  getEmailCampaigns,
 };

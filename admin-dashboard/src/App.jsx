@@ -12,6 +12,7 @@ import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
 import Broadcast from './pages/Broadcast';
 import DeletionRequests from './pages/DeletionRequests';
+import EmailCenter from './pages/EmailCenter';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -55,6 +56,7 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/broadcast" element={<Broadcast />} />
                 <Route path="/deletion-requests" element={<DeletionRequests />} />
+                <Route path="/email" element={<EmailCenter />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

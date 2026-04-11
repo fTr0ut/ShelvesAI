@@ -78,6 +78,11 @@ router.get('/shelves/:shelfId/items', adminController.getShelfItems);
 // System info
 router.get('/system', adminController.getSystemInfo);
 
+// Email campaigns (read — no CSRF)
+router.get('/email/resend-audiences', adminController.listResendAudiences);
+router.get('/email/audience-count', adminController.getEmailAudienceCount);
+router.get('/email/campaigns', adminController.getEmailCampaigns);
+
 // CSRF required for admin state-changing routes.
 router.use(requireAdminCsrf);
 
@@ -99,6 +104,9 @@ router.put('/settings/:key', adminController.updateSetting);
 // Deletion request actions (write — CSRF required)
 router.post('/deletion-requests/:id/approve', adminController.approveDeletionRequest);
 router.post('/deletion-requests/:id/reject', adminController.rejectDeletionRequest);
+
+// Email campaigns (write — CSRF required)
+router.post('/email/send', adminController.sendEmailCampaign);
 
 // Broadcast (write — CSRF required, mounted after requireAdminCsrf)
 router.use('/', adminBroadcastRoutes);
