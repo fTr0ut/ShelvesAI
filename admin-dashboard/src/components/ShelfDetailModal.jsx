@@ -139,6 +139,11 @@ export default function ShelfDetailModal({ shelfId, onClose }) {
                               {kind && <span>{kind}</span>}
                               {item.year && <span> ({item.year})</span>}
                             </div>
+                            {item.notes && (
+                              <div className="mt-1 text-xs text-gray-700 whitespace-pre-wrap break-words bg-gray-50 border border-gray-200 rounded p-2">
+                                {item.notes}
+                              </div>
+                            )}
                           </div>
                           {item.format && (
                             <span className="text-xs text-gray-400">{item.format}</span>

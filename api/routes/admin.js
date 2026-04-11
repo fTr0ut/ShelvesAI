@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
@@ -7,8 +8,23 @@ const { requireAdminCsrf } = require('../middleware/csrf');
 const adminController = require('../controllers/adminController');
 const { adminLogin } = require('../controllers/authController');
 const { requireFields } = require('../middleware/validate');
+const { isAllowedImageMimeType } = require('../utils/imageValidation');
 const logger = require('../logger');
 const adminBroadcastRoutes = require('./adminBroadcast');
+
+const emailImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    if (isAllowedImageMimeType(file.mimetype)) {
+      cb(null, true);
+    } else {
+      const err = new Error('Only JPEG, PNG, and WEBP images are allowed');
+      err.status = 400;
+      cb(err);
+    }
+  },
+});
 
 const adminLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -74,6 +90,7 @@ router.get('/deletion-requests', adminController.listDeletionRequests);
 router.get('/shelves', adminController.listShelves);
 router.get('/shelves/:shelfId', adminController.getShelf);
 router.get('/shelves/:shelfId/items', adminController.getShelfItems);
+router.get('/moderation/items', adminController.listModerationItems);
 
 // System info
 router.get('/system', adminController.getSystemInfo);
@@ -104,9 +121,11 @@ router.put('/settings/:key', adminController.updateSetting);
 // Deletion request actions (write — CSRF required)
 router.post('/deletion-requests/:id/approve', adminController.approveDeletionRequest);
 router.post('/deletion-requests/:id/reject', adminController.rejectDeletionRequest);
+router.post('/moderation/action', adminController.applyModerationAction);
 
 // Email campaigns (write — CSRF required)
 router.post('/email/send', adminController.sendEmailCampaign);
+router.post('/email/images', emailImageUpload.single('image'), adminController.uploadEmailImage);
 
 // Broadcast (write — CSRF required, mounted after requireAdminCsrf)
 router.use('/', adminBroadcastRoutes);

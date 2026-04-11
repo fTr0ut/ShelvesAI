@@ -252,6 +252,30 @@ export default function Dashboard() {
               {systemInfo?.platform || '-'}
             </dd>
           </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Moderation Mode</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {systemInfo?.moderation?.botMode || 'recommend_only'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Flagged Items</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {systemInfo?.moderation?.counts?.flagged ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Bot Actions (24h)</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {systemInfo?.moderation?.recentBotActions24h ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-gray-500">Last Alert</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {systemInfo?.moderation?.lastAlertSentAt ? new Date(systemInfo.moderation.lastAlertSentAt).toLocaleString() : '-'}
+            </dd>
+          </div>
         </dl>
       </div>
     </div>

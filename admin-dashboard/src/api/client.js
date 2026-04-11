@@ -154,6 +154,13 @@ export const getShelf = (shelfId) =>
 export const getShelfItems = (shelfId, params = {}) =>
   client.get(`/admin/shelves/${shelfId}/items`, { params });
 
+// Moderation
+export const getModerationItems = (params = {}) =>
+  client.get('/admin/moderation/items', { params });
+
+export const applyModerationAction = (payload) =>
+  client.post('/admin/moderation/action', payload);
+
 // Deletion requests
 export const getDeletionRequests = (params = {}) =>
   client.get('/admin/deletion-requests', { params });
@@ -165,6 +172,11 @@ export const rejectDeletionRequest = (id, note = '') =>
   client.post(`/admin/deletion-requests/${id}/reject`, { note });
 
 // Email campaigns
+export const uploadEmailImage = (formData) =>
+  client.post('/admin/email/images', formData, {
+    headers: { 'Content-Type': undefined }, // let axios set multipart boundary
+  });
+
 export const getResendAudiences = () =>
   client.get('/admin/email/resend-audiences');
 

@@ -28,7 +28,16 @@ async function listShelves({
   }
 
   if (search) {
-    whereConditions.push(`s.name ILIKE $${paramIndex}`);
+    whereConditions.push(`(
+      s.name ILIKE $${paramIndex}
+      OR s.description ILIKE $${paramIndex}
+      OR EXISTS (
+        SELECT 1
+        FROM user_collections uc
+        WHERE uc.shelf_id = s.id
+          AND uc.notes ILIKE $${paramIndex}
+      )
+    )`);
     params.push(`%${search}%`);
     paramIndex++;
   }

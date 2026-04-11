@@ -50,6 +50,7 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-11 | admin-moderation-surface | Added a normalized admin moderation domain across API, schema, and dashboard. New backend files: `api/database/migrations/20260411223000_create_moderation_entities.js`, `api/database/queries/moderation.js`, `api/__tests__/moderationController.test.js`; init schema parity now includes `moderation_entities` plus default `system_settings.moderation_bot_config`. `api/controllers/adminController.js` adds `GET /api/admin/moderation/items` and `POST /api/admin/moderation/action`, extends `GET /api/admin/system` with moderation metrics/config, persists moderation entity state + audit metadata, and sends Resend admin alerts for bot-executed actions via new `sendModerationActionAlertEmail()` in `api/services/emailService.js`. Admin search/discovery now exposes abusive text more directly by searching `users.bio` and `shelves.description`/`user_collections.notes`, while the dashboard adds `pages/Moderation.jsx`, `/moderation` routing/nav, stopgap rendering of profile bios and shelf item notes, moderation bot settings UI, moderation system cards on Dashboard, and deep links from Social Feed to author/content review surfaces.
 - 2026-04-11 | mutual-user-blocks | Added first-class mutual block enforcement across authenticated social flows. New DB pieces: `api/database/migrations/20260411113000_create_user_blocks.js`, `api/database/queries/userBlocks.js`, init schema parity for `user_blocks` plus `users_are_blocked(user1, user2)`. Social API adds `GET/POST/DELETE /api/friends/blocks`; `GET /api/friends` now only returns pending/accepted friendships. Blocked pairs now receive `403 { code: 'user_blocked' }` on protected profile/feed/shelf/favorites/wishlist/list access, are filtered out of feed/social summaries/notifications/search, and cannot friend/like/comment/mention each other. Mobile updates in `ProfileScreen`, `FriendsListScreen`, `FeedDetailScreen`, `WishlistsScreen`, `FavoritesScreen`, and `ui/GlobalSearchBar` add block/unblock UI, blocked-state rendering, and focus-time search refresh.
 
 - 2026-04-11 | deletion-request-emails | Added email notifications for deletion request outcomes. Modified `api/services/emailService.js`: added `sendDeletionApprovedEmail({ email, username })` and `sendDeletionRejectedEmail({ email, username, reviewerNote })` — both follow existing Resend pattern with HTML + plain text, dev/test passthrough when API key absent. Modified `api/controllers/adminController.js`: imports both functions; `approveDeletionRequest` sends approved email after `invalidateAuthCache` (non-fatal, errors warn-logged); `rejectDeletionRequest` sends rejected email after status update (non-fatal).
@@ -807,12 +808,14 @@ routes/admin.js
   Routes (read, before CSRF):
     GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
     GET  /workfeed, /workfeed/:jobId
-    GET  /settings, /users/:userId/vision-quota, /audit-logs
+    GET  /settings, /system, /users/:userId/vision-quota, /audit-logs
     GET  /shelves, /shelves/:shelfId, /shelves/:shelfId/items
+    GET  /moderation/items
   Routes (write, after CSRF):
     PUT  /settings/:key, /users/:userId/vision-quota
     POST /users/:userId/suspend, /unsuspend, /toggle-admin, /toggle-premium, /toggle-unlimited-vision
     POST /users/:userId/vision-quota/reset
+    POST /moderation/action
     POST /broadcast, /broadcasts/:id/cancel, /broadcasts/:id/suppress (via adminBroadcast.js)
     GET  /broadcasts (via adminBroadcast.js)
 
@@ -832,12 +835,14 @@ routes/broadcasts.js
 
 controllers/adminController.js
   -> database/queries/admin.js
+  -> database/queries/moderation.js
   -> database/queries/jobRuns.js
   -> database/queries/workflowQueueJobs.js
   -> database/queries/systemSettings.js
   -> database/queries/visionQuota.js
   -> database/queries/adminContent.js
   -> services/processingStatus.js
+  -> services/emailService.js
   -> services/config/SystemSettingsCache.js
   -> database/queries/utils.js
   -> utils/adminAuth.js
@@ -1708,6 +1713,7 @@ src/App.jsx
   -> src/pages/Content.jsx
   -> src/pages/ActivityFeed.jsx
   -> src/pages/SocialFeed.jsx
+  -> src/pages/Moderation.jsx
   -> src/pages/Jobs.jsx
   -> src/pages/AuditLog.jsx
   -> src/pages/Settings.jsx
@@ -1734,6 +1740,7 @@ src/api/client.js
     getRecentFeed, getJobs, getJob, getAuditLogs,
     getSettings, updateSetting,
     getShelves, getShelf, getShelfItems,
+    getModerationItems, applyModerationAction,
     sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast,
     getResendAudiences, getEmailAudienceCount, sendEmailCampaign, getEmailCampaigns,
     getDeletionRequests, approveDeletionRequest, rejectDeletionRequest
@@ -1772,6 +1779,11 @@ src/pages/SocialFeed.jsx
   -> src/api/client.js (getAdminSocialFeed, getAdminEventComments, deleteEvent)
   -> src/components/UserAvatar.jsx
   -> src/components/Pagination.jsx
+  -> src/utils/errorUtils.js
+
+src/pages/Moderation.jsx
+  -> react-router-dom (Link, useSearchParams)
+  -> src/api/client.js (getModerationItems, applyModerationAction)
   -> src/utils/errorUtils.js
 
 src/pages/Jobs.jsx
@@ -1975,6 +1987,18 @@ system_settings (key VARCHAR PK)
   â”œâ”€â”€ description (TEXT, nullable)
   â””â”€â”€ updated_by (FK -> users.id, nullable)
 
+  Seeded key: `moderation_bot_config = { mode: 'recommend_only', alertHumanAdmins: true }`
+
+moderation_entities (SERIAL PK)
+  -> content_type/content_id (normalized UGC key, unique pair)
+  -> status in {active, flagged, hidden, cleared, deleted}
+  -> last_action, last_actor_type in {human, bot}
+  -> last_admin_id (FK -> users.id, nullable)
+  -> rule_code, action_reason, confidence
+  -> evidence_snapshot (JSONB normalized moderation snapshot)
+  -> alerts_sent_at, created_at, updated_at
+  INDEX(status), INDEX(updated_at), UNIQUE(content_type, content_id)
+
 collectables (SERIAL PK)
   -> max_players (INTEGER, nullable)
   -> platform_data (JSONB, default `[]`)
@@ -2021,7 +2045,7 @@ news_items (SERIAL PK)
 - Admin bypass via `is_current_user_admin()` DB function
 - Context set via `SET LOCAL "app.current_user_id"` in `queryWithContext()` / `transactionWithContext()`
 
-### Migration History (66 files, 2026-01-10 -> 2026-04-09)
+### Migration History (84 files, 2026-01-10 -> 2026-04-11)
 
 | Migration | Tables/Columns Affected |
 |---|---|
@@ -2099,6 +2123,7 @@ news_items (SERIAL PK)
 | `20260409130000_add_user_collection_item_details` | + `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` |
 | `20260411113000_create_user_blocks` | + `user_blocks`, backfill/remove legacy `friendships.status='blocked'`, `users_are_blocked(user1, user2)` helper function, RLS policies for participants/admins |
 | `20260411200000_create_admin_email_campaigns` | + `admin_email_campaigns` (admin_id nullable FK, subject, template_id, audience_type, audience_label, recipient_count, sent_count, failed_count, status, sent_at) |
+| `20260411223000_create_moderation_entities` | + `moderation_entities` (normalized moderation state/audit snapshot table keyed by `content_type + content_id`) and seed `system_settings.moderation_bot_config` |
 ---
 
 ## External Service Integrations

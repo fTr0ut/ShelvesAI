@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import {
+  uploadEmailImage,
   getResendAudiences,
   getEmailAudienceCount,
   sendEmailCampaign,
@@ -105,21 +106,18 @@ const DB_AUDIENCE_OPTIONS = [
   { value: 'admins', label: 'Admins only' },
 ];
 
-const QUILL_MODULES = {
-  toolbar: [
-    ['bold', 'italic', 'underline'],
-    [{ list: 'ordered' }, { list: 'bullet' }],
-    ['link'],
-    [{ header: [1, 2, 3, false] }],
-    ['clean'],
-  ],
-};
-
-const QUILL_FORMATS = ['bold', 'italic', 'underline', 'list', 'link', 'header'];
+const QUILL_FORMATS = ['bold', 'italic', 'underline', 'list', 'link', 'header', 'image'];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function EmailCenter() {
+  const quillRef = useRef(null);
+  const imageInputRef = useRef(null);
+  // Maps relative URL → absolute public URL for images uploaded this session
+  const imageUrlMapRef = useRef(new Map());
+  // Stable ref so the Quill handler closure always calls the latest version
+  const imageHandlerFnRef = useRef(null);
+
   const [activeTab, setActiveTab] = useState('compose');
   const [selectedTemplate, setSelectedTemplate] = useState(EMAIL_TEMPLATES[0]);
   const [subject, setSubject] = useState('');
@@ -132,9 +130,62 @@ export default function EmailCenter() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [sendResult, setSendResult] = useState(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [campaignsError, setCampaignsError] = useState(null);
+
+  // Image upload handler — called by Quill's custom toolbar handler
+  function handleImageButtonClick() {
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+      imageInputRef.current.click();
+    }
+  }
+  imageHandlerFnRef.current = handleImageButtonClick;
+
+  async function handleImageFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageUploading(true);
+    setImageUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const res = await uploadEmailImage(formData);
+      const { url, absoluteUrl } = res.data;
+      // Track relative → absolute mapping so handleSend can produce email-safe HTML
+      imageUrlMapRef.current.set(url, absoluteUrl);
+      // Insert relative URL into editor — served via the Vite /media proxy in dev
+      const quill = quillRef.current?.getEditor();
+      if (quill) {
+        const range = quill.getSelection(true);
+        quill.insertEmbed(range.index, 'image', url);
+        quill.setSelection(range.index + 1);
+      }
+    } catch {
+      setImageUploadError('Image upload failed. Check file type and size (5 MB max).');
+    } finally {
+      setImageUploading(false);
+    }
+  }
+
+  // Stable modules object — toolbar handlers use the ref so they never go stale
+  const quillModules = useMemo(() => ({
+    toolbar: {
+      container: [
+        ['bold', 'italic', 'underline'],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link', 'image'],
+        [{ header: [1, 2, 3, false] }],
+        ['clean'],
+      ],
+      handlers: {
+        image: () => imageHandlerFnRef.current?.(),
+      },
+    },
+  }), []);
 
   // Fetch Resend audiences on mount
   useEffect(() => {
@@ -179,7 +230,12 @@ export default function EmailCenter() {
     e.preventDefault();
     if (!canSend) return;
 
-    const emailHtml = selectedTemplate.buildHtml(subject.trim(), bodyHtml);
+    // Build email HTML, then swap every relative image URL for its absolute counterpart
+    // so email clients (which have no base URL) can load the images.
+    let emailHtml = selectedTemplate.buildHtml(subject.trim(), bodyHtml);
+    for (const [relUrl, absUrl] of imageUrlMapRef.current) {
+      emailHtml = emailHtml.replaceAll(relUrl, absUrl);
+    }
 
     const audienceLabel = audienceType.startsWith('resend:')
       ? (resendAudiences.find((a) => `resend:${a.id}` === audienceType)?.name || audienceType)
@@ -291,18 +347,35 @@ export default function EmailCenter() {
 
               {/* Rich Text Body */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Body</label>
+                <div className="flex justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">Body</label>
+                  {imageUploading && (
+                    <span className="text-xs text-blue-600 animate-pulse">Uploading image…</span>
+                  )}
+                </div>
+                {imageUploadError && (
+                  <p className="mb-1 text-xs text-red-600">{imageUploadError}</p>
+                )}
                 <div className="rounded-md overflow-hidden border border-gray-300">
                   <ReactQuill
+                    ref={quillRef}
                     theme="snow"
                     value={bodyHtml}
                     onChange={setBodyHtml}
-                    modules={QUILL_MODULES}
+                    modules={quillModules}
                     formats={QUILL_FORMATS}
                     placeholder="Write your message…"
                     style={{ minHeight: '180px' }}
                   />
                 </div>
+                {/* Hidden file input triggered by the Quill image toolbar button */}
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={handleImageFileChange}
+                />
               </div>
 
               {/* Audience + Actions row */}

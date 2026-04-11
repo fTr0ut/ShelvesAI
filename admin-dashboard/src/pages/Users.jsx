@@ -78,6 +78,13 @@ export default function Users() {
     loadUsers();
   }, [loadUsers]);
 
+  useEffect(() => {
+    const selectedUserId = searchParams.get('selectedUserId');
+    if (selectedUserId) {
+      setSelectedUserId(selectedUserId);
+    }
+  }, [searchParams]);
+
   function handleSearch(e) {
     e.preventDefault();
     const nextSearch = searchInput.trim();

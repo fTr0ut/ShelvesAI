@@ -10,6 +10,11 @@ const VISION_SETTINGS = [
   { key: 'vision_monthly_quota', label: 'Monthly Vision Quota', type: 'number', description: 'Maximum number of vision scans per user per month' },
 ];
 
+const DEFAULT_MODERATION_BOT_CONFIG = {
+  mode: 'recommend_only',
+  alertHumanAdmins: true,
+};
+
 export default function Settings() {
   const { user } = useAuth();
   const [settings, setSettings] = useState([]);
@@ -23,6 +28,8 @@ export default function Settings() {
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [moderationMode, setModerationMode] = useState(DEFAULT_MODERATION_BOT_CONFIG.mode);
+  const [alertHumanAdmins, setAlertHumanAdmins] = useState(DEFAULT_MODERATION_BOT_CONFIG.alertHumanAdmins);
 
   useEffect(() => {
     loadSettings();
@@ -135,6 +142,10 @@ export default function Settings() {
   }
 
   const visionQuotaValue = getSettingValue('vision_monthly_quota');
+  const moderationBotConfig = {
+    ...DEFAULT_MODERATION_BOT_CONFIG,
+    ...(getSettingValue('moderation_bot_config') || {}),
+  };
   const [quotaInput, setQuotaInput] = useState('');
 
   useEffect(() => {
@@ -143,7 +154,34 @@ export default function Settings() {
     }
   }, [visionQuotaValue]);
 
-  const nonVisionSettings = settings.filter(s => !VISION_SETTINGS.some(v => v.key === s.key));
+  useEffect(() => {
+    setModerationMode(moderationBotConfig.mode);
+    setAlertHumanAdmins(moderationBotConfig.alertHumanAdmins !== false);
+  }, [moderationBotConfig.mode, moderationBotConfig.alertHumanAdmins]);
+
+  async function handleModerationConfigSave() {
+    try {
+      setSaving('moderation_bot_config');
+      setError(null);
+      await updateSetting(
+        'moderation_bot_config',
+        {
+          mode: moderationMode,
+          alertHumanAdmins,
+        },
+        'Controls moderation bot execution mode and admin alert behavior'
+      );
+      await loadSettings();
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to update moderation bot config'));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const nonVisionSettings = settings.filter(
+    (s) => !VISION_SETTINGS.some(v => v.key === s.key) && s.key !== 'moderation_bot_config'
+  );
 
   return (
     <div>
@@ -203,6 +241,48 @@ export default function Settings() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white shadow rounded-lg mb-6">
+        <div className="px-4 py-5 sm:p-6">
+          <h3 className="text-lg leading-6 font-medium text-gray-900">Moderation Bot</h3>
+          <p className="mt-1 text-sm text-gray-500">Control whether the moderation bot can recommend or execute actions.</p>
+
+          {loading ? (
+            <div className="mt-4 text-gray-500">Loading...</div>
+          ) : (
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <label className="text-sm text-gray-700">
+                <span className="block mb-1 font-medium">Mode</span>
+                <select
+                  value={moderationMode}
+                  onChange={(e) => setModerationMode(e.target.value)}
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
+                >
+                  <option value="recommend_only">recommend_only</option>
+                  <option value="hybrid">hybrid</option>
+                  <option value="autonomous">autonomous</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={alertHumanAdmins}
+                  onChange={(e) => setAlertHumanAdmins(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                Alert human admins when bot executes actions
+              </label>
+              <button
+                onClick={handleModerationConfigSave}
+                disabled={saving === 'moderation_bot_config'}
+                className="px-4 py-2 text-sm font-medium rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving === 'moderation_bot_config' ? 'Saving...' : 'Save Moderation Config'}
+              </button>
             </div>
           )}
         </div>

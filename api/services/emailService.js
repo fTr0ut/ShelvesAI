@@ -425,8 +425,96 @@ async function sendBulkEmail(recipients, { subject, html, text }) {
         }
     }
 
-    logger.info(`[EmailService] Bulk campaign complete: ${sent} sent, ${failed} failed`);
-    return { sent, failed };
+  logger.info(`[EmailService] Bulk campaign complete: ${sent} sent, ${failed} failed`);
+  return { sent, failed };
+}
+
+async function sendModerationActionAlertEmail(recipients, {
+  actorType,
+  moderatorUsername,
+  action,
+  contentType,
+  contentId,
+  title = null,
+  authorUsername = null,
+  ruleCode = null,
+  reason = null,
+  confidence = null,
+  sourceRoute = null,
+}) {
+  const safeRecipients = Array.isArray(recipients)
+    ? recipients.filter((item) => item?.email)
+    : [];
+
+  if (safeRecipients.length === 0) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const summaryTitle = title || `${contentType} ${contentId}`;
+  const safeSummaryTitle = escapeHtml(summaryTitle);
+  const safeAuthor = escapeHtml(authorUsername || 'unknown');
+  const safeRuleCode = escapeHtml(ruleCode || 'unspecified');
+  const safeReason = escapeHtml(reason || 'No reason provided.');
+  const safeAction = escapeHtml(action || 'unknown');
+  const safeActorType = escapeHtml(actorType || 'unknown');
+  const safeModerator = escapeHtml(moderatorUsername || 'unknown');
+  const safeRoute = sourceRoute ? escapeHtml(sourceRoute) : null;
+  const confidenceText = Number.isFinite(Number(confidence))
+    ? `${Math.round(Number(confidence) * 100)}%`
+    : 'n/a';
+
+  return sendBulkEmail(safeRecipients, {
+    subject: `[${APP_NAME}] Moderation action: ${safeAction} on ${summaryTitle}`,
+    text: `A moderation action was executed.
+
+Actor type: ${actorType || 'unknown'}
+Moderator: ${moderatorUsername || 'unknown'}
+Action: ${action || 'unknown'}
+Content type: ${contentType}
+Content id: ${contentId}
+Title: ${summaryTitle}
+Author: ${authorUsername || 'unknown'}
+Rule code: ${ruleCode || 'unspecified'}
+Confidence: ${confidenceText}
+Source route: ${sourceRoute || 'n/a'}
+
+Reason:
+${reason || 'No reason provided.'}
+`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #111827; margin: 0; padding: 24px; background-color: #f3f4f6;">
+    <div style="max-width: 720px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
+        <div style="padding: 18px 22px; background: #7c2d12; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 18px;">${APP_NAME} Moderation Alert</h1>
+        </div>
+        <div style="padding: 20px 22px;">
+            <p style="margin: 0 0 16px 0; color: #374151;">An automated moderation action was executed and may require review.</p>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+                <tr><td style="padding: 6px 0; color: #6b7280; width: 140px;">Actor type</td><td style="padding: 6px 0; color: #111827;">${safeActorType}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Moderator</td><td style="padding: 6px 0; color: #111827;">${safeModerator}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Action</td><td style="padding: 6px 0; color: #111827;">${safeAction}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Content</td><td style="padding: 6px 0; color: #111827;">${safeSummaryTitle}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Content type</td><td style="padding: 6px 0; color: #111827;">${escapeHtml(contentType)}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Content id</td><td style="padding: 6px 0; color: #111827;">${escapeHtml(contentId)}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Author</td><td style="padding: 6px 0; color: #111827;">${safeAuthor}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Rule code</td><td style="padding: 6px 0; color: #111827;">${safeRuleCode}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">Confidence</td><td style="padding: 6px 0; color: #111827;">${escapeHtml(confidenceText)}</td></tr>
+                ${safeRoute ? `<tr><td style="padding: 6px 0; color: #6b7280;">Source route</td><td style="padding: 6px 0; color: #111827;">${safeRoute}</td></tr>` : ''}
+            </table>
+            <h2 style="margin: 0 0 10px 0; font-size: 15px; color: #111827;">Reason</h2>
+            <div style="white-space: pre-wrap; word-break: break-word; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 0; font-size: 14px; color: #111827;">${safeReason}</div>
+        </div>
+    </div>
+</body>
+</html>
+`,
+  });
 }
 
 /**
@@ -474,6 +562,7 @@ module.exports = {
     sendDeletionApprovedEmail,
     sendDeletionRejectedEmail,
     sendBulkEmail,
+    sendModerationActionAlertEmail,
     getResendAudiences,
     getResendAudienceContacts,
 };

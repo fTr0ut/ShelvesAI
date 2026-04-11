@@ -1,5 +1,9 @@
+const fs = require('fs');
+const path = require('path');
+const { randomBytes } = require('crypto');
 const jwt = require('jsonwebtoken');
 const adminQueries = require('../database/queries/admin');
+const moderationQueries = require('../database/queries/moderation');
 const deletionRequestQueries = require('../database/queries/deletionRequests');
 const { parsePagination } = require('../database/queries/utils');
 const { clearAdminAuthCookies, ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
@@ -11,6 +15,7 @@ const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
 const {
     sendDeletionApprovedEmail,
     sendDeletionRejectedEmail,
+    sendModerationActionAlertEmail,
     sendBulkEmail,
     getResendAudiences,
     getResendAudienceContacts,
@@ -60,6 +65,33 @@ function toNumericOrNull(value) {
   if (value == null || value === '') return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+const DEFAULT_MODERATION_BOT_CONFIG = {
+  mode: 'recommend_only',
+  alertHumanAdmins: true,
+};
+
+async function getModerationBotConfig() {
+  const setting = await systemSettingsQueries.getSetting('moderation_bot_config');
+  const raw = setting?.value && typeof setting.value === 'object' ? setting.value : {};
+  const mode = ['recommend_only', 'hybrid', 'autonomous'].includes(raw.mode)
+    ? raw.mode
+    : DEFAULT_MODERATION_BOT_CONFIG.mode;
+
+  return {
+    mode,
+    alertHumanAdmins: raw.alertHumanAdmins !== false,
+  };
+}
+
+function parseBoolean(value, defaultValue = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+  }
+  return defaultValue;
 }
 
 function hydrateWorkfeedProgress(job) {
@@ -451,6 +483,10 @@ async function getSystemInfo(req, res) {
   try {
     const uptimeSeconds = process.uptime();
     const memoryUsage = process.memoryUsage();
+    const [moderationMetrics, moderationBotConfig] = await Promise.all([
+      moderationQueries.getModerationMetrics(),
+      getModerationBotConfig(),
+    ]);
 
     res.json({
       uptime: Math.floor(uptimeSeconds),
@@ -461,10 +497,234 @@ async function getSystemInfo(req, res) {
       },
       nodeVersion: process.version,
       platform: process.platform,
+      moderation: {
+        ...moderationMetrics,
+        botMode: moderationBotConfig.mode,
+        alertHumanAdmins: moderationBotConfig.alertHumanAdmins,
+      },
     });
   } catch (err) {
     logger.error('Admin getSystemInfo error:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function listModerationItems(req, res) {
+  try {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 30, 100));
+    const cursor = req.query.cursor ? String(req.query.cursor) : null;
+    const updatedSince = req.query.updatedSince ? String(req.query.updatedSince) : null;
+    const contentType = req.query.contentType ? String(req.query.contentType) : null;
+    const status = req.query.status ? String(req.query.status) : null;
+    const search = req.query.search ? String(req.query.search) : '';
+
+    if (contentType && !moderationQueries.CONTENT_TYPES.includes(contentType)) {
+      return res.status(400).json({ error: 'Unsupported moderation contentType' });
+    }
+    if (status && status !== 'all' && !moderationQueries.STATUS_VALUES.includes(status)) {
+      return res.status(400).json({ error: 'Unsupported moderation status' });
+    }
+
+    const [result, moderationBotConfig] = await Promise.all([
+      moderationQueries.listModerationItems({
+        limit,
+        cursor,
+        updatedSince,
+        contentType,
+        status,
+        search,
+      }),
+      getModerationBotConfig(),
+    ]);
+
+    res.json({
+      items: result.items,
+      pagination: {
+        limit,
+        nextCursor: result.nextCursor,
+        hasMore: result.hasMore,
+      },
+      botMode: moderationBotConfig.mode,
+      alertHumanAdmins: moderationBotConfig.alertHumanAdmins,
+    });
+  } catch (err) {
+    logger.error('Admin listModerationItems error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function applyModerationAction(req, res) {
+  try {
+    const {
+      contentType,
+      contentId,
+      action,
+      reason,
+      ruleCode = null,
+      confidence = null,
+      actorType = 'human',
+      execute = false,
+      suspendReason = null,
+    } = req.body || {};
+
+    const normalizedContentType = String(contentType || '').trim();
+    const normalizedContentId = String(contentId || '').trim();
+    const normalizedAction = String(action || '').trim();
+    const normalizedReason = String(reason || '').trim();
+    const normalizedActorType = String(actorType || 'human').trim();
+    const shouldExecute = parseBoolean(execute, false);
+    const numericConfidence = confidence == null || confidence === ''
+      ? null
+      : Number(confidence);
+
+    if (!normalizedContentType || !normalizedContentId || !normalizedAction) {
+      return res.status(400).json({ error: 'contentType, contentId, and action are required' });
+    }
+
+    if (!moderationQueries.CONTENT_TYPES.includes(normalizedContentType)) {
+      return res.status(400).json({ error: 'Unsupported moderation contentType' });
+    }
+
+    if (!moderationQueries.ACTOR_TYPES.includes(normalizedActorType)) {
+      return res.status(400).json({ error: 'Unsupported moderation actorType' });
+    }
+
+    if (!normalizedReason) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+
+    if (numericConfidence != null && (!Number.isFinite(numericConfidence) || numericConfidence < 0 || numericConfidence > 1)) {
+      return res.status(400).json({ error: 'confidence must be between 0 and 1' });
+    }
+
+    const moderationBotConfig = await getModerationBotConfig();
+    if (normalizedActorType === 'bot' && shouldExecute && moderationBotConfig.mode === 'recommend_only') {
+      return res.status(409).json({ error: 'Autonomous moderation is disabled by moderation_bot_config' });
+    }
+
+    const [snapshot, previousState] = await Promise.all([
+      moderationQueries.getModerationItem(normalizedContentType, normalizedContentId),
+      moderationQueries.getModerationEntity(normalizedContentType, normalizedContentId),
+    ]);
+
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Moderation item not found' });
+    }
+
+    if (!snapshot.availableActions?.includes(normalizedAction)) {
+      return res.status(400).json({ error: 'Unsupported moderation action for this content item' });
+    }
+
+    let executionResult = null;
+    let message = 'Moderation recommendation recorded';
+
+    if (normalizedAction === 'suspend_user') {
+      executionResult = shouldExecute
+        ? await adminQueries.suspendUser(
+          snapshot.authorUserId,
+          suspendReason || normalizedReason,
+          req.user.id,
+          getAdminContext(req)
+        )
+        : null;
+
+      if (executionResult?.error) {
+        const statusCode = executionResult.error === 'User not found' ? 404 : 400;
+        return res.status(statusCode).json({ error: executionResult.error });
+      }
+
+      if (shouldExecute && snapshot.authorUserId) {
+        invalidateAuthCache(snapshot.authorUserId);
+      }
+
+      message = shouldExecute ? 'User suspended successfully' : message;
+    } else if (shouldExecute) {
+      executionResult = await moderationQueries.applyMutationForAction({
+        action: normalizedAction,
+        snapshot,
+        previousState,
+      });
+      message = 'Moderation action executed';
+    }
+
+    const resultingStatus = normalizedAction === 'suspend_user'
+      ? (shouldExecute ? 'flagged' : 'flagged')
+      : moderationQueries.resultingStatusForAction({
+        action: normalizedAction,
+        execute: shouldExecute,
+        currentStatus: previousState?.status || snapshot.status,
+      });
+
+    const evidenceSnapshot = moderationQueries.buildSnapshotItem(snapshot);
+    const alertsSentAt = normalizedActorType === 'bot' && shouldExecute && moderationBotConfig.alertHumanAdmins
+      ? new Date().toISOString()
+      : null;
+
+    const state = await moderationQueries.upsertModerationEntity({
+      contentType: normalizedContentType,
+      contentId: normalizedContentId,
+      status: resultingStatus,
+      lastAction: normalizedAction,
+      lastActorType: normalizedActorType,
+      lastAdminId: req.user.id,
+      ruleCode: ruleCode ? String(ruleCode).trim() : null,
+      actionReason: normalizedReason,
+      confidence: numericConfidence,
+      evidenceSnapshot,
+      alertsSentAt,
+    });
+
+    await adminQueries.logAction({
+      adminId: req.user.id,
+      action: shouldExecute ? 'MODERATION_ACTION_EXECUTED' : 'MODERATION_ACTION_RECOMMENDED',
+      targetUserId: snapshot.authorUserId || null,
+      metadata: {
+        contentType: normalizedContentType,
+        contentId: normalizedContentId,
+        action: normalizedAction,
+        actorType: normalizedActorType,
+        executed: shouldExecute,
+        ruleCode: ruleCode ? String(ruleCode).trim() : null,
+        reason: normalizedReason,
+        confidence: numericConfidence,
+        sourceRoute: snapshot.sourceRoute || null,
+        evidenceSnapshot,
+      },
+      ...getAdminContext(req),
+    });
+
+    let alertResult = null;
+    if (normalizedActorType === 'bot' && shouldExecute && moderationBotConfig.alertHumanAdmins) {
+      try {
+        const recipients = await adminQueries.getUsersForEmailCampaign('admins');
+        alertResult = await sendModerationActionAlertEmail(recipients, {
+          actorType: normalizedActorType,
+          moderatorUsername: req.user.username,
+          action: normalizedAction,
+          contentType: normalizedContentType,
+          contentId: normalizedContentId,
+          title: snapshot.title || null,
+          authorUsername: snapshot.authorUsername || null,
+          ruleCode: ruleCode ? String(ruleCode).trim() : null,
+          reason: normalizedReason,
+          confidence: numericConfidence,
+          sourceRoute: snapshot.sourceRoute || null,
+        });
+      } catch (alertErr) {
+        logger.warn('Failed to send moderation action alert email:', alertErr.message);
+      }
+    }
+
+    return res.json({
+      state,
+      item: snapshot,
+      message,
+      executed: shouldExecute,
+      alertResult,
+    });
+  } catch (err) {
+    logger.error('Admin applyModerationAction error:', err);
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -932,6 +1192,44 @@ async function approveDeletionRequest(req, res) {
   }
 }
 
+// ─── Email Image Upload ───────────────────────────────────────────────────────
+
+const ALLOWED_EMAIL_IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+
+function getMediaRoot() {
+    const raw = process.env.MEDIA_CACHE_DIR || process.env.COVER_CACHE_DIR || path.join(__dirname, '../cache');
+    return path.isAbsolute(raw) ? raw : path.resolve(__dirname, raw);
+}
+
+async function uploadEmailImage(req, res) {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    const originalExt = path.extname(req.file.originalname || '').toLowerCase();
+    const ext = ALLOWED_EMAIL_IMAGE_EXTS.has(originalExt) ? originalExt : '.jpg';
+
+    const filename = `${randomBytes(16).toString('hex')}${ext}`;
+    const emailImagesDir = path.join(getMediaRoot(), 'email-images');
+
+    try {
+        await fs.promises.mkdir(emailImagesDir, { recursive: true });
+        await fs.promises.writeFile(path.join(emailImagesDir, filename), req.file.buffer);
+    } catch (err) {
+        logger.error('uploadEmailImage: failed to save file:', err.message);
+        return res.status(500).json({ error: 'Failed to save image' });
+    }
+
+    // API_PUBLIC_URL must be set in production (e.g. https://api.example.com).
+    // Falls back to req.protocol + host for local/staging use.
+    const publicBase = (process.env.API_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    const relativeUrl = `/media/email-images/${filename}`;
+    return res.json({
+        url: relativeUrl,
+        absoluteUrl: `${publicBase}${relativeUrl}`,
+    });
+}
+
 // ─── Email Campaign Handlers ──────────────────────────────────────────────────
 
 const DB_AUDIENCE_TYPES = new Set(['all', 'premium', 'free', 'admins', 'new_7d', 'new_30d']);
@@ -1146,6 +1444,8 @@ module.exports = {
   listJobs,
   getJob,
   getSystemInfo,
+  listModerationItems,
+  applyModerationAction,
   getSettings,
   getSetting,
   updateSetting,
@@ -1156,6 +1456,7 @@ module.exports = {
   listDeletionRequests,
   approveDeletionRequest,
   rejectDeletionRequest,
+  uploadEmailImage,
   listResendAudiences,
   getEmailAudienceCount,
   sendEmailCampaign,

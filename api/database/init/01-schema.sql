@@ -1,6 +1,6 @@
 -- ShelvesAI Database Schema
 -- Generated from current production schema
--- Last updated: 2026-04-02
+-- Last updated: 2026-04-11
 
 -- ============================================
 -- EXTENSIONS
@@ -905,6 +905,32 @@ CREATE INDEX idx_admin_action_logs_action ON admin_action_logs(action);
 CREATE INDEX idx_admin_action_logs_created_at ON admin_action_logs(created_at);
 
 -- ============================================
+-- MODERATION ENTITIES
+-- ============================================
+CREATE TABLE moderation_entities (
+    id SERIAL PRIMARY KEY,
+    content_type TEXT NOT NULL,
+    content_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'flagged', 'hidden', 'cleared', 'deleted')),
+    last_action TEXT,
+    last_actor_type TEXT NOT NULL DEFAULT 'human'
+        CHECK (last_actor_type IN ('human', 'bot')),
+    last_admin_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    rule_code TEXT,
+    action_reason TEXT,
+    confidence DECIMAL(5, 4),
+    evidence_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    alerts_sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_moderation_entities_content UNIQUE (content_type, content_id)
+);
+
+CREATE INDEX idx_moderation_entities_status ON moderation_entities(status);
+CREATE INDEX idx_moderation_entities_updated_at ON moderation_entities(updated_at);
+
+-- ============================================
 -- JOB LOGGING (Requests + Scheduled Workflows)
 -- ============================================
 CREATE TABLE job_runs (
@@ -1178,3 +1204,18 @@ CREATE TRIGGER update_job_runs_updated_at
 CREATE TRIGGER update_workflow_queue_jobs_updated_at
     BEFORE UPDATE ON workflow_queue_jobs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_moderation_entities_updated_at
+    BEFORE UPDATE ON moderation_entities
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- DEFAULT SYSTEM SETTINGS
+-- ============================================
+INSERT INTO system_settings (key, value, description)
+VALUES (
+    'moderation_bot_config',
+    '{"mode":"recommend_only","alertHumanAdmins":true}'::jsonb,
+    'Controls moderation bot execution mode and admin alert behavior'
+)
+ON CONFLICT (key) DO NOTHING;

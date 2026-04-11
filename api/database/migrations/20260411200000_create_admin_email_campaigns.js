@@ -4,7 +4,7 @@
 exports.up = function (knex) {
   return knex.schema.createTable('admin_email_campaigns', (t) => {
     t.increments('id');
-    t.integer('admin_id');                       // nullable — preserved if admin account later deleted
+    t.uuid('admin_id');                           // nullable — preserved if admin account later deleted
     t.text('subject').notNullable();
     t.text('template_id').notNullable();
     t.text('audience_type').notNullable();       // e.g. 'all', 'premium', 'resend:abc-123'

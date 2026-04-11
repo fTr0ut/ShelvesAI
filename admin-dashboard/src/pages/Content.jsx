@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getShelves } from '../api/client';
 import UserAvatar from '../components/UserAvatar';
 import Pagination from '../components/Pagination';
@@ -15,6 +16,7 @@ const TYPE_COLORS = {
 };
 
 export default function Content() {
+  const [searchParams] = useSearchParams();
   const [shelves, setShelves] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({ total: 0, hasMore: false });
@@ -47,6 +49,13 @@ export default function Content() {
   useEffect(() => {
     loadShelves();
   }, [loadShelves]);
+
+  useEffect(() => {
+    const selectedShelfId = searchParams.get('selectedShelfId');
+    if (selectedShelfId) {
+      setSelectedShelfId(selectedShelfId);
+    }
+  }, [searchParams]);
 
   function handleSearch(e) {
     e.preventDefault();

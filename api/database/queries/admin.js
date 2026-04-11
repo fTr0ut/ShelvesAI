@@ -74,6 +74,7 @@ async function listUsers({
       OR email ILIKE $${paramIndex}
       OR first_name ILIKE $${paramIndex}
       OR last_name ILIKE $${paramIndex}
+      OR bio ILIKE $${paramIndex}
     )`);
     params.push(`%${search}%`);
     paramIndex++;

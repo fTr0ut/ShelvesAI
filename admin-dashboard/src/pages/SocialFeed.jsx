@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { getAdminSocialFeed, getAdminEventComments, deleteEvent } from '../api/client';
 import UserAvatar from '../components/UserAvatar';
 import Pagination from '../components/Pagination';
@@ -348,6 +349,25 @@ export default function SocialFeed() {
                   onClick={() => toggleExpand(event.id)}
                 >
                   <EventDescription event={event} />
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500">
+                  {event.userId && (
+                    <Link
+                      to={`/users?selectedUserId=${encodeURIComponent(String(event.userId))}`}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      Open author
+                    </Link>
+                  )}
+                  {event.shelfId && (
+                    <Link
+                      to={`/content?selectedShelfId=${encodeURIComponent(String(event.shelfId))}`}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      Open parent content
+                    </Link>
+                  )}
                 </div>
 
                 {/* Bottom: social stats */}

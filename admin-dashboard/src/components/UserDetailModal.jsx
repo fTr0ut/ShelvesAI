@@ -436,6 +436,14 @@ export default function UserDetailModal({ userId, onClose, onUpdate }) {
                     </dd>
                   </div>
                 </dl>
+                {user.bio && (
+                  <div className="mt-4">
+                    <dt className="text-sm font-medium text-gray-500 mb-1">Bio</dt>
+                    <dd className="text-sm text-gray-900 whitespace-pre-wrap break-words bg-gray-50 rounded-md p-3 border border-gray-200">
+                      {user.bio}
+                    </dd>
+                  </div>
+                )}
               </div>
 
               {/* Suspend Form */}
