@@ -23,6 +23,7 @@ const {
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const adminContentQueries = require('../database/queries/adminContent');
 const processingStatus = require('../services/processingStatus');
+const s3 = require('../services/s3');
 const logger = require('../logger');
 
 const normalizeIp = (ip) => {
@@ -1208,10 +1209,22 @@ async function uploadEmailImage(req, res) {
 
     const originalExt = path.extname(req.file.originalname || '').toLowerCase();
     const ext = ALLOWED_EMAIL_IMAGE_EXTS.has(originalExt) ? originalExt : '.jpg';
-
     const filename = `${randomBytes(16).toString('hex')}${ext}`;
-    const emailImagesDir = path.join(getMediaRoot(), 'email-images');
 
+    if (s3.isEnabled()) {
+        const key = `email-images/${filename}`;
+        try {
+            await s3.uploadBuffer(req.file.buffer, key, req.file.mimetype);
+        } catch (err) {
+            logger.error('uploadEmailImage: S3 upload failed:', err.message);
+            return res.status(500).json({ error: 'Failed to upload image' });
+        }
+        const absoluteUrl = s3.getPublicUrl(key);
+        return res.json({ url: absoluteUrl, absoluteUrl });
+    }
+
+    // Fallback: local filesystem (dev / no S3 configured)
+    const emailImagesDir = path.join(getMediaRoot(), 'email-images');
     try {
         await fs.promises.mkdir(emailImagesDir, { recursive: true });
         await fs.promises.writeFile(path.join(emailImagesDir, filename), req.file.buffer);
@@ -1220,8 +1233,6 @@ async function uploadEmailImage(req, res) {
         return res.status(500).json({ error: 'Failed to save image' });
     }
 
-    // API_PUBLIC_URL must be set in production (e.g. https://api.example.com).
-    // Falls back to req.protocol + host for local/staging use.
     const publicBase = (process.env.API_PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
     const relativeUrl = `/media/email-images/${filename}`;
     return res.json({
