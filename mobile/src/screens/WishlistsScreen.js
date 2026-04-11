@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useContext, useMemo, useState, useCallback } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -17,9 +17,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
+import { isUserBlockedApiError } from '../utils/apiErrors';
 
 const SORT_OPTIONS = [
     { key: 'name_asc', label: 'Name A-Z' },
@@ -43,6 +45,7 @@ export default function WishlistsScreen({ navigation, route }) {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [targetUser, setTargetUser] = useState(null);
+    const [isBlockedState, setIsBlockedState] = useState(false);
 
     // Search & Sort State
     const [searchQuery, setSearchQuery] = useState('');
@@ -59,14 +62,11 @@ export default function WishlistsScreen({ navigation, route }) {
         [colors, spacing, typography, shadows, radius]
     );
 
-    useEffect(() => {
-        loadWishlists();
-    }, [targetUserId, targetUsername]);
-
-    const loadWishlists = async (isRefresh = false) => {
+    const loadWishlists = useCallback(async (isRefresh = false) => {
         try {
             if (isRefresh) setRefreshing(true);
             else setLoading(true);
+            setIsBlockedState(false);
 
             let data;
             if (targetUserId) {
@@ -87,12 +87,23 @@ export default function WishlistsScreen({ navigation, route }) {
             }
             setWishlists(data.wishlists || []);
         } catch (e) {
-            if (!isRefresh) Alert.alert('Error', 'Failed to load wishlists');
+            if (isUserBlockedApiError(e)) {
+                setIsBlockedState(true);
+                setWishlists([]);
+            } else if (!isRefresh) {
+                Alert.alert('Error', 'Failed to load wishlists');
+            }
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [apiBase, targetUserId, targetUsername, token]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadWishlists();
+        }, [loadWishlists])
+    );
 
     const handleRefresh = () => loadWishlists(true);
 
@@ -278,7 +289,13 @@ export default function WishlistsScreen({ navigation, route }) {
                 </TouchableOpacity>
             </View>
 
-            {wishlists.length === 0 && !loading ? (
+            {isBlockedState ? (
+                <View style={styles.emptyState}>
+                    <Ionicons name="ban-outline" size={48} color={colors.textMuted} />
+                    <Text style={styles.emptyTitle}>Unavailable</Text>
+                    <Text style={styles.emptySubtitle}>You cannot view this user's wishlists.</Text>
+                </View>
+            ) : wishlists.length === 0 && !loading ? (
                 <View style={styles.emptyState}>
                     <Ionicons name="heart-outline" size={48} color={colors.textMuted} />
                     <Text style={styles.emptyTitle}>No wishlists yet</Text>

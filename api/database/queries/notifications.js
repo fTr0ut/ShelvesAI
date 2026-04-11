@@ -60,6 +60,16 @@ async function getActorName(actorId) {
 }
 
 async function create({ userId, actorId, type, entityId, entityType, metadata = {}, suppressPush = false }) {
+    if (actorId && userId && String(actorId) !== String(userId)) {
+        const blockedResult = await query(
+            'SELECT users_are_blocked($1::uuid, $2::uuid) AS blocked',
+            [userId, actorId]
+        );
+        if (blockedResult.rows[0]?.blocked === true) {
+            return null;
+        }
+    }
+
     const normalizedMetadata = normalizeMetadata(metadata);
     const values = [
         userId,
@@ -168,6 +178,7 @@ async function getForUser(userId, options = {}) {
          LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
          WHERE n.user_id = $1
            AND n.deleted_at IS NULL
+           AND (n.actor_id IS NULL OR NOT users_are_blocked($1::uuid, n.actor_id))
          ORDER BY n.created_at DESC
          LIMIT $2 OFFSET $3`,
         [userId, limit, offset]
@@ -253,7 +264,8 @@ async function getUnreadCount(userId) {
          FROM notifications
          WHERE user_id = $1
            AND is_read = FALSE
-           AND deleted_at IS NULL`,
+           AND deleted_at IS NULL
+           AND (actor_id IS NULL OR NOT users_are_blocked($1::uuid, actor_id))`,
         [userId]
     );
 
@@ -280,6 +292,30 @@ async function softDeleteLike({ userId, actorId, entityId }) {
     return result.rowCount > 0;
 }
 
+async function softDeleteBetweenUsers(userId1, userId2, types = ['friend_request', 'friend_accept', 'like', 'comment', 'mention']) {
+    if (!userId1 || !userId2 || !Array.isArray(types) || !types.length) {
+        return 0;
+    }
+
+    const result = await query(
+        `UPDATE notifications
+         SET deleted_at = NOW()
+         WHERE deleted_at IS NULL
+           AND type = ANY($3::text[])
+           AND (
+             (user_id = $1 AND actor_id = $2)
+             OR (user_id = $2 AND actor_id = $1)
+           )
+         RETURNING id`,
+        [userId1, userId2, types]
+    );
+    if (result.rowCount > 0) {
+        invalidateUnreadCount(userId1);
+        invalidateUnreadCount(userId2);
+    }
+    return result.rowCount;
+}
+
 module.exports = {
     create,
     getForUser,
@@ -287,4 +323,5 @@ module.exports = {
     markAllAsRead,
     getUnreadCount,
     softDeleteLike,
+    softDeleteBetweenUsers,
 };

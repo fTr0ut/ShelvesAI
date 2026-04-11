@@ -13,12 +13,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { CategoryIcon } from '../components/ui';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
 import { useAsync } from '../hooks/useAsync';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import { isUserBlockedApiError } from '../utils/apiErrors';
 
 export default function FavoritesScreen({ navigation, route }) {
     const { token, apiBase } = useContext(AuthContext);
@@ -58,7 +60,7 @@ export default function FavoritesScreen({ navigation, route }) {
         return data.favorites || [];
     }, [apiBase, token, targetUserId, targetUsername]);
 
-    const { data: fetchedFavorites, loading, refresh } = useAsync(fetchFavorites, [fetchFavorites]);
+    const { data: fetchedFavorites, loading, error, refresh } = useAsync(fetchFavorites, [fetchFavorites]);
 
     // Local copy so we can optimistically remove items without re-fetching.
     const [favorites, setFavorites] = useState([]);
@@ -69,6 +71,12 @@ export default function FavoritesScreen({ navigation, route }) {
             setFavorites(fetchedFavorites);
         }
     }, [fetchedFavorites]);
+
+    useFocusEffect(
+        useCallback(() => {
+            refresh();
+        }, [refresh])
+    );
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
@@ -185,6 +193,14 @@ export default function FavoritesScreen({ navigation, route }) {
         </View>
     );
 
+    const renderBlockedState = () => (
+        <View style={styles.emptyState}>
+            <Ionicons name="ban-outline" size={56} color={colors.textMuted} />
+            <Text style={styles.emptyTitle}>Unavailable</Text>
+            <Text style={styles.emptyText}>You cannot view this user's favorites.</Text>
+        </View>
+    );
+
     if (loading && !refreshing) {
         return (
             <View style={[styles.screen, styles.centerContainer]}>
@@ -224,7 +240,7 @@ export default function FavoritesScreen({ navigation, route }) {
                         colors={[colors.primary]}
                     />
                 }
-                ListEmptyComponent={renderEmpty}
+                ListEmptyComponent={isUserBlockedApiError(error) ? renderBlockedState : renderEmpty}
                 showsVerticalScrollIndicator={false}
             />
         </SafeAreaView>

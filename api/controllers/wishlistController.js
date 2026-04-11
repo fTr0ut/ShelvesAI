@@ -5,6 +5,7 @@
 
 const wishlistsQueries = require('../database/queries/wishlists');
 const logger = require('../logger');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 
 /**
  * GET /wishlists - List all wishlists for current user
@@ -31,6 +32,14 @@ async function listUserWishlists(req, res) {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
 
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId: req.user.id,
+            targetUserId,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
+
         // Get wishlists visible to the current user
         const wishlists = await wishlistsQueries.listViewableForUser(targetUserId, req.user.id);
         res.json({ wishlists });
@@ -51,6 +60,14 @@ async function checkUserHasWishlists(req, res) {
         if (!targetUserId || typeof targetUserId !== 'string') {
             return res.status(400).json({ error: 'Invalid user ID' });
         }
+
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId: req.user.id,
+            targetUserId,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
 
         const hasWishlists = await wishlistsQueries.hasViewableWishlists(targetUserId, req.user.id);
         res.json({ hasWishlists });
@@ -91,21 +108,31 @@ async function createWishlist(req, res) {
 async function getWishlist(req, res) {
     try {
         const { id } = req.params;
+        const parsedId = parseInt(id, 10);
 
         // First try to get as owner
-        let wishlist = await wishlistsQueries.getById(parseInt(id), req.user.id);
+        let wishlist = await wishlistsQueries.getById(parsedId, req.user.id);
         let isOwner = !!wishlist;
 
         // If not owner, check visibility
         if (!wishlist) {
-            wishlist = await wishlistsQueries.getForViewing(parseInt(id), req.user.id);
+            const ownerId = await wishlistsQueries.getOwnerId(parsedId);
+            const canAccess = await ensureUsersNotBlocked({
+                res,
+                viewerId: req.user.id,
+                targetUserId: ownerId,
+                error: 'You cannot access this user',
+            });
+            if (!canAccess) return;
+
+            wishlist = await wishlistsQueries.getForViewing(parsedId, req.user.id);
             if (!wishlist) {
                 return res.status(404).json({ error: 'Wishlist not found' });
             }
         }
 
         // Get items
-        const items = await wishlistsQueries.getItems(parseInt(id));
+        const items = await wishlistsQueries.getItems(parsedId);
 
         res.json({ wishlist, items, isOwner });
     } catch (err) {
@@ -165,16 +192,26 @@ async function listItems(req, res) {
     try {
         const { id } = req.params;
         const { limit = 100, offset = 0 } = req.query;
+        const parsedId = parseInt(id, 10);
+
+        const ownerId = await wishlistsQueries.getOwnerId(parsedId);
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId: req.user.id,
+            targetUserId: ownerId,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
 
         // Verify access
-        const wishlist = await wishlistsQueries.getById(parseInt(id), req.user.id) ||
-            await wishlistsQueries.getForViewing(parseInt(id), req.user.id);
+        const wishlist = await wishlistsQueries.getById(parsedId, req.user.id) ||
+            await wishlistsQueries.getForViewing(parsedId, req.user.id);
 
         if (!wishlist) {
             return res.status(404).json({ error: 'Wishlist not found' });
         }
 
-        const items = await wishlistsQueries.getItems(parseInt(id), {
+        const items = await wishlistsQueries.getItems(parsedId, {
             limit: parseInt(limit),
             offset: parseInt(offset),
         });

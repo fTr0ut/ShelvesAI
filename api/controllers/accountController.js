@@ -3,6 +3,7 @@ const { rowToCamelCase, buildUpdateQuery } = require('../database/queries/utils'
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { sendFeedbackEmail } = require('../services/emailService');
+const deletionRequestQueries = require('../database/queries/deletionRequests');
 const logger = require('../logger');
 
 async function getAccount(req, res) {
@@ -120,4 +121,48 @@ async function submitFeedback(req, res) {
   }
 }
 
-module.exports = { getAccount, updateAccount, submitFeedback };
+async function getDeletionRequestStatus(req, res) {
+  try {
+    const request = await deletionRequestQueries.getPendingRequestByUserId(req.user.id);
+    return res.json({ request: request || null });
+  } catch (err) {
+    logger.error('getDeletionRequestStatus error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function requestAccountDeletion(req, res) {
+  const reason = req.body?.reason ? String(req.body.reason).trim() : null;
+
+  if (reason && reason.length > 1000) {
+    return res.status(400).json({ error: 'Reason is too long (max 1000 characters)' });
+  }
+
+  try {
+    const existing = await deletionRequestQueries.getPendingRequestByUserId(req.user.id);
+    if (existing) {
+      return res.status(409).json({ error: 'You already have a pending deletion request' });
+    }
+
+    await deletionRequestQueries.createDeletionRequest(req.user.id, reason);
+    return res.status(201).json({ success: true });
+  } catch (err) {
+    logger.error('requestAccountDeletion error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function revokeDeletionRequest(req, res) {
+  try {
+    const deleted = await deletionRequestQueries.revokeDeletionRequest(req.user.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'No pending deletion request found' });
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('revokeDeletionRequest error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+module.exports = { getAccount, updateAccount, submitFeedback, getDeletionRequestStatus, requestAccountDeletion, revokeDeletionRequest };

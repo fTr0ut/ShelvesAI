@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const adminQueries = require('../database/queries/admin');
+const deletionRequestQueries = require('../database/queries/deletionRequests');
 const { parsePagination } = require('../database/queries/utils');
 const { clearAdminAuthCookies, ADMIN_AUTH_COOKIE } = require('../utils/adminAuth');
 const systemSettingsQueries = require('../database/queries/systemSettings');
@@ -7,6 +8,7 @@ const jobRunsQueries = require('../database/queries/jobRuns');
 const workflowQueueJobsQueries = require('../database/queries/workflowQueueJobs');
 const { getSystemSettingsCache } = require('../services/config/SystemSettingsCache');
 const { revokeToken, invalidateAuthCache } = require('../middleware/auth');
+const { sendDeletionApprovedEmail, sendDeletionRejectedEmail } = require('../services/emailService');
 const visionQuotaQueries = require('../database/queries/visionQuota');
 const adminContentQueries = require('../database/queries/adminContent');
 const processingStatus = require('../services/processingStatus');
@@ -884,6 +886,70 @@ async function deleteEvent(req, res) {
   }
 }
 
+async function listDeletionRequests(req, res) {
+  const { status, page = 0 } = req.query;
+  try {
+    const result = await deletionRequestQueries.listDeletionRequests({
+      status: status || null,
+      page: parseInt(page) || 0,
+      limit: 20,
+    });
+    return res.json(result);
+  } catch (err) {
+    logger.error('Admin listDeletionRequests error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function approveDeletionRequest(req, res) {
+  const { id } = req.params;
+  const reviewerNote = req.body?.note ? String(req.body.note).trim() : null;
+
+  try {
+    const request = await deletionRequestQueries.getDeletionRequestById(id);
+    if (!request) return res.status(404).json({ error: 'Deletion request not found' });
+    if (request.status !== 'pending') return res.status(409).json({ error: 'Request is no longer pending' });
+
+    await deletionRequestQueries.updateDeletionRequestStatus(
+      id, 'approved', req.user.id, reviewerNote, getAdminContext(req)
+    );
+    invalidateAuthCache(request.userId);
+    try {
+      await sendDeletionApprovedEmail({ email: request.email, username: request.username });
+    } catch (emailErr) {
+      logger.warn('Failed to send deletion approved email:', emailErr.message);
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('Admin approveDeletionRequest error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function rejectDeletionRequest(req, res) {
+  const { id } = req.params;
+  const reviewerNote = req.body?.note ? String(req.body.note).trim() : null;
+
+  try {
+    const request = await deletionRequestQueries.getDeletionRequestById(id);
+    if (!request) return res.status(404).json({ error: 'Deletion request not found' });
+    if (request.status !== 'pending') return res.status(409).json({ error: 'Request is no longer pending' });
+
+    await deletionRequestQueries.updateDeletionRequestStatus(
+      id, 'rejected', req.user.id, reviewerNote, getAdminContext(req)
+    );
+    try {
+      await sendDeletionRejectedEmail({ email: request.email, username: request.username, reviewerNote: reviewerNote || null });
+    } catch (emailErr) {
+      logger.warn('Failed to send deletion rejected email:', emailErr.message);
+    }
+    return res.json({ success: true });
+  } catch (err) {
+    logger.error('Admin rejectDeletionRequest error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
 module.exports = {
   getMe,
   logout,
@@ -915,4 +981,7 @@ module.exports = {
   listShelves,
   getShelf,
   getShelfItems,
+  listDeletionRequests,
+  approveDeletionRequest,
+  rejectDeletionRequest,
 };

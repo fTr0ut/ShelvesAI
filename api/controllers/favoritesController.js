@@ -10,6 +10,7 @@ const friendshipsQueries = require('../database/queries/friendships');
 const shelvesQueries = require('../database/queries/shelves');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { sendError, logError } = require('../utils/errorHandler');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 
 function hydrateFavoriteMedia(favorite) {
     if (!favorite || typeof favorite !== 'object') return favorite;
@@ -189,6 +190,14 @@ async function listUserFavorites(req, res) {
         const isOwner = targetUserId === viewerId;
 
         if (!isOwner) {
+            const canAccess = await ensureUsersNotBlocked({
+                res,
+                viewerId,
+                targetUserId,
+                error: 'You cannot access this user',
+            });
+            if (!canAccess) return;
+
             // Check privacy settings (normalize error responses to prevent user enumeration)
             const user = await usersQueries.findById(targetUserId);
 
@@ -228,6 +237,14 @@ async function checkUserHasFavorites(req, res) {
         const isOwner = targetUserId === viewerId;
 
         if (!isOwner) {
+            const canAccess = await ensureUsersNotBlocked({
+                res,
+                viewerId,
+                targetUserId,
+                error: 'You cannot access this user',
+            });
+            if (!canAccess) return;
+
             const user = await usersQueries.findById(targetUserId);
             if (!user) {
                 return res.json({ hasFavorites: false }); // Or 404, but false is safer for UI checks

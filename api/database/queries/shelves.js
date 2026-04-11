@@ -103,6 +103,7 @@ async function getForViewing(shelfId, viewerId) {
      JOIN users u ON u.id = s.owner_id
      WHERE s.id = $1
      AND (u.is_suspended = false OR s.owner_id = $2)
+     AND (s.owner_id = $2 OR NOT users_are_blocked(s.owner_id, $2))
      AND (
        s.owner_id = $2
        OR s.visibility = 'public'
@@ -444,6 +445,16 @@ async function addCollectable({
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
 }
 
+async function getOwnerIdForShelf(shelfId) {
+    const result = await query(
+        `SELECT owner_id
+         FROM shelves
+         WHERE id = $1`,
+        [shelfId],
+    );
+    return result.rows[0]?.owner_id || null;
+}
+
 /**
  * Add a manual entry to a shelf
  * @param {object} params
@@ -750,6 +761,16 @@ async function listVisibleForUser(ownerId, viewerId = null) {
     // If viewer is the owner, show all shelves
     if (isSameUserId(ownerId, viewerId)) {
         return listForUser(ownerId);
+    }
+
+    if (viewerId) {
+        const blockResult = await query(
+            `SELECT users_are_blocked($1::uuid, $2::uuid) AS blocked`,
+            [ownerId, viewerId],
+        );
+        if (blockResult.rows[0]?.blocked) {
+            return [];
+        }
     }
 
     // Check if owner is suspended - return empty if viewing someone else's suspended profile
@@ -1112,6 +1133,7 @@ async function findLatestAccessibleCollectionItemByReference({
              WHERE uc.user_id = $1
                AND ${referenceClause}
                AND (owner.is_suspended = false OR s.owner_id = $${params.length + 1})
+               AND NOT users_are_blocked(s.owner_id, $${params.length + 1})
                AND (
                  s.owner_id = $${params.length + 1}
                  OR s.visibility = 'public'
@@ -1489,6 +1511,7 @@ module.exports = {
     listForUser,
     getById,
     getForViewing,
+    getOwnerIdForShelf,
     create,
     update,
     remove,

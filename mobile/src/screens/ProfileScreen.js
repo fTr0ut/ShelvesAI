@@ -14,12 +14,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest, getValidToken } from '../services/api';
 import { getProfileImageSource } from '../utils/mediaUrl';
 import { pickProfilePhotoAsset, uploadProfilePhoto } from '../services/profilePhotoUpload';
 import { shareEntityLink } from '../services/shareLinks';
+import { isUserBlockedApiError } from '../utils/apiErrors';
 const { getNonAuthInputProps } = require('../utils/textInputPolicy');
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
 import {
@@ -45,6 +47,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [editing, setEditing] = useState(false);
     const [uploadingPhoto, setUploadingPhoto] = useState(false);
     const [error, setError] = useState(null);
+    const [isBlockedState, setIsBlockedState] = useState(false);
 
     // Tab state
     const [activeTab, setActiveTab] = useState('posts');
@@ -111,10 +114,6 @@ export default function ProfileScreen({ navigation, route }) {
     }, [editing]);
 
     useEffect(() => {
-        loadProfile();
-    }, [username]);
-
-    useEffect(() => {
         let isActive = true;
         if (!token) {
             setImageAuthToken(null);
@@ -131,10 +130,11 @@ export default function ProfileScreen({ navigation, route }) {
         return () => { isActive = false; };
     }, [apiBase, token]);
 
-    const loadProfile = async () => {
+    const loadProfile = useCallback(async () => {
         try {
             setStateIfMounted(setLoading, true);
             setStateIfMounted(setError, null);
+            setStateIfMounted(setIsBlockedState, false);
 
             const profilePath = route.params?.username ? `/api/profile/${username}` : '/api/profile';
             const profileData = await apiRequest({ apiBase, path: profilePath, token });
@@ -206,11 +206,18 @@ export default function ProfileScreen({ navigation, route }) {
             }
         } catch (e) {
             console.error('Failed to load profile:', e);
-            setStateIfMounted(setError, e.message);
+            setStateIfMounted(setIsBlockedState, isUserBlockedApiError(e));
+            setStateIfMounted(setError, isUserBlockedApiError(e) ? 'You cannot view this profile.' : e.message);
         } finally {
             setStateIfMounted(setLoading, false);
         }
-    };
+    }, [apiBase, currentUser?.username, hydrateEditableFields, isOwnProfile, route.params?.username, setStateIfMounted, token, username]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadProfile();
+        }, [loadProfile])
+    );
 
     const loadFavorites = useCallback(async () => {
         if (!isOwnProfile) return; // Only show favorites on own profile
@@ -395,6 +402,40 @@ export default function ProfileScreen({ navigation, route }) {
             ]
         );
     }, [apiBase, token, profile, navigation]);
+
+    const handleBlockUser = useCallback(() => {
+        if (!profile?.id || isOwnProfile) return;
+
+        Alert.alert(
+            'Block User',
+            `Block ${profile.firstName || profile.username}? You will no longer see each other in profiles, feed, or social actions.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await apiRequest({
+                                apiBase,
+                                path: '/api/friends/blocks',
+                                method: 'POST',
+                                token,
+                                body: { targetUserId: profile.id },
+                            });
+                            if (navigation.canGoBack()) {
+                                navigation.goBack();
+                            } else {
+                                navigation.navigate('FriendsList');
+                            }
+                        } catch (e) {
+                            Alert.alert('Error', e.message || 'Failed to block user');
+                        }
+                    },
+                },
+            ]
+        );
+    }, [apiBase, isOwnProfile, navigation, profile, token]);
 
     const getProfileImageSource = () => {
         // Prefer pre-resolved URL from API (handles S3/CloudFront)
@@ -1157,7 +1198,7 @@ export default function ProfileScreen({ navigation, route }) {
                     <View style={{ width: 40 }} />
                 </View>
                 <View style={styles.centerContainer}>
-                    <Ionicons name="alert-circle" size={48} color={colors.textMuted} />
+                    <Ionicons name={isBlockedState ? 'ban-outline' : 'alert-circle'} size={48} color={colors.textMuted} />
                     <Text style={styles.errorText}>{error || 'User not found'}</Text>
                     <TouchableOpacity style={styles.retryButton} onPress={loadProfile}>
                         <Text style={styles.retryButtonText}>Try Again</Text>
@@ -1383,6 +1424,15 @@ export default function ProfileScreen({ navigation, route }) {
                                     )}
                                     <Text style={styles.wishlistButtonText}>Share Profile</Text>
                                 </TouchableOpacity>
+                                {!isOwnProfile && (
+                                    <TouchableOpacity
+                                        style={[styles.wishlistButton, { borderColor: colors.error }]}
+                                        onPress={handleBlockUser}
+                                    >
+                                        <Ionicons name="ban-outline" size={18} color={colors.error} />
+                                        <Text style={[styles.wishlistButtonText, { color: colors.error }]}>Block User</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
 
 

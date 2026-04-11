@@ -6,6 +6,7 @@
 const listsQueries = require('../database/queries/lists');
 const collectablesQueries = require('../database/queries/collectables');
 const feedQueries = require('../database/queries/feed');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 /**
@@ -71,6 +72,15 @@ async function getList(req, res) {
         if (isNaN(listId)) {
             return res.status(400).json({ error: 'Invalid list id' });
         }
+
+        const ownerId = await listsQueries.getOwnerId(listId);
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId: req.user.id,
+            targetUserId: ownerId,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
 
         const list = await listsQueries.getForViewing(listId, req.user.id);
         if (!list) {

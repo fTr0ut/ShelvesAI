@@ -9,6 +9,7 @@ import {
     StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 
 export default function AboutScreen({ navigation }) {
@@ -20,7 +21,7 @@ export default function AboutScreen({ navigation }) {
     };
 
     return (
-        <View style={styles.screen}>
+        <SafeAreaView style={styles.screen} edges={['top']}>
             <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
 
             {/* Header */}
@@ -87,12 +88,24 @@ export default function AboutScreen({ navigation }) {
                     </TouchableOpacity>
                 </View>
 
+                {/* Account */}
+                <View style={styles.card}>
+                    <Text style={styles.cardTitle}>Account</Text>
+                    <TouchableOpacity
+                        style={[styles.linkRow, { borderBottomWidth: 0 }]}
+                        onPress={() => navigation.navigate('RequestAccountDeletion')}
+                    >
+                        <Text style={[styles.linkText, { color: colors.error }]}>Request Account Deletion</Text>
+                        <Ionicons name="chevron-forward" size={16} color={colors.error} />
+                    </TouchableOpacity>
+                </View>
+
                 {/* Attribution */}
                 <Text style={styles.attribution}>
                     Made with ❤️ for collectors everywhere
                 </Text>
             </ScrollView>
-        </View>
+        </SafeAreaView>
     );
 }
 

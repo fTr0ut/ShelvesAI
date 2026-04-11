@@ -12,7 +12,9 @@ describe('notificationsQueries.create dedup behavior', () => {
   });
 
   test('friend_accept duplicates return null and do not send push', async () => {
-    query.mockResolvedValueOnce({ rows: [] });
+    query
+      .mockResolvedValueOnce({ rows: [{ blocked: false }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const result = await notificationsQueries.create({
       userId: 'u1',
@@ -24,9 +26,9 @@ describe('notificationsQueries.create dedup behavior', () => {
     });
 
     expect(result).toBeNull();
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
 
-    const [sql] = query.mock.calls[0];
+    const [sql] = query.mock.calls[1];
     expect(sql).toContain('ON CONFLICT (user_id, actor_id, entity_id, type)');
     expect(sql).toContain("type = 'friend_accept'");
     expect(pushNotificationService.sendPushNotification).not.toHaveBeenCalled();
@@ -50,6 +52,23 @@ describe('notificationsQueries.create dedup behavior', () => {
     const [sql] = query.mock.calls[0];
     expect(sql).toContain('ON CONFLICT (user_id, entity_id, type)');
     expect(sql).toContain("type IN ('workflow_complete', 'workflow_failed')");
+    expect(pushNotificationService.sendPushNotification).not.toHaveBeenCalled();
+  });
+
+  test('blocked actor and recipient pairs do not create notifications', async () => {
+    query.mockResolvedValueOnce({ rows: [{ blocked: true }] });
+
+    const result = await notificationsQueries.create({
+      userId: 'u1',
+      actorId: 'a1',
+      type: 'comment',
+      entityId: 'evt-1',
+      entityType: 'event',
+      metadata: {},
+    });
+
+    expect(result).toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
     expect(pushNotificationService.sendPushNotification).not.toHaveBeenCalled();
   });
 });

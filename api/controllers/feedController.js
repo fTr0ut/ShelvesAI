@@ -8,6 +8,7 @@ const { getNewsRecommendationsForUser } = require('../services/discovery/newsRec
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
 const { PREVIEW_PAYLOAD_LIMIT } = require('../config/constants');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 const OTHER_SHELF_TYPE = 'other';
@@ -1286,6 +1287,14 @@ async function getFeed(req, res) {
     if (ownerOverride) {
       // Security: Verify viewer has permission to see this user's feed
       if (ownerOverride !== viewerId) {
+        const canAccess = await ensureUsersNotBlocked({
+          res,
+          viewerId,
+          targetUserId: ownerOverride,
+          error: 'You do not have permission to view this feed',
+        });
+        if (!canAccess) return;
+
         const isFriend = await friendshipQueries.areFriends(viewerId, ownerOverride);
         if (!isFriend) {
           return res.status(403).json({ error: 'You do not have permission to view this feed' });
@@ -1484,6 +1493,16 @@ async function getFeedEntryDetails(req, res) {
       const isCheckIn = aggregate.eventType === 'checkin.activity';
       const isOwner = !!(viewerId && aggregate.userId && String(viewerId) === String(aggregate.userId));
 
+      if (!isOwner) {
+        const canAccess = await ensureUsersNotBlocked({
+          res,
+          viewerId,
+          targetUserId: aggregate.userId,
+          error: 'You do not have access to this feed entry',
+        });
+        if (!canAccess) return;
+      }
+
       if (isCheckIn && !isOwner) {
         const visibility = aggregate.visibility || 'public';
         if (visibility === 'friends') {
@@ -1661,6 +1680,17 @@ async function getFeedEntryDetails(req, res) {
       entry.displayHints = getDisplayHints(aggregate.eventType);
       await applyManualCoverPrivacy([entry], viewerId);
       return res.json({ entry });
+    }
+
+    const shelfOwnerId = await shelvesQueries.getOwnerIdForShelf(shelfId);
+    if (shelfOwnerId && String(shelfOwnerId) !== String(viewerId)) {
+      const canAccess = await ensureUsersNotBlocked({
+        res,
+        viewerId,
+        targetUserId: shelfOwnerId,
+        error: 'You do not have access to this feed entry',
+      });
+      if (!canAccess) return;
     }
 
     const shelf = await shelvesQueries.getForViewing(shelfId, viewerId);

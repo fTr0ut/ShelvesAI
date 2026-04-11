@@ -216,7 +216,175 @@ ${normalizedMessage}
     }
 }
 
+/**
+ * Notify a user that their account deletion request has been approved
+ * and their account has been permanently deleted.
+ * @param {object} payload
+ * @param {string} payload.email
+ * @param {string} payload.username
+ */
+async function sendDeletionApprovedEmail({ email, username }) {
+    if (!API_KEY) {
+        const env = String(process.env.NODE_ENV || '').toLowerCase();
+        const isDevLike = env === 'development' || env === 'test';
+
+        if (!isDevLike) {
+            logger.error(`[EmailService] RESEND_API_KEY not configured - cannot send deletion approved email to ${email}`);
+            throw new Error('Email transport unavailable');
+        }
+
+        logger.warn(`[EmailService] RESEND_API_KEY not configured - simulating deletion approved email to ${email}`);
+        return { success: true, simulated: true };
+    }
+
+    const safeUsername = escapeHtml(username || 'there');
+    const year = new Date().getFullYear();
+
+    const msg = {
+        from: `${APP_NAME} <${FROM_EMAIL}>`,
+        to: email,
+        subject: `Your ${APP_NAME} account has been deleted`,
+        text: `Hi ${username || 'there'},
+
+Your account deletion request has been approved and your ${APP_NAME} account has been permanently deleted.
+
+All associated data — including your shelves, collections, profile, and activity — has been removed from our systems.
+
+If you ever decide to return, you're welcome to create a new account at any time.
+
+If you have any questions, please contact us at ${SUPPORT_EMAIL}.
+
+- The ${APP_NAME} Team`,
+        html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: #111827; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">${APP_NAME}</h1>
+    </div>
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+        <p style="font-size: 16px;">Hi ${safeUsername},</p>
+        <p style="font-size: 16px;">Your account deletion request has been approved. Your <strong>${APP_NAME}</strong> account has been permanently deleted.</p>
+        <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 24px 0;">
+            <p style="margin: 0; font-size: 14px; color: #374151;">All associated data — including your shelves, collections, profile, and activity — has been removed from our systems.</p>
+        </div>
+        <p style="font-size: 15px; color: #374151;">If you ever decide to return, you're welcome to create a new account at any time.</p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+        <p style="font-size: 14px; color: #6b7280;">Questions? Contact us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #6366f1;">${SUPPORT_EMAIL}</a>.</p>
+        <p style="font-size: 12px; color: #9ca3af; text-align: center;">© ${year} ${APP_NAME}. All rights reserved.</p>
+    </div>
+</body>
+</html>
+`,
+    };
+
+    try {
+        const response = await resend.emails.send(msg);
+        if (response?.error) {
+            throw new Error(response.error.message || 'Resend API error');
+        }
+        logger.info(`[EmailService] Deletion approved email sent to ${email}`);
+        return { success: true };
+    } catch (error) {
+        logger.error('[EmailService] Failed to send deletion approved email:', error.message);
+        throw new Error('Failed to send deletion approved email');
+    }
+}
+
+/**
+ * Notify a user that their account deletion request has been rejected.
+ * @param {object} payload
+ * @param {string} payload.email
+ * @param {string} payload.username
+ * @param {string|null} payload.reviewerNote
+ */
+async function sendDeletionRejectedEmail({ email, username, reviewerNote = null }) {
+    if (!API_KEY) {
+        const env = String(process.env.NODE_ENV || '').toLowerCase();
+        const isDevLike = env === 'development' || env === 'test';
+
+        if (!isDevLike) {
+            logger.error(`[EmailService] RESEND_API_KEY not configured - cannot send deletion rejected email to ${email}`);
+            throw new Error('Email transport unavailable');
+        }
+
+        logger.warn(`[EmailService] RESEND_API_KEY not configured - simulating deletion rejected email to ${email}`);
+        return { success: true, simulated: true };
+    }
+
+    const safeUsername = escapeHtml(username || 'there');
+    const safeNote = reviewerNote ? escapeHtml(reviewerNote) : null;
+    const year = new Date().getFullYear();
+
+    const noteTextBlock = reviewerNote
+        ? `\nReason provided:\n${reviewerNote}\n`
+        : '';
+
+    const noteHtmlBlock = safeNote
+        ? `<div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 20px 0;">
+            <p style="margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.4px;">Reason</p>
+            <p style="margin: 0; font-size: 14px; color: #374151;">${safeNote}</p>
+           </div>`
+        : '';
+
+    const msg = {
+        from: `${APP_NAME} <${FROM_EMAIL}>`,
+        to: email,
+        subject: `Your ${APP_NAME} account deletion request has been reviewed`,
+        text: `Hi ${username || 'there'},
+
+We've reviewed your account deletion request, but we're unable to process it at this time.
+${noteTextBlock}
+Your account remains active and you can continue to use ${APP_NAME} as normal.
+
+If you have questions or believe this was a mistake, please contact us at ${SUPPORT_EMAIL}.
+
+- The ${APP_NAME} Team`,
+        html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: #111827; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">${APP_NAME}</h1>
+    </div>
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
+        <p style="font-size: 16px;">Hi ${safeUsername},</p>
+        <p style="font-size: 16px;">We've reviewed your account deletion request, but we're unable to process it at this time.</p>
+        ${noteHtmlBlock}
+        <p style="font-size: 15px; color: #374151;">Your account remains active and you can continue to use <strong>${APP_NAME}</strong> as normal.</p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+        <p style="font-size: 14px; color: #6b7280;">Questions or concerns? Contact us at <a href="mailto:${SUPPORT_EMAIL}" style="color: #6366f1;">${SUPPORT_EMAIL}</a>.</p>
+        <p style="font-size: 12px; color: #9ca3af; text-align: center;">© ${year} ${APP_NAME}. All rights reserved.</p>
+    </div>
+</body>
+</html>
+`,
+    };
+
+    try {
+        const response = await resend.emails.send(msg);
+        if (response?.error) {
+            throw new Error(response.error.message || 'Resend API error');
+        }
+        logger.info(`[EmailService] Deletion rejected email sent to ${email}`);
+        return { success: true };
+    } catch (error) {
+        logger.error('[EmailService] Failed to send deletion rejected email:', error.message);
+        throw new Error('Failed to send deletion rejected email');
+    }
+}
+
 module.exports = {
     sendPasswordResetEmail,
     sendFeedbackEmail,
+    sendDeletionApprovedEmail,
+    sendDeletionRejectedEmail,
 };

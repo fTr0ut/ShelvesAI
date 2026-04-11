@@ -22,6 +22,7 @@ import { apiRequest, getValidToken } from '../services/api';
 import { addComment, getComments, toggleLike } from '../services/feedApi';
 import { getShareableEventId, shareEntityLink } from '../services/shareLinks';
 import { resolveCollectableCoverUrl, resolveManualCoverUrl } from '../utils/coverUrl';
+import { isUserBlockedApiError } from '../utils/apiErrors';
 import { useMentionInput } from '../hooks/useMentionInput';
 import { MentionSuggestions } from '../components/ui';
 import {
@@ -45,6 +46,7 @@ export default function FeedDetailScreen({ route, navigation }) {
   const [detailEntry, setDetailEntry] = useState(entry || null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isBlockedState, setIsBlockedState] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState('');
   const [commentLoading, setCommentLoading] = useState(false);
@@ -85,9 +87,16 @@ export default function FeedDetailScreen({ route, navigation }) {
         if (isMounted && response?.entry) {
           setDetailEntry((prev) => ({ ...(prev || {}), ...response.entry }));
           setError('');
+          setIsBlockedState(false);
         }
       } catch (err) {
-        if (isMounted) setError('Unable to load activity');
+        if (!isMounted) return;
+        if (isUserBlockedApiError(err)) {
+          setIsBlockedState(true);
+          setError('You cannot view this activity.');
+        } else {
+          setError('Unable to load activity');
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -112,6 +121,10 @@ export default function FeedDetailScreen({ route, navigation }) {
         setCommentCount(response.commentCount);
       }
     } catch (err) {
+      if (isUserBlockedApiError(err)) {
+        setIsBlockedState(true);
+        setError('You cannot view this activity.');
+      }
       setComments([]);
     }
   }, [apiBase, token, targetId]);
@@ -149,6 +162,10 @@ export default function FeedDetailScreen({ route, navigation }) {
       if (typeof response?.likeCount === 'number') setLikeCount(response.likeCount);
       if (typeof response?.liked === 'boolean') setHasLiked(response.liked);
     } catch (err) {
+      if (isUserBlockedApiError(err)) {
+        setIsBlockedState(true);
+        setError('You cannot interact with this activity.');
+      }
       setHasLiked(hasLiked);
       setLikeCount(likeCount);
     } finally {
@@ -174,7 +191,10 @@ export default function FeedDetailScreen({ route, navigation }) {
         setCommentCount((prev) => prev + 1);
       }
     } catch (err) {
-      // ignore for now
+      if (isUserBlockedApiError(err)) {
+        setIsBlockedState(true);
+        setError('You cannot interact with this activity.');
+      }
     } finally {
       setCommentLoading(false);
     }
@@ -627,6 +647,25 @@ export default function FeedDetailScreen({ route, navigation }) {
       </View>
     );
   };
+
+  if (isBlockedState) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Activity</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="ban-outline" size={44} color={colors.textMuted} />
+          <Text style={styles.errorText}>This activity is unavailable because one of you has blocked the other.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>

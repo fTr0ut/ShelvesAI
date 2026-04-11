@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { apiRequest } from '../services/api';
@@ -22,6 +23,7 @@ export default function FriendsListScreen({ navigation }) {
     const { colors, spacing, typography, shadows, radius, isDark } = useTheme();
 
     const [friendships, setFriendships] = useState([]);
+    const [blockedUsers, setBlockedUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -31,24 +33,30 @@ export default function FriendsListScreen({ navigation }) {
         [colors, spacing, typography, shadows, radius]
     );
 
-    useEffect(() => {
-        loadFriends();
-    }, []);
-
-    const loadFriends = async (isRefresh = false) => {
+    const loadFriends = useCallback(async (isRefresh = false) => {
         try {
             if (isRefresh) setRefreshing(true);
             else setLoading(true);
 
-            const data = await apiRequest({ apiBase, path: '/api/friends', token });
-            setFriendships(data.friendships || []);
+            const [friendsData, blockedData] = await Promise.all([
+                apiRequest({ apiBase, path: '/api/friends', token }),
+                apiRequest({ apiBase, path: '/api/friends/blocks', token }),
+            ]);
+            setFriendships(friendsData.friendships || []);
+            setBlockedUsers(blockedData.blockedUsers || []);
         } catch (e) {
             if (!isRefresh) Alert.alert('Error', 'Failed to load friends');
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    };
+    }, [apiBase, token]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFriends();
+        }, [loadFriends])
+    );
 
     const handleRefresh = () => loadFriends(true);
 
@@ -82,6 +90,16 @@ export default function FriendsListScreen({ navigation }) {
         return friendships.filter(f => f.status === 'pending' && !f.isRequester);
     }, [friendships]);
 
+    const filteredBlockedUsers = useMemo(() => {
+        if (!searchQuery.trim()) return blockedUsers;
+        const query = searchQuery.toLowerCase().trim();
+        return blockedUsers.filter((user) => {
+            const name = user.name?.toLowerCase() || '';
+            const username = user.username?.toLowerCase() || '';
+            return name.includes(query) || username.includes(query);
+        });
+    }, [blockedUsers, searchQuery]);
+
     const handleRespondToRequest = async (friendshipId, action) => {
         try {
             await apiRequest({
@@ -96,6 +114,62 @@ export default function FriendsListScreen({ navigation }) {
             Alert.alert('Error', e.message);
         }
     };
+
+    const handleBlockUser = useCallback((user) => {
+        if (!user?.id) return;
+        Alert.alert(
+            'Block User',
+            `Block ${user.name || user.username}?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await apiRequest({
+                                apiBase,
+                                path: '/api/friends/blocks',
+                                method: 'POST',
+                                token,
+                                body: { targetUserId: user.id },
+                            });
+                            loadFriends(true);
+                        } catch (e) {
+                            Alert.alert('Error', e.message);
+                        }
+                    },
+                },
+            ]
+        );
+    }, [apiBase, token]);
+
+    const handleUnblockUser = useCallback((user) => {
+        if (!user?.id) return;
+        Alert.alert(
+            'Unblock User',
+            `Unblock ${user.name || user.username}?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Unblock',
+                    onPress: async () => {
+                        try {
+                            await apiRequest({
+                                apiBase,
+                                path: `/api/friends/blocks/${user.id}`,
+                                method: 'DELETE',
+                                token,
+                            });
+                            loadFriends(true);
+                        } catch (e) {
+                            Alert.alert('Error', e.message);
+                        }
+                    },
+                },
+            ]
+        );
+    }, [apiBase, token]);
 
     const handleRemoveFriend = useCallback((friendshipId, friendName) => {
         Alert.alert(
@@ -205,7 +279,47 @@ export default function FriendsListScreen({ navigation }) {
                     >
                         <Ionicons name="close" size={18} color={colors.error} />
                     </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.blockButton}
+                        onPress={() => handleBlockUser(friend)}
+                    >
+                        <Ionicons name="ban-outline" size={18} color={colors.error} />
+                    </TouchableOpacity>
                 </View>
+            </View>
+        );
+    };
+
+    const renderBlockedUser = (user) => {
+        const initial = (user.name?.[0] || user.username?.[0] || '?').toUpperCase();
+        let avatarSource = null;
+        if (user.profileMediaUrl) {
+            avatarSource = { uri: user.profileMediaUrl };
+        } else if (user.profileMediaPath) {
+            avatarSource = { uri: `${apiBase}/media/${user.profileMediaPath}` };
+        } else if (user.picture) {
+            avatarSource = { uri: user.picture };
+        }
+
+        return (
+            <View key={user.id} style={styles.requestCard}>
+                <View style={styles.avatar}>
+                    {avatarSource ? (
+                        <Image source={avatarSource} style={styles.avatarImage} />
+                    ) : (
+                        <Text style={styles.avatarText}>{initial}</Text>
+                    )}
+                </View>
+                <View style={styles.friendInfo}>
+                    <Text style={styles.friendName}>{user.name || user.username}</Text>
+                    <Text style={styles.friendUsername}>@{user.username}</Text>
+                </View>
+                <TouchableOpacity
+                    style={styles.unblockButton}
+                    onPress={() => handleUnblockUser(user)}
+                >
+                    <Text style={styles.unblockButtonText}>Unblock</Text>
+                </TouchableOpacity>
             </View>
         );
     };
@@ -264,6 +378,13 @@ export default function FriendsListScreen({ navigation }) {
                     {pendingRequests.map((item) => (
                         <View key={item.id}>{renderPendingRequest({ item })}</View>
                     ))}
+                </View>
+            )}
+
+            {filteredBlockedUsers.length > 0 && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Blocked Users ({filteredBlockedUsers.length})</Text>
+                    {filteredBlockedUsers.map((user) => renderBlockedUser(user))}
                 </View>
             )}
 
@@ -448,6 +569,16 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             justifyContent: 'center',
             alignItems: 'center',
         },
+        blockButton: {
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: colors.error + '12',
+            borderWidth: 1,
+            borderColor: colors.error + '30',
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
         declineButton: {
             width: 36,
             height: 36,
@@ -457,6 +588,18 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) =>
             borderColor: colors.error,
             justifyContent: 'center',
             alignItems: 'center',
+        },
+        unblockButton: {
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            borderRadius: radius.md,
+            borderWidth: 1,
+            borderColor: colors.primary,
+        },
+        unblockButtonText: {
+            fontSize: 13,
+            fontWeight: '600',
+            color: colors.primary,
         },
         emptyState: {
             alignItems: 'center',

@@ -4,6 +4,7 @@ const { validateIntParam } = require('../middleware/validate');
 const ctrl = require('../controllers/shelvesController');
 const shelvesQueries = require('../database/queries/shelves');
 const { normalizeComparableId } = require('../utils/identity');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 const router = express.Router();
@@ -31,6 +32,16 @@ router.get('/:manualId/shelf-item', validateIntParam(['manualId']), async (req, 
 
         if (!requestedOwnerId) {
             return res.status(400).json({ error: "Invalid ownerId" });
+        }
+
+        if (requestedOwnerId !== userId) {
+            const canAccess = await ensureUsersNotBlocked({
+                res,
+                viewerId: userId,
+                targetUserId: requestedOwnerId,
+                error: 'You cannot access this user',
+            });
+            if (!canAccess) return;
         }
 
         const resolution = await shelvesQueries.findLatestAccessibleCollectionItemByReference({

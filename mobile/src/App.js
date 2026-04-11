@@ -38,6 +38,7 @@ import MarketValueSourcesScreen from './screens/MarketValueSourcesScreen'
 import AccountScreen from './screens/AccountScreen'
 import ManualEditScreen from './screens/ManualEditScreen'
 import AboutScreen from './screens/AboutScreen'
+import RequestAccountDeletionScreen from './screens/RequestAccountDeletionScreen'
 import ProfileScreen from './screens/ProfileScreen'
 import ProfileEditScreen from './screens/ProfileEditScreen'
 import WishlistsScreen from './screens/WishlistsScreen'
@@ -461,6 +462,7 @@ function AppNavigator({ token, needsOnboarding, navigationRef }) {
             <Stack.Screen name="Account" component={AccountScreen} />
             <Stack.Screen name="ManualEdit" component={ManualEditScreen} />
             <Stack.Screen name="About" component={AboutScreen} />
+            <Stack.Screen name="RequestAccountDeletion" component={RequestAccountDeletionScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="ProfileEdit" component={ProfileEditScreen} />
             <Stack.Screen name="Wishlists" component={WishlistsScreen} />

@@ -1,4 +1,3 @@
-const FileType = require('file-type');
 const sizeOf = require('image-size');
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
@@ -34,7 +33,8 @@ async function validateImageBuffer(buffer, options = {}) {
     : MAX_IMAGE_PIXELS;
   const allowedMimeTypes = options.allowedMimeTypes || ALLOWED_IMAGE_MIME_TYPES;
 
-  const detected = await FileType.fromBuffer(buffer);
+  const { fileTypeFromBuffer } = await import('file-type');
+  const detected = await fileTypeFromBuffer(buffer);
   if (!detected || !allowedMimeTypes.has(detected.mime)) {
     throw new Error('Unsupported image type. Allowed: JPEG, PNG, WEBP');
   }

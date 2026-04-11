@@ -1,12 +1,12 @@
 const { validateImageBuffer } = require('../utils/imageValidation');
 
 jest.mock('file-type', () => ({
-  fromBuffer: jest.fn(),
+  fileTypeFromBuffer: jest.fn(),
 }));
 
 jest.mock('image-size', () => jest.fn());
 
-const FileType = require('file-type');
+const fileType = require('file-type');
 const sizeOf = require('image-size');
 
 describe('validateImageBuffer', () => {
@@ -14,7 +14,7 @@ describe('validateImageBuffer', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    FileType.fromBuffer.mockResolvedValue({ mime: 'image/jpeg', ext: 'jpg' });
+    fileType.fileTypeFromBuffer.mockResolvedValue({ mime: 'image/jpeg', ext: 'jpg' });
   });
 
   it('rejects oversize dimensions with default cap', async () => {

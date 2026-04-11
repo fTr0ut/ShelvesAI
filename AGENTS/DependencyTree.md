@@ -3,7 +3,7 @@
 > **Maintenance rule:** Any agent making changes to the codebase MUST update this file to reflect new files, removed files, changed imports, new tables, or new routes. This is a living document.
 > **Recent changes mandate:** Any agent making changes to the codebase MUST append a dated entry to the **Recent Changes Log** section in this file before finishing work.
 
-Last updated: 2026-04-10
+Last updated: 2026-04-11
 
 ---
 
@@ -49,6 +49,16 @@ ShelvesAI/
 
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
+
+- 2026-04-11 | mutual-user-blocks | Added first-class mutual block enforcement across authenticated social flows. New DB pieces: `api/database/migrations/20260411113000_create_user_blocks.js`, `api/database/queries/userBlocks.js`, init schema parity for `user_blocks` plus `users_are_blocked(user1, user2)`. Social API adds `GET/POST/DELETE /api/friends/blocks`; `GET /api/friends` now only returns pending/accepted friendships. Blocked pairs now receive `403 { code: 'user_blocked' }` on protected profile/feed/shelf/favorites/wishlist/list access, are filtered out of feed/social summaries/notifications/search, and cannot friend/like/comment/mention each other. Mobile updates in `ProfileScreen`, `FriendsListScreen`, `FeedDetailScreen`, `WishlistsScreen`, `FavoritesScreen`, and `ui/GlobalSearchBar` add block/unblock UI, blocked-state rendering, and focus-time search refresh.
+
+- 2026-04-11 | deletion-request-emails | Added email notifications for deletion request outcomes. Modified `api/services/emailService.js`: added `sendDeletionApprovedEmail({ email, username })` and `sendDeletionRejectedEmail({ email, username, reviewerNote })` — both follow existing Resend pattern with HTML + plain text, dev/test passthrough when API key absent. Modified `api/controllers/adminController.js`: imports both functions; `approveDeletionRequest` sends approved email after `invalidateAuthCache` (non-fatal, errors warn-logged); `rejectDeletionRequest` sends rejected email after status update (non-fatal).
+
+- 2026-04-11 | audit-log-immutability | Fixed audit log being effectively cleared when a user is deleted. Root cause: `admin_action_logs` had `ON DELETE SET NULL` FKs on both `admin_id` and `target_user_id`, so deleting a user nulled those columns on all their audit entries — making entries invisible in filtered searches. New migration `api/database/migrations/20260411140000_drop_audit_log_user_fks.js` drops both FK constraints so the UUID values are retained permanently. Modified `api/database/queries/deletionRequests.js`: before deleting the user, bulk-snapshots username/email into `metadata` of all prior audit entries for that user (`UPDATE admin_action_logs SET metadata = metadata || ...`); the new approval entry also gets username/email in metadata. Modified `api/database/queries/admin.js`: `listAuditLogs` query now uses `COALESCE(target_u.username, metadata->>'targetUsername')` so deleted-user entries remain fully readable.
+
+- 2026-04-11 | account-deletion-hard-delete | Wired hard deletion of user account on admin approval. Modified `api/database/queries/deletionRequests.js`: `updateDeletionRequestStatus` now executes `DELETE FROM users WHERE id = $1` inside the same transaction when status is `approved` (cascade handles all related tables). Modified `api/controllers/adminController.js`: `approveDeletionRequest` now calls `invalidateAuthCache(request.userId)` after the transaction to immediately evict the user from the in-memory auth cache.
+
+- 2026-04-10 | account-deletion-request | Added full account deletion request flow. New files: `api/database/migrations/20260410130000_create_deletion_requests.js` (deletion_requests table: user_id FK, reason, status pending/approved/rejected, reviewed_by FK, reviewer_note, processed_at; partial unique index on pending requests per user), `api/database/queries/deletionRequests.js` (createDeletionRequest, getPendingRequestByUserId, revokeDeletionRequest, listDeletionRequests, getDeletionRequestById, updateDeletionRequestStatus with audit log write), `mobile/src/screens/RequestAccountDeletionScreen.js` (form with optional reason, DELETE confirmation, pending-request state with revoke button), `admin-dashboard/src/pages/DeletionRequests.jsx` (table with status filter tabs, Approve/Reject modal with reviewer note). Modified: `api/routes/account.js` (+ GET/POST/DELETE /api/account/deletion-request), `api/controllers/accountController.js` (+ getDeletionRequestStatus, requestAccountDeletion, revokeDeletionRequest), `api/routes/admin.js` (+ GET /admin/deletion-requests before CSRF; POST /deletion-requests/:id/approve and /reject after CSRF), `api/controllers/adminController.js` (+ listDeletionRequests, approveDeletionRequest, rejectDeletionRequest; imports deletionRequestQueries), `mobile/src/screens/AboutScreen.js` (+ Account card with Request Account Deletion nav row), `mobile/src/App.js` (+ RequestAccountDeletionScreen import + Stack.Screen name="RequestAccountDeletion"), `admin-dashboard/src/api/client.js` (+ getDeletionRequests, approveDeletionRequest, rejectDeletionRequest), `admin-dashboard/src/App.jsx` (+ /deletion-requests route + DeletionRequests import), `admin-dashboard/src/components/Sidebar.jsx` (+ Deletion Requests nav entry + DeletionIcon).
 
 - 2026-04-10 | admin-broadcast-system | Added full admin broadcast feature. New files: `api/database/migrations/20260410120000_create_broadcast_logs.js` (broadcast_logs table with status/is_suppressed), `api/database/queries/broadcastLogs.js` (createBroadcastLog, updateBroadcastLog, suppressBroadcast, getBroadcastStatus, listBroadcasts), `api/routes/adminBroadcast.js` (POST /api/admin/broadcast, GET /api/admin/broadcasts, POST /broadcasts/:id/cancel, POST /broadcasts/:id/suppress — all after CSRF), `api/routes/broadcasts.js` (GET /api/broadcasts/:id/status — public, no auth), `mobile/src/components/SystemBroadcastModal.js` (full-screen modal with suppress check on mount), `admin-dashboard/src/pages/Broadcast.jsx` (compose form + history table with cancel/recall actions). Modified: `api/database/queries/pushDeviceTokens.js` (+ getAllActiveTokens), `api/services/pushNotificationService.js` (+ sendBroadcastNotification with per-chunk cancel check, + broadcastLogs import), `api/routes/admin.js` (+ adminBroadcast router mounted after CSRF), `api/server.js` (+ /api/broadcasts route), `mobile/src/services/pushNotifications.js` (parseNotificationData now returns title, body, broadcastId), `mobile/src/context/PushContext.js` (+ broadcastMessage state, dismissBroadcast, system_broadcast handling in foreground listener and nav handler, renders SystemBroadcastModal), `admin-dashboard/src/api/client.js` (+ sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast), `admin-dashboard/src/App.jsx` (+ /broadcast route), `admin-dashboard/src/components/Sidebar.jsx` (+ Broadcast nav entry + BroadcastIcon).
 
@@ -546,14 +556,17 @@ controllers/feedController.js
   -> database/queries/utils.js
   -> services/discovery/newsRecommendations.js
   -> services/mediaUrl.js
+  -> utils/userBlockAccess.js
   -> config/constants.js
 
 controllers/eventSocialController.js
   -> database/queries/eventSocial.js
   -> database/queries/notifications.js
   -> database/queries/friendships.js
+  -> database/queries/userBlocks.js
   -> database/queries/users.js
   -> database/queries/utils.js
+  -> utils/userBlockAccess.js
 ```
 
 #### friends
@@ -567,6 +580,7 @@ controllers/friendController.js
   -> database/pg.js
   -> database/queries/friendships.js
   -> database/queries/notifications.js
+  -> database/queries/userBlocks.js
   -> database/queries/utils.js
   -> services/mediaUrl.js
 ```
@@ -587,6 +601,7 @@ controllers/profileController.js
   -> database/queries/utils.js
   -> services/mediaUrl.js
   -> utils/imageValidation.js
+  -> utils/userBlockAccess.js
 ```
 
 #### account
@@ -614,13 +629,15 @@ routes/collectables.js
   -> middleware/admin.js
   -> middleware/validate.js
   -> database/queries/collectables.js
+  -> database/queries/shelves.js
   -> database/pg.js
   -> database/queries/utils.js
   -> services/collectables/fingerprint.js
   -> services/collectables/kind.js
+  -> utils/userBlockAccess.js
   -> utils/normalize.js
   ->database/queries/marketValueEstimates.js
-  Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type/platform and provider-level fallback paging via offset; local games platform filtering uses `system_name` + `platform_data`; game responses include derived `maxPlayers` when available), POST /api/collectables/resolve-search-hit, GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
+  Endpoints: GET /api/collectables (supports fallbackApi/fallbackLimit/apiSupplement/type/platform and provider-level fallback paging via offset; local games platform filtering uses `system_name` + `platform_data`; game responses include derived `maxPlayers` when available), POST /api/collectables/resolve-search-hit, GET /:collectableId/shelf-item (owner override is block-filtered), GET /:collectableId/market-value-sources, GET /:collectableId/user-estimate, PUT /:collectableId/user-estimate
 ```
 
 #### share
@@ -648,6 +665,7 @@ routes/wishlists.js
 
 controllers/wishlistController.js
   -> database/queries/wishlists.js
+  -> utils/userBlockAccess.js
 ```
 
 #### favorites
@@ -666,6 +684,7 @@ controllers/favoritesController.js
   -> database/queries/shelves.js
   -> services/mediaUrl.js
   -> utils/errorHandler.js
+  -> utils/userBlockAccess.js
 ```
 
 #### lists
@@ -679,6 +698,7 @@ controllers/listsController.js
   -> database/queries/lists.js
   -> database/queries/collectables.js
   -> database/queries/feed.js
+  -> utils/userBlockAccess.js
 ```
 
 #### ratings
@@ -1225,6 +1245,7 @@ database/queries/collectables.js -> database/pg.js, database/queries/utils.js, d
 database/queries/feed.js -> database/pg.js, database/queries/utils.js, config/constants.js
 database/queries/eventSocial.js -> database/pg.js, database/queries/utils.js
 database/queries/friendships.js -> database/pg.js, database/queries/utils.js
+database/queries/userBlocks.js -> database/pg.js, database/queries/utils.js
 database/queries/users.js -> database/pg.js, database/queries/utils.js
 database/queries/notifications.js -> database/pg.js, database/queries/utils.js
 database/queries/needsReview.js -> database/pg.js, database/queries/utils.js
@@ -1509,6 +1530,7 @@ ui/GlobalSearchBar.js
   -> context/AuthContext.js
   -> context/ThemeContext.js
   -> services/api.js
+  -> utils/apiErrors.js
   exports: useGlobalSearch (hook), GlobalSearchInput, GlobalSearchOverlay
 
 ui/MentionSuggestions.js
@@ -1553,7 +1575,7 @@ components/news/QuickCheckInModal.js
 | OnboardingUITourScreen | AuthContext, ThemeContext, OnboardingConfigGate |
 | OnboardingNewShelfTutorialScreen | AuthContext, ThemeContext, OnboardingConfigGate |
 | SocialFeedScreen | ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl, feedAddedEvent, navigation/useBottomFooterLayout |
-| FeedDetailScreen | AuthContext, ThemeContext, api, feedApi, coverUrl, feedAddedEvent |
+| FeedDetailScreen | AuthContext, ThemeContext, api, feedApi, coverUrl, feedAddedEvent, utils/apiErrors |
 | ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
 | ShelfDetailScreen | AuthContext, ThemeContext, api, coverUrl, ocr, ui/CachedImage, ui/StarRating, ui/CategoryIcon, VisionProcessingModal, navigation/useBottomFooterLayout |
 | ShelfCreateScreen | AuthContext, ThemeContext, api, imageUpload, navigation/useBottomFooterLayout |
@@ -1566,25 +1588,27 @@ components/news/QuickCheckInModal.js
 | CheckInScreen | AuthContext, ThemeContext, api, useSearch |
 | ManualEditScreen | AuthContext, ThemeContext, api |
 | AccountScreen | AuthContext, ThemeContext, PushContext, api, useAsync (manages is_private + show_personal_photos toggles) |
-| ProfileScreen | AuthContext, ThemeContext, api, imageUpload, feedAddedEvent |
+| ProfileScreen | AuthContext, ThemeContext, api, imageUpload, feedAddedEvent, utils/apiErrors |
 | ProfileEditScreen | AuthContext, ThemeContext, api, imageUpload |
 | FriendSearchScreen | AuthContext, ThemeContext, api, coverUrl, useCollectableSearchEngine |
-| FriendsListScreen | AuthContext, ThemeContext, api |
-| WishlistsScreen | AuthContext, ThemeContext, api |
+| FriendsListScreen | AuthContext, ThemeContext, api, navigation/useFocusEffect |
+| WishlistsScreen | AuthContext, ThemeContext, api, navigation/useFocusEffect, utils/apiErrors |
 | WishlistScreen | AuthContext, ThemeContext, api, ui/CachedImage, ui/StarRating, ui/CategoryIcon |
 | WishlistCreateScreen | AuthContext, ThemeContext, api |
-| FavoritesScreen | ui/CategoryIcon, AuthContext, ThemeContext, api, useAsync, coverUrl |
+| FavoritesScreen | ui/CategoryIcon, AuthContext, ThemeContext, api, useAsync, coverUrl, navigation/useFocusEffect, utils/apiErrors |
 | ListCreateScreen | AuthContext, ThemeContext, api |
 | ListDetailScreen | ui/CategoryIcon, AuthContext, ThemeContext, api |
 | UnmatchedScreen | AuthContext, ThemeContext, api |
 | NotificationScreen | AuthContext, ThemeContext, api |
 | NotificationSettingsScreen | AuthContext, ThemeContext, pushNotifications |
 | AboutScreen | ThemeContext |
+| RequestAccountDeletionScreen | AuthContext, ThemeContext, api |
 
 ### Utils
 
 ```
 utils/coverUrl.js    (no internal imports)
+utils/apiErrors.js   (no internal imports)
 utils/mediaUrl.js    (no internal imports)
 utils/iconConfig.js  (no internal imports)
 utils/onboarding.js  (no internal imports)
@@ -1968,6 +1992,7 @@ news_items (SERIAL PK)
 - `shelves.game_defaults`: nullable JSONB contract for games shelf defaults (`platformType/customPlatformText/format`)
 - `shelves_photo_storage_check`: shelf photo metadata must be fully null OR a valid complete storage record (`photo_storage_provider` in `{s3,local}` + key/type/size/dimensions/updated_at)
 - `users.email`: UNIQUE constraint
+- `user_blocks`: Directional block rows are unique on `(blocker_id, blocked_id)` with a self-block CHECK; social SQL uses `users_are_blocked(user1, user2)` for mutual enforcement
 - `collectables.title`: GIN pg_trgm index for fuzzy search
 - `collectables.cast_members`: partial GIN index (`idx_collectables_cast_members_gin`) for exact cast-name containment lookups
 - `workflow_queue_jobs.status`: CHECK constraint (`queued|processing|completed|failed|aborted`)
@@ -2058,6 +2083,7 @@ news_items (SERIAL PK)
 | `20260409120000_add_token_quota_fields` | + `user_vision_quota.tokens_used/output_tokens_used`, + `users.unlimited_vision_tokens` |
 | `20260409120001_create_vision_token_log` | + `vision_token_log` |
 | `20260409130000_add_user_collection_item_details` | + `user_collections.series/edition/special_markings/age_statement/label_color/regional_item/barcode/item_specific_text` |
+| `20260411113000_create_user_blocks` | + `user_blocks`, backfill/remove legacy `friendships.status='blocked'`, `users_are_blocked(user1, user2)` helper function, RLS policies for participants/admins |
 ---
 
 ## External Service Integrations

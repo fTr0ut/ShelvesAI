@@ -67,6 +67,9 @@ router.get('/jobs/:jobId', adminController.getJob);
 // Audit logs (read)
 router.get('/audit-logs', adminController.listAuditLogs);
 
+// Deletion requests (read — no CSRF)
+router.get('/deletion-requests', adminController.listDeletionRequests);
+
 // Content browsing (read)
 router.get('/shelves', adminController.listShelves);
 router.get('/shelves/:shelfId', adminController.getShelf);
@@ -92,6 +95,10 @@ router.put('/users/:userId/vision-quota', adminController.setUserVisionQuota);
 
 // System settings (write — CSRF required)
 router.put('/settings/:key', adminController.updateSetting);
+
+// Deletion request actions (write — CSRF required)
+router.post('/deletion-requests/:id/approve', adminController.approveDeletionRequest);
+router.post('/deletion-requests/:id/reject', adminController.rejectDeletionRequest);
 
 // Broadcast (write — CSRF required, mounted after requireAdminCsrf)
 router.use('/', adminBroadcastRoutes);

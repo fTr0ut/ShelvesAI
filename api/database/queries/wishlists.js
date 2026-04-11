@@ -40,6 +40,7 @@ async function getForViewing(wishlistId, viewerId) {
     const result = await query(
         `SELECT w.* FROM wishlists w
          WHERE w.id = $1
+         AND (w.user_id = $2 OR NOT users_are_blocked(w.user_id, $2))
          AND (
            w.user_id = $2
            OR w.visibility = 'public'
@@ -69,6 +70,7 @@ async function listViewableForUser(targetUserId, viewerId) {
          LEFT JOIN wishlist_items wi ON wi.wishlist_id = w.id
          LEFT JOIN users u ON u.id = w.user_id
          WHERE w.user_id = $1
+         AND (w.user_id = $2 OR NOT users_are_blocked(w.user_id, $2))
          AND (
            w.user_id = $2
            OR w.visibility = 'public'
@@ -95,6 +97,7 @@ async function hasViewableWishlists(targetUserId, viewerId) {
         `SELECT EXISTS (
            SELECT 1 FROM wishlists w
            WHERE w.user_id = $1
+           AND (w.user_id = $2 OR NOT users_are_blocked(w.user_id, $2))
            AND (
              w.user_id = $2
              OR w.visibility = 'public'
@@ -109,6 +112,17 @@ async function hasViewableWishlists(targetUserId, viewerId) {
         [targetUserId, viewerId]
     );
     return result.rows[0]?.has_wishlists || false;
+}
+
+async function getOwnerId(wishlistId) {
+    const result = await query(
+        `SELECT user_id
+         FROM wishlists
+         WHERE id = $1
+         LIMIT 1`,
+        [wishlistId]
+    );
+    return result.rows[0]?.user_id || null;
 }
 
 /**
@@ -257,6 +271,7 @@ module.exports = {
     hasViewableWishlists,
     getById,
     getForViewing,
+    getOwnerId,
     create,
     update,
     remove,

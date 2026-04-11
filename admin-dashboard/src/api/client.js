@@ -154,6 +154,16 @@ export const getShelf = (shelfId) =>
 export const getShelfItems = (shelfId, params = {}) =>
   client.get(`/admin/shelves/${shelfId}/items`, { params });
 
+// Deletion requests
+export const getDeletionRequests = (params = {}) =>
+  client.get('/admin/deletion-requests', { params });
+
+export const approveDeletionRequest = (id, note = '') =>
+  client.post(`/admin/deletion-requests/${id}/approve`, { note });
+
+export const rejectDeletionRequest = (id, note = '') =>
+  client.post(`/admin/deletion-requests/${id}/reject`, { note });
+
 // Broadcast
 export const sendBroadcast = (payload) =>
   client.post('/admin/broadcast', payload);

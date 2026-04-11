@@ -395,7 +395,7 @@ async function listAuditLogs({
     `SELECT a.id, a.admin_id, a.action, a.target_user_id,
             a.metadata, a.ip_address, a.user_agent, a.created_at,
             admin_u.username as admin_username,
-            target_u.username as target_username
+            COALESCE(target_u.username, a.metadata->>'targetUsername') as target_username
      FROM admin_action_logs a
      LEFT JOIN users admin_u ON admin_u.id = a.admin_id
      LEFT JOIN users target_u ON target_u.id = a.target_user_id

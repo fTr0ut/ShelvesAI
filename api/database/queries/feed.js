@@ -304,6 +304,7 @@ async function getGlobalFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id != $1 -- Exclude self
     AND u.is_suspended = false -- Filter out suspended users
+    AND NOT users_are_blocked($1::uuid, a.user_id)
     AND (
       (a.shelf_id IS NOT NULL AND (
         s.visibility = 'public'
@@ -372,6 +373,7 @@ async function getAllFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN media cm ON cm.id = c.cover_media_id
     LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE (u.is_suspended = false OR a.user_id = $1) -- Filter suspended users except self
+    AND (a.user_id = $1 OR NOT users_are_blocked($1::uuid, a.user_id))
     AND (
       a.user_id = $1 -- Include self (all own events)
       OR
@@ -442,6 +444,7 @@ async function getFriendsFeed(userId, { limit = 20, offset = 0, type = null }) {
     LEFT JOIN user_manuals um ON um.id = a.manual_id
     WHERE a.user_id IN (SELECT friend_id FROM friend_ids) -- Friends only, no self
     AND u.is_suspended = false -- Filter out suspended users
+    AND NOT users_are_blocked($1::uuid, a.user_id)
     AND (
       -- Shelf-based events
       (a.shelf_id IS NOT NULL AND s.visibility IN ('public', 'friends'))

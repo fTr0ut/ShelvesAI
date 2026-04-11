@@ -14,7 +14,8 @@ async function getForUser(userId) {
      FROM friendships f
      JOIN users u_req ON u_req.id = f.requester_id
      JOIN users u_addr ON u_addr.id = f.addressee_id
-     WHERE f.requester_id = $1 OR f.addressee_id = $1
+     WHERE f.status IN ('pending', 'accepted')
+       AND (f.requester_id = $1 OR f.addressee_id = $1)
      ORDER BY f.updated_at DESC`,
         [userId]
     );
@@ -76,7 +77,7 @@ async function sendRequest(requesterId, addresseeId, message = null) {
  * Respond to a friend request (accept, reject, block)
  */
 async function respond(friendshipId, userId, action) {
-    if (!['accept', 'reject', 'block'].includes(action)) {
+    if (!['accept', 'reject'].includes(action)) {
         return { error: 'Invalid action' };
     }
 
@@ -95,7 +96,7 @@ async function respond(friendshipId, userId, action) {
         return { deleted: true };
     }
 
-    const status = action === 'accept' ? 'accepted' : 'blocked';
+    const status = 'accepted';
     const result = await query(
         `UPDATE friendships SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
         [status, friendshipId]

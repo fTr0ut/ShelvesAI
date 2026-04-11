@@ -7,6 +7,7 @@ jest.mock('../database/queries/feed', () => ({
 
 jest.mock('../database/queries/shelves', () => ({
   getForViewing: jest.fn(),
+  getOwnerIdForShelf: jest.fn(),
 }));
 
 jest.mock('../database/queries/friendships', () => ({
@@ -21,6 +22,10 @@ jest.mock('../database/queries/newsSeen', () => ({
   markNewsItemsSeen: jest.fn(),
 }));
 
+jest.mock('../utils/userBlockAccess', () => ({
+  ensureUsersNotBlocked: jest.fn(),
+}));
+
 jest.mock('../services/discovery/newsRecommendations', () => ({
   getNewsRecommendationsForUser: jest.fn().mockResolvedValue([]),
 }));
@@ -29,6 +34,7 @@ const { getFeed, getFeedEntryDetails } = require('../controllers/feedController'
 const feedQueries = require('../database/queries/feed');
 const shelvesQueries = require('../database/queries/shelves');
 const eventSocialQueries = require('../database/queries/eventSocial');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const { query } = require('../database/pg');
 
 function makeRes() {
@@ -76,6 +82,8 @@ describe('feedController manual cover privacy', () => {
     jest.clearAllMocks();
     feedQueries.getGlobalFeed.mockResolvedValue([makeManualAddedEvent()]);
     eventSocialQueries.getSocialSummaries.mockResolvedValue(new Map());
+    ensureUsersNotBlocked.mockResolvedValue(true);
+    shelvesQueries.getOwnerIdForShelf.mockResolvedValue('owner-1');
   });
 
   it.each([
@@ -231,5 +239,51 @@ describe('feedController manual cover privacy', () => {
     expect(manual.coverMediaPath).toBeNull();
     expect(manual.coverMediaUrl).toBeNull();
     expect(feedItem.itemId).toBeNull();
+  });
+
+  it('returns blocked 403 when owner feed override is block-restricted', async () => {
+    ensureUsersNotBlocked.mockResolvedValue(false);
+
+    const req = { user: { id: 'viewer-1' }, query: { ownerId: 'owner-1' } };
+    const res = makeRes();
+
+    await getFeed(req, res);
+
+    expect(ensureUsersNotBlocked).toHaveBeenCalledWith({
+      res,
+      viewerId: 'viewer-1',
+      targetUserId: 'owner-1',
+      error: 'You do not have permission to view this feed',
+    });
+    expect(feedQueries.getMyFeed).not.toHaveBeenCalled();
+  });
+
+  it('returns blocked 403 for blocked aggregate detail access before hydration', async () => {
+    ensureUsersNotBlocked.mockResolvedValue(false);
+    query.mockResolvedValueOnce({
+      rows: [{
+        id: 'agg-1',
+        event_type: 'item.added',
+        user_id: 'owner-1',
+        created_at: '2026-03-27T00:00:00.000Z',
+        last_activity_at: '2026-03-27T00:00:00.000Z',
+      }],
+    });
+
+    const req = {
+      user: { id: 'viewer-1' },
+      params: { shelfId: 'agg-1' },
+    };
+    const res = makeRes();
+
+    await getFeedEntryDetails(req, res);
+
+    expect(ensureUsersNotBlocked).toHaveBeenCalledWith({
+      res,
+      viewerId: 'viewer-1',
+      targetUserId: 'owner-1',
+      error: 'You do not have access to this feed entry',
+    });
+    expect(res.json).not.toHaveBeenCalled();
   });
 });

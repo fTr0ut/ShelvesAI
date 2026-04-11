@@ -14,6 +14,7 @@ const { resolveShelfType, getApiContainerKey } = require('../services/config/she
 const { resolveMediaUrl } = require('../services/mediaUrl');
 const { normalizeString: _normalizeString, normalizeStringArray, normalizeTags } = require("../utils/normalize");
 const { normalizeComparableId } = require('../utils/identity');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const { _helpers: shelfItemResponseHelpers } = require('../controllers/shelvesController');
 const logger = require('../logger');
 const {
@@ -1344,6 +1345,16 @@ router.get("/:collectableId/shelf-item", validateIntParam(['collectableId']), as
 
     if (!requestedOwnerId) {
       return res.status(400).json({ error: "Invalid ownerId" });
+    }
+
+    if (requestedOwnerId !== userId) {
+      const canAccess = await ensureUsersNotBlocked({
+        res,
+        viewerId: userId,
+        targetUserId: requestedOwnerId,
+        error: 'You cannot access this user',
+      });
+      if (!canAccess) return;
     }
 
     const resolution = await shelvesQueries.findLatestAccessibleCollectionItemByReference({

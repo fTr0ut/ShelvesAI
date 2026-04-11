@@ -655,6 +655,51 @@ CREATE INDEX idx_friendships_addressee ON friendships(addressee_id);
 CREATE INDEX idx_friendships_status ON friendships(status);
 
 -- ============================================
+-- USER BLOCKS
+-- ============================================
+CREATE TABLE user_blocks (
+    id SERIAL PRIMARY KEY,
+    blocker_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT user_blocks_unique_pair UNIQUE (blocker_id, blocked_id),
+    CONSTRAINT user_blocks_no_self_block CHECK (blocker_id <> blocked_id)
+);
+
+CREATE INDEX idx_user_blocks_blocker ON user_blocks(blocker_id);
+CREATE INDEX idx_user_blocks_blocked ON user_blocks(blocked_id);
+
+INSERT INTO user_blocks (blocker_id, blocked_id, created_at, updated_at)
+SELECT requester_id, addressee_id, created_at, updated_at
+FROM friendships
+WHERE status = 'blocked'
+ON CONFLICT (blocker_id, blocked_id) DO NOTHING;
+
+DELETE FROM friendships
+WHERE status = 'blocked';
+
+ALTER TABLE friendships
+    DROP CONSTRAINT IF EXISTS friendships_status_check;
+
+ALTER TABLE friendships
+    ADD CONSTRAINT friendships_status_check
+    CHECK (status IN ('pending', 'accepted'));
+
+CREATE OR REPLACE FUNCTION users_are_blocked(user1 UUID, user2 UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM user_blocks ub
+        WHERE (ub.blocker_id = user1 AND ub.blocked_id = user2)
+           OR (ub.blocker_id = user2 AND ub.blocked_id = user1)
+    );
+$$;
+
+-- ============================================
 -- EVENT AGGREGATES (Activity feed batches)
 -- ============================================
 CREATE TABLE event_aggregates (

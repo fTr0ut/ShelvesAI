@@ -20,6 +20,11 @@ async function canUserViewEvent(eventId, viewerId) {
        SELECT 1
        FROM target t
        WHERE
+         (
+           t.user_id = $2
+           OR NOT users_are_blocked(t.user_id, $2)
+         )
+         AND (
          t.user_id = $2
          OR (
            t.shelf_id IS NOT NULL
@@ -70,6 +75,7 @@ async function canUserViewEvent(eventId, viewerId) {
                )
            )
          )
+         )
      ) AS can_view`,
     [eventId, viewerId]
   );
@@ -107,8 +113,11 @@ async function toggleLike(eventId, userId) {
     }
 
     const countResult = await client.query(
-      'SELECT COUNT(*)::int AS like_count FROM event_likes WHERE event_id = $1',
-      [eventId]
+      `SELECT COUNT(*)::int AS like_count
+       FROM event_likes
+       WHERE event_id = $1
+         AND NOT users_are_blocked($2::uuid, user_id)`,
+      [eventId, userId]
     );
 
     return { liked, likeCount: countResult.rows[0]?.like_count || 0 };
@@ -143,7 +152,7 @@ async function addComment(eventId, userId, content) {
   };
 }
 
-async function getComments(eventId, { limit = 20, offset = 0 } = {}) {
+async function getComments(eventId, { limit = 20, offset = 0, viewerId = null } = {}) {
   const result = await query(
     `SELECT ec.id, ec.content, ec.created_at, ec.user_id,
             u.username, u.picture, pm.local_path as profile_media_path
@@ -151,14 +160,18 @@ async function getComments(eventId, { limit = 20, offset = 0 } = {}) {
      LEFT JOIN users u ON u.id = ec.user_id
      LEFT JOIN profile_media pm ON pm.id = u.profile_media_id
      WHERE ec.event_id = $1
+       AND ($4::uuid IS NULL OR NOT users_are_blocked($4::uuid, ec.user_id))
      ORDER BY ec.created_at DESC
      LIMIT $2 OFFSET $3`,
-    [eventId, limit, offset]
+    [eventId, limit, offset, viewerId]
   );
 
   const countResult = await query(
-    'SELECT COUNT(*)::int AS comment_count FROM event_comments WHERE event_id = $1',
-    [eventId]
+    `SELECT COUNT(*)::int AS comment_count
+     FROM event_comments
+     WHERE event_id = $1
+       AND ($2::uuid IS NULL OR NOT users_are_blocked($2::uuid, user_id))`,
+    [eventId, viewerId]
   );
 
   const comments = result.rows.map((row) => {
@@ -200,18 +213,21 @@ async function getSocialSummaries(eventIds, userId) {
         SELECT event_id, COUNT(*)::int AS like_count
         FROM event_likes
         WHERE event_id = ANY($1)
+          AND ($2::uuid IS NULL OR NOT users_are_blocked($2::uuid, user_id))
         GROUP BY event_id
      ),
      comment_counts AS (
         SELECT event_id, COUNT(*)::int AS comment_count
         FROM event_comments
         WHERE event_id = ANY($1)
+          AND ($2::uuid IS NULL OR NOT users_are_blocked($2::uuid, user_id))
         GROUP BY event_id
      ),
      top_comments AS (
         SELECT DISTINCT ON (event_id) event_id, id, user_id, content, created_at
         FROM event_comments
         WHERE event_id = ANY($1)
+          AND ($2::uuid IS NULL OR NOT users_are_blocked($2::uuid, user_id))
         ORDER BY event_id, created_at DESC
      ),
      user_likes AS (

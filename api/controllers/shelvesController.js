@@ -56,6 +56,7 @@ const {
   resolveGameShelfDefaultsForItem,
 } = require('../services/gameShelfDefaults');
 const visionResultCacheQueries = require('../database/queries/visionResultCache');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 const {
   DEFAULT_OCR_CONFIDENCE_THRESHOLD,
@@ -252,6 +253,17 @@ function formatShelfResponse(shelf) {
 
 function isSameUserId(a, b) {
   return isSameComparableId(a, b);
+}
+
+async function ensureShelfViewerNotBlocked(res, shelfId, viewerId) {
+  const ownerId = await shelvesQueries.getOwnerIdForShelf(shelfId);
+  if (!ownerId || isSameUserId(ownerId, viewerId)) return true;
+  return ensureUsersNotBlocked({
+    res,
+    viewerId,
+    targetUserId: ownerId,
+    error: 'You cannot access this shelf',
+  });
 }
 
 function formatShelfPhotoResponse(shelfRow) {
@@ -1482,6 +1494,9 @@ async function getShelf(req, res) {
     const shelfId = parseInt(req.params.shelfId, 10);
     if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
 
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
+
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
     const readOnly = !isSameUserId(shelf.ownerId, req.user.id);
@@ -1572,6 +1587,9 @@ async function getShelfPhoto(req, res) {
     const shelfId = parseInt(req.params.shelfId, 10);
     if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
 
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
+
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
 
@@ -1588,6 +1606,9 @@ async function getShelfPhotoImage(req, res) {
   try {
     const shelfId = parseInt(req.params.shelfId, 10);
     if (isNaN(shelfId)) return res.status(400).json({ error: 'Invalid shelf id' });
+
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
 
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
@@ -1665,6 +1686,9 @@ async function listShelfItems(req, res) {
   try {
     const shelfId = parseInt(req.params.shelfId, 10);
     if (isNaN(shelfId)) return res.status(400).json({ error: "Invalid shelf id" });
+
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
 
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: "Shelf not found" });
@@ -2641,6 +2665,9 @@ async function getShelfItemOwnerPhoto(req, res) {
       return res.status(400).json({ error: 'Invalid shelf or item id' });
     }
 
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
+
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
 
@@ -2689,6 +2716,9 @@ async function getShelfItemOwnerPhotoImage(req, res) {
     if (isNaN(shelfId) || isNaN(itemId)) {
       return res.status(400).json({ error: 'Invalid shelf or item id' });
     }
+
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
 
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: 'Shelf not found' });
@@ -2746,6 +2776,9 @@ async function getShelfItemOwnerPhotoThumbnail(req, res) {
     if (isNaN(shelfId) || isNaN(itemId)) {
       return res.status(400).json({ error: 'Invalid shelf or item id' });
     }
+
+    const canAccess = await ensureShelfViewerNotBlocked(res, shelfId, req.user.id);
+    if (!canAccess) return;
 
     const shelf = await shelvesQueries.getForViewing(shelfId, req.user.id);
     if (!shelf) return res.status(404).json({ error: 'Shelf not found' });

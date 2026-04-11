@@ -1,8 +1,10 @@
 const friendshipQueries = require('../database/queries/friendships');
 const notificationsQueries = require('../database/queries/notifications');
+const userBlocksQueries = require('../database/queries/userBlocks');
 const { query } = require('../database/pg');
 const { rowToCamelCase, parsePagination } = require('../database/queries/utils');
 const { resolveMediaUrl } = require('../services/mediaUrl');
+const { sendUserBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 function formatUser(user) {
@@ -43,6 +45,7 @@ async function searchUsers(req, res) {
          FROM users
          WHERE id != $1
          AND is_suspended = false
+         AND NOT users_are_blocked($1::uuid, id)
          AND (
            username ILIKE $2
            OR first_name ILIKE $2
@@ -63,6 +66,7 @@ async function searchUsers(req, res) {
          FROM users
          WHERE id != $2
          AND is_suspended = false
+         AND NOT users_are_blocked($2::uuid, id)
          AND (
            username % $1
            OR first_name % $1
@@ -85,10 +89,13 @@ async function searchUsers(req, res) {
     const candidateIds = usersResult.rows.map(u => u.id);
 
     // Get friendships for these users
-    const friendshipsResult = await query(
+      const friendshipsResult = await query(
       `SELECT * FROM friendships
-       WHERE (requester_id = $1 AND addressee_id = ANY($2))
-       OR (addressee_id = $1 AND requester_id = ANY($2))`,
+       WHERE status IN ('pending', 'accepted')
+         AND (
+           (requester_id = $1 AND addressee_id = ANY($2))
+           OR (addressee_id = $1 AND requester_id = ANY($2))
+         )`,
       [viewerId, candidateIds]
     );
 
@@ -115,7 +122,6 @@ async function searchUsers(req, res) {
         direction = role;
         if (doc.status === 'accepted') relation = 'friends';
         else if (doc.status === 'pending') relation = role === 'outgoing' ? 'outgoing' : 'incoming';
-        else if (doc.status === 'blocked') relation = 'blocked';
         else relation = doc.status;
       }
 
@@ -153,7 +159,8 @@ async function listFriendships(req, res) {
        LEFT JOIN profile_media pm_req ON pm_req.id = u_req.profile_media_id
        JOIN users u_addr ON u_addr.id = f.addressee_id
        LEFT JOIN profile_media pm_addr ON pm_addr.id = u_addr.profile_media_id
-       WHERE f.requester_id = $1 OR f.addressee_id = $1
+       WHERE f.status IN ('pending', 'accepted')
+         AND (f.requester_id = $1 OR f.addressee_id = $1)
        ORDER BY f.updated_at DESC
        LIMIT $2 OFFSET $3`,
       [req.user.id, limit, offset]
@@ -161,7 +168,8 @@ async function listFriendships(req, res) {
 
     const countResult = await query(
       `SELECT COUNT(*) as total FROM friendships 
-       WHERE requester_id = $1 OR addressee_id = $1`,
+       WHERE status IN ('pending', 'accepted')
+         AND (requester_id = $1 OR addressee_id = $1)`,
       [req.user.id]
     );
     const total = parseInt(countResult.rows[0].total);
@@ -218,6 +226,10 @@ async function sendFriendRequest(req, res) {
     const targetResult = await query('SELECT id FROM users WHERE id = $1 AND is_suspended = false', [targetUserId]);
     if (!targetResult.rows.length) {
       return res.status(403).json({ error: 'Unable to complete request' });
+    }
+
+    if (await userBlocksQueries.isBlockedEitherDirection(req.user.id, targetUserId)) {
+      return sendUserBlocked(res, 'You cannot interact with this user');
     }
 
     // Check for reverse request (they sent us one)
@@ -316,6 +328,25 @@ async function respondToRequest(req, res) {
       return res.status(400).json({ error: 'friendshipId and action are required' });
     }
 
+    const participantResult = await query(
+      `SELECT requester_id, addressee_id
+       FROM friendships
+       WHERE id = $1
+       LIMIT 1`,
+      [friendshipId]
+    );
+    const friendship = participantResult.rows[0];
+    if (!friendship) {
+      return res.status(404).json({ error: 'Friendship not found' });
+    }
+
+    const otherUserId = friendship.requester_id === req.user.id
+      ? friendship.addressee_id
+      : friendship.requester_id;
+    if (await userBlocksQueries.isBlockedEitherDirection(req.user.id, otherUserId)) {
+      return sendUserBlocked(res, 'You cannot interact with this user');
+    }
+
     const result = await friendshipQueries.respond(friendshipId, req.user.id, action);
 
     if (result.error) {
@@ -369,5 +400,81 @@ async function removeFriendship(req, res) {
   }
 }
 
-module.exports = { listFriendships, sendFriendRequest, respondToRequest, searchUsers, removeFriendship };
+async function blockUser(req, res) {
+  try {
+    const { targetUserId } = req.body ?? {};
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'targetUserId is required' });
+    }
+
+    const result = await userBlocksQueries.blockUser(req.user.id, targetUserId);
+    if (result?.error) {
+      const status = result.error === 'You cannot block yourself' ? 400 : 403;
+      return res.status(status).json({ error: result.error });
+    }
+
+    return res.status(201).json(result);
+  } catch (err) {
+    logger.error('blockUser error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function listBlockedUsers(req, res) {
+  try {
+    const { limit, offset } = parsePagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+    const result = await userBlocksQueries.listBlockedUsers(req.user.id, { limit, offset });
+
+    const blocks = result.blocks.map((item) => ({
+      ...item,
+      blockedUser: {
+        ...item.blockedUser,
+        profileMediaUrl: resolveMediaUrl(item.blockedUser?.profileMediaPath),
+      },
+    }));
+
+    return res.json({
+      blocks,
+      pagination: {
+        limit: result.limit,
+        skip: result.offset,
+        total: result.total,
+        hasMore: result.offset + blocks.length < result.total,
+      },
+    });
+  } catch (err) {
+    logger.error('listBlockedUsers error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function unblockUser(req, res) {
+  try {
+    const targetUserId = String(req.params.targetUserId || '').trim();
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'targetUserId is required' });
+    }
+
+    const removed = await userBlocksQueries.unblockUser(req.user.id, targetUserId);
+    if (!removed) {
+      return res.status(404).json({ error: 'Block not found' });
+    }
+
+    return res.json({ removed: true, block: removed });
+  } catch (err) {
+    logger.error('unblockUser error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+module.exports = {
+  listFriendships,
+  sendFriendRequest,
+  respondToRequest,
+  searchUsers,
+  removeFriendship,
+  blockUser,
+  listBlockedUsers,
+  unblockUser,
+};
 

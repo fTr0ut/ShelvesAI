@@ -51,19 +51,31 @@ async function getForViewing(listId, viewerId) {
          FROM user_lists ul
          JOIN users u ON u.id = ul.user_id
          WHERE ul.id = $1
+         AND (ul.user_id = $2 OR NOT users_are_blocked(ul.user_id, $2))
          AND (
              ul.user_id = $2
              OR ul.visibility = 'public'
              OR (ul.visibility = 'friends' AND EXISTS (
                  SELECT 1 FROM friendships 
                  WHERE status = 'accepted'
-                 AND ((sender_id = ul.user_id AND receiver_id = $2) 
-                      OR (sender_id = $2 AND receiver_id = ul.user_id))
+                 AND ((requester_id = ul.user_id AND addressee_id = $2) 
+                      OR (requester_id = $2 AND addressee_id = ul.user_id))
              ))
          )`,
         [listId, viewerId]
     );
     return result.rows[0] ? rowToCamelCase(result.rows[0]) : null;
+}
+
+async function getOwnerId(listId) {
+    const result = await query(
+        `SELECT user_id
+         FROM user_lists
+         WHERE id = $1
+         LIMIT 1`,
+        [listId]
+    );
+    return result.rows[0]?.user_id || null;
 }
 
 /**
@@ -295,6 +307,7 @@ module.exports = {
     listForUser,
     getById,
     getForViewing,
+    getOwnerId,
     create,
     update,
     remove,

@@ -253,6 +253,16 @@ export function useGlobalSearch(navigation) {
         handleChange(queryRef.current);
     }, [handleChange, selectedType]);
 
+    useEffect(() => {
+        const unsubscribe = navigation?.addListener?.('focus', () => {
+            searchCacheRef.current.clear();
+            if (queryRef.current.trim()) {
+                handleChange(queryRef.current);
+            }
+        });
+        return unsubscribe;
+    }, [handleChange, navigation]);
+
     return {
         query, results, loading, showResults, apiBase, searchMeta, resolving,
         selectedType,

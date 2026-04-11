@@ -11,6 +11,7 @@ import Jobs from './pages/Jobs';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
 import Broadcast from './pages/Broadcast';
+import DeletionRequests from './pages/DeletionRequests';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -53,6 +54,7 @@ function App() {
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/broadcast" element={<Broadcast />} />
+                <Route path="/deletion-requests" element={<DeletionRequests />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

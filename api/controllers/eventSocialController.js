@@ -2,7 +2,9 @@ const eventSocialQueries = require('../database/queries/eventSocial');
 const notificationsQueries = require('../database/queries/notifications');
 const friendshipQueries = require('../database/queries/friendships');
 const usersQueries = require('../database/queries/users');
+const userBlocksQueries = require('../database/queries/userBlocks');
 const { parsePagination } = require('../database/queries/utils');
+const { sendUserBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 /**
@@ -24,6 +26,15 @@ async function ensureEventAccessible(eventId, userId, res) {
   if (!exists) {
     res.status(404).json({ error: 'Feed entry not found' });
     return false;
+  }
+
+  const ownerId = await eventSocialQueries.getEventOwner(eventId);
+  if (ownerId && ownerId !== userId) {
+    const blocked = await userBlocksQueries.isBlockedEitherDirection(ownerId, userId);
+    if (blocked) {
+      sendUserBlocked(res, 'You do not have access to this feed entry');
+      return false;
+    }
   }
 
   const canView = await eventSocialQueries.canUserViewEvent(eventId, userId);
@@ -86,7 +97,7 @@ async function addComment(req, res) {
     if (!canAccess) return;
 
     const comment = await eventSocialQueries.addComment(eventId, req.user.id, content);
-    const { commentCount } = await eventSocialQueries.getComments(eventId, { limit: 1, offset: 0 });
+    const { commentCount } = await eventSocialQueries.getComments(eventId, { limit: 1, offset: 0, viewerId: req.user.id });
 
     let ownerId = null;
     try {
@@ -120,6 +131,13 @@ async function addComment(req, res) {
           if (mentionedUser.id === req.user.id) continue;
           if (mentionedUser.id === ownerId) continue;
           if (!friendIdSet.has(mentionedUser.id)) continue;
+
+          const blockedWithCommenter = await userBlocksQueries.isBlockedEitherDirection(req.user.id, mentionedUser.id);
+          if (blockedWithCommenter) continue;
+          if (ownerId) {
+            const blockedWithOwner = await userBlocksQueries.isBlockedEitherDirection(ownerId, mentionedUser.id);
+            if (blockedWithOwner) continue;
+          }
 
           const canView = await eventSocialQueries.canUserViewEvent(eventId, mentionedUser.id);
           if (!canView) continue;
@@ -157,7 +175,7 @@ async function getComments(req, res) {
     if (!canAccess) return;
 
     const { limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 100 });
-    const result = await eventSocialQueries.getComments(eventId, { limit, offset });
+    const result = await eventSocialQueries.getComments(eventId, { limit, offset, viewerId: req.user.id });
 
     res.json({
       comments: result.comments,

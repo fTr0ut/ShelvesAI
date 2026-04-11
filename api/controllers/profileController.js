@@ -10,6 +10,7 @@ const profileMediaQueries = require('../database/queries/profileMedia');
 const { rowToCamelCase } = require('../database/queries/utils');
 const { addMediaUrls } = require('../services/mediaUrl');
 const { validateImageBuffer } = require('../utils/imageValidation');
+const { ensureUsersNotBlocked } = require('../utils/userBlockAccess');
 const logger = require('../logger');
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -147,6 +148,18 @@ async function getPublicProfile(req, res) {
         const { username } = req.params;
         const viewerId = req.user?.id || null;
 
+        const candidate = await usersQueries.findByUsername(username);
+        if (!candidate) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId,
+            targetUserId: candidate.id,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
+
         const profile = await usersQueries.getPublicProfile(username, viewerId);
 
         if (!profile) {
@@ -173,6 +186,14 @@ async function getProfileShelves(req, res) {
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
+
+        const canAccess = await ensureUsersNotBlocked({
+            res,
+            viewerId,
+            targetUserId: user.id,
+            error: 'You cannot access this user',
+        });
+        if (!canAccess) return;
 
         // Check privacy
         if (user.is_private && viewerId !== user.id) {
