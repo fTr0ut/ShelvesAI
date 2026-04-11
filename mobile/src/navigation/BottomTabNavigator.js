@@ -291,7 +291,7 @@ export default function BottomTabNavigator() {
                     })}
                     options={{
                         ...(ENABLE_PROFILE_IN_TAB_BAR && {
-                            tabBarItemStyle: { flex: 1 },
+                            tabBarItemStyle: { flex: 1.35 },
                         }),
                         tabBarIcon: ({ color, size }) => (
                             <Ionicons name="home" size={size} color={color} />

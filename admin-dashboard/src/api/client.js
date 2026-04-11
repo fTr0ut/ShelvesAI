@@ -154,4 +154,17 @@ export const getShelf = (shelfId) =>
 export const getShelfItems = (shelfId, params = {}) =>
   client.get(`/admin/shelves/${shelfId}/items`, { params });
 
+// Broadcast
+export const sendBroadcast = (payload) =>
+  client.post('/admin/broadcast', payload);
+
+export const getBroadcasts = (params = {}) =>
+  client.get('/admin/broadcasts', { params });
+
+export const cancelBroadcast = (id) =>
+  client.post(`/admin/broadcasts/${id}/cancel`);
+
+export const suppressBroadcast = (id) =>
+  client.post(`/admin/broadcasts/${id}/suppress`);
+
 export default client;

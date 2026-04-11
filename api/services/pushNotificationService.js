@@ -1,6 +1,7 @@
 const Expo = require('expo-server-sdk').default;
 const pushDeviceTokens = require('../database/queries/pushDeviceTokens');
 const notificationPreferences = require('../database/queries/notificationPreferences');
+const broadcastLogs = require('../database/queries/broadcastLogs');
 const logger = require('../logger');
 
 const expo = new Expo();
@@ -163,6 +164,101 @@ async function processTickets(tickets, messages) {
 }
 
 /**
+ * Send a push notification to all active devices (broadcast).
+ * Bypasses per-user notification preferences.
+ * Checks for cancellation between each chunk so an in-progress send can be stopped.
+ *
+ * @param {Object} options
+ * @param {number} options.broadcastId - ID of the broadcast_logs row
+ * @param {string} options.title - Notification title
+ * @param {string} options.body - Notification body
+ * @param {Object} [options.metadata] - Additional metadata
+ */
+async function sendBroadcastNotification({ broadcastId, title, body, metadata = {} }) {
+    try {
+        await broadcastLogs.updateBroadcastLog(broadcastId, { status: 'running' });
+
+        const tokenRows = await pushDeviceTokens.getAllActiveTokens();
+        if (!tokenRows || tokenRows.length === 0) {
+            await broadcastLogs.updateBroadcastLog(broadcastId, {
+                status: 'completed',
+                totalTokens: 0,
+                successCount: 0,
+                errorCount: 0,
+            });
+            return { sent: true, totalTokens: 0, successCount: 0, errorCount: 0 };
+        }
+
+        const messages = [];
+        const invalidTokens = [];
+
+        for (const row of tokenRows) {
+            const pushToken = row.expoPushToken;
+            if (!Expo.isExpoPushToken(pushToken)) {
+                invalidTokens.push(pushToken);
+                continue;
+            }
+            messages.push({
+                to: pushToken,
+                sound: 'default',
+                title,
+                body,
+                data: {
+                    type: 'system_broadcast',
+                    broadcastId: String(broadcastId),
+                    metadata,
+                },
+            });
+        }
+
+        for (const token of invalidTokens) {
+            await pushDeviceTokens.deactivateToken(token);
+        }
+
+        const chunks = expo.chunkPushNotifications(messages);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const chunk of chunks) {
+            // Check for cancellation between each batch
+            const current = await broadcastLogs.getBroadcastStatus(broadcastId);
+            if (current && current.status === 'cancelled') {
+                logger.info(`Broadcast ${broadcastId} cancelled mid-send`);
+                await broadcastLogs.updateBroadcastLog(broadcastId, {
+                    totalTokens: messages.length,
+                    successCount,
+                    errorCount,
+                });
+                return { sent: false, reason: 'cancelled', successCount, errorCount };
+            }
+
+            try {
+                const tickets = await expo.sendPushNotificationsAsync(chunk);
+                const errors = await processTickets(tickets, chunk);
+                successCount += tickets.length - errors.length;
+                errorCount += errors.length;
+            } catch (err) {
+                logger.error('Error sending broadcast chunk:', err);
+                errorCount += chunk.length;
+            }
+        }
+
+        await broadcastLogs.updateBroadcastLog(broadcastId, {
+            status: 'completed',
+            totalTokens: messages.length,
+            successCount,
+            errorCount,
+        });
+
+        return { sent: true, totalTokens: messages.length, successCount, errorCount };
+    } catch (err) {
+        logger.error('sendBroadcastNotification error:', err);
+        await broadcastLogs.updateBroadcastLog(broadcastId, { status: 'completed', errorCount: 0 });
+        return { sent: false, reason: 'error', error: err.message };
+    }
+}
+
+/**
  * Validate an Expo push token format
  */
 function isValidExpoPushToken(token) {
@@ -171,6 +267,7 @@ function isValidExpoPushToken(token) {
 
 module.exports = {
     sendPushNotification,
+    sendBroadcastNotification,
     isValidExpoPushToken,
     buildPushContent,
 };

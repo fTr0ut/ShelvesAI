@@ -57,3 +57,11 @@ nul
 pgrewind
 pgrewind.js
 drop-db.js
+
+.expo/*
+*.expo*
+mobile/.expo/*
+*android/
+*ios/
+mobile/android
+*/android/*

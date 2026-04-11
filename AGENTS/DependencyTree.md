@@ -50,6 +50,20 @@ ShelvesAI/
 > **Mandate for all agents:** For every codebase change, append one entry here using `YYYY-MM-DD | area | summary`.
 > Include only concrete, merged-in-file impacts (routes/contracts/imports/tables/workflow behavior), not exploratory notes.
 
+- 2026-04-10 | admin-broadcast-system | Added full admin broadcast feature. New files: `api/database/migrations/20260410120000_create_broadcast_logs.js` (broadcast_logs table with status/is_suppressed), `api/database/queries/broadcastLogs.js` (createBroadcastLog, updateBroadcastLog, suppressBroadcast, getBroadcastStatus, listBroadcasts), `api/routes/adminBroadcast.js` (POST /api/admin/broadcast, GET /api/admin/broadcasts, POST /broadcasts/:id/cancel, POST /broadcasts/:id/suppress — all after CSRF), `api/routes/broadcasts.js` (GET /api/broadcasts/:id/status — public, no auth), `mobile/src/components/SystemBroadcastModal.js` (full-screen modal with suppress check on mount), `admin-dashboard/src/pages/Broadcast.jsx` (compose form + history table with cancel/recall actions). Modified: `api/database/queries/pushDeviceTokens.js` (+ getAllActiveTokens), `api/services/pushNotificationService.js` (+ sendBroadcastNotification with per-chunk cancel check, + broadcastLogs import), `api/routes/admin.js` (+ adminBroadcast router mounted after CSRF), `api/server.js` (+ /api/broadcasts route), `mobile/src/services/pushNotifications.js` (parseNotificationData now returns title, body, broadcastId), `mobile/src/context/PushContext.js` (+ broadcastMessage state, dismissBroadcast, system_broadcast handling in foreground listener and nav handler, renders SystemBroadcastModal), `admin-dashboard/src/api/client.js` (+ sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast), `admin-dashboard/src/App.jsx` (+ /broadcast route), `admin-dashboard/src/components/Sidebar.jsx` (+ Broadcast nav entry + BroadcastIcon).
+
+- 2026-04-10 | shelves-screen-create-fab-alignment | Updated `mobile/src/screens/ShelvesScreen.js` to remove the dashed inline/top-of-list `New Shelf` CTAs from browse layouts and replace them with the same green floating `Add` pill pattern used by `ShelfDetailScreen`. The shelves list now omits synthetic `special-create` entries, uses extra bottom content clearance for the floating button, and keeps shelf creation routed through `ShelfCreateScreen`.
+
+- 2026-04-10 | mobile-android-native-edge-to-edge-tab-root-cause | Root-caused the Android bottom-tab safe-area issue to runtime/config mismatch rather than a hidden second navigator override. Added `expo.android.edgeToEdgeEnabled=true` to `mobile/app.json`, restored production tab/onboarding/footer spacing code to live inset behavior by removing the same-day `bottomTabInsets` workaround, added missing `mobile/assets/notification-icon.png` so Android `expo prebuild` could run, and reran `expo prebuild --platform android --no-install`. Follow-up native investigation showed this Expo SDK 54 / RN 0.81 stack enables Android edge-to-edge through the generated RN feature-flag path (`BuildConfig.IS_EDGE_TO_EDGE_ENABLED` -> `ReactNativeApplicationEntryPoint` -> `ReactActivityDelegate.enableEdgeToEdge(window)`), not through a `Theme.EdgeToEdge` parent. `styles.xml` therefore remains on `Theme.AppCompat.DayNight.NoActionBar`; a manual `Theme.EdgeToEdge` switch was attempted, broke Android resource compilation, and was reverted. Important debugging note preserved below: Expo Go was misleading because processed Expo config previously omitted `android.edgeToEdgeEnabled`; future Android tab-spacing regressions must be validated in a native dev build first.
+
+- 2026-04-10 | mobile-android-bottom-tab-gesture-offset | Superseded later the same day by the native edge-to-edge root-cause fix; the temporary JS raised-tab workaround was removed.
+
+- 2026-04-10 | mobile-android-bottom-tab-safe-area-floor | Superseded later the same day by the native edge-to-edge root-cause fix; the temporary JS bottom-inset clamp workaround was removed.
+
+- 2026-04-10 | onboarding-config-driven-tour-and-shelf-tutorial | Retrofitted `OnboardingUITourScreen` into the JSON-driven onboarding framework: all text (screenTitle, screenSubtitle, step titles/bodies, button labels) now sourced from `api/config/onboardingScreen.json` under new `uiTour` key; screen wrapped in `OnboardingConfigGate section="uiTour"`; last step navigates to new `OnboardingNewShelfTutorial` instead of calling `setNeedsOnboarding`. Added `mobile/src/screens/OnboardingNewShelfTutorialScreen.js` (styled like OnboardingPagerScreen, config-driven from `newShelfTutorial` JSON section) as the final onboarding step; on tap calls `setNeedsOnboarding(false)` + resets navigation to `[Main, ShelfCreateScreen]`. Both screens registered in `App.js` onboarding stack with `gestureEnabled: false`. `api/config/onboardingScreen.json` gains `uiTour` and `newShelfTutorial` sections.
+
+- 2026-04-10 | onboarding-ui-tour | Added `mobile/src/screens/OnboardingUITourScreen.js` as the final onboarding step. Shows a mock BottomTabNavigator with spotlight + tooltip walkthrough for Profile, Home, Add (FAB), and Shelves tabs. `OnboardingProfileOptionalScreen.completeOnboarding()` now navigates to `OnboardingUITour` instead of calling `setNeedsOnboarding(false)` directly; the tour screen calls `setNeedsOnboarding(false)` when the user taps "Let's Go!". Registered in `App.js` onboarding stack with `gestureEnabled: false`.
+
 - 2026-04-10 | collectable-detail-social-ownership-hydration | Hardened SocialFeed/Profile/FeedDetail navigation into `CollectableDetailScreen` so feed-origin detail params now carry `ownerUsername` alongside `ownerId`, and the detail screen normalizes owner/viewer ids before deciding owned vs foreign context. The lightweight shelf-context lookup now hydrates full matched shelf items from `/api/shelves/:shelfId/items` for both collectables and manuals instead of only when `userDetails` exists. Backend `GET /api/collectables/:collectableId/shelf-item` and `GET /api/manuals/:manualId/shelf-item` now resolve the latest viewable foreign-owner copy directly in SQL, preventing a newer private copy from masking an older public/friends-visible one.
 
 - 2026-04-10 | shelf-controller-owner-id-normalization | Fixed shelf ownership classification in `api/controllers/shelvesController.js` by normalizing `shelf.ownerId` and `req.user.id` before owner/read-only checks. This prevents owned shelf item hydration from falling into the foreign-view path when auth ids arrive as strings, which was stripping owner-only detail data from `GET /api/shelves/:shelfId/items` for users opening their own items from SocialFeed-origin detail routes.
@@ -407,6 +421,7 @@ api/server.js
   -> api/routes/discover.js
   -> api/routes/push.js
   -> api/routes/admin.js
+  -> api/routes/broadcasts.js
   -> api/routes/manuals.js
   -> api/routes/waitlist.js
   -> api/routes/share.js
@@ -768,6 +783,7 @@ routes/admin.js
   -> middleware/admin.js
   -> middleware/csrf.js
   -> middleware/validate.js
+  -> routes/adminBroadcast.js
   Routes (read, before CSRF):
     GET  /stats, /stats/detailed, /users, /feed/recent, /jobs, /jobs/:jobId
     GET  /workfeed, /workfeed/:jobId
@@ -777,6 +793,22 @@ routes/admin.js
     PUT  /settings/:key, /users/:userId/vision-quota
     POST /users/:userId/suspend, /unsuspend, /toggle-admin, /toggle-premium, /toggle-unlimited-vision
     POST /users/:userId/vision-quota/reset
+    POST /broadcast, /broadcasts/:id/cancel, /broadcasts/:id/suppress (via adminBroadcast.js)
+    GET  /broadcasts (via adminBroadcast.js)
+
+routes/adminBroadcast.js
+  -> database/queries/broadcastLogs.js
+  -> services/pushNotificationService.js
+  Routes (all after CSRF, mounted via admin.js):
+    POST /api/admin/broadcast          — send broadcast to all active devices
+    GET  /api/admin/broadcasts         — paginated broadcast history
+    POST /api/admin/broadcasts/:id/cancel   — stop in-progress send
+    POST /api/admin/broadcasts/:id/suppress — recall (hide in-app modal)
+
+routes/broadcasts.js
+  -> database/queries/broadcastLogs.js
+  Routes (public, no auth required):
+    GET /api/broadcasts/:id/status — returns { isSuppressed } for mobile suppress check
 
 controllers/adminController.js
   -> database/queries/admin.js
@@ -1052,7 +1084,12 @@ services/emailService.js
   (uses resend)
 
 services/pushNotificationService.js
-  (no internal imports â€” uses expo-server-sdk)
+  -> database/queries/pushDeviceTokens.js
+  -> database/queries/broadcastLogs.js
+  -> database/queries/notificationPreferences.js
+  -> logger.js
+  (uses expo-server-sdk)
+  Exports: sendPushNotification, sendBroadcastNotification, isValidExpoPushToken, buildPushContent
 
 services/s3.js
   -> services/outboundLimiterRegistry.js
@@ -1207,6 +1244,9 @@ database/queries/profileMedia.js -> database/pg.js, services/s3.js
 database/queries/passwordReset.js -> database/pg.js
 database/queries/visionQuota.js -> database/pg.js, services/config/SystemSettingsCache.js (lazy, for getMonthlyQuotaAsync)
 database/queries/pushDeviceTokens.js -> database/pg.js, database/queries/utils.js
+  Exports: registerToken, getTokensForUser, getAllActiveTokens, deactivateToken, removeToken, removeAllTokensForUser, touchToken
+database/queries/broadcastLogs.js -> database/pg.js, database/queries/utils.js
+  Exports: createBroadcastLog, updateBroadcastLog, suppressBroadcast, getBroadcastStatus, listBroadcasts
 database/queries/notificationPreferences.js -> database/pg.js, database/queries/utils.js
 database/queries/workflowQueueJobs.js -> database/pg.js, database/queries/utils.js
 database/queries/systemSettings.js -> database/pg.js, database/queries/utils.js
@@ -1288,6 +1328,8 @@ mobile/app.json
   -> assets/icon.png
   -> assets/splash.png
   -> Android adaptive icon foreground: assets/logo-android.png
+  -> Android notifications icon: assets/notification-icon.png
+  -> Android edge-to-edge enabled via `expo.android.edgeToEdgeEnabled=true`
   -> Android app-link intent filters for `https://shelvesai.com/app/*` and `/reset-password`
 
 mobile/android/app/src/main/AndroidManifest.xml
@@ -1295,8 +1337,14 @@ mobile/android/app/src/main/AndroidManifest.xml
   -> HTTPS and custom-scheme deep link intent filters
   -> Expo updates disabled in native Android manifest metadata
 
+mobile/android/app/src/main/res/values/styles.xml
+  -> `AppTheme` remains `Theme.AppCompat.DayNight.NoActionBar`; Android edge-to-edge in this Expo SDK 54 / RN 0.81 project is driven by the generated RN feature flag path, not by swapping the app theme parent
+
 mobile/ios/ShelvesAI/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
   -> sourced from website/public/logo-v2.png
+
+Android bottom-tab safe-area debugging note:
+  Expo Go is not authoritative when processed app config omits `android.edgeToEdgeEnabled`. Validate Android bottom-tab/system-gesture spacing in a native dev build first. In this repo, native edge-to-edge should be verified through the generated RN path (`BuildConfig.IS_EDGE_TO_EDGE_ENABLED` -> `ReactNativeApplicationEntryPoint` -> `ReactActivityDelegate.enableEdgeToEdge(window)`), not by assuming `styles.xml` should switch to `Theme.EdgeToEdge`. If only Expo Go reproduces the issue after native edge-to-edge is configured, treat it as host-runtime divergence rather than proof that production tab layout is wrong.
 ```
 
 ### Context Providers
@@ -1315,6 +1363,8 @@ context/ToastContext.js
 context/PushContext.js
   -> services/pushNotifications.js
   -> context/AuthContext.js
+  -> components/SystemBroadcastModal.js
+  Handles: system_broadcast foreground notifications, broadcast modal state (broadcastMessage, dismissBroadcast)
 ```
 
 ### Navigation
@@ -1357,6 +1407,7 @@ services/newsApi.js
 
 services/pushNotifications.js
   -> services/api.js
+  parseNotificationData() returns: type, entityId, entityType, notificationId, metadata, broadcastId, title, body
 
 services/imageUpload.js
   -> expo-image-manipulator
@@ -1404,6 +1455,12 @@ components/Toast.js
 
 components/VisionProcessingModal.js
   -> context/ThemeContext.js
+
+components/SystemBroadcastModal.js
+  -> context/ThemeContext.js
+  -> context/AuthContext.js
+  -> services/api.js
+  On mount: checks GET /api/broadcasts/:broadcastId/status — auto-dismisses if isSuppressed
 
 components/ShelfVisionModal.js
   (no internal imports)
@@ -1493,6 +1550,8 @@ components/news/QuickCheckInModal.js
 | UsernameSetupScreen | AuthContext, ThemeContext, api |
 | OnboardingProfileRequiredScreen | AuthContext, ThemeContext |
 | OnboardingProfileOptionalScreen | AuthContext, ThemeContext, api, imageUpload |
+| OnboardingUITourScreen | AuthContext, ThemeContext, OnboardingConfigGate |
+| OnboardingNewShelfTutorialScreen | AuthContext, ThemeContext, OnboardingConfigGate |
 | SocialFeedScreen | ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), news/NewsFeed, news/NewsSection, news/QuickCheckInModal, AuthContext, ThemeContext, api, feedApi, newsApi, coverUrl, feedAddedEvent, navigation/useBottomFooterLayout |
 | FeedDetailScreen | AuthContext, ThemeContext, api, feedApi, coverUrl, feedAddedEvent |
 | ShelvesScreen | ui/CategoryIcon, ui/AccountSlideMenu, ui/GlobalSearchBar (useGlobalSearch, GlobalSearchInput, GlobalSearchOverlay), AuthContext, ThemeContext, api, navigation/useBottomFooterLayout |
@@ -1628,6 +1687,7 @@ src/App.jsx
   -> src/pages/Jobs.jsx
   -> src/pages/AuditLog.jsx
   -> src/pages/Settings.jsx
+  -> src/pages/Broadcast.jsx
 ```
 
 ### Context
@@ -1641,13 +1701,14 @@ src/context/AuthContext.jsx
 
 ```
 src/api/client.js
-  (no internal imports â€” leaf node, uses axios)
+  (no internal imports — leaf node, uses axios)
   Exports: login, getMe, logout, getStats, getDetailedStats, getSystemInfo,
     getUsers, getUser, suspendUser, unsuspendUser, toggleAdmin, togglePremium,
     getUserVisionQuota, resetUserVisionQuota, setUserVisionQuota,
     getRecentFeed, getJobs, getJob, getAuditLogs,
     getSettings, updateSetting,
-    getShelves, getShelf, getShelfItems
+    getShelves, getShelf, getShelfItems,
+    sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast
 ```
 
 ### Pages
@@ -1697,6 +1758,10 @@ src/pages/AuditLog.jsx
 src/pages/Settings.jsx
   -> src/context/AuthContext.jsx (useAuth)
   -> src/api/client.js (getSettings, updateSetting)
+  -> src/utils/errorUtils.js
+
+src/pages/Broadcast.jsx
+  -> src/api/client.js (sendBroadcast, getBroadcasts, cancelBroadcast, suppressBroadcast)
   -> src/utils/errorUtils.js
 ```
 

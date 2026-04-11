@@ -30,6 +30,7 @@
         "foregroundImage": "./assets/logo-android.png",
         "backgroundColor": "#F4F1EA"
       },
+      "edgeToEdgeEnabled": true,
       "package": "com.shelvesai.app",
       "softwareKeyboardLayoutMode": "resize",
       "intentFilters": [

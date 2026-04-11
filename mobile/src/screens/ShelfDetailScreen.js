@@ -380,7 +380,7 @@ export default function ShelfDetailScreen({ route, navigation }) {
     const isReadOnly = !!(readOnlyParam || (shelf?.ownerId && user?.id && shelf.ownerId !== user.id));
     const { contentBottomPadding, floatingBottomOffset } = useBottomFooterLayout();
     const detailContentBottomPadding = contentBottomPadding(spacing.xl + spacing.lg);
-    const detailFabBottomOffset = floatingBottomOffset(spacing.md);
+    const detailFabBottomOffset = floatingBottomOffset(spacing.md - 40);
 
     useEffect(() => {
         return () => {

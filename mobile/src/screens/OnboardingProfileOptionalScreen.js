@@ -112,14 +112,8 @@ export default function OnboardingProfileOptionalScreen({ navigation }) {
         if (result?.user) {
             setUser(result.user);
         }
-        setNeedsOnboarding(false);
-        setTimeout(() => {
-            navigation.reset({
-                index: 1,
-                routes: [{ name: 'Main' }, { name: 'ShelfCreateScreen' }],
-            });
-        }, 0);
-    }, [apiBase, navigation, onboardingConfig?.terms?.version, setNeedsOnboarding, setUser, token]);
+        navigation.navigate('OnboardingUITour');
+    }, [apiBase, navigation, onboardingConfig?.terms?.version, setUser, token]);
 
     const requireTermsAcceptance = useCallback(() => {
         if (termsAccepted) {

@@ -282,11 +282,10 @@ export default function ShelvesScreen({ navigation }) {
                     bannerData.push({ id: `header-banner-${type}`, isHeader: true, layout: 'banner', title: type.toUpperCase() });
                     grouped[type].forEach(shelf => bannerData.push({ ...shelf, layout: 'banner' }));
                 });
-                
-                bannerData.push({ id: 'create-shelf', type: 'special-create', name: 'New Shelf', layout: 'banner' });
+
                 return bannerData;
             }
-            return [...shelves, { id: 'create-shelf', type: 'special-create', name: 'New Shelf' }];
+            return shelves;
         }
 
         const matchingShelves = searchResults.filter(r => r.resultType === 'shelf');
@@ -311,11 +310,6 @@ export default function ShelvesScreen({ navigation }) {
         return finalData;
     }, [debouncedSearchQuery, shelves, searchResults, isSearchingItems, viewMode]);
 
-    const showTopCreateShelfButton = useMemo(
-        () => totalShelves > 6 && !searchQuery.trim(),
-        [totalShelves, searchQuery]
-    );
-
     const sortSelectionLabel = useMemo(() => {
         const field = SHELF_SORT_OPTIONS.find((option) => option.key === sortBy)?.label || 'Date Created';
         const dir = SHELF_SORT_DIRECTIONS.find((option) => option.key === sortDir)?.label || 'Descending';
@@ -324,16 +318,13 @@ export default function ShelvesScreen({ navigation }) {
 
 
     const styles = useMemo(() => createStyles({ colors, spacing, typography, shadows, radius }), [colors, spacing, typography, shadows, radius]);
-    const { contentBottomPadding } = useBottomFooterLayout();
-    const shelvesListBottomPadding = contentBottomPadding(spacing.md);
+    const { contentBottomPadding, floatingBottomOffset } = useBottomFooterLayout();
+    const shelvesListBottomPadding = contentBottomPadding(spacing.xl + spacing.lg);
+    const shelvesFabBottomOffset = floatingBottomOffset(spacing.md - 40);
 
     const handleOpenShelf = (shelf) => {
-        if (shelf.type === 'special-create') {
-            navigation.navigate('ShelfCreateScreen');
-        } else {
-            const shelfId = shelf.isGlobalResult ? (shelf.shelfId || shelf.originalId) : shelf.id;
-            navigation.navigate('ShelfDetail', { id: shelfId, title: shelf.name || shelf.title });
-        }
+        const shelfId = shelf.isGlobalResult ? (shelf.shelfId || shelf.originalId) : shelf.id;
+        navigation.navigate('ShelfDetail', { id: shelfId, title: shelf.name || shelf.title });
     };
 
     const handleOpenItem = (item) => {
@@ -415,22 +406,6 @@ export default function ShelvesScreen({ navigation }) {
     }, [buildShelfPhotoSource, styles]);
 
     const renderGridItem = ({ item }) => {
-        if (item.type === 'special-create') {
-            return (
-                <TouchableOpacity
-                    style={[styles.gridCard, styles.createCard]}
-                    onPress={() => handleOpenShelf(item)}
-                    activeOpacity={0.8}
-                >
-                    <View style={styles.createIconBox}>
-                        <Ionicons name="add" size={32} color={colors.primary} />
-                    </View>
-                    <Text style={styles.createTitle}>New Shelf</Text>
-                    <Text style={styles.createMeta}>Create collection</Text>
-                </TouchableOpacity>
-            );
-        }
-
         return (
             <TouchableOpacity
                 style={styles.gridCard}
@@ -456,24 +431,6 @@ export default function ShelvesScreen({ navigation }) {
         }
         if (item.isEmpty) {
             return renderEmpty();
-        }
-        if (item.type === 'special-create') {
-            return (
-                <TouchableOpacity
-                    style={[styles.listCard, styles.createCard]}
-                    onPress={() => handleOpenShelf(item)}
-                    activeOpacity={0.8}
-                >
-                    <View style={styles.createIconBoxList}>
-                        <Ionicons name="add" size={24} color={colors.primary} />
-                    </View>
-                    <View style={styles.listContent}>
-                        <Text style={styles.createTitleList}>New Shelf</Text>
-                        <Text style={styles.createMetaList}>Create a new collection</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                </TouchableOpacity>
-            );
         }
 
         const getResultItemImageUri = (item) => {
@@ -594,28 +551,6 @@ export default function ShelvesScreen({ navigation }) {
     const { width: windowWidth } = Dimensions.get('window');
 
     const renderSwipeItem = ({ item }) => {
-        if (item.type === 'special-create') {
-            return (
-                <View style={{ width: windowWidth, padding: spacing.md }}>
-                    <TouchableOpacity
-                        style={[styles.swipeCardItem, styles.createCard, { backgroundColor: colors.surface }]}
-                        onPress={() => handleOpenShelf(item)}
-                        activeOpacity={0.8}
-                    >
-                        <View style={styles.createIconBox}>
-                            <Ionicons name="add" size={48} color={colors.primary} />
-                        </View>
-                        <Text style={[styles.createTitle, { fontSize: 20, marginTop: spacing.md }]}>New Shelf</Text>
-                        <Text style={styles.createMeta}>Create a new collection</Text>
-                    </TouchableOpacity>
-                    <View style={styles.swipeHintContainer}>
-                        <Ionicons name="swap-horizontal" size={16} color={colors.textMuted} style={{ marginRight: 6 }} />
-                        <Text style={styles.swipeHint}>Swipe left or right to browse shelves</Text>
-                    </View>
-                </View>
-            );
-        }
-
         const shelfPhotoSource = buildShelfPhotoSource(item);
 
         return (
@@ -681,23 +616,6 @@ export default function ShelvesScreen({ navigation }) {
                 <View key={i} style={[styles.skeleton, viewMode === 'tile' ? styles.skeletonGrid : styles.skeletonList]} />
             ))}
         </View>
-    );
-
-    const renderTopCreateShelf = () => (
-        <TouchableOpacity
-            style={styles.topCreateButton}
-            onPress={() => navigation.navigate('ShelfCreateScreen')}
-            activeOpacity={0.8}
-        >
-            <View style={styles.topCreateIcon}>
-                <Ionicons name="add" size={22} color={colors.primary} />
-            </View>
-            <View style={styles.topCreateContent}>
-                <Text style={styles.topCreateTitle}>New Shelf</Text>
-                <Text style={styles.topCreateMeta}>Create a new collection</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </TouchableOpacity>
     );
 
     const handleEndReached = () => {
@@ -817,7 +735,6 @@ export default function ShelvesScreen({ navigation }) {
                                 ? [styles.swipeListContainer, { paddingBottom: shelvesListBottomPadding }]
                                 : [styles.listContainer, { paddingBottom: shelvesListBottomPadding }]
                         }
-                        ListHeaderComponent={(showTopCreateShelfButton && viewMode !== 'swipe') ? renderTopCreateShelf : null}
                         columnWrapperStyle={(!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'tile') ? styles.gridRow : undefined}
                         horizontal={!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe'}
                         pagingEnabled={!isSearchingItems && debouncedSearchQuery.trim().length < 2 && viewMode === 'swipe'}
@@ -841,6 +758,14 @@ export default function ShelvesScreen({ navigation }) {
                         ListEmptyComponent={renderEmpty}
                     />
                 )}
+
+                <TouchableOpacity
+                    style={[styles.fab, { bottom: shelvesFabBottomOffset }]}
+                    onPress={() => navigation.navigate('ShelfCreateScreen')}
+                    activeOpacity={0.9}
+                >
+                    <Text style={styles.fabText}>Add</Text>
+                </TouchableOpacity>
 
                 <GlobalSearchOverlay search={search} />
             </View>
@@ -1065,43 +990,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         padding: spacing.md,
         paddingTop: 0,
     },
-    topCreateButton: {
-        width: '100%',
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: colors.surface,
-        borderRadius: radius.lg,
-        padding: spacing.md,
-        marginBottom: spacing.md,
-        borderStyle: 'dashed',
-        borderWidth: 1,
-        borderColor: colors.border,
-        ...shadows.sm,
-    },
-    topCreateIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: radius.md,
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: colors.border,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: spacing.md,
-    },
-    topCreateContent: {
-        flex: 1,
-    },
-    topCreateTitle: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: colors.primary,
-    },
-    topCreateMeta: {
-        fontSize: 13,
-        color: colors.textMuted,
-        marginTop: 2,
-    },
     gridRow: {
         justifyContent: 'space-between',
     },
@@ -1113,14 +1001,6 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginBottom: spacing.md,
         ...shadows.sm,
     },
-    createCard: {
-        borderStyle: 'dashed',
-        borderWidth: 2,
-        borderColor: colors.border,
-        backgroundColor: 'transparent',
-        shadowOpacity: 0,
-        elevation: 0,
-    },
     gridIconBox: {
         width: 48,
         height: 48,
@@ -1131,57 +1011,15 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         marginBottom: spacing.sm,
         overflow: 'hidden',
     },
-    createIconBox: {
-        width: 48,
-        height: 48,
-        borderRadius: radius.md,
-        backgroundColor: colors.surface,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: spacing.sm,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
-    createIconBoxList: {
-        width: 44,
-        height: 44,
-        borderRadius: radius.md,
-        backgroundColor: colors.surface,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: spacing.md,
-        borderWidth: 1,
-        borderColor: colors.border,
-    },
     gridTitle: {
         fontSize: 15,
         fontWeight: '600',
         color: colors.text,
         marginBottom: 4,
     },
-    createTitle: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: colors.primary,
-        marginBottom: 4,
-    },
-    createTitleList: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: colors.primary,
-    },
     gridMeta: {
         fontSize: 12,
         color: colors.textMuted,
-    },
-    createMeta: {
-        fontSize: 12,
-        color: colors.textMuted,
-    },
-    createMetaList: {
-        fontSize: 13,
-        color: colors.textMuted,
-        marginTop: 2,
     },
     listCard: {
         flexDirection: 'row',
@@ -1342,6 +1180,23 @@ const createStyles = ({ colors, spacing, typography, shadows, radius }) => Style
         fontSize: 14,
         color: colors.textMuted,
         fontWeight: '500',
+    },
+    fab: {
+        position: 'absolute',
+        right: spacing.md,
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: radius.full,
+        backgroundColor: colors.success,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...shadows.lg,
+    },
+    fabText: {
+        color: colors.textInverted,
+        fontSize: 16,
+        fontWeight: '600',
+        fontFamily: typography.semibold,
     },
     // Unmatched Entry
     unmatchedEntry: {

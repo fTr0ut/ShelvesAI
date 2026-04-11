@@ -30,6 +30,8 @@ import UsernameSetupScreen from './screens/UsernameSetupScreen'
 import OnboardingPagerScreen from './screens/OnboardingPagerScreen'
 import OnboardingProfileRequiredScreen from './screens/OnboardingProfileRequiredScreen'
 import OnboardingProfileOptionalScreen from './screens/OnboardingProfileOptionalScreen'
+import OnboardingUITourScreen from './screens/OnboardingUITourScreen'
+import OnboardingNewShelfTutorialScreen from './screens/OnboardingNewShelfTutorialScreen'
 import CollectableDetailScreen from './screens/CollectableDetailScreen'
 import ItemDetailsScreen from './screens/ItemDetailsScreen'
 import MarketValueSourcesScreen from './screens/MarketValueSourcesScreen'
@@ -430,6 +432,8 @@ function AppNavigator({ token, needsOnboarding, navigationRef }) {
             <Stack.Screen name="UsernameSetup" component={UsernameSetupScreen} />
             <Stack.Screen name="OnboardingProfileRequired" component={OnboardingProfileRequiredScreen} />
             <Stack.Screen name="OnboardingProfileOptional" component={OnboardingProfileOptionalScreen} />
+            <Stack.Screen name="OnboardingUITour" component={OnboardingUITourScreen} options={{ gestureEnabled: false }} />
+            <Stack.Screen name="OnboardingNewShelfTutorial" component={OnboardingNewShelfTutorialScreen} options={{ gestureEnabled: false }} />
           </>
         ) : (
           <>

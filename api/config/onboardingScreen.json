@@ -83,5 +83,52 @@
     "errorShort": "Username must be at least 3 characters",
     "buttonLabel": "Continue",
     "loadingLabel": "Setting up..."
+  },
+  "uiTour": {
+    "screenTitle": "Here's how to get around",
+    "screenSubtitle": "A quick tour of your navigation",
+    "nextButtonLabel": "Next",
+    "doneButtonLabel": "Let's Go!",
+    "steps": [
+      {
+        "key": "profile",
+        "icon": "person-circle-outline",
+        "label": "Profile",
+        "isFab": false,
+        "title": "Your Profile",
+        "body": "View your collection stats, manage account settings, and connect with friends — all from here."
+      },
+      {
+        "key": "home",
+        "icon": "home",
+        "label": "Home",
+        "isFab": false,
+        "title": "Your Feed",
+        "body": "See what friends are collecting and checking in. Discover new items from people you follow."
+      },
+      {
+        "key": "add",
+        "icon": "add",
+        "label": null,
+        "isFab": true,
+        "title": "Quick Actions",
+        "body": "Tap + to add items to a shelf, check in to a spot, or search for new friends."
+      },
+      {
+        "key": "shelves",
+        "icon": "library",
+        "label": "Shelves",
+        "isFab": false,
+        "title": "Your Collection",
+        "body": "Browse and manage your shelves. Scan new items, view your collection, and edit details."
+      }
+    ]
+  },
+  "newShelfTutorial": {
+    "icon": "albums-outline",
+    "title": "Create Your First Shelf",
+    "subtitle": "Let's get your collection started",
+    "body": "It's time to create your first shelf! Give it a name, select the type of items or collectibles you'll track on it, and then set the visibility settings. Then, when you're ready, take a photo of your collection and try it out!",
+    "buttonLabel": "Create My First Shelf"
   }
 }

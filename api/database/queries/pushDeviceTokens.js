@@ -131,6 +131,16 @@ async function removeAllTokensForUser(userId) {
 }
 
 /**
+ * Get all active push tokens across all users (for broadcast sends)
+ */
+async function getAllActiveTokens() {
+    const result = await query(
+        `SELECT expo_push_token FROM push_device_tokens WHERE is_active = true`
+    );
+    return result.rows.map(rowToCamelCase);
+}
+
+/**
  * Update last_used_at timestamp for a token
  */
 async function touchToken(expoPushToken) {
@@ -145,6 +155,7 @@ async function touchToken(expoPushToken) {
 module.exports = {
     registerToken,
     getTokensForUser,
+    getAllActiveTokens,
     deactivateToken,
     removeToken,
     removeAllTokensForUser,

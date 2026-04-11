@@ -11,6 +11,7 @@ import {
   setBadgeCount,
 } from '../services/pushNotifications'
 import { AuthContext } from './AuthContext'
+import SystemBroadcastModal from '../components/SystemBroadcastModal'
 
 const PUSH_TOKEN_KEY = 'expoPushToken'
 
@@ -19,12 +20,15 @@ export const PushContext = createContext({
   isRegistered: false,
   registerPush: () => {},
   unregisterPush: () => {},
+  broadcastMessage: null,
+  dismissBroadcast: () => {},
 })
 
 export function PushProvider({ children, navigationRef }) {
   const { token, apiBase, user } = useContext(AuthContext)
   const [expoPushToken, setExpoPushToken] = useState(null)
   const [isRegistered, setIsRegistered] = useState(false)
+  const [broadcastMessage, setBroadcastMessage] = useState(null)
 
   const notificationListener = useRef()
   const responseListener = useRef()
@@ -34,10 +38,19 @@ export function PushProvider({ children, navigationRef }) {
   /**
    * Handle navigation based on notification data
    */
-  const handleNotificationNavigation = useCallback((data) => {
-    if (!navigationRef?.current || !data) return
+  const dismissBroadcast = useCallback(() => setBroadcastMessage(null), [])
 
-    const { type, entityId, entityType, metadata } = data
+  const handleNotificationNavigation = useCallback((data) => {
+    if (!data) return
+
+    const { type, entityId, entityType, metadata, title, body, broadcastId } = data
+
+    if (type === 'system_broadcast') {
+      setBroadcastMessage({ title, body, broadcastId })
+      return
+    }
+
+    if (!navigationRef?.current) return
 
     // Navigate based on notification type
     if (type === 'like' || type === 'comment' || type === 'mention') {
@@ -56,7 +69,7 @@ export function PushProvider({ children, navigationRef }) {
         navigationRef.current.navigate('Main', { screen: 'Shelves' })
       }
     }
-  }, [navigationRef])
+  }, [navigationRef, setBroadcastMessage])
 
   /**
    * Register for push notifications
@@ -156,7 +169,10 @@ export function PushProvider({ children, navigationRef }) {
     // Listener for notifications received while app is in foreground
     notificationListener.current = addNotificationReceivedListener((notification) => {
       if (__DEV__) console.log('Notification received in foreground:', notification)
-      // Could show a custom in-app alert here if desired
+      const data = parseNotificationData(notification)
+      if (data?.type === 'system_broadcast') {
+        setBroadcastMessage({ title: data.title, body: data.body, broadcastId: data.broadcastId })
+      }
     })
 
     // Listener for when user taps on a notification
@@ -203,11 +219,20 @@ export function PushProvider({ children, navigationRef }) {
     isRegistered,
     registerPush,
     unregisterPush,
+    broadcastMessage,
+    dismissBroadcast,
   }
 
   return (
     <PushContext.Provider value={value}>
       {children}
+      <SystemBroadcastModal
+        visible={broadcastMessage !== null}
+        title={broadcastMessage?.title}
+        body={broadcastMessage?.body}
+        broadcastId={broadcastMessage?.broadcastId}
+        onDismiss={dismissBroadcast}
+      />
     </PushContext.Provider>
   )
 }

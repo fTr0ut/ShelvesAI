@@ -8,6 +8,7 @@ const adminController = require('../controllers/adminController');
 const { adminLogin } = require('../controllers/authController');
 const { requireFields } = require('../middleware/validate');
 const logger = require('../logger');
+const adminBroadcastRoutes = require('./adminBroadcast');
 
 const adminLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -91,5 +92,8 @@ router.put('/users/:userId/vision-quota', adminController.setUserVisionQuota);
 
 // System settings (write — CSRF required)
 router.put('/settings/:key', adminController.updateSetting);
+
+// Broadcast (write — CSRF required, mounted after requireAdminCsrf)
+router.use('/', adminBroadcastRoutes);
 
 module.exports = router;

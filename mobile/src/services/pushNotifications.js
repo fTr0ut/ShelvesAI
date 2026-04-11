@@ -193,7 +193,8 @@ export async function setBadgeCount(count) {
  * Parse notification data for navigation
  */
 export function parseNotificationData(notification) {
-  const data = notification?.request?.content?.data
+  const content = notification?.request?.content
+  const data = content?.data
   if (!data) return null
 
   return {
@@ -202,5 +203,8 @@ export function parseNotificationData(notification) {
     entityType: data.entityType,
     notificationId: data.notificationId,
     metadata: data.metadata || null,
+    broadcastId: data.broadcastId || null,
+    title: content.title || null,
+    body: content.body || null,
   }
 }

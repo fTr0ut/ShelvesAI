@@ -10,6 +10,7 @@ import SocialFeed from './pages/SocialFeed';
 import Jobs from './pages/Jobs';
 import AuditLog from './pages/AuditLog';
 import Settings from './pages/Settings';
+import Broadcast from './pages/Broadcast';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -51,6 +52,7 @@ function App() {
                 <Route path="/jobs" element={<Jobs />} />
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/broadcast" element={<Broadcast />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

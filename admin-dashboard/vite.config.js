@@ -39,7 +39,7 @@ function buildSecurityHeaders(isDev) {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const isDev = mode === 'development';
+  const isDev = mode === 'development' || mode === 'localdev';
   const headers = buildSecurityHeaders(isDev);
   const apiTarget = env.API_TARGET || 'http://localhost:5001';
 
